@@ -371,9 +371,9 @@ namespace IGTAPTasMod
             bool finished;
             float replayed;
             FullTasTracker tracker;
-            _engine.HumanJumpButtons = _solverFullTasClass != null && HumanClass(_solverFullTasClass.cls);
+            _engine.HumanClass = _solverFullTasClass != null && HumanClass(_solverFullTasClass.cls);
             try { finished = EvaluateFullTas(_solverFullTas, inputs, out replayed, out _, out tracker); }
-            finally { _audit = null; _engine.HumanJumpButtons = false; }
+            finally { _audit = null; _engine.HumanClass = false; }
             string status = _engine.Status;
             ParkAtNewGameStart();
             if (!finished || Mathf.Abs(replayed - time) > .0001f)
@@ -429,9 +429,9 @@ namespace IGTAPTasMod
             float time;
             int finishTick;
             FullTasTracker tracker;
-            _engine.HumanJumpButtons = HumanClass(cls);
+            _engine.HumanClass = HumanClass(cls);
             try { finished = EvaluateFullTas(judged, inputs, out time, out finishTick, out tracker); }
-            finally { _engine.HumanJumpButtons = false; }
+            finally { _engine.HumanClass = false; }
             long runTicks = _engine.PhysicsTicks;
             string status = _engine.Status;
             ParkAtNewGameStart();

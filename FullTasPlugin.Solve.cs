@@ -190,8 +190,7 @@ namespace IGTAPTasMod
                 if (goals.Count == 0) continue;
                 bool stale = route.name.EndsWith(" stale", StringComparison.Ordinal);
                 string plain = stale ? route.name.Substring(0, route.name.Length - " stale".Length) : route.name;
-                Match category = MatchCategoryRoute(plain);
-                if (!category.Success) category = MatchFarmRoute(plain);
+                Match category = MatchGatedRoute(plain);
                 string caps = string.IsNullOrEmpty(target?.minCapabilities) ? default(Caps).Id : target.minCapabilities;
                 float time = float.MaxValue;
                 if (category.Success)
@@ -203,6 +202,16 @@ namespace IGTAPTasMod
                 List<SolverTick> ticks = ToTicks(route.steps);
                 string json = JsonConvert.SerializeObject(new { name = route.name, token, course, goals, capabilities = caps, standing, restart, ticks });
                 found.Add((stale, time, token + "|" + caps + "|" + standing + "|" + restart + "|" + JsonConvert.SerializeObject(ticks), json));
+                // A course route's laps from its quick restart (a farm route's lead restarts onto the course): a run's quick restart
+                // lands as the route's did, where the standing start (the category start, at its own origin) doesn't.
+                int reset = course > 0 ? ticks.FindIndex(t => t.reset) : -1;
+                if (reset > 0)
+                {
+                    List<SolverTick> laps = ticks.GetRange(reset, ticks.Count - reset);
+                    json = JsonConvert.SerializeObject(new { name = route.name + " from its quick restart", token, course, goals, capabilities = caps,
+                        standing = false, restart = true, ticks = laps });
+                    found.Add((stale, time, token + "|" + caps + "|False|True|" + JsonConvert.SerializeObject(laps), json));
+                }
             }
             WriteFullTasRunSeeds(run, labels, found);
             var written = new HashSet<string>();

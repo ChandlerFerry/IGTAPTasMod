@@ -570,8 +570,7 @@ namespace IGTAPTasMod
             Caps target = Caps.Parse(capabilities);
             return _library.macros.Any(m =>
             {
-                Match g = MatchCategoryRoute(m.name);
-                if (!g.Success) g = MatchFarmRoute(m.name);
+                Match g = MatchGatedRoute(m.name);
                 return g.Success && string.Equals(g.Groups["token"].Value, course.Token, StringComparison.OrdinalIgnoreCase)
                     && Caps.Parse(g.Groups["label"].Value.ToUpperInvariant()).IsSubsetOf(target);
             });
@@ -600,6 +599,9 @@ namespace IGTAPTasMod
             public string name, note;
             public bool on;
             public string[] caps;
+            /// <summary>The block's avoid boxes ([x0, y0, x1, y1], game world frame) and their one-way sides (FullTasGoal.FromLeft..., 0: two-way).</summary>
+            public float[][] avoid;
+            public int from;
         }
 
         OptionalBlock[] _optionalBlocks = new OptionalBlock[0];
@@ -615,7 +617,10 @@ namespace IGTAPTasMod
                     : ((JArray)root["paths"]).OfType<JObject>().Where(rule => rule["course"] != null)
                         .SelectMany(rule => (rule["optional"] as JArray ?? new JArray()).OfType<JObject>().Select(b => new OptionalBlock {
                             course = (int)rule["course"], name = (string)b["name"], note = (string)b["note"] ?? "", on = (bool?)b["default"] ?? false,
-                            caps = rule["capabilities"].Select(c => (string)c).ToArray() })).ToArray();
+                            caps = rule["capabilities"].Select(c => (string)c).ToArray(),
+                            avoid = (b["avoid"] as JArray ?? new JArray()).Select(box => box.Select(v => (float)v).ToArray()).Where(box => box.Length == 4).ToArray(),
+                            from = ((string)b["from"] ?? "").Split('+').Select(side => Array.IndexOf(FullTasGoal.SideNames, side.Trim()))
+                                .Where(bit => bit >= 0).Aggregate(0, (sides, bit) => sides | 1 << bit) })).ToArray();
             }
             return _optionalBlocks.Where(b => b.course == course);
         }
@@ -1297,6 +1302,9 @@ namespace IGTAPTasMod
             _preservedCourseResetPoint = new Vector2(course.x, course.y);
             _hasPreservedCourseResetPoint = true;
             List<(string field, object value)> savedAbilities = ApplyAbilities(player, _solverCaps, course);
+            List<(string name, OptionalBlock block)> directions = _solverFullTas == null && _techStart == null ? DirectionBlocks(course.id, _solverCaps) : null;
+            var cut = new bool[directions?.Count ?? 0];
+            Vector2? prev = null;
             _silentEvaluation = true;
             _engine.Quiet = true;
             _silentFinished = false;
@@ -1316,7 +1324,8 @@ namespace IGTAPTasMod
             try
             {
                 TurboRunner.Run(player, () => _pendingSilentMacro != null || (_engine.IsRunning && idleTicks < 20),
-                    inputs.Count + 400, () =>
+                    // Dash and spring ticks take no input: a farm loop's four laps run well past one tick an input.
+                    inputs.Count * 4 + 400, () =>
                     {
                         _engine.Clock++;
                         _engineSimTickHook?.Invoke(player);
@@ -1335,6 +1344,13 @@ namespace IGTAPTasMod
                         }
                         if (_startState == null && tick > 0) _startState = settling;
                         if (_audit != null) AuditTick(player, tick);
+                        if (directions != null)
+                        {
+                            Vector2 p = (Vector2)player.transform.position - CurrentOrigin();
+                            if (prev is Vector2 a)
+                                for (int k = 0; k < cut.Length; k++) cut[k] |= Cuts(directions[k].block, a, p);
+                            prev = p;
+                        }
                         lastTick = tick;
                     }, from);
                 if (from == null && _startState == null)
@@ -1356,7 +1372,52 @@ namespace IGTAPTasMod
             time = _silentTime;
             finishTick = Math.Min(inputs.Count - 1, Math.Max(0, lastTick));
             end = player.transform.position;
+            _lastDirections = directions?.Where((d, k) => !cut[k]).Select(d => d.name).ToArray() ?? new string[0];
             return _silentFinished && time > 0f;
+        }
+
+        /// <summary>The directions the last <see cref="Evaluate"/>'s route kept on a two-way course (Categories.Directions: the
+        /// direction blocks it never cut); none elsewhere.</summary>
+        string[] _lastDirections = new string[0];
+
+        /// <summary>A two-way course's direction blocks for the category (Categories.Directions), null unless it has both.</summary>
+        List<(string name, OptionalBlock block)> DirectionBlocks(int course, string caps)
+        {
+            var found = Categories.Directions.Select(d => (d.name, block: OptionalBlocks(course).FirstOrDefault(b => b.name == d.block && b.caps.Contains(caps)))).ToList();
+            return found.All(d => d.block != null && d.block.avoid.Length > 0) ? found : null;
+        }
+
+        /// <summary>The move from <paramref name="a"/> to <paramref name="p"/> (game world frame) is cut by one of the block's boxes:
+        /// it ends inside a two-way box, or crosses a one-way box's entry edge inwards (the engine's OfflineSolver.Box.Cuts).</summary>
+        static bool Cuts(OptionalBlock block, Vector2 a, Vector2 p)
+        {
+            foreach (float[] b in block.avoid)
+            {
+                float x0 = Math.Min(b[0], b[2]), x1 = Math.Max(b[0], b[2]), y0 = Math.Min(b[1], b[3]), y1 = Math.Max(b[1], b[3]);
+                if (block.from == 0 ? p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1 : FullTasGoal.CrossesInto(block.from, x0, y0, x1, y1, a.x, a.y, p.x, p.y))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>The category's best of a direction (+infinity: none yet).</summary>
+        float DirectionBest(string category, string direction)
+        {
+            float best = float.PositiveInfinity;
+            foreach (MacroDefinition m in _library.macros)
+            {
+                Match g = MatchDirectionRoute(m.name);
+                if (g.Success && string.Equals(g.Groups["category"].Value, category, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(g.Groups["direction"].Value, direction, StringComparison.OrdinalIgnoreCase))
+                    best = Math.Min(best, float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture));
+            }
+            return best;
+        }
+
+        /// <summary>The directions the last <see cref="Evaluate"/>'s route kept whose best <paramref name="time"/> beats.</summary>
+        string[] DirectionsBeaten(float time)
+        {
+            return _lastDirections.Where(d => time < DirectionBest(SolverCategory, d) - .0001f).ToArray();
         }
 
         string SolverCategory { get { return _solverFullTas != null ? FullTasClassCategory(_solverFullTas.name, _solverFullTasClass.cls)
@@ -1372,7 +1433,9 @@ namespace IGTAPTasMod
         /// from the course start finishes in <paramref name="time"/> and every tick obeys the category. A farm loop (README ###
         /// Rules 30; its loop from input <paramref name="loopFrom"/>, <paramref name="loopLaps"/> laps): when a replay from the
         /// course start loops in exactly <paramref name="loopLive"/> units a loop (<see cref="EvaluateLoop"/>) and every tick obeys
-        /// the category; named by a lap's share, `<c>&lt;category&gt; farm &lt;lap&gt;</c>`.
+        /// the category; named by a lap's share, `<c>&lt;category&gt; farm &lt;lap&gt;</c>`. On a two-way course a record is also
+        /// saved as `<c>&lt;category&gt; &lt;direction&gt; &lt;time&gt;</c>` for each direction the replay keeps and beats
+        /// (Categories.Directions), and as only those when it doesn't beat the record.
         /// </summary>
         bool SaveSolverRoute(List<SolverTick> inputs, float time, int loopFrom = 0, int loopLaps = 1, long loopLive = 0)
         {
@@ -1395,7 +1458,13 @@ namespace IGTAPTasMod
                 violation = RouteViolation(inputs, time);
             }
             if (violation != null) return Rejected(name, violation);
-            _library.macros.Add(new MacroDefinition { name = name, steps = ToSteps(inputs), loopFrom = loopFrom, loopLaps = loopFrom > 0 ? Math.Max(1, loopLaps) : 0 });
+            // A record also saves as the best of each direction it keeps and beats (a direction record, Categories.Directions), and
+            // only that when it doesn't beat the record itself.
+            string[] beaten = loopFrom > 0 || _solverFullTas != null ? new string[0] : DirectionsBeaten(time);
+            if (loopFrom > 0 || _solverFullTas != null || beaten.Length == 0 || time < CategoryBest(SolverCategory) - .0001f)
+                _library.macros.Add(new MacroDefinition { name = name, steps = ToSteps(inputs), loopFrom = loopFrom, loopLaps = loopFrom > 0 ? Math.Max(1, loopLaps) : 0 });
+            foreach (string direction in beaten)
+                _library.macros.Add(new MacroDefinition { name = SolverCategory + " " + direction + " " + time.ToString("0.00", CultureInfo.InvariantCulture), steps = ToSteps(inputs) });
             PruneSlowerRoutes();
             SaveLibrary();
             return true;
@@ -1492,6 +1561,9 @@ namespace IGTAPTasMod
         // "4_almost_completed 13.46" is no route.
         static readonly Regex CategoryRoute = new Regex(@"^(?<category>(?<token>[^_\s]+)_(?<label>" + Caps.LabelPattern + @")) (?<time>[\d.]+)$", RegexOptions.IgnoreCase);
         static readonly Regex FarmRoute = new Regex(@"^(?<category>(?<token>[^_\s]+)_(?<label>" + Caps.LabelPattern + @")) farm (?<time>[\d.]+)$", RegexOptions.IgnoreCase);
+        // A direction record (Categories.Directions): "3_WJ_DS_DJ backwards 2.76", the category's best of one direction on a two-way course.
+        static readonly Regex DirectionRoute = new Regex(@"^(?<category>(?<token>[^_\s]+)_(?<label>" + Caps.LabelPattern + @")) (?<direction>"
+            + string.Join("|", Categories.Directions.Select(d => d.name)) + @") (?<time>[\d.]+)$", RegexOptions.IgnoreCase);
         static readonly Regex RoutePrefix = new Regex(@"^(?<category>(?<token>[^_\s]+)_(?<label>" + Caps.LabelPattern + @"))(?: |$)", RegexOptions.IgnoreCase);
 
         static Match MatchRoute(Regex pattern, string name)
@@ -1501,13 +1573,23 @@ namespace IGTAPTasMod
         }
         static Match MatchCategoryRoute(string name) { return MatchRoute(CategoryRoute, name); }
         static Match MatchFarmRoute(string name) { return MatchRoute(FarmRoute, name); }
+        static Match MatchDirectionRoute(string name) { return MatchRoute(DirectionRoute, name); }
+
+        /// <summary>A name only the gate gives: a record, a direction record or a farm route.</summary>
+        static Match MatchGatedRoute(string name)
+        {
+            Match g = MatchCategoryRoute(name);
+            if (!g.Success) g = MatchDirectionRoute(name);
+            return g.Success ? g : MatchFarmRoute(name);
+        }
         static Match MatchRoutePrefix(string name) { return MatchRoute(RoutePrefix, name); }
 
         static bool RankedRoute(string name, out string key, out float time)
         {
             Match g = MatchCategoryRoute(name);
+            string direction = g.Success || !(g = MatchDirectionRoute(name)).Success ? null : g.Groups["direction"].Value.ToUpperInvariant();
             bool farm = !g.Success && (g = MatchFarmRoute(name)).Success;
-            key = g.Success ? g.Groups["category"].Value.ToUpperInvariant() + (farm ? " FARM" : "") : null;
+            key = g.Success ? g.Groups["category"].Value.ToUpperInvariant() + (farm ? " FARM" : direction != null ? " " + direction : "") : null;
             time = g.Success ? float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture) : 0f;
             return g.Success;
         }

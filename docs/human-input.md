@@ -68,7 +68,9 @@ release reaches it (`Movement.Update`); holding is never read. A jump press whil
 going down. A release lifts both. With both down there is no third button: a TAS route (a category route, a Full-TAS
 `major` or `nmg` one) still presses, as one button released and pressed again within the tick (the press clears the
 release's jump cut before the tick reads it, a 3.6 ms retap no human makes), but a human class's replay (`human-major`,
-`human-nmg`) ends there (`MacroEngine.HumanJumpButtons`, README `### Rules` 54). The `two-button-jump` lab shows what the
+`human-nmg`) ends there (`MacroEngine.HumanClass`, README `### Rules` 54). A human class's stick is digital too: a
+part tilt anywhere (the tick's stick, `lockMoveX`/`lockMoveY`, `dashTurnX`/`dashTurnY` anything but 0 or ±1) ends its
+replay, so it has the KB Wall Clip and not the GC one. The `two-button-jump` lab shows what the
 second button is for. Dash presses on consecutive ticks alternate the two dash buttons. The
 overlay's JUMP and DASH columns and the pad under the input list show each tick this way (J1/J2 and D1/D2: bright on the
 tick a button goes down, dim while held), with "release" and "cut" while a release's jump cut is armed.
@@ -156,7 +158,7 @@ move a press or a dash a few ticks while keeping where the hold ends.
   forward hold the stick back until `Velocity.x` changes sign (~3 ticks from a full run) before the press. With a super
   instead of the ground jump and the press 2-4 ticks after the dash, it is the dash boost (the stored superbounce, lab
   `stored-superbounce`).
-- **GC Wall Clip** (game controller; Course 1 NONE): rising with your back to a wall, flick the stick lightly toward it
+- **GC Wall Clip** (game controller; Course 1 NONE; not in a human class, whose stick is digital): rising with your back to a wall, flick the stick lightly toward it
   and back. The player's box is offset 5 units to the front (`defaultColliderOffset`/`dashColliderOffset` x 5, width
   41), so the facing flip swings its back edge 10 units into the wall; depenetration pushes it only part way out, and
   the next tick the front ground ray (x−25, Movement.cs:926-940) starts inside the wall and grounds the player mid-air

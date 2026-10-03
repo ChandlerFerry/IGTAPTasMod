@@ -36,6 +36,8 @@ namespace IGTAP.EngineSim.Cli
         int _ladderMax;
         /// <summary>The Cash the plan's ladders earn that their stand-in laps don't (Ladders): added to every state the plan plays on.</summary>
         double _credit;
+        /// <summary>A plan past this physics tick stops (the goals part's reroutes: the best's end, which a plan behind it can't beat).</summary>
+        long _planTickCap = long.MaxValue;
 
         /// <summary>What <see cref="Replan"/> planned.</summary>
         sealed class PlanResult
@@ -243,6 +245,8 @@ namespace IGTAP.EngineSim.Cli
                 // More laps only add Cash: once the target is paid for and still no way reaches it, the plan is stuck here.
                 if (aimPayable && !aimPlayed) { Log($"stuck at tick {now}: {aim} is paid for but no way reaches it from {Where(at.WithGoal(Fresh(_goals, 0))).at} ({_whyNot})"); break; }
                 if (pick == null) { Log($"stuck at tick {now}: no option plays from here"); break; }
+                // A reroute whose target no lap brings closer (a goal before it the plan never plays) would lap on until TimeUp.
+                if (pick.Value.tick > _planTickCap) { Log($"stuck at tick {now}: past the best's end at tick {_planTickCap}"); break; }
                 var p = pick.Value;
                 planned.AddRange(p.goals);
                 route = p.inputs;
@@ -348,15 +352,19 @@ namespace IGTAP.EngineSim.Cli
             return result;
         }
 
+        /// <summary>A saved course route's inputs from the quick restart the planner makes: a standing one as it is, a restart
+        /// one (a farm route's laps from its own quick restart) without its first tick, that restart.</summary>
+        static List<InputTick> LapInputs(Seed s) => s.Restart ? s.Inputs.Skip(1).ToList() : s.Inputs;
+
         /// <summary>
-        /// Files the saved course routes (--seed files that run this course from standing at its start) as lap pieces at the
-        /// spot a quick restart from here lands: the gate's part as the lap's start piece, the rest as its finish piece, each
-        /// checked by playing it there. A lap the route polished in the run is often slower than the course's own record
+        /// Files the saved course routes (--seed files that run this course from standing at its start, or from a quick restart
+        /// onto it) as lap pieces at the spot a quick restart from here lands: the gate's part as the lap's start piece, the rest
+        /// as its finish piece, each checked by playing it there. A lap the route polished in the run is often slower than the course's own record
         /// (Course 1's farm route finishes 12 ticks sooner after the same quick restart), and the planner laps from the library.
         /// </summary>
         void SeedLaps(SimSnapshot at, List<InputTick> route, int reached, FullTasGoal[] lap)
         {
-            var runs = _seeds.Where(s => s.Standing && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label)).ToList();
+            var runs = _seeds.Where(s => (s.Standing || s.Restart) && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label)).ToList();
             if (runs.Count == 0) return;
             var restart = Restarts(at, route, reached).FirstOrDefault();
             if (restart.state == null) { Log("lap seeds: no quick restart from the stretch's start"); return; }
@@ -365,11 +373,11 @@ namespace IGTAP.EngineSim.Cli
             foreach (Seed s in runs)
             {
                 var start = new Target { Goal = reached, Extra = new[] { lap[0] }, Key = lap[0].label };
-                Step gate = Reaches(restart.state, before.Count, s.Inputs, start);
+                Step gate = Reaches(restart.state, before.Count, LapInputs(s), start);
                 if (gate == null || gate.Next == null) { Log($"lap seeds: {s.Name} doesn't reach {lap[0].label} from the quick restart's spot at {Where(restart.state.WithGoal(Fresh(_goals, 0))).at} ({_whyNot})"); continue; }
                 var finish = new Target { Goal = reached, Extra = new[] { lap[1] }, Key = lap[1].label };
                 List<InputTick> afterGate = before.Concat(gate.Inputs).ToList();
-                Step end = Reaches(gate.Next, afterGate.Count, s.Inputs.Skip(gate.Inputs.Count).ToList(), finish);
+                Step end = Reaches(gate.Next, afterGate.Count, LapInputs(s).Skip(gate.Inputs.Count).ToList(), finish);
                 if (end == null) { Log($"lap seeds: {s.Name} crosses {lap[0].label} but doesn't reach {lap[1].label} after it ({_whyNot})"); continue; }
                 Keep(gate, restart.state, before, start);
                 Keep(end, gate.Next, afterGate, finish);
@@ -699,7 +707,7 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         (List<InputTick> inputs, SimSnapshot state, long tick)? RecordLap(SimSnapshot at, List<InputTick> route, List<FullTasGoal> planned, FullTasGoal[] lap, int course)
         {
-            var runs = _seeds.Where(s => s.Standing && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label)).ToList();
+            var runs = _seeds.Where(s => (s.Standing || s.Restart) && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label)).ToList();
             if (runs.Count == 0) return null;
             var gate = Play(at, route, planned, new[] { lap[0] }, false);
             if (gate == null) return null;
@@ -726,7 +734,7 @@ namespace IGTAP.EngineSim.Cli
                     if (cached && found < 0) { tried.Add($"{key} misses {lap[1].label}"); continue; }
                     foreach (int idle in cached ? new[] { found } : Enumerable.Range(0, MaxRecordPad + 1))
                     {
-                        end = Reaches(restarted, inputs.Count + pre.Count, Enumerable.Repeat(new InputTick(), idle).Concat(s.Inputs).ToList(), target);
+                        end = Reaches(restarted, inputs.Count + pre.Count, Enumerable.Repeat(new InputTick(), idle).Concat(LapInputs(s)).ToList(), target);
                         if (end != null) { found = idle; break; }
                     }
                     if (!cached) _recordPads[key] = end == null ? -1 : found;
@@ -750,7 +758,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 _recordSearched.Add(course);
                 var (how, pre, restarted) = starts[0];
-                var seedsFor = runs.Select(s => s.Inputs).ToList();
+                var seedsFor = runs.Select(LapInputs).ToList();
                 Step found = SolvePiece(restarted, inputs.Concat(pre).ToList(), i, target, _pieceMinutes * 3, BuildStall, seedsFor);
                 if (found != null)
                 {

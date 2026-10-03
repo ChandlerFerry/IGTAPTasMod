@@ -12,7 +12,8 @@ CONFIG = GAME / "BepInEx" / "config" / "IGTAPTasMod"
 TRACES = CONFIG / "enginesim"
 API = "http://127.0.0.1:17426"
 # A category or farm route's name: course, category label, "farm ", time.
-ROUTE_NAME = re.compile(r"^([^_\s]+)_([A-Z][A-Z0-9_]*) (farm )?([\d.]+)$")
+# A record, direction record ("3_WJ_DS_DJ backwards 2.76") or farm route: token, label, "farm ", time.
+ROUTE_NAME = re.compile(r"^([^_\s]+)_([A-Z][A-Z0-9_]*) (?:forwards |backwards )?(farm )?([\d.]+)$")
 
 
 def call(path, body=None, method=None, timeout=600):

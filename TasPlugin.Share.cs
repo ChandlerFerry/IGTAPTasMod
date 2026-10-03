@@ -91,8 +91,7 @@ namespace IGTAPTasMod
         /// <summary>A record's name ("4_WJ_DS 13.28", "4_WJ_DS farm 13.62") as a plain route of the same category.</summary>
         static string SharedName(string name)
         {
-            var record = MatchCategoryRoute(name);
-            if (!record.Success) record = MatchFarmRoute(name);
+            var record = MatchGatedRoute(name);
             return record.Success ? record.Groups["category"].Value + " shared " + name.Substring(record.Groups["category"].Length).Trim() : name;
         }
 

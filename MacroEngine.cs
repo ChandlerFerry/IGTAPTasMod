@@ -70,9 +70,10 @@ namespace IGTAPTasMod
         public event Action<bool, string> AttemptEnded;
         public bool Quiet;
         /// <summary>A human class's replay (README ### Rules 54): a jump press while both jump buttons are down
-        /// (<see cref="JumpButtonsDown"/> 2) ends the run instead of pressing. A setting of the replay, not engine state: FieldState
+        /// (<see cref="JumpButtonsDown"/> 2), or a stick at a part tilt (anything but 0 or full: a keyboard's, so the KB wall
+        /// clip stands and the GC one doesn't), ends the run instead of pressing. A setting of the replay, not engine state: FieldState
         /// skips it, so a restore keeps it.</summary>
-        public bool HumanJumpButtons;
+        public bool HumanClass;
         public bool InputsExhausted { get { return _steps != null && _stepIndex >= _steps.Count; } }
         public Vector2 TickStick { get { return IsRunning ? _tickStick : Vector2.zero; } }
 
@@ -608,6 +609,12 @@ namespace IGTAPTasMod
 
         private void RunRawInput(Movement movement, MacroStep step, bool entering)
         {
+            if (entering && HumanClass && (PartTilt(ControllerAxis(step.rawMoveX, step.rawMoveY).x) || PartTilt(step.lockMoveX)
+                || PartTilt(step.lockMoveY) || PartTilt(step.dashTurnX) || PartTilt(step.dashTurnY)))
+            {
+                Fail(movement, "A part-tilt stick in a human class");
+                return;
+            }
             movement.MoveAxis = ControllerAxis(step.rawMoveX, step.rawMoveY);
             _springDashFrame = entering ? step.springDashFrame : 0;
             _springTicks = 0;
@@ -617,6 +624,11 @@ namespace IGTAPTasMod
             if (entering) PressStep(movement);
             _elapsedTicks++;
             if (_elapsedTicks >= Mathf.Max(1, step.durationTicks)) Advance(movement, false);
+        }
+
+        private static bool PartTilt(float? v)
+        {
+            return v.HasValue && v.Value != 0f && Mathf.Abs(v.Value) != 1f;
         }
 
         private static int WallJumpHoldDirection(MacroStep step)
@@ -684,7 +696,7 @@ namespace IGTAPTasMod
 
         private void PressJump(Movement movement)
         {
-            if (JumpButtonsDown >= 2 && HumanJumpButtons)
+            if (JumpButtonsDown >= 2 && HumanClass)
             {
                 Abort("A third jump press while both jump buttons are down at action " + (_stepIndex + 1));
                 return;

@@ -211,6 +211,13 @@ namespace IGTAPTasMod
 
         public static bool IsCategory(string idOrLabel) { return Find(idOrLabel) != null; }
 
+        /// <summary>
+        /// A two-way course's directions (a course with both blocks in forced-paths.json, Courses 1-3): a route of a direction
+        /// never cuts that block's boxes. Its best is a direction record, <c>&lt;course&gt;_&lt;CAT&gt; &lt;direction&gt; &lt;time&gt;</c>,
+        /// beside the category record, so a Full-TAS run reaching the course in another state has both to pick from.
+        /// </summary>
+        public static readonly (string name, string block)[] Directions = { ("forwards", "avoid-backwards"), ("backwards", "avoid-forwards") };
+
         /// <summary>The step of <see cref="Ladder"/> (-1 when the id isn't one).</summary>
         public static int LadderStep(string id) { return Array.IndexOf(Ladder, id); }
     }

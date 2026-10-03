@@ -176,6 +176,31 @@ namespace IGTAPTasMod
                 || (from & FromLeft) != 0 && px1 <= rx0 || (from & FromRight) != 0 && px0 >= rx1
                 || (from & FromBottom) != 0 && py1 <= ry0 || (from & FromTop) != 0 && py0 >= ry1;
         }
+
+        /// <summary>A move longer than this in one physics tick is a respawn, not a move (<see cref="CrossesInto"/>).</summary>
+        public const float TeleportStep = 400f;
+
+        /// <summary>
+        /// A one-way avoid box's cut (forced-paths.json's block "from"; the engine's OfflineSolver.Box, the gate's direction records):
+        /// the move from (ax, ay) to (px, py) crosses one of the box's <paramref name="sides"/> edges inwards, a fast move through a
+        /// thin box included. A respawn's jump crosses nothing.
+        /// </summary>
+        public static bool CrossesInto(int sides, float x0, float y0, float x1, float y1, float ax, float ay, float px, float py)
+        {
+            if ((px - ax) * (px - ax) + (py - ay) * (py - ay) > TeleportStep * TeleportStep) return false;
+            return (sides & FromLeft) != 0 && Crosses(ax, px, x0, ay, py, y0, y1)
+                || (sides & FromRight) != 0 && Crosses(-ax, -px, -x1, ay, py, y0, y1)
+                || (sides & FromBottom) != 0 && Crosses(ay, py, y0, ax, px, x0, x1)
+                || (sides & FromTop) != 0 && Crosses(-ay, -py, -y1, ax, px, x0, x1);
+        }
+
+        /// <summary>A move from u0 to u1 crosses the edge at u = e going up, at a v (interpolated) within [v0, v1].</summary>
+        static bool Crosses(float u0, float u1, float e, float va, float vb, float v0, float v1)
+        {
+            if (!(u0 < e && u1 >= e)) return false;
+            float v = va + (vb - va) * (e - u0) / (u1 - u0);
+            return v >= v0 && v <= v1;
+        }
     }
 
     internal sealed class FullTasTracker

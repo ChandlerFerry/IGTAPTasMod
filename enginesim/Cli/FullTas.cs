@@ -191,7 +191,7 @@ namespace IGTAP.EngineSim.Cli
             _labels = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
             _goals = _labels.Length;
             _eval = Solve.Creator(_trace, header)();
-            _eval.Engine.HumanJumpButtons = Human;
+            _eval.Engine.HumanClass = Human;
             // --loose-buys: a stray purchase doesn't end the replay (to line it up with a trace capture, which plays on).
             _eval.StrictBuys = !_args.Contains("--loose-buys");
             var bought = new List<string>();
@@ -437,7 +437,7 @@ namespace IGTAP.EngineSim.Cli
             // Every purchase is a goal: a route that buys a box other than its next goal's spends Cash and levels the goals
             // (and the plans that wrote them) don't count, so no search or check here plays one (docs/fulltas.md).
             Func<Simulation> make = Solve.Creator(_trace, header);
-            _create = () => { Simulation sim = make(); sim.StrictBuys = true; sim.Engine.HumanJumpButtons = Human; return sim; };
+            _create = () => { Simulation sim = make(); sim.StrictBuys = true; sim.Engine.HumanClass = Human; return sim; };
             _clock = Stopwatch.StartNew();
             _eval = _create();
             _origin = _eval.Start;
@@ -1080,13 +1080,34 @@ namespace IGTAP.EngineSim.Cli
                     head.reset = true;
                     own[0] = head;
                     list.Add((s.Name + ", with a quick restart on its first tick", own));
+                    // A quick restart carries what the ticks before it left running past the respawn: a dash's end (EndDash's
+                    // Velocity.y = 10), a jump released on the restart's tick (jumpCutBuffer, 15 ticks, cuts the lap's first jump),
+                    // and the facing a dash at rest takes; and the lap's first dash moves by the frames its tick gets on the
+                    // 280 fps grid (6, 5, 6, 5, 6). A tap either way and five consecutive idle counts before the restart set them
+                    // as the route's own restart had them.
+                    foreach (int k in new[] { 6, 7, 8, 9, 10, 17, 18, 19, 20, 21 })
+                        foreach (float tap in new[] { 1f, -1f, 0f })
+                            list.Add((s.Name + ", after " + (tap == 0f ? "" : tap > 0f ? "a tap right and " : "a tap left and ") + k
+                                + " idle ticks and a quick restart",
+                                (tap == 0f ? new List<InputTick>() : new List<InputTick> { new InputTick { x = tap } })
+                                    .Concat(Enumerable.Repeat(new InputTick(), k)).Concat(own).ToList()));
                 }
                 list.Add((s.Name + ", as it is", s.Inputs));
-                if (restart)
+                if (restart && !s.Restart)
                     foreach (int k in Enumerable.Range(0, MaxSettle + 1).OrderBy(k => Math.Abs(k - Math.Max(0, settle))))
                         if (!(s.Standing && k == settle)) list.Add((s.Name + ", after a quick restart and " + k + " idle ticks", Restarted(s, k)));
                 return list;
             }).ToList();
+            // A restart seed's ways are alternatives for one start (the phases above), not tiers of one seed: each gets a start
+            // of its own ahead of the rest, or the standing seeds' tiers fill MaxSeedStarts first.
+            var spread = new List<List<(string how, List<InputTick> inputs)>>();
+            for (int i = 0; i < matching.Count; i++)
+                if (matching[i].Restart && restart)
+                {
+                    spread.AddRange(perSeed[i].Select(v => new List<(string how, List<InputTick> inputs)> { v }));
+                    perSeed[i] = new List<(string how, List<InputTick> inputs)>();
+                }
+            perSeed.InsertRange(0, spread);
             foreach (Seed bonus in matching.Where(s => s.Standing && s.Name.StartsWith("bonus", StringComparison.OrdinalIgnoreCase)))
             {
                 string token = bonus.Name.Substring(0, bonus.Name.IndexOf('_'));

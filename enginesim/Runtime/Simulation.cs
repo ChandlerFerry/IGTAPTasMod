@@ -500,6 +500,20 @@ namespace IGTAP.EngineSim
         /// <summary>The player's position in the world frame (the scene position minus FloatingOrigin.currentOrigin).</summary>
         public WorldPos PlayerWorld { get { Vector3 p = Player.transform.m_Position - CurrentOrigin; return new WorldPos(p.x, p.y); } }
 
+        /// <summary>Where a quick restart now puts the player (world frame): the course reset point while one is set, else the respawn point.</summary>
+        public Vector2 RestartPoint
+        {
+            get
+            {
+                return Player.courseResetPoint != Vector2.zero
+                    ? new Vector2(Player.courseResetPoint.x - CurrentOrigin.x, Player.courseResetPoint.y - CurrentOrigin.y) : Player.respawnPoint;
+            }
+        }
+
+        /// <summary>Where the player was before this tick (after a quick restart's respawn), for a one-way avoid box
+        /// (<see cref="OfflineSolver.Box.From"/>).</summary>
+        public WorldPos PlayerStepFrom { get; private set; }
+
         /// <summary>The player's position in the capture's scene frame (the trace's rects, goals and map cells).</summary>
         public CapturePos PlayerAtCapture
         {
@@ -1296,7 +1310,8 @@ namespace IGTAP.EngineSim
             _finishTime = 0f;
             _endReason = null;
             _finishIn = -1;
-            int maxTicks = inputs.Count - from.Tick + extraTicks;
+            // Dash and spring ticks take no input (a farm loop's laps run well past one tick an input), as turbo's cap (Solver.Evaluate).
+            int maxTicks = (inputs.Count - from.Tick) * 4 + extraTicks;
             int idleTicks = 0, lastTick = from.Tick > 0 ? from.Tick : -1, stepped = 0;
             bool stop = false;
             for (Scheduler.Tick = 0; Scheduler.Tick < maxTicks && Engine.IsRunning && idleTicks < 20 && !stop; Scheduler.Tick++)
@@ -1326,6 +1341,7 @@ namespace IGTAP.EngineSim
                     RespawnMethod.Invoke(Player, new object[] { true });
                     Goals?.QuickRestarted();
                 }
+                PlayerStepFrom = PlayerWorld;
                 // A start inside a tick: the game started the engine in Movement.FixedUpdate's prefix after BeforeTick had run
                 // idle, so that tick's pre-hook stick read is at rest and its step is pressed at the input hook (FixedTick).
                 if (!(StartsInsideTick && from.Tick == 0 && Scheduler.Tick == 0)) Engine.BeforeTick(Player);

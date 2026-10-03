@@ -115,8 +115,15 @@ namespace IGTAP.EngineSim.Cli
                 var ticks = new List<long>();
                 var toEnd = new List<float>();
                 var body = new List<(float x, float y)>();
+                // Where each finish leaves the quick restart: a lap that doesn't repeat usually restarts somewhere else (Simulation.LoopRespawn).
+                var restarts = new List<Vector2>();
+                // The player's fields one input into each loop: what a lap carries through the restart into the next.
+                var carried = new List<Dictionary<string, string>>();
                 RunResult r = sim.Run(inputs, null, null, AnyTicks, _ =>
                 {
+                    while (restarts.Count < sim.Progress) restarts.Add(sim.RestartPoint);
+                    long into = sim.Engine.RunTicks - route.Lead.Count - 1;
+                    if (into >= 0 && into % route.Loop.Count == 0 && carried.Count == into / route.Loop.Count) carried.Add(Fields(sim.Player));
                     ticks.Add(sim.Engine.PhysicsTicks);
                     toEnd.Add(Nearest(sim, hitbox, ends));
                     var b = sim.Physics.PlayerBody();
@@ -133,8 +140,11 @@ namespace IGTAP.EngineSim.Cli
                     if (!on)
                     {
                         long own = route.Lead.Count + (long)k * route.Loop.Count;
-                        c.Broke ??= g >= r.Progress ? $"loop {k}: {r.EndReason} at goal {r.Progress + 1}"
-                            : $"loop {k} finished on input {r.GoalInputTicks[g]}, its last is {own}";
+                        c.Broke ??= (g >= r.Progress ? $"loop {k}: {r.EndReason} at goal {r.Progress + 1}"
+                            : $"loop {k} finished on input {r.GoalInputTicks[g]}, its last is {own}")
+                            + $"; restarts after each finish at {string.Join(" ", restarts.Select(v => $"({v.x:0},{v.y:0})"))}"
+                            + (carried.Count < 2 ? "" : "; loop 2 starts unlike loop 1 in " + string.Join(", ", carried[0].Keys
+                                .Where(f => carried[1].TryGetValue(f, out string v) && v != carried[0][f]).Select(f => $"{f} {carried[0][f]} -> {carried[1][f]}")));
                         continue;
                     }
                     c.Ticks = r.GoalPhysicsTicks[g] - r.GoalPhysicsTicks[s];
@@ -152,6 +162,16 @@ namespace IGTAP.EngineSim.Cli
                 }
                 return c;
             });
+        }
+
+        /// <summary>The player's value fields (numbers, flags, vectors), by name, for comparing two loops' starts.</summary>
+        static Dictionary<string, string> Fields(Movement m)
+        {
+            var fields = new Dictionary<string, string>();
+            foreach (System.Reflection.FieldInfo f in typeof(Movement).GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic))
+                if (f.FieldType.IsPrimitive || f.FieldType.IsEnum || f.FieldType == typeof(Vector2) || f.FieldType == typeof(Vector3))
+                    fields[f.Name] = Convert.ToString(f.GetValue(m), CultureInfo.InvariantCulture);
+            return fields;
         }
 
         /// <summary>The route with its loop settled into the lead: the loops before the steady one played as lead laps, so the
@@ -202,14 +222,36 @@ namespace IGTAP.EngineSim.Cli
             };
             Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: searching Course {run.Course} ({run.Caps}) from the lead's finish {laps} "
                 + $"({lead.Count} inputs) for {minutes:0.##} min on {threads} threads");
+            // Each new fastest lap is checked as a loop of itself as it comes: the fastest one that repeats is kept (a faster lap that
+            // doesn't, carrying a buffered jump into the next, can't replace it), and once one repeats the search ends after
+            // SteadyQuietSeconds without a faster lap. The --auto loop after it makes the loop faster; a lap that repeats is enough here.
             var clock = Stopwatch.StartNew();
+            var quiet = Stopwatch.StartNew();
             Thread[] workers = solver.Start(threads);
-            while (clock.Elapsed.TotalMinutes < minutes) Thread.Sleep(250);
+            List<InputTick> steady = null, seen = null;
+            while (clock.Elapsed.TotalMinutes < minutes && !(steady != null && quiet.Elapsed.TotalSeconds >= SteadyQuietSeconds))
+            {
+                Thread.Sleep(250);
+                List<InputTick> f;
+                long live;
+                lock (guard) (f, live) = (found, foundLive);
+                if (f == null || f == seen) continue;
+                seen = f;
+                quiet.Restart();
+                List<InputTick> cut = CutAtFinish(run, route, f);
+                if (cut == null) continue;
+                LoopCycle c = MeasureLoop(run, new LoopRoute { Lead = lead, LeadLaps = laps, Loop = cut, FirstLap = route.FirstLap, FirstTicks = route.FirstTicks });
+                Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: the {live / 1400.0:0.0000}s lap as a loop of itself: {c}");
+                if (c.Steady) steady = cut;
+            }
             solver.Stop();
             foreach (Thread t in workers) t.Join(60000);
             Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: {Interlocked.Read(ref solver.Runs)} runs, {Interlocked.Read(ref solver.Finishes)} finishes, {solver.GuideStatus()}");
-            return found == null ? null : CutAtFinish(run, route, found);
+            return steady ?? (found == null ? null : CutAtFinish(run, route, found));
         }
+
+        /// <summary>The lap search ends this long after its last faster lap once it has a lap that repeats.</summary>
+        const double SteadyQuietSeconds = 30;
 
         /// <summary>The course run after the route's lead, without goals: a course solve's from where the lead leaves the player.</summary>
         static Simulation AfterLead(CourseRun run, LoopRoute route)
@@ -416,7 +458,8 @@ namespace IGTAP.EngineSim.Cli
                 if (bad < 0 && reached[goals.Count - 1] >= 0) return goals;
                 if (bad < 0)
                 {
-                    if (kept.Count == 0) throw new InvalidOperationException("the farm loop doesn't replay under its finish goals");
+                    if (kept.Count == 0) throw new InvalidOperationException("the farm loop doesn't replay under its finish goals (finishes at ticks "
+                        + string.Join(", ", reached) + " of " + inputs.Count + " inputs)");
                     kept.Clear();
                     continue;
                 }

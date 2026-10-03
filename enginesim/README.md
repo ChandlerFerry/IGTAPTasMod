@@ -507,7 +507,10 @@ momentum carries through them, and a window is scored on its arrival.
   1, 2 or 3 laps (the fewest that repeats), the loops before the steady one moved into the lead. With none, loop laps
   are searched one after another from the fastest first lap (`SearchLoopLap`: the course solve from the state after the
   lead, `UseGoals(null)` so the next finish ends a run, seeded with the first lap after a quick restart and a few idle
-  ticks, and after the drop through the end gate), for a third of `--minutes` (5 at most) each. A lap the search doesn't
+  ticks, and after the drop through the end gate), for a third of `--minutes` (5 at most) each; each new fastest lap is
+  checked as a loop of itself as it comes, the fastest that repeats is kept over a faster one that doesn't, and once one
+  repeats the search ends 30 s after its last faster lap (before 2026-10-02 it ran its minutes out and kept only the
+  fastest lap, so Course 3 `WJ_DS_DJ` sat 5 minutes a lap with nothing shown). A lap the search doesn't
   find is repaired (`RepairLoopLap`): the lap before (the first lap after a quick restart) played after the lead, and the
   reach windows (`fulltas --unsolved`, stopping once every goal is reached) take it on from where it breaks through the
   first lap's waypoints to the finish; a course run reaches its finish as a waypoint, not from loop pieces. After each, the loops
@@ -539,7 +542,11 @@ momentum carries through them, and a window is scored on its arrival.
   direction in turn, half the minutes each (farm forwards first, record backwards first), each with its own run and
   waypoints, and fails (exit 1) only when neither gets a route; picking one (`--optional`) runs that direction only, as
   does `--focus` or `--waypoints-out`. Courses 4 and 5
-  go forwards only.
+  go forwards only. The direction blocks are one-way (a block's `"from"`: `left`, `right`, `bottom`, `top`, joined with
+  `+`; `OfflineSolver.Box.From`): a box cuts only a move into it across that edge, a fast one through a thin box included,
+  so it cuts leaving the start the wrong way and not a farm lap coming back through it. Course 3's `avoid-backwards`
+  (from `bottom`) sits under the end gate: a forwards farm lap drops through it to the start, which a plain box cut. The
+  guide's distance field leaves one-way boxes out. `IGTAP.EngineSim oneway` checks the crossing test.
 - **Files.** The run lives in `<traces>\course-auto\` (`fulltas-<run>.json` and its world, `fulltas\<run>.json`, the
   archive, `.auto.jsonl`, `.auto-refs.json`), the run named `course<N>_<caps>[-opt-...][-farm]`. Every kept record best
   is played again on the plain course simulation and written to `offline-best\<course>_<caps>-<time>.json` as `solve`

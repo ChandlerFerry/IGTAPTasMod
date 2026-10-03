@@ -1,0 +1,21 @@
+.routePicker { margin-bottom: 18px; }
+.routePicker .matrixScroll { max-height: 60vh; overflow: auto; }
+.routePicker td.beyondUnlocks { opacity: .45; }
+.pickSlots { display: flex; gap: 2px; }
+.pickSlot { display: flex; flex-direction: column; align-items: flex-end; min-width: 50px; padding: 3px 5px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; cursor: pointer; }
+.pickSlot small { color: var(--muted); font-size: 9px; letter-spacing: .06em; text-transform: uppercase; }
+.pickSlot:hover:not(span) { background: #10213a; transform: none; }
+.pickSlot.active { background: #15335a; box-shadow: inset 0 -2px var(--cyan); }
+.pickSlot.empty { color: var(--muted); opacity: .5; }
+span.pickSlot { cursor: default; }
+.pickSlot.targeted { opacity: 1; box-shadow: inset 0 0 0 2px var(--cyan); }
+.pickSlot.active.targeted { box-shadow: inset 0 0 0 2px var(--cyan), inset 0 -2px var(--cyan); }
+.otherRoutes { margin-top: 14px; }
+.otherRoutes summary { cursor: pointer; }
+.otherRoutes .routeList { max-height: 300px; }
+.routeRow { border-radius: 10px; }
+.routeRow:hover { background: #10213a; }
+.routeRow.active { background: #15335a; box-shadow: inset 3px 0 var(--cyan); }
+.routeRow .routeItem { width: 100%; min-width: 0; }
+.routeRow .routeItem:hover { background: transparent; box-shadow: none; }
+.toggleBar .connection { padding: 5px 12px; border-radius: 999px; }

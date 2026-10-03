@@ -50,12 +50,13 @@ namespace IGTAP.EngineSim
             public bool Guide;
             public bool IsEmpty => Via.Count == 0 && Avoid.Count == 0;
 
-            /// <summary>A run's step at <paramref name="p"/>: past the next via box it counts it; true when an avoid box cuts it
-            /// (one cutting only after a goal once <paramref name="progress"/> has reached it).</summary>
-            public bool Step(WorldPos p, int progress, ref int waypoints)
+            /// <summary>A run's step from <paramref name="prev"/> (<see cref="Simulation.PlayerStepFrom"/>) to <paramref name="p"/>: past
+            /// the next via box it counts it; true when an avoid box cuts it (one cutting only after a goal once
+            /// <paramref name="progress"/> has reached it).</summary>
+            public bool Step(WorldPos prev, WorldPos p, int progress, ref int waypoints)
             {
                 if (waypoints < Via.Count && Via[waypoints].Contains(p)) waypoints++;
-                foreach (Box box in Avoid) if (box.Contains(p) && (box.After == 0 || progress >= box.After)) return true;
+                foreach (Box box in Avoid) if (box.Cuts(prev, p) && (box.After == 0 || progress >= box.After)) return true;
                 return false;
             }
         }
@@ -65,9 +66,25 @@ namespace IGTAP.EngineSim
             public readonly float X0, Y0, X1, Y1;
             /// <summary>Goal mode: the box cuts a run only once it has reached this many goals (0: always).</summary>
             public readonly int After;
-            public Box(WorldPos a, WorldPos b, int after = 0) { X0 = Math.Min(a.x, b.x); Y0 = Math.Min(a.y, b.y); X1 = Math.Max(a.x, b.x); Y1 = Math.Max(a.y, b.y); After = after; }
+            /// <summary>One-way (forced-paths.json's block "from", <see cref="FullTasGoal.SideNames"/>): the box cuts only a move across
+            /// that edge into it, so a direction gate cuts leaving the start its way and not a farm lap's drop back through it (0: any tick inside).</summary>
+            public readonly int From;
+            public Box(WorldPos a, WorldPos b, int after = 0, int from = 0) { X0 = Math.Min(a.x, b.x); Y0 = Math.Min(a.y, b.y); X1 = Math.Max(a.x, b.x); Y1 = Math.Max(a.y, b.y); After = after; From = from; }
             public bool Contains(WorldPos p) { return p.x >= X0 && p.x <= X1 && p.y >= Y0 && p.y <= Y1; }
-            public override string ToString() { return $"{X0:0},{Y0:0}..{X1:0},{Y1:0}" + (After > 0 ? " after goal " + After : ""); }
+
+            /// <summary>The step from <paramref name="prev"/> to <paramref name="p"/> is cut: it ends inside, or for a one-way box it
+            /// crosses the entry edge inwards (<see cref="FullTasGoal.CrossesInto"/>).</summary>
+            public bool Cuts(WorldPos prev, WorldPos p)
+            {
+                return From == 0 ? Contains(p) : FullTasGoal.CrossesInto(From, X0, Y0, X1, Y1, prev.x, prev.y, p.x, p.y);
+            }
+
+            public override string ToString()
+            {
+                int from = From;
+                return $"{X0:0},{Y0:0}..{X1:0},{Y1:0}" + (After > 0 ? " after goal " + After : "")
+                    + (from != 0 ? " from " + string.Join("+", FullTasGoal.SideNames.Where((s, i) => (from & 1 << i) != 0)) : "");
+            }
         }
 
         public readonly string Capabilities;
@@ -1683,7 +1700,7 @@ namespace IGTAP.EngineSim
                 }
                 if (path == null) return;
                 int before = _waypoints;
-                if (path.Step(p, _sim.Progress, ref _waypoints)) _avoided = true;
+                if (path.Step(_sim.PlayerStepFrom, p, _sim.Progress, ref _waypoints)) _avoided = true;
                 if (_waypoints > before && _waypoints > _owner.MostWaypoints)
                     lock (_owner.Shared) _owner.MostWaypoints = Math.Max(_owner.MostWaypoints, _waypoints);
             }

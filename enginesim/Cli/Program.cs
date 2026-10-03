@@ -47,6 +47,7 @@ namespace IGTAP.EngineSim.Cli
                     case "zip-plan": return ZipPlan.Run(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
                     case "grid": return Grid();
+                    case "oneway": return OneWay();
                     case "probe": return Probe.Run(args.Skip(1).ToArray());
                     case "techgrafts": return TechGrafts.Command(args.Skip(1).ToArray());
                     case "routegrafts": return TechGrafts.RouteCommand(args.Skip(1).ToArray());
@@ -462,6 +463,25 @@ namespace IGTAP.EngineSim.Cli
             {
                 if (!type.IsValueType) visiting.Remove(value);
             }
+        }
+
+        /// <summary>A one-way avoid box (OfflineSolver.Box.From) cuts a move in across its entry edge and nothing else: Course 3's
+        /// avoid-backwards (from bottom) cuts the climb from the start, a fast one through it included, and not the farm lap's drop.</summary>
+        static int OneWay()
+        {
+            var box = new OfflineSolver.Box(new WorldPos(9446.9f, 7369.6f), new WorldPos(9694.1f, 7484f), 0, IGTAPTasMod.FullTasGoal.FromBottom);
+            var right = new OfflineSolver.Box(new WorldPos(9620.2f, 6908.6f), new WorldPos(9694.5f, 7170.5f), 0, IGTAPTasMod.FullTasGoal.FromRight);
+            void Check(bool ok, string what) { if (!ok) throw new InvalidOperationException("oneway: " + what); }
+            Check(box.Cuts(new WorldPos(9500, 7360), new WorldPos(9500, 7380)), "climb in from below");
+            Check(box.Cuts(new WorldPos(9500, 7300), new WorldPos(9520, 7550)), "climb through in one tick");
+            Check(!box.Cuts(new WorldPos(9500, 7500), new WorldPos(9500, 7470)), "drop in from above");
+            Check(!box.Cuts(new WorldPos(9500, 7400), new WorldPos(9500, 7380)), "falling inside");
+            Check(!box.Cuts(new WorldPos(9400, 7300), new WorldPos(9420, 7380)), "climb beside it");
+            Check(!box.Cuts(new WorldPos(9500, 6000), new WorldPos(9500, 7400)), "respawn inside");
+            Check(right.Cuts(new WorldPos(9700, 7000), new WorldPos(9690, 7000)) && !right.Cuts(new WorldPos(9600, 7000), new WorldPos(9630, 7000)), "from right");
+            Check(new OfflineSolver.Box(new WorldPos(0, 0), new WorldPos(10, 10)).Cuts(new WorldPos(5, 5), new WorldPos(5, 5)), "two-way box inside");
+            Console.WriteLine("oneway: ok");
+            return 0;
         }
 
         /// <summary>

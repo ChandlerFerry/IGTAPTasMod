@@ -23,6 +23,12 @@ Vman speedrun's start, split by area goals: [`docs/fulltas.md`](docs/fulltas.md#
   `WJ_DS_DJ_BS_ZIP` only on those with zip movers (`Categories.cs` lists them; README `### Rules` 19); bonus4 needs the zip
   movers, so it runs only the `ZIP` categories. Bonuses 17–21
   and 23 (unlock boxes, the Start a VMAN speedrun boxes among them) run no category.
+- Direction record (two-way courses: both `avoid-forwards` and `avoid-backwards` in `forced-paths.json`, Courses 1-3):
+  `<course>_<CAT> forwards <time>` and `<course>_<CAT> backwards <time>`, the category's best by the game timer of a
+  route that never cuts `avoid-backwards` (forwards) or `avoid-forwards` (backwards) (`Categories.Directions`). The gate
+  checks the blocks on its own replay and saves a record as each direction record it keeps and beats, beside or instead
+  of the category record; a Full-TAS run reaching the course in another state gets both directions to pick from (its
+  seeds, and `LoadCourseRoutes`' fastest of each direction by the offline bests' `directions`).
 - Farm route (courses only; farm this course): `<course>_<CAT> farm <lap>`, a lap of the course's steady-state loop
   (finish to finish, by a quick restart or the drop through the end gate) in live time, seconds to 4 places (README `###
   Rules` 30); the route is its lead and its loop (`loopFrom`, `loopLaps`). A bonus or transition is timed in ticks from

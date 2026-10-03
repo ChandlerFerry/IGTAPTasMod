@@ -98,13 +98,13 @@ namespace IGTAP.EngineSim
 
         /// <summary>
         /// Forced-path avoid boxes (world frame) as walls: a run is cut on entering one, so it is no way to the target (the
-        /// planner sets them; a box that cuts only after a goal, <see cref="OfflineSolver.Box.After"/>, is left out). Per simulation.
+        /// planner sets them; a box that cuts only after a goal, <see cref="OfflineSolver.Box.After"/>, or one way, <see cref="OfflineSolver.Box.From"/>, is left out). Per simulation.
         /// </summary>
         public void SetAvoid(IReadOnlyList<OfflineSolver.Box> avoid)
         {
             lock (_gate)
             {
-                _avoid = avoid.Where(b => b.After == 0).Select(CaptureRect).ToList();
+                _avoid = avoid.Where(b => b.After == 0 && b.From == 0).Select(CaptureRect).ToList();
                 _built.Clear();
             }
         }

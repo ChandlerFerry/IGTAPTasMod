@@ -45,6 +45,8 @@ namespace IGTAP.EngineSim.Cli
             public string EndReason;
             /// <summary>Entered one of the run's avoid boxes or missed a via box: off the course's forced path.</summary>
             public bool OffPath;
+            /// <summary>A two-way course's directions the route keeps (Categories.Directions: the direction blocks it never cuts), else null.</summary>
+            public string[] Directions;
             /// <summary>The record's near misses at the start gate and the finish (a gated course's finished run), else null.</summary>
             public Bus Bus;
         }
@@ -291,14 +293,18 @@ namespace IGTAP.EngineSim.Cli
                 var toEnd = new List<float>();
                 var timing = new List<bool>();
                 var body = new List<(float x, float y)>();
+                List<(string name, List<OfflineSolver.Box> boxes)> directions = DirectionBlocks(run.Course, run.Caps);
+                var cut = new bool[directions?.Count ?? 0];
                 Action<int> onStep = _ =>
                 {
                     if (!rules.IsEmpty)
                     {
                         WorldPos p = sim.PlayerWorld;
                         if (via < rules.Via.Count && rules.Via[via].Contains(p)) via++;
-                        foreach (OfflineSolver.Box box in rules.Avoid) if (box.Contains(p)) avoided = true;
+                        foreach (OfflineSolver.Box box in rules.Avoid) if (box.Cuts(sim.PlayerStepFrom, p)) avoided = true;
                     }
+                    for (int k = 0; k < cut.Length; k++)
+                        if (!cut[k] && directions[k].boxes.Any(b => b.Cuts(sim.PlayerStepFrom, sim.PlayerWorld))) cut[k] = true;
                     if (!gated) return;
                     ticks.Add(sim.Engine.PhysicsTicks);
                     toStart.Add(Nearest(sim, hitbox, starts));
@@ -310,8 +316,17 @@ namespace IGTAP.EngineSim.Cli
                 };
                 RunResult r = sim.Run(inputs, null, null, 1000000, onStep);
                 return new CourseResult { Finished = r.Finished, Time = r.Time, RunTicks = r.PhysicsTicks, EndReason = r.EndReason,
+                    Directions = directions?.Where((d, k) => !cut[k]).Select(d => d.name).ToArray(),
                     OffPath = avoided || via < rules.Via.Count, Bus = gated && r.Finished ? MeasureBus(ticks, toStart, toEnd, timing, body) : null };
             });
+        }
+
+        /// <summary>A two-way course's direction blocks (Categories.Directions) with their avoid boxes; null when the course doesn't have both.</summary>
+        static List<(string name, List<OfflineSolver.Box> boxes)> DirectionBlocks(int course, string caps)
+        {
+            List<Solve.OptionalBlock> blocks = Solve.OptionalBlocks(course, caps, new OfflineSolver.ForcedPath());
+            var found = IGTAPTasMod.Categories.Directions.Select(d => (d.name, boxes: blocks.FirstOrDefault(b => b.Name == d.block)?.Boxes.Avoid)).ToList();
+            return found.All(d => d.boxes != null && d.boxes.Count > 0) ? found : null;
         }
 
         /// <summary>The course's start gates (start) or the end gates that finish it.</summary>
@@ -397,7 +412,8 @@ namespace IGTAP.EngineSim.Cli
         static (string file, string text) RecordBestFile(CourseRun run, List<InputTick> inputs, CourseResult c)
         {
             string file = Path.Combine(Path.GetDirectoryName(run.Trace), "offline-best", run.Label + "-" + c.Time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
-            return (file, JsonSerializer.Serialize(new { course = run.Course, capabilities = run.Caps, time = c.Time, runTicks = c.RunTicks, ticks = inputs.Select(t => t.ToJson()) }));
+            return (file, JsonSerializer.Serialize(new { course = run.Course, capabilities = run.Caps, time = c.Time, runTicks = c.RunTicks, directions = c.Directions,
+                ticks = inputs.Select(t => t.ToJson()) }));
         }
 
         /// <summary>A finishing route written to offline-best as `solve` writes it, and the `offline best` line the plugin reads.</summary>

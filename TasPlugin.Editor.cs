@@ -677,8 +677,7 @@ namespace IGTAPTasMod
             if (path == "open")
             {
                 MacroDefinition route = _library.macros.Find(r => r.id == Text(body, "routeId")) ?? throw new InvalidOperationException("Route not found.");
-                Match record = MatchCategoryRoute(route.name);
-                if (!record.Success) record = MatchFarmRoute(route.name);
+                Match record = MatchGatedRoute(route.name);
                 if (record.Success)
                 {
                     // A record passed the gate as it is: edits go to a copy, a plain route the gate can judge again.

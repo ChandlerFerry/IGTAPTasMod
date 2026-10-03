@@ -313,7 +313,7 @@ namespace IGTAPTasMod
             ParkAtStart();
             var result = new JudgeResult { finished = finished, time = time, finishTick = finishTick, runTicks = runTicks,
                 previousBest = float.IsInfinity(best) ? (float?)null : best };
-            if (!finished || time >= best - .0001f) return result;
+            if (!finished || time >= best - .0001f && DirectionsBeaten(time).Length == 0) return result;
             if (!_startFresh)
             {
                 _startStates.Remove(_startKey);
@@ -386,7 +386,7 @@ namespace IGTAPTasMod
         readonly HashSet<string> _offlineJudgedPaths = new HashSet<string>();
         // Each offline best's runTicks by its path and write time: the pump reads them every 5 s, and a file doesn't change once
         // the solver wrote it.
-        readonly CachedFiles<long> _offlineRunTicks = new CachedFiles<long>();
+        readonly CachedFiles<(long runTicks, string[] directions)> _offlineRunTicks = new CachedFiles<(long, string[])>();
 
         sealed class OfflineBest
         {
@@ -397,6 +397,8 @@ namespace IGTAPTasMod
             public bool farm;
             /// <summary>A farm loop: judged for the farm only.</summary>
             public bool loop;
+            /// <summary>The directions the engine's course check found it keeps (its "directions"), judged for those records too; the gate checks them again.</summary>
+            public string[] directions = new string[0];
             public List<(string label, JObject body, string category)> judgings;
         }
 
@@ -424,10 +426,18 @@ namespace IGTAPTasMod
                 var judgings = !course.HasCategory(caps) ? new List<(string, JObject, string)>() : CategoryJudgings(course, id, caps);
                 float time = float.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture);
                 if (loop) return new OfflineBest { path = path, group = id + "_" + caps, time = time, farm = true, loop = true, judgings = judgings };
-                long runTicks;
-                try { runTicks = _offlineRunTicks.Get(path, p => (long?)JObject.Parse(File.ReadAllText(p))["runTicks"] ?? long.MaxValue); }
+                (long runTicks, string[] directions) read;
+                try
+                {
+                    read = _offlineRunTicks.Get(path, p =>
+                    {
+                        JObject json = JObject.Parse(File.ReadAllText(p));
+                        return ((long?)json["runTicks"] ?? long.MaxValue, (json["directions"] as JArray)?.Select(d => (string)d).ToArray() ?? new string[0]);
+                    });
+                }
                 catch (Exception) { return null; }
-                return new OfflineBest { path = path, group = id + "_" + caps, time = time, runTicks = runTicks, farm = !course.IsBonus && !course.IsTransition, judgings = judgings };
+                return new OfflineBest { path = path, group = id + "_" + caps, time = time, runTicks = read.runTicks, directions = read.directions,
+                    farm = !course.IsBonus && !course.IsTransition, judgings = judgings };
             }
             m = OfflineFullTasBestFile.Match(file);
             if (m.Success)
@@ -516,7 +526,16 @@ namespace IGTAPTasMod
                 double farmBest = judgeable && any.farm ? FarmBest(any.judgings[0].category) : double.NegativeInfinity;
                 OfflineBest first = null;
                 (string label, JObject body, string category) next = default;
-                foreach (var (file, worth) in new[] { (fastest, fastest != null && fastest.time <= best + .0001f), (fewest, fewest != null && fewest.time < farmBest - 1e-6) })
+                var candidates = new List<(OfflineBest file, bool worth)> { (fastest, fastest != null && fastest.time <= best + .0001f) };
+                // Each direction's fastest, for its direction record (Categories.Directions): the gate saves it when it keeps and beats it.
+                if (judgeable)
+                    foreach (var (direction, _) in Categories.Directions)
+                    {
+                        OfflineBest d = files.FirstOrDefault(f => !f.loop && f.directions.Contains(direction));
+                        if (d != null) candidates.Add((d, d.time <= DirectionBest(any.judgings[0].category, direction) + .0001f));
+                    }
+                candidates.Add((fewest, fewest != null && fewest.time < farmBest - 1e-6));
+                foreach (var (file, worth) in candidates)
                 {
                     if (file == null || !worth && !_offlineJudgedPaths.Contains(file.path)) continue;
                     next = file.judgings.FirstOrDefault(j => !_offlineJudged.Contains(file.path + "|" + j.label));

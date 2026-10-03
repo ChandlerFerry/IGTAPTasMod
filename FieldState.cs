@@ -10,7 +10,7 @@ namespace IGTAPTasMod
     {
         static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, FieldInfo[]> Fields =
             new System.Collections.Concurrent.ConcurrentDictionary<Type, FieldInfo[]>();
-        static readonly HashSet<string> Skipped = new HashSet<string> { "currentPlayerPath", "currentPlayerSprites", "currentPlayerScales", "HumanJumpButtons" };
+        static readonly HashSet<string> Skipped = new HashSet<string> { "currentPlayerPath", "currentPlayerSprites", "currentPlayerScales", "HumanClass" };
 
         internal static FieldInfo[] For(Type type) { return Fields.GetOrAdd(type, Declared); }
 

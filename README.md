@@ -115,7 +115,8 @@
     a turbo restore puts the world back at its snapshot's origin (`enginesim/README.md`). A course, bonus or transition
     start is judged at one origin, whatever ran before: where the game's own rebase on the player standing there leaves it.
 52. Only save strictly faster times: record by the game timer, farm by a lap of the steady loop in live time (30); human
-    classes: strictly lower score.
+    classes: strictly lower score. A two-way course (Courses 1-3) also keeps a record of each direction, forwards and
+    backwards, by the game timer among routes of that direction (`AGENTS.md`, route names).
 53. Trace every new best and name its trick.
 54. A Full-TAS run keeps four bests, its classes: `major` (any tech) and `nmg` (no major tech) by live time, `human-major`
     and `human-nmg` the same two by score. Score: live time plus 2 s a spike-grace tick, 5 s a frame-perfect input and
@@ -125,8 +126,10 @@
     jump press or release, a dash, a jump on a dash frame) moved alone a tick at a time; frame-perfect: it works on one
     tick only (20 ms); back-to-back: two actions (inputs on one tick are one) under 3 ticks (60 ms) apart that no timing of
     the inputs inside their windows avoids. A grace tick is a step on spikes the run lives through. A human class has two
-    jump buttons (`Jump`, `Jump2`, a release lifting both): a jump press while both are down ends its replay
-    (`MacroEngine.HumanJumpButtons`); `major` and `nmg` may make it. A tech's category (glitchless, nmg, major) is
+    jump buttons (`Jump`, `Jump2`, a release lifting both): a jump press while both are down ends its replay, and
+    its stick is digital: any part tilt (the tick's, the lock's or the dash freeze's stick anything but 0 or full) ends
+    it too, so the KB wall clip stands and the GC one doesn't (`MacroEngine.HumanClass`); `major` and `nmg` may make
+    either. A tech's category (glitchless, nmg, major) is
     `techs.json`'s; spike grace stays glitchless (exception 8). A class is judged by the engine's tech checks: after its
     replay the gate runs `IGTAP.EngineSim techs-used <trace> <route> --json` from the run's trace, refuses an `nmg` or
     `human-nmg` route with a major span (naming the tech, its category and tick), scores a human one (its difficulty

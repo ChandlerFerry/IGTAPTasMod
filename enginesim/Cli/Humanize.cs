@@ -556,7 +556,7 @@ namespace IGTAP.EngineSim.Cli
                 {
                     WorldPos p = _sim.PlayerWorld;
                     if (_waypoints < _path.Via.Count && _path.Via[_waypoints].Contains(p)) _waypoints++;
-                    foreach (OfflineSolver.Box box in _path.Avoid) if (box.Contains(p)) _avoided = true;
+                    foreach (OfflineSolver.Box box in _path.Avoid) if (box.Cuts(_sim.PlayerStepFrom, p)) _avoided = true;
                 };
                 RunResult r = _sim.Run(inputs, from, tick =>
                 {

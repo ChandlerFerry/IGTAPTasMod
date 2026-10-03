@@ -10,12 +10,14 @@
         {
           "name": "avoid-forwards",
           "note": "Around the Start marker (2493, -218): x 2436 to 2522, y -361 (into the floor) to -180. Off unless picked.",
+          "from": "left",
           "avoid": [[2436, -361, 2522, -180]],
           "via": []
         },
         {
           "name": "avoid-backwards",
           "note": "x 2168.3 to 2347.6, y 213.4 to 235.5. Off unless picked.",
+          "from": "bottom",
           "avoid": [[2168.3, 213.4, 2347.6, 235.5]],
           "via": []
         },
@@ -38,12 +40,14 @@
         {
           "name": "avoid-backwards",
           "note": "x 4726.5 to 4919.2, y 2398.2 to 2439.1. Off unless picked.",
+          "from": "bottom",
           "avoid": [[4726.5, 2398.2, 4919.2, 2439.1]],
           "via": []
         },
         {
           "name": "avoid-forwards",
           "note": "x 4991.2 to 5021, y 1801.5 to 2116.8. Off unless picked.",
+          "from": "left",
           "avoid": [[4991.2, 1801.5, 5021.0, 2116.8]],
           "via": []
         }
@@ -59,12 +63,14 @@
         {
           "name": "avoid-backwards",
           "note": "x 9446.9 to 9694.1, y 7369.6 to 7484.0. Off unless picked.",
+          "from": "bottom",
           "avoid": [[9446.9, 7369.6, 9694.1, 7484.0]],
           "via": []
         },
         {
           "name": "avoid-forwards",
           "note": "x 9620.2 to 9694.5, y 6908.6 to 7170.5. Off unless picked.",
+          "from": "left",
           "avoid": [[9620.2, 6908.6, 9694.5, 7170.5]],
           "via": []
         }
@@ -88,7 +94,7 @@
       "course": 5,
       "capabilities": ["wjdsdj", "wjdsdjbsorbzipom", "wjdsbszipom", "wjds2bszipom"],
       "note": "Forward only: runs that go back right past the course entry (into the shop room and the hub) are cut. The start room's ceiling hole is the finish (RealEnd, a trigger just under the ceiling), entered from above: a run climbing up through it never started the timer (the start gate is left, and End (1) cancels a timed run coming back right), so the hole's column below RealEnd is cut.",
-      "avoid": [[-3120, -3000, 19959, 1300], [-3360, 150, -3232, 239]],
+      "avoid": [[-3120, -3000, 19959, 1300], [-3360, 150, -3232, 239], [-8410.5, -1298.2, -6073.8, 4154.0], [-6125.9, -1066.5, -3596.3, -626.2], [-6135.3, -644.9, -4542.6, 573.1]],
       "via": []
     },
     {
@@ -122,6 +128,7 @@
         {
           "name": "avoid-backwards",
           "note": "x 19800.2 to 19978.2, y 3538.6 to 3581.9. On unless turned off.",
+          "from": "bottom",
           "default": true,
           "avoid": [[19800.2, 3538.6, 19978.2, 3581.9]],
           "via": []

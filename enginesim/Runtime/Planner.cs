@@ -1136,7 +1136,7 @@ namespace IGTAP.EngineSim
                 OfflineSolver.ForcedPath path = _p._path;
                 if (path == null) return;
                 WorldPos p = _sim.PlayerWorld;
-                if (path.Step(p, _sim.Progress, ref _waypoints)) _avoided = true;
+                if (path.Step(_sim.PlayerStepFrom, p, _sim.Progress, ref _waypoints)) _avoided = true;
             }
 
             bool AfterTick(int tick)

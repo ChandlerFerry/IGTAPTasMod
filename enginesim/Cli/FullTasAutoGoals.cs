@@ -19,7 +19,7 @@ namespace IGTAP.EngineSim.Cli
     // or one that laps where the route stands and waits. Each edit is played on a copy: the best's inputs spliced, then idle ticks
     // before the quick restart ahead of each goal it misses (the Cash comes later), and it's adopted only when the whole run is
     // strictly faster and reaches every goal. The run's end goal, its area and reward goals and every unlock buy stay
-    // (FullTasGoal.EditRefused); an adopted list goes with the route (the run file's goals, the offline best's and the gate's), and
+    // (FullTasGoal.EditRefused), but for the cash goals (GLOBAL cashPerLoop boxes: CashEdits, GoalsRefused); an adopted list goes with the route (the run file's goals, the offline best's and the gate's), and
     // the game updates fulltas.json when it judges that route a record.
     sealed partial class FullTas
     {
@@ -40,6 +40,9 @@ namespace IGTAP.EngineSim.Cli
             /// <summary>An add in place of a walk (<see cref="AddEdits"/>): the goals it reaches through its laps; the rest are re-found
             /// as an investment (0: not one).</summary>
             public int Refind;
+            /// <summary>A cash goal edit the best's inputs can't play (<see cref="CashEdits"/>): not played, re-found as an investment
+            /// from this many goals in, the best's own (0: played).</summary>
+            public int RefindFrom;
             /// <summary>A ladder (<see cref="LadderEdits"/>): the first goal after it (0-based, new numbering), from which the waits are
             /// re-timed to their Cash once it plays through (0: none).</summary>
             public int Retune;
@@ -123,8 +126,9 @@ namespace IGTAP.EngineSim.Cli
                 edits.AddRange(inserts);
                 edits.AddRange(PayoutEdits(best, laps));
                 edits.AddRange(LadderEdits(best, laps));
+                edits.AddRange(CashEdits(best));
             }
-            edits.RemoveAll(e => e.Kind != "reward" && FullTasGoal.EditRefused(_labels, e.Labels) != null);
+            edits.RemoveAll(e => GoalsRefused(_labels, e.Labels) != null);
             // An edit is its whole spliced route: one played before (this session or an earlier one) plays the same way again.
             int played = edits.RemoveAll(e => _editsTried.Contains(EditKey(e)));
             if (edits.Count == 0)
@@ -135,18 +139,21 @@ namespace IGTAP.EngineSim.Cli
             _pullNo++;
             int pull = _pullNo;
             Log($"auto: pull {pull}: goals, {edits.Count} goal-list edits of {laps.Count} laps ({edits.Count(e => e.Kind == "drop")} drops, {edits.Count(e => e.Kind == "add")} adds, "
-                + $"{edits.Count(e => e.Kind == "regroup")} regroups, {edits.Count(e => e.Kind == "record")} record laps, {edits.Count(e => e.Kind == "insert")} inserted record laps, {edits.Count(e => e.Kind == "payout")} payout breaks, {edits.Count(e => e.Kind == "ladder")} ladders), "
+                + $"{edits.Count(e => e.Kind == "regroup")} regroups, {edits.Count(e => e.Kind == "record")} record laps, {edits.Count(e => e.Kind == "insert")} inserted record laps, {edits.Count(e => e.Kind == "payout")} payout breaks, {edits.Count(e => e.Kind == "ladder")} ladders, {edits.Count(e => e.Kind == "cash")} cash goals), "
                 + "each played on a copy with waits before the quick restarts it needs");
             var results = new (Route route, Route partial, string why)[edits.Count];
             RunOnThreads(edits.Count, (sim, origin, tracker, i) =>
             {
                 GoalEdit e = edits[i];
+                if (e.RefindFrom > 0) { results[i] = (null, BestUpTo(best, e.RefindFrom, e.Labels.Length), $"re-found from goal {e.RefindFrom}"); return; }
                 sim.UseGoals(tracker.For(GoalsOf(e.Labels)));
                 results[i] = PlayedRetuned(sim, origin, e, best);
             });
             // An add that plays through keeps the best's later waits for Cash, so its laps' extra Cash buys nothing sooner: the
             // AddRetunes fastest of them get every wait after their laps re-timed to their Cash (Retune, as a ladder's) and play again.
-            List<int> slow = Enumerable.Range(0, edits.Count).Where(i => edits[i].Kind == "add" && edits[i].Refind == 0 && results[i].route != null && results[i].route.Live >= best.Live)
+            // So does a moved cash goal (taken earlier, its income comes sooner).
+            List<int> slow = Enumerable.Range(0, edits.Count).Where(i => (edits[i].Kind == "add" && edits[i].Refind == 0 || edits[i].Kind == "cash" && edits[i].OldOf.Contains(-1))
+                    && results[i].route != null && results[i].route.Live >= best.Live)
                 .OrderBy(i => results[i].route.Live).Take(AddRetunes).ToList();
             RunOnThreads(slow.Count, (sim, origin, tracker, j) =>
             {
@@ -256,9 +263,9 @@ namespace IGTAP.EngineSim.Cli
             return labels.Select(l => byLabel.TryGetValue(l, out FullTasGoal g) ? g : _insertedGoals.TryGetValue(l, out var x) ? x.goal : Grouped(l, byLabel)).ToArray();
         }
 
-        /// <summary>--insert-goal reward:bonusN@K (repeatable): a reward goal the run doesn't have, put in at goal K (1-based; the goals
-        /// from K on move one on), its header entry (the bonus's end rect from the config folder's courses.json) and goal (the box
-        /// nearest that rect, as the game resolves it).</summary>
+        /// <summary>The goals the trace's header doesn't have, each with its header entry and goal (<see cref="NewGoal"/>): --insert-goal
+        /// reward:bonusN@K's (repeatable: put in at goal K, 1-based; the goals from K on move one on) and the cash goals' (at 0: no
+        /// forced insert).</summary>
         readonly Dictionary<string, (int at, JsonNode header, FullTasGoal goal)> _insertedGoals = new Dictionary<string, (int, JsonNode, FullTasGoal)>();
 
         void InsertGoalOption(string option)
@@ -266,17 +273,44 @@ namespace IGTAP.EngineSim.Cli
             string[] p = option.Split('@');
             if (p.Length != 2 || !p[0].StartsWith("reward:bonus", StringComparison.Ordinal) || !int.TryParse(p[1], out int at))
                 throw new ArgumentException($"--insert-goal {option}: reward:bonusN@K");
-            string token = p[0].Substring("reward:".Length);
-            string courses = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetFullPath(_trace))), "courses.json");
-            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(courses));
-            JsonElement c = doc.RootElement.EnumerateArray().FirstOrDefault(e => e.TryGetProperty("name", out JsonElement n) && n.GetString() == token);
-            if (c.ValueKind != JsonValueKind.Object) throw new ArgumentException($"--insert-goal {option}: no {token} in {courses}");
+            var (header, goal) = NewGoal(p[0]) ?? throw new ArgumentException($"--insert-goal {option}: no {p[0].Substring("reward:".Length)} in courses.json, or no upgrade box near its end");
+            _insertedGoals[p[0]] = (at, header, goal);
+            Log($"auto goals: --insert-goal {p[0]} at goal {at} (box {goal.boxes[0]})");
+        }
+
+        /// <summary>A goal the trace's header doesn't have, its entry and goal as the game resolves the label: reward:bonusN's box the one
+        /// nearest the bonus's end rect in the config folder's courses.json, buy:token's the token's box (FullTasGoal.Boxes). Null when
+        /// there is no such bonus, box or token.</summary>
+        (JsonNode header, FullTasGoal goal)? NewGoal(string label)
+        {
+            if (label.StartsWith("buy:", StringComparison.Ordinal))
+            {
+                var t = FullTasGoal.Boxes.FirstOrDefault(b => "buy:" + b.token == label);
+                if (t.token == null) return null;
+                string id = FullTasGoal.BoxId(t.path, t.sibling);
+                return (new JsonObject { ["label"] = label, ["kind"] = FullTasGoal.Buy, ["course"] = 0, ["boxes"] = new JsonArray(id) },
+                    new FullTasGoal { label = label, kind = FullTasGoal.Buy, boxes = new[] { id } });
+            }
+            if (!label.StartsWith("reward:bonus", StringComparison.Ordinal)) return null;
+            string token = label.Substring("reward:".Length);
+            JsonElement c = Bonuses().FirstOrDefault(e => e.GetProperty("name").GetString() == token);
+            if (c.ValueKind != JsonValueKind.Object) return null;
             float x = c.GetProperty("endX").GetSingle(), y = c.GetProperty("endY").GetSingle(), w = c.GetProperty("endW").GetSingle(), h = c.GetProperty("endH").GetSingle();
             _eval.Restore(_origin); // the box positions in the start's frame, the rect's (a replay may have rebased the world)
-            string box = _eval.Shop.NearestBox(x, y, FullTasGoal.RewardBoxRange) ?? throw new ArgumentException($"--insert-goal {option}: no upgrade box near {token}'s end");
-            var header = new JsonObject { ["label"] = p[0], ["kind"] = FullTasGoal.Reward, ["course"] = 0, ["boxes"] = new JsonArray(box), ["rect"] = new JsonArray(x, y, w, h) };
-            _insertedGoals[p[0]] = (at, header, new FullTasGoal { label = p[0], kind = FullTasGoal.Reward, boxes = new[] { box }, x = x, y = y, w = w, h = h });
-            Log($"auto goals: --insert-goal {p[0]} at goal {at} (box {box})");
+            string box = _eval.Shop.NearestBox(x, y, FullTasGoal.RewardBoxRange);
+            if (box == null) return null;
+            return (new JsonObject { ["label"] = label, ["kind"] = FullTasGoal.Reward, ["course"] = 0, ["boxes"] = new JsonArray(box), ["rect"] = new JsonArray(x, y, w, h) },
+                new FullTasGoal { label = label, kind = FullTasGoal.Reward, boxes = new[] { box }, x = x, y = y, w = w, h = h });
+        }
+
+        /// <summary>The config folder's courses.json entries named bonusN with an end rect.</summary>
+        List<JsonElement> Bonuses()
+        {
+            string courses = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetFullPath(_trace))), "courses.json");
+            if (!File.Exists(courses)) return new List<JsonElement>();
+            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(courses));
+            return doc.RootElement.EnumerateArray().Where(e => e.TryGetProperty("name", out JsonElement n) && n.GetString() is string s
+                && Regex.IsMatch(s, @"^bonus\d+$") && e.TryGetProperty("endX", out _)).Select(e => e.Clone()).ToList();
         }
 
         /// <summary>
@@ -566,7 +600,7 @@ namespace IGTAP.EngineSim.Cli
                     p = new Route { Inputs = r.Inputs, Progress = e.Refind, GoalInput = r.GoalInput, GoalPhysics = r.GoalPhysics, GoalHeld = r.GoalHeld, EndReason = r.EndReason };
                 }
                 else if (results[i].route != null || p == null
-                    || !(e.Kind == "insert" || e.Kind == "reward" || (e.Kind == "add" || drops && e.Kind == "drop") && AddAhead(e, p, best) || (e.Kind == "payout" || e.Kind == "ladder") && PayoutMayPay(e, p, best))) continue;
+                    || !(e.Kind == "insert" || e.Kind == "reward" || e.Kind == "cash" || (e.Kind == "add" || drops && e.Kind == "drop") && AddAhead(e, p, best) || (e.Kind == "payout" || e.Kind == "ladder") && PayoutMayPay(e, p, best))) continue;
                 picks.Add((e, p));
             }
             return picks.GroupBy(x => (x.e.Kind, x.e.Refind > 0))
@@ -643,6 +677,156 @@ namespace IGTAP.EngineSim.Cli
                 }
             }
             return edits;
+        }
+
+        /// <summary>The labels of the goals that buy a GLOBAL cashPerLoop box (Shop.GlobalCashAt), the run's and the made ones'
+        /// (<see cref="FindCashGoals"/>; a box's kind doesn't change, so the set only grows).</summary>
+        readonly HashSet<string> _cashLabels = new HashSet<string>();
+        /// <summary>A cash goal moves this many goals earlier and later (<see cref="CashEdits"/>).</summary>
+        static readonly int[] CashMoves = { 1, 4, 16 };
+        /// <summary>A cash goal the run doesn't have is offered only where the best stands this near its box (world units) at a goal.</summary>
+        const float CashNear = 4000f;
+
+        void FindCashGoals()
+        {
+            foreach (FullTasGoal g in _runGoals.Goals.Concat(_insertedGoals.Values.Select(x => x.goal)))
+                if ((g.kind == FullTasGoal.Buy || g.kind == FullTasGoal.Reward) && g.boxes?.Length == 1 && _eval.Shop.GlobalCashAt(g.boxes[0]) != null) _cashLabels.Add(g.label);
+        }
+
+        /// <summary>
+        /// <see cref="FullTasGoal.EditRefused"/> as the goals part holds its edits to it: the cash goals (<see cref="CashEdits"/>) and
+        /// --insert-goal's reward goals aren't the skeleton here, so they may be added, dropped and moved. The game still holds them to
+        /// it: it won't adopt a list that adds, drops or moves a reward goal from a judged route (put it in fulltas.json by hand).
+        /// </summary>
+        string GoalsRefused(IList<string> from, IList<string> to)
+        {
+            bool Free(string l) => _cashLabels.Contains(l) || l.StartsWith("reward:", StringComparison.Ordinal) && _insertedGoals.ContainsKey(l);
+            return FullTasGoal.EditRefused(from.Where(l => !Free(l)).ToList(), to.Where(l => !Free(l)).ToList());
+        }
+
+        /// <summary>The best as reached through its first <paramref name="goals"/> goals, numbered for a list of <paramref name="length"/>
+        /// that keeps them: the run an edit there is re-found from (<see cref="InvestRepair"/>).</summary>
+        static Route BestUpTo(Route best, int goals, int length)
+        {
+            long[] Cut(long[] a) => a == null ? null : Enumerable.Range(0, length).Select(i => i < goals ? a[i] : -1).ToArray();
+            return new Route { Inputs = best.Inputs, Progress = goals, GoalInput = Cut(best.GoalInput), GoalPhysics = Cut(best.GoalPhysics), GoalHeld = Cut(best.GoalHeld),
+                EndReason = best.EndReason };
+        }
+
+        /// <summary>
+        /// Cash goals: a goal that buys a GLOBAL cashPerLoop box (+1 level of every course's reward: bonuses 1-16's and 22's boxes,
+        /// buyglobalreward2-5). One taken earlier raises the income of everything after it and costs its detour or price sooner. Each
+        /// of the best's is dropped and moved CashMoves goals earlier and later, a buy one bought once more before its first and after
+        /// its last; one the run doesn't have (a bonus in courses.json, an economy box) goes in after the goal where the best stands
+        /// nearest its box, within CashNear. A reward goal whose detour ends in a quick restart before the next goal is cut out (from
+        /// the quick restart before its touch, else the goal before) and, when it starts with one, put in before the quick restart
+        /// that starts the step it moves to; those play as spliced. Every other edit keeps the best's inputs, which don't play it, and
+        /// is re-found as an investment from the goal before the change (<see cref="GoalEdit.RefindFrom"/>, <see cref="InvestRepair"/>).
+        /// </summary>
+        List<GoalEdit> CashEdits(Route best)
+        {
+            var edits = new List<GoalEdit>();
+            FindCashGoals();
+            List<InputTick> all = best.Inputs;
+            int In(int k) => (int)Math.Min(best.GoalInput[k], all.Count);
+            // The last quick restart between goal k-1 and goal k (-1: none), and the first after goal k before goal k+1.
+            int Before(int k) { for (int i = In(k) - 1; k > 0 && i >= In(k - 1); i--) if (all[i].reset) return i; return -1; }
+            int After(int k) { for (int i = In(k); k + 1 < _goals && i < In(k + 1); i++) if (all[i].reset) return i; return -1; }
+            // The best's goals with old goal k taken out (-1: none) and a goal put in before old goal j (-1: none), re-found from the
+            // first goal the list changes.
+            GoalEdit Edit(string key, string text, int k, int j, string label)
+            {
+                var oldOf = Enumerable.Range(0, _goals).Where(o => o != k).ToList();
+                if (j >= 0) oldOf.Insert(oldOf.IndexOf(j), -1);
+                string[] labels = oldOf.Select(o => o < 0 ? label : _labels[o]).ToArray();
+                int first = 0;
+                while (first < Math.Min(labels.Length, _goals) && labels[first] == _labels[first]) first++;
+                return new GoalEdit { Kind = "cash", Key = key, Text = text, Inputs = all, OldOf = oldOf.ToArray(), Labels = labels, First = first, Last = first,
+                    RefindFrom = Math.Max(1, first) };
+            }
+            for (int k = 1; k + 1 < _goals; k++)
+            {
+                string l = _labels[k];
+                if (!_cashLabels.Contains(l) || k >= best.Progress) continue;
+                bool reward = _runGoals.Goals[k].kind == FullTasGoal.Reward;
+                int a = Before(k), b = After(k);
+                bool detour = reward && b >= 0;
+                edits.Add(detour ? Spliced(best, new List<(int, int, List<InputTick>)> { (a >= 0 ? a : In(k - 1), b, new List<InputTick>()) }, new[] { k }, "cash",
+                        $"cash:drop:{k}", $"Dropped goal {k + 1} ({l}; its detour cut)", k, k)
+                    : Edit($"cash:drop:{k}", $"Dropped goal {k + 1} ({l})", k, -1, null));
+                foreach (int d in CashMoves)
+                    foreach (int j in new[] { k - d, k + 1 + d })
+                    {
+                        if (j < 1 || j >= _goals) continue;
+                        string text = $"Moved goal {k + 1} ({l}) {(j < k ? $"{d} goals earlier" : $"{d} goals later")}, before goal {j + 1} ({_labels[j]})";
+                        int r = Before(j);
+                        if (detour && a >= 0 && r >= 0)
+                        {
+                            List<InputTick> trip = all.GetRange(a, b - a);
+                            GoalEdit s = Spliced(best, new List<(int, int, List<InputTick>)> { (a, b, new List<InputTick>()), (r, r, trip) }, new[] { k }, "cash", $"cash:move:{k}:{j}",
+                                text + " (its detour moved)", Math.Min(j, k), Math.Min(j, k));
+                            int put = Array.IndexOf(s.OldOf, j);
+                            s.OldOf = s.OldOf.Take(put).Append(-1).Concat(s.OldOf.Skip(put)).ToArray();
+                            s.Labels = s.OldOf.Select(o => o < 0 ? l : _labels[o]).ToArray();
+                            edits.Add(s);
+                        }
+                        else edits.Add(Edit($"cash:move:{k}:{j}", text, k, j, l));
+                    }
+            }
+            // Another level of each paid one: before its first buy and after its last.
+            foreach (var g in Enumerable.Range(1, Math.Max(0, Math.Min(best.Progress, _goals - 1) - 1))
+                .Where(k => _cashLabels.Contains(_labels[k]) && _runGoals.Goals[k].kind == FullTasGoal.Buy).GroupBy(k => _labels[k]))
+            {
+                edits.Add(Edit($"cash:add:{g.Key}:{g.Min()}", $"Bought {g.Key} once more before goal {g.Min() + 1}", -1, g.Min(), g.Key));
+                edits.Add(Edit($"cash:add:{g.Key}:{g.Max() + 1}", $"Bought {g.Key} once more after goal {g.Max() + 1}", -1, g.Max() + 1, g.Key));
+            }
+            // The ones the run doesn't have: the cash bonuses and the economy boxes. Where the best stands at each goal (one replay).
+            var missing = Bonuses().Select(c => "reward:" + c.GetProperty("name").GetString())
+                .Concat(FullTasGoal.Boxes.Where(b => FullTasGoal.EconomyBoxes.Contains(b.token)).Select(b => "buy:" + b.token))
+                .Where(x => !_labels.Contains(x)).ToList();
+            var made = new List<(string label, float x, float y)>();
+            foreach (string x in missing)
+            {
+                if (!_insertedGoals.TryGetValue(x, out var entry))
+                {
+                    if (NewGoal(x) is not { } n) continue;
+                    entry = (0, n.header, n.goal);
+                }
+                _eval.Restore(_origin); // the box in the start's frame
+                // A one-off box a reward goal of the run already takes isn't missing.
+                if (_eval.Shop.GlobalCashAt(entry.goal.boxes[0]) is not { } p
+                    || _runGoals.Goals.Any(g => g.kind == FullTasGoal.Reward && g.boxes?.Contains(entry.goal.boxes[0]) == true)) continue;
+                _insertedGoals.TryAdd(x, entry);
+                _cashLabels.Add(x);
+                ScenePos o = _eval.WorldOriginInScene;
+                made.Add((x, p.x - o.x, p.y - o.y));
+            }
+            if (made.Count == 0) return Changed(best, edits);
+            var at = new WorldPos[_goals];
+            _eval.SetStart(_origin, 0);
+            _eval.Goals.Limit = _goals;
+            int progress = 0;
+            _eval.Run(all, null, null, 1000000, _ =>
+            {
+                for (; progress < _eval.Progress && progress < _goals; progress++) at[progress] = _eval.PlayerWorld;
+            });
+            // A bonus whose end needs an unlock the run never gets (bonus4's zip movers) can't be taken anywhere in it.
+            IGTAPTasMod.Caps end = PlayerCaps.Of(_eval);
+            foreach (var (x, bx, by) in made)
+            {
+                if (x.StartsWith("reward:", StringComparison.Ordinal) && !IGTAPTasMod.Categories.CanFinish(x.Substring("reward:".Length), end)) continue;
+                float Far(int k) => (at[k].x - bx) * (at[k].x - bx) + (at[k].y - by) * (at[k].y - by);
+                int near = Enumerable.Range(0, Math.Min(progress, _goals - 1)).OrderBy(Far).DefaultIfEmpty(-1).First();
+                if (near < 0 || Far(near) > CashNear * CashNear) continue;
+                edits.Add(Edit($"cash:add:{x}:{near + 1}", $"Added {x} after goal {near + 1} ({_labels[near]}, {Math.Sqrt(Far(near)):0} from its box)", -1, near + 1, x));
+            }
+            return Changed(best, edits);
+        }
+
+        /// <summary>The edits that change the best's goals or inputs, one of each (a buy moved next to a buy of its own box is the best).</summary>
+        List<GoalEdit> Changed(Route best, List<GoalEdit> edits)
+        {
+            return edits.Where(e => !ReferenceEquals(e.Inputs, best.Inputs) || !e.Labels.SequenceEqual(_labels)).GroupBy(EditKey).Select(g => g.First()).ToList();
         }
 
         /// <summary>
@@ -897,18 +1081,35 @@ namespace IGTAP.EngineSim.Cli
                     if (!m.Success || !Caps.TryParse(m.Groups[2].Value, out Caps caps)) continue;
                     files.Add((int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture), caps, double.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture), f));
                 }
-            // Fastest first across unlock sets: a record lap stops after RecordReached routes that play from the restart.
-            foreach (var f in files.GroupBy(f => (f.course, f.caps.Id))
-                .SelectMany(g => g.OrderBy(f => f.time).GroupBy(f => Path.GetFileName(f.path)).Select(x => x.First()).Take(RecordRoutes)).OrderBy(f => f.time))
+            // Per course and unlock set the fastest RecordRoutes, and on a two-way course the fastest RecordRoutes of each direction
+            // too (the file's "directions", IGTAPTasMod.Categories.Directions): a run reaches the course in states the overall
+            // fastest may not play from. Fastest first across unlock sets: a record lap stops after RecordReached routes that play
+            // from the restart.
+            var picked = new List<(int course, Caps caps, double time, string path, List<InputTick> ticks)>();
+            foreach (var g in files.GroupBy(f => (f.course, f.caps.Id)))
+            {
+                var kept = new Dictionary<string, int>();
+                int read = 0;
+                foreach (var f in g.OrderBy(f => f.time).GroupBy(f => Path.GetFileName(f.path)).Select(x => x.First()))
                 {
+                    if (kept.GetValueOrDefault("") >= RecordRoutes && IGTAPTasMod.Categories.Directions.All(d => kept.GetValueOrDefault(d.name) >= RecordRoutes)
+                        || ++read > RecordRoutes * 10) break;
                     try
                     {
                         using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(f.path), new JsonDocumentOptions { MaxDepth = 256 });
                         if (!doc.RootElement.TryGetProperty("ticks", out JsonElement ticks)) continue;
-                        _courseRoutes.Add((f.course, f.caps, Path.GetFileNameWithoutExtension(f.path), ticks.EnumerateArray().Select(InputTick.FromJson).ToList()));
+                        string[] directions = doc.RootElement.TryGetProperty("directions", out JsonElement d) && d.ValueKind == JsonValueKind.Array
+                            ? d.EnumerateArray().Select(x => x.GetString()).ToArray() : new string[0];
+                        string[] counts = directions.Prepend("").Where(k => kept.GetValueOrDefault(k) < RecordRoutes).ToArray();
+                        if (counts.Length == 0) continue;
+                        foreach (string k in counts) kept[k] = kept.GetValueOrDefault(k) + 1;
+                        picked.Add((f.course, f.caps, f.time, f.path, ticks.EnumerateArray().Select(InputTick.FromJson).ToList()));
                     }
                     catch (Exception ex) when (ex is IOException || ex is JsonException) { }
                 }
+            }
+            foreach (var f in picked.OrderBy(f => f.time))
+                _courseRoutes.Add((f.course, f.caps, Path.GetFileNameWithoutExtension(f.path), f.ticks));
             if (_courseRoutes.Count > 0)
                 Log($"auto goals: {_courseRoutes.Count} saved course routes for record laps ({string.Join(", ", _courseRoutes.GroupBy(r => r.course).Select(g => $"Course {g.Key}: {g.Count()}"))})");
         }
@@ -1272,8 +1473,10 @@ namespace IGTAP.EngineSim.Cli
                 }
                 if (target == null || TimeUp) continue;
                 PlanResult p;
+                _planTickCap = best.Last;
                 try { p = Replan(on, GoalsOf(e.Labels), kept, new[] { target }, true); }
                 catch (Exception ex) { Log($"auto goals: reroute of {e.Text}: {ex.GetBaseException().Message}"); continue; }
+                finally { _planTickCap = long.MaxValue; }
                 Route r = p.Run;
                 bool complete = r != null && r.Progress == p.Goals.Length;
                 Log($"auto goals: reroute of {e.Text}: goals {kept + 1}.. to {target} planned again ({p.Planned?.Length ?? 0} goals): "
@@ -1331,7 +1534,7 @@ namespace IGTAP.EngineSim.Cli
             foreach (var (how, l, o) in options)
             {
                 string[] labels = l.ToArray();
-                if (FullTasGoal.EditRefused(_labels, labels) != null) continue;
+                if (GoalsRefused(_labels, labels) != null) continue;
                 sim.UseGoals(sim.Goals.For(GoalsOf(labels)));
                 sim.SetStart(origin, 0);
                 sim.Goals.Limit = labels.Length;
@@ -1360,7 +1563,7 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         bool AdoptGoals(GoalEdit e, Route route, Route old)
         {
-            if (!e.Labels.SequenceEqual(_labels) && FullTasGoal.EditRefused(_labels, e.Labels) is string refused)
+            if (!e.Labels.SequenceEqual(_labels) && GoalsRefused(_labels, e.Labels) is string refused)
             {
                 Log($"auto goals: {e.Text} refused: {refused}");
                 return false;
@@ -1501,7 +1704,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 Route standIn = _best;
                 List<GoalRow> rows = ModelOf(inv);
-                var edits = DropEdits(inv, Laps(inv)).Concat(AddEdits(inv, rows)).Where(x => x.First > e.Last && FullTasGoal.EditRefused(_labels, x.Labels) == null).ToList();
+                var edits = DropEdits(inv, Laps(inv)).Concat(AddEdits(inv, rows)).Where(x => x.First > e.Last && GoalsRefused(_labels, x.Labels) == null).ToList();
                 if (edits.Count == 0) return false;
                 double c0 = CpuSeconds();
                 var results = new (Route route, Route partial, string why)[edits.Count];
@@ -1656,24 +1859,29 @@ namespace IGTAP.EngineSim.Cli
             }
             int mine = from.FindIndex(l => l.SequenceEqual(_labels));
             if (goals.SequenceEqual(_labels) || mine < 0) return;
-            // A reward goal the trace doesn't have came from --insert-goal (the loop adopts those past EditRefused, the trace's header
-            // has no entry for it): its entry is made again as the option makes it. Anything else that changes the skeleton stays refused.
-            string[] added = goals.Where(l => !_labels.Contains(l) && l.StartsWith("reward:bonus", StringComparison.Ordinal)).ToArray();
-            if (FullTasGoal.EditRefused(_labels, goals.Except(added).ToArray()) is string refused)
-            {
-                Log($"auto goals: fulltas/{Path.GetFileName(_runFile)}'s adopted goals ({goals.Length}) aren't an edit of the trace's ({refused}); the trace's goals stay");
-                return;
-            }
+            // A reward or single buy goal the trace doesn't have came from --insert-goal or a cash goal edit (the loop adopts those past
+            // EditRefused: GoalsRefused; the trace's header has no entry for it): its entry is made again as they make it. Anything else
+            // that changes the skeleton stays refused.
+            string[] added = goals.Distinct().Where(l => !_labels.Contains(l) && (l.StartsWith("reward:bonus", StringComparison.Ordinal)
+                || l.StartsWith("buy:", StringComparison.Ordinal) && !l.Contains('+'))).ToArray();
             var made = new List<string>();
-            try
+            foreach (string l in added)
             {
-                foreach (string l in added)
-                    if (!_insertedGoals.ContainsKey(l)) { InsertGoalOption($"{l}@{Array.IndexOf(goals, l) + 1}"); made.Add(l); }
+                if (_insertedGoals.ContainsKey(l)) continue;
+                if (NewGoal(l) is not { } n)
+                {
+                    foreach (string m in made) _insertedGoals.Remove(m);
+                    Log($"auto goals: fulltas/{Path.GetFileName(_runFile)}'s adopted goals add {l}, whose goal can't be made again; the trace's goals stay");
+                    return;
+                }
+                _insertedGoals[l] = (0, n.header, n.goal);
+                made.Add(l);
             }
-            catch (Exception e)
+            FindCashGoals();
+            if (GoalsRefused(_labels, goals) is string refused)
             {
-                foreach (string l in made) _insertedGoals.Remove(l);
-                Log($"auto goals: fulltas/{Path.GetFileName(_runFile)}'s adopted goals add {string.Join(", ", added)}, whose goal can't be made again ({e.Message}); the trace's goals stay");
+                foreach (string m in made) _insertedGoals.Remove(m);
+                Log($"auto goals: fulltas/{Path.GetFileName(_runFile)}'s adopted goals ({goals.Length}) aren't an edit of the trace's ({refused}); the trace's goals stay");
                 return;
             }
             var saved = (header: AutoHeader(), create: _create, eval: _eval, origin: _origin, tracker: _runGoals, labels: _labels, goals: _goals, best: _best);

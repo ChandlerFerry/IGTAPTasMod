@@ -457,6 +457,35 @@ A Course 2 clone bought before `reward:bonus1` doesn't pay for itself: Cash at `
 800 W, so the run would wait ~100 ticks near the box and walk ~90 more, and the model's break-even detour is 100–190
 ticks (`buy:buyds` −41 ticks with the clone 700 ticks before the bonus and a 100-tick detour, +59 with 200).
 
+### Course laps from a quick restart
+
+A saved course route starts standing at its category start, and a run's quick restart doesn't land in that state, so a
+route that plays from the category start can miss from the run's restart (`5_WJ_DS_DJ 11.26` and `bonus16_WJ_DS_DJ 8.90`
+die from `TouchGrass-ANY%`'s restarts). Three things differ:
+
+- **Where it lands.** A quick restart before the start gate is crossed respawns at the last checkpoint (Course 5's at
+  (−3282, −306.5)). One with the course running (its gate crossed) respawns at the course's reset point (−3281, −308).
+  The category start stands at a third spot: the reset point, with the world rebased around it.
+- **What the ticks before it left running.** A dash still running ends after the respawn (`EndDash` sets `Velocity.y`
+  to 10). A jump released on the restart's tick starts `jumpCutBuffer` (15 ticks) and cuts the lap's first jump. The
+  facing carries over, and a dash at rest takes it.
+- **The frame phase.** The lap's first dash moves by the frames its tick gets on the 280 fps grid (6, 5, 6, 5, 6), so
+  one idle tick more or less before the restart moves the whole lap.
+
+A farm route's lead ends in a quick restart onto its course after a finish, as a run's lap does after a buy. So the seed
+writer (the plugin's `WriteFullTasSeeds`, and the same rule in any hand-written seed list) also files every course route
+that has a quick restart as a restart seed (`"restart": true`, `<name> from its quick restart`): its inputs from that
+restart on. The solve plays a restart seed after a tap right, a tap left or none, then 6-10 or 17-21 idle ticks (five in
+a row, so one of them lands the lap's frame phase), then its own restart. These are 31 alternatives for one start, so
+each takes a seed start of its own ahead of the standing seeds (`SeedStarts`), and the 64 starts don't fill before any
+is tried. `fulltas-plan` files restart seeds as lap pieces too (`LapInputs`).
+
+For the respawn to be the checkpoint, the lap's quick restart has to come before the gate. So a lap after buys is
+`finish:N` alone, not `start:N, finish:N`: with `start:N` the search walks into the gate first and the restart lands at
+the reset point. `TouchGrass-ANY%`'s Course 5 laps play `5_WJ_DS_DJ farm 15.0571 from its quick restart` this way, after
+a tap right and 6 or 8 idle ticks (13.34 s on the course timer). The first lap of a course, reached from elsewhere, keeps
+its `start:N`.
+
 ## Seed
 
 Unity's RNG is deterministic for the runs: every Full-TAS new game starts it from one fixed seed (the plugin's
@@ -1268,6 +1297,19 @@ baseline). The default is set by the measurements below, and has every part exce
      cashPerLoop level, as bonuses 1-3 are: every reward goes with 3 + 2n (n global levels), 15 -> 17 at Course 3's
      start. On the 350.35 s record, `reward:bonus5@174` (after bonus 2: from bonus 2's quick restart at Checkpoint (3),
      120 ticks to the box and a quick restart back) is 2.65 s behind at `start:3` and re-found to 348.50 s (one pull).
+   - **Cash goals** (`CashEdits`): a reward or buy goal of a GLOBAL cashPerLoop box (`Shop.GlobalCashAt`: bonuses 1-16's
+     and 22's boxes, `buyglobalreward2`-`5`; +1 level of every course's reward). One taken earlier raises the income of
+     everything after it and costs its detour or price sooner. Each of the best's is dropped and moved 1, 4 and 16 goals
+     earlier and later (`CashMoves`); a buy one is bought once more before its first buy and after its last; one the run
+     doesn't have (a `bonusN` in `courses.json`, an economy box) goes in after the goal where the best stands nearest its
+     box, within 4000 units (`CashNear`). A reward goal whose detour ends in a quick restart before the next goal is cut
+     out (from the quick restart before its touch, else the goal before) and, when it starts with one, put in before the
+     quick restart that starts the step it moves to: those play as spliced, a moved one with its later waits re-timed when
+     it plays through but isn't faster (`AddRetunes`, as an add). Every other edit keeps the best's inputs, which don't
+     play it, and is re-found as an investment from the goal before the change without a play (`RefindFrom`). The goals
+     part holds its edits to `EditRefused` with the cash goals (and `--insert-goal`'s) taken out (`GoalsRefused`): the game
+     still won't adopt a list that adds, drops or moves a reward goal from a judged route; put it in `fulltas.json` by
+     hand. A later `--auto` resumes on such a list as on an `--insert-goal`'s (an added buy goal's entry made from its box).
    - **Regroups**: two single buys after a buy of box x, as one `buy:a+b` goal played with the buy table's measured way
      from x's spot (`fulltas/<run>.buytable.json`, [Buy table](#buy-table); either order it has, so a reorder too).
    - **Record laps**: a lap replaced by a quick restart, 0-40 idle ticks and a faster lap played from there: the saved
@@ -1353,12 +1395,17 @@ baseline). The default is set by the measurements below, and has every part exce
      exactly T+K and the waits after them re-timed (`Retune`) first. The waits from the ladder on are re-timed too; one
      that doesn't play through is re-found as an investment. Only where the course has clones and keeps the reserve, or
      right before a Cash-bound buy. `fulltas <trace> --ladder-study C --k K` (0: every K) prints each spot's laps (course
-     time, finish, held ticks) and each ladder played whole, with every finish's course time and pay.
+     time, finish, held ticks) and each ladder played whole, with every finish's course time and pay. A goals pull builds
+     ladders for `LadderSeconds` (240 s) at most, and the next pull goes on from the spot where this one stopped. Each rung
+     is a `SlowOne` search that replays the lap from every point in it, so a long lap (Course 5's 600 ticks) takes
+     minutes. On `TouchGrass-ANY%` (unlock buys before four farmed courses) the ladders alone outlasted a 2-hour `--auto`,
+     and the pull's other edits never played.
 
    An edit that misses a goal after the change gets idle ticks before the last quick restart ahead of that goal (every 5
    up to its lead there plus 60, then each below the first that passes: a stray buy isn't monotone in the wait), up to 6
    times. The fastest edit that reaches every goal and beats the best is adopted, never one that drops or reorders the
-   end goal, an area or reward goal or an unlock buy (`FullTasGoal.EditRefused`). Adopting: the trace's header with the
+   end goal, an area or reward goal (but a cash goal's or an `--insert-goal`'s) or an unlock buy (`GoalsRefused`).
+   Adopting: the trace's header with the
    new list makes every simulation from then on, the fresh check keeps the route or the old goals stay, and the loop's
    goal-numbered state (references, arms, library, model, parts) starts again from the new best. The run file, the
    offline best and the gate submission carry the list (`goals`) and the lists it came from (`goalsFrom`, oldest first);
@@ -2319,6 +2366,42 @@ The engine and turbo buy the second on the touch's own tick (the coroutine start
 a 1x probe hasn't confirmed that count yet. L levels in about L−1 ticks. The statue's `buyclone2` (29 levels) went from
 5 ticks to about 28, `buyclonemult2` (9) from 2 to about 8. The coroutine buys on after the player leaves the box, but
 the boosts come up to 0.5 s later.
+
+## TouchGrass-ANY% and TrueEnding% (2026-10-03)
+
+`TouchGrass-ANY%` ends on the block-swap box (`buy:buyblockswap5`, 9.49e34 W) and the drop through the hole left of
+Course 4. The order is 1 → 2 → 3 → 5 → breaker → 3 → boost at 4 → block swap. The boost (`buyprestige4`) is bought after
+the breaker, where Course 4's tier is 29.5 ([Tiers through the trip breaker](#tiers-through-the-trip-breaker)). Before
+the breaker it would lift Courses 1-3 only to 10^11 against Course 5's 10^16.5 (about a month to the breaker's 3.16e22),
+and it would be gone for after.
+
+**Goals (502).**
+- FalseEnding%-280's goals through `buy:buydj`, then the 4th Course 3 global cash level: its box is 433 u past the DJ
+  box, 3e9 W, worth about 4.5 s at Course 5.
+- Bonuses 7, 6, 16 and 15 on the way down to Course 5, then the Course 5 farm. Each global cash level is worth about 15 s
+  there.
+- An extra Course 5 lap, then bonus 22 while Cash comes up to the breaker's price, then `buy:buyprestige5`.
+- Back to Course 3: three laps with buy-max touches.
+- The way along `3to4_REC Course3_To_Course4_WJ_DS_DJ`'s path to the boost box, then the boost and the block swap.
+
+The Course 5 farm and the Course 3 laps were planned with `plan_fulltas.py`'s late model on the 2026-10-02 course routes
+(`C:\tmp\igtap\tg\plan_tg.py`, `post_tg.py`), not yet with `fulltas-plan`. The model's walks are guesses, and the farm
+came up one lap short of the breaker.
+
+Area goals guide the stretches with no saved route: bonus 6's own path after bonus 7, bonus 16's from bonus 6's box, and
+bonus 15's from bonus 16's drop. Bonus 7's route touches the checkpoint at (12085, 11357), so the quick restart after
+it lands there, not at bonus 6's start. Bonus 6's route passes bonus 16's start checkpoint. A quick restart right after
+an area goal takes the goal back, so area goals can't stand in for checkpoints.
+
+**First record: 728.45 s** (34,479 ticks; human score 970.45: 121 grace ticks). Splits (live): `buydj` 326.82 s,
+bonus 15 396.75 s, Course 5's gate 401.18 s, bonus 22 655.84 s, the breaker 662.01 s, Course 3's gate after it
+691.09 s, the boost 721.98 s, the block swap 725.96 s.
+`fulltas --auto` took it to **699.29 s** over four sessions (2026-10-03). The largest gain, 19.5 s, was a revived
+window through goals 305-306 (the first Course 5 laps), 1210 ticks ahead by goal 377.
+
+**`TrueEnding%`** has the same goals with every bonus taken by the block swap: bonus 22 inside the Course 5 farm, and
+`buyglobalreward4` and bonus 8 above Course 4 after the boost. The model puts these at +3 s and +9 s against
+TouchGrass's own list. It ends at `buy:buyblockswap5` for now, the start of a True Ending route.
 
 ## FalseEnding-Any% and FalseEnding2-Any% (2026-09-28)
 

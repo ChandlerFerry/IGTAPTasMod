@@ -340,7 +340,7 @@ namespace IGTAPTasMod
 
         private static void RejectCategoryName(string name)
         {
-            if (MatchCategoryRoute(name).Success || MatchFarmRoute(name).Success)
+            if (MatchGatedRoute(name).Success)
                 throw new InvalidOperationException("Category route names are reserved for routes that passed the solver's gate.");
         }
 

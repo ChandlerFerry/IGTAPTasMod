@@ -418,6 +418,16 @@ namespace IGTAP.EngineSim
             return null;
         }
 
+        /// <summary>A GLOBAL cashPerLoop box's scene position (+1 level of every course's reward: the cash bonuses' boxes,
+        /// buyglobalreward2-5); null for any other box.</summary>
+        internal (float x, float y)? GlobalCashAt(string box)
+        {
+            upgradeBox b = Box(box);
+            if (b == null || b.upgrade != localUpgrades.localUpgradeSet.GLOBAL || b.globalUpgrade != globalStats.globalUpgradeSet.cashPerLoop) return null;
+            Vector3 p = b.transform.position;
+            return (p.x, p.y);
+        }
+
         internal upgradeBox.movementUpgrades? MovementUpgrade(string box)
         {
             upgradeBox b = Box(box);

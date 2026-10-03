@@ -47,6 +47,7 @@ namespace IGTAP.EngineSim.Cli
         {
             ulong key = Mix(SnapshotIndex.Hash(new List<InputTick> { before }.Concat(lap).ToList(), lap.Count + 1, prefix), (ulong)k);
             if (_slowLaps.TryGetValue(key, out SlowLap have)) return have;
+            if (LadderTimeUp) return null;
             SlowLap Play(List<InputTick> v, List<int> points)
             {
                 sim.SetStart(at, a);
@@ -68,7 +69,7 @@ namespace IGTAP.EngineSim.Cli
                 SlowLap Exact(SlowLap from, int n)
                 {
                     SlowLap pick = null;
-                    for (int p = from.Gate; p < from.Lap.Count; p++)
+                    for (int p = from.Gate; p < from.Lap.Count && !LadderTimeUp; p++)
                     {
                         var v = new List<InputTick>(from.Lap.Count + n);
                         v.AddRange(from.Lap.Take(p));
@@ -83,7 +84,7 @@ namespace IGTAP.EngineSim.Cli
                     if (SlowOne(sim, at, a, prefix, before, lap, finishGoal, j) is SlowLap m) one = Exact(m, k - j);
                 r = one;
             }
-            _slowLaps[key] = r;
+            if (!LadderTimeUp) _slowLaps[key] = r;
             return r;
         }
 
@@ -110,6 +111,12 @@ namespace IGTAP.EngineSim.Cli
         /// (on screen, build 25640326) or first off-screen tick resets it to 0 (SpawnClone), and nothing in a run gives it back: a
         /// break then only brings Cash forward (about half the clones' pay at once, repaid over one path).</summary>
         const float ReserveKept = 1000f;
+
+        /// <summary>The seconds a goals pull spends building ladders (<see cref="LadderEdits"/>), and where the next pull goes on.</summary>
+        const double LadderSeconds = 240;
+        int _ladderCursor;
+        System.Diagnostics.Stopwatch _ladderClock;
+        bool LadderTimeUp => _ladderClock != null && _ladderClock.Elapsed.TotalSeconds > LadderSeconds;
 
         /// <summary>The run with a ladder's earlier laps held back (<see cref="Retune"/> after each), by the best and the held laps.</summary>
         readonly ConcurrentDictionary<ulong, Route> _heldBack = new ConcurrentDictionary<ulong, Route>();
@@ -183,15 +190,24 @@ namespace IGTAP.EngineSim.Cli
                 return chain;
             }
             ulong start = SnapshotIndex.Hash(best.Inputs, 0), bestKey = SnapshotIndex.Hash(best.Inputs, best.Inputs.Count);
-            RunOnThreads(spots.Count, (sim, origin, tracker, i) =>
+            // A goals pull builds ladders for LadderSeconds at most, from the spot the last pull stopped at: every rung is a SlowOne
+            // search, and on a run with many unlock buys and farmed courses (TouchGrass-ANY%) the ladders alone outlast an --auto
+            // session, leaving the pull's other edits (drops, adds, cash goals) unplayed.
+            bool budget = !only && course == 0 && onlyK == 0;
+            _ladderClock = budget ? System.Diagnostics.Stopwatch.StartNew() : null;
+            int offset = budget ? _ladderCursor % spots.Count : 0, begun = 0;
+            RunOnThreads(spots.Count, (sim, origin, tracker, n) =>
             {
-                LadderSpot s = spots[i];
+                LadderSpot s = spots[(n + offset) % spots.Count];
+                if (LadderTimeUp) { s.Why = "not built this pull (LadderSeconds)"; return; }
+                System.Threading.Interlocked.Increment(ref begun);
                 Caps has = default;
                 List<Finish> earlier = null;
                 var gates = new Dictionary<int, SimSnapshot>();
                 int raised = 0;
                 for (int k = 2; k <= LadderKmax && s.Why == null; k++)
                 {
+                    if (LadderTimeUp) break;
                     if (s.OnlyK > 0 && k != s.OnlyK) continue;
                     string[] labels = LadderLabels(s, k);
                     sim.UseGoals(tracker.For(GoalsOf(labels)));
@@ -299,6 +315,8 @@ namespace IGTAP.EngineSim.Cli
                     if (onlyK == 0 || k == onlyK) s.Ladders.Add((k, rungs, hold, basis));
                 }
             });
+            if (budget) _ladderCursor += begun;
+            _ladderClock = null;
             List<GoalRow> rows = _model?.Count == _goals ? _model : null;
             bool CashBound(int g) => rows != null && g < _goals && _runGoals.Goals[g].kind == FullTasGoal.Buy && rows[g].Spare < rows[g].Gap;
             var made = new List<(GoalEdit e, LadderSpot s)>();

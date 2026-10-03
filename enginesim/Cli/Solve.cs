@@ -99,11 +99,13 @@ namespace IGTAP.EngineSim.Cli
             TimeSpan lastBest = TimeSpan.Zero;
             Humanize.Background humanize = args.Contains("--no-humanize") ? null
                 : new Humanize.Background(create, forced, course, caps, threads, line => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {line}"));
+            // The directions of the picked direction blocks (IGTAPTasMod.Categories.Directions): every run keeps their boxes.
+            string[] directions = IGTAPTasMod.Categories.Directions.Where(d => optional.Contains(d.block)).Select(d => d.name).ToArray();
             solver.Improved += (time, runTicks, inputs, how) =>
             {
                 lastBest = clock.Elapsed;
                 string file = Path.Combine(outDir, label + "-" + time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
-                WriteShared(file, JsonSerializer.Serialize(new { course, capabilities = caps, time, runTicks, ticks = inputs.Select(t => t.ToJson()) }));
+                WriteShared(file, JsonSerializer.Serialize(new { course, capabilities = caps, time, runTicks, directions, ticks = inputs.Select(t => t.ToJson()) }));
                 Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] offline best {time:0.00}s via {how} ({inputs.Count} ticks, run {runTicks * .02:0.00}s from the start) -> {Path.GetFileName(file)}");
                 if (submit && how != "seed" && how != "plateau") pending.Set(new Pending(time, runTicks, inputs));
                 humanize?.Set(file, inputs);
@@ -243,7 +245,7 @@ namespace IGTAP.EngineSim.Cli
                 foreach (PathBlock block in rule.Optional ?? Array.Empty<PathBlock>())
                 {
                     var boxes = new OfflineSolver.ForcedPath();
-                    AddBoxes(boxes, block.Via, block.Avoid);
+                    AddBoxes(boxes, block.Via, block.Avoid, 0, Sides(block));
                     blocks.Add(new OptionalBlock(block.Name, block.Note ?? "", block.Default, boxes));
                 }
             }
@@ -253,7 +255,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>forced-paths.json's rules (a course's and category's boxes, a Full-TAS run's avoid boxes). The studio edits the
         /// file while a solve runs, so it is read again whenever it has changed.</summary>
         sealed record PathRule(int? Course, string[] Capabilities, string[] Fulltas, float[][] Via, float[][] Avoid, bool Guide, PathBlock[] Optional);
-        sealed record PathBlock(string Name, string Note, bool Default, float[][] Via, float[][] Avoid, string[] OffFor, string After);
+        sealed record PathBlock(string Name, string Note, bool Default, float[][] Via, float[][] Avoid, string[] OffFor, string After, string From);
         sealed record PathsFile(PathRule[] Paths);
         static Tuple<DateTime, PathRule[]> _pathRules;
 
@@ -296,7 +298,7 @@ namespace IGTAP.EngineSim.Cli
                         if (index < 0) continue;
                         after = index + 1;
                     }
-                    AddBoxes(forced, null, block.Avoid, after);
+                    AddBoxes(forced, null, block.Avoid, after, Sides(block));
                 }
             }
             return forced;
@@ -307,10 +309,24 @@ namespace IGTAP.EngineSim.Cli
         internal static readonly System.Collections.Concurrent.ConcurrentDictionary<string, OfflineSolver.ForcedPath> CourseRuns =
             new System.Collections.Concurrent.ConcurrentDictionary<string, OfflineSolver.ForcedPath>();
 
-        static void AddBoxes(OfflineSolver.ForcedPath forced, float[][] via, float[][] avoid, int after = 0)
+        static void AddBoxes(OfflineSolver.ForcedPath forced, float[][] via, float[][] avoid, int after = 0, int from = 0)
         {
             foreach (float[] c in via ?? Array.Empty<float[]>()) forced.Via.Add(new OfflineSolver.Box(new WorldPos(c[0], c[1]), new WorldPos(c[2], c[3]), after));
-            foreach (float[] c in avoid ?? Array.Empty<float[]>()) forced.Avoid.Add(new OfflineSolver.Box(new WorldPos(c[0], c[1]), new WorldPos(c[2], c[3]), after));
+            foreach (float[] c in avoid ?? Array.Empty<float[]>()) forced.Avoid.Add(new OfflineSolver.Box(new WorldPos(c[0], c[1]), new WorldPos(c[2], c[3]), after, from));
+        }
+
+        /// <summary>A block's "from" ("bottom", "left+top", ...): its avoid boxes cut only a move into them across those edges
+        /// (<see cref="OfflineSolver.Box.From"/>).</summary>
+        static int Sides(PathBlock block)
+        {
+            int from = 0;
+            foreach (string side in (block.From ?? "").Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                int bit = Array.IndexOf(IGTAPTasMod.FullTasGoal.SideNames, side);
+                if (bit < 0) throw new InvalidOperationException($"forced-paths.json: block '{block.Name}' from \"{side}\" is not a side ({string.Join(", ", IGTAPTasMod.FullTasGoal.SideNames)}, joined with \"+\")");
+                from |= 1 << bit;
+            }
+            return from;
         }
 
         /// <summary>
