@@ -154,9 +154,12 @@ namespace IGTAP.EngineSim
             _b2.SetSubStepping(SettingBool("useSubStepping", false));
             _ground = _b2.CreateBody(new b2BodyDef());
 
+            // A static body off at the export is built too (a tree segment's ground, TreeSegmentActivationComponent.IE_Grow): it
+            // never moves and has fixtures only while its colliders are on (Live). A dynamic or kinematic one off at the export
+            // isn't (this Box2D can't disable a body): one turned on ends the run at the next step (Unbodied).
             foreach (Rigidbody2D rb in world.Bodies)
             {
-                if (!rb.gameObject.activeInHierarchy || !rb.simulated) continue;
+                if (!rb.simulated || !rb.gameObject.activeInHierarchy && rb.bodyType != RigidbodyType2D.Static) continue;
                 var state = new BodyState { Rigidbody = rb };
                 rb.BackendData = state;
                 _bodies[rb] = state;
@@ -210,6 +213,7 @@ namespace IGTAP.EngineSim
             {
                 composite.Sources = list.ToArray();
                 composite.SourcesLiveAtLoad = list.Select(Live).ToArray();
+                if (composite.Data.SourceShapes == null && composite.Data.Shapes.Length == 0) composite.Data.SourceShapes = PathShapes(composite);
             }
             _bodyList = new BodyState[_bodies.Count];
             _bodies.Values.CopyTo(_bodyList, 0);
@@ -354,14 +358,41 @@ namespace IGTAP.EngineSim
             }
         }
 
+        /// <summary>
+        /// A composite off at the export has no shapes there, only its paths: its geometry with every source on, each path a
+        /// closed chain in the body's frame (two-sided edges, this Box2D's chains). Unity builds a Polygons composite from convex
+        /// polygons (its decomposition isn't known here; the outline's surface is the same, its inside and its seams aren't:
+        /// docs/fidelity-log.md, *Upgrade trees grown by hand*), an Outlines one from edges.
+        /// </summary>
+        ShapeData[] PathShapes(ColliderState s)
+        {
+            Collider2D c = s.Collider;
+            if (s.Data.Paths == null || s.Data.Paths.Length == 0) return null;
+            // ponytail: the paths in the body's frame only for a composite on its body's object at offset 0 (every export's).
+            if (c.attachedRigidbody == null || c.attachedRigidbody.gameObject != c.gameObject || c.m_Offset != Vector2.zero) return null;
+            Vector3 scale = c.transform.m_LossyScale;
+            float radius = c is CompositeCollider2D composite ? composite.edgeRadius : 0f;
+            var shapes = new List<ShapeData>();
+            foreach (Vector2[] path in s.Data.Paths)
+            {
+                if (path.Length < 2) continue;
+                var loop = new Vector2[path.Length + 1];
+                for (int i = 0; i < path.Length; i++) loop[i] = new Vector2(path[i].x * scale.x, path[i].y * scale.y);
+                loop[path.Length] = loop[0];
+                // b2ChainShape.CreateLoop: the last point again, the ghosts the points before and after the seam.
+                shapes.Add(new ShapeData { Type = "Edges", Radius = radius, Vertices = loop, UseAdjacentStart = true,
+                    AdjacentStart = loop[path.Length - 1], UseAdjacentEnd = true, AdjacentEnd = loop[1] });
+            }
+            return shapes.ToArray();
+        }
+
         // Colliders that were on without their body at a rebuild (Unbodied): the next step ends the run if one still is.
         readonly HashSet<ColliderState> _unbodied = new HashSet<ColliderState>();
 
         /// <summary>
-        /// On, its Rigidbody2D on too, but that body was off at the world export, so neither it nor (with it off) the collider's
-        /// geometry is in the export: a tree segment's ground (TreeSegmentActivationComponent.IE_Grow turns it on). A composite
-        /// has nothing without its sources. On only between two steps (the segment's activation before IE_Grow turns its
-        /// ground off again), it is never seen.
+        /// On, its Rigidbody2D on too, but that body is dynamic or kinematic and was off at the world export, so the engine has
+        /// no body for it (static ones are built). A composite has nothing without its sources. On only between two steps, it
+        /// is never seen.
         /// </summary>
         static bool Unbodied(ColliderState s)
         {
@@ -641,7 +672,7 @@ namespace IGTAP.EngineSim
                     if (Unbodied(s))
                     {
                         _sim.Engine.Abort("Unmodeled physics: " + s.Collider.name + "'s " + s.Collider.GetType().Name
-                            + " is on, its Rigidbody2D off at the world export (no body or geometry for it)");
+                            + " is on, its dynamic or kinematic Rigidbody2D off at the world export (the engine has no body for it)");
                         break;
                     }
             FindLapsedTouches();

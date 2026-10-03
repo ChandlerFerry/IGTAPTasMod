@@ -1676,10 +1676,16 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   step that is 462 rendered frames for a trunk, 81 for the ground and 557 for the box (`b640-world-c1`, The Tree 2's
   first segment). The box's colliders move with it (a body-less collider a script moves is rebuilt from its geometry at
   the next sync, `PhysicsWorld.SyncMoved`), and the transforms a script moves are in snapshots
-  (`SimSnapshot.Transforms`). A segment's ground can't be modeled yet: its `Rigidbody2D` was off at every world export,
-  so neither its body nor its tilemap's geometry is in the export, and a step with it on ends the run (`Unmodeled
-  physics: Tree*Ground's TilemapCollider2D is on ...`, `PhysicsWorld.Unbodied`). A coroutine on an object off in the
-  hierarchy doesn't start, as in Unity (a tree in an unloaded zone doesn't grow).
+  (`SimSnapshot.Transforms`). A segment's ground (`Tree*Ground`: a static `Rigidbody2D`, a `TilemapCollider2D` used by
+  a Polygons `CompositeCollider2D`) is off at the export: the export has its body and its composite's `paths`, but no
+  `shapes` (Unity builds none for a collider that is off). The engine builds static bodies that are off at the export too
+  (fixtures only while their colliders are on), links an off source to the composite on its body's object, and builds the
+  composite from its paths while its source is on (`PhysicsWorld.PathShapes`): each path a closed chain of two-sided
+  edges, not Unity's convex polygons, whose decomposition isn't known here. The surface is the same; inside the outline
+  and at Unity's seams it isn't (docs/fidelity-log.md, *Upgrade trees grown by hand*). The ground appears with
+  IE_Grow's collider write (frame 600 above) and not during the fade. A dynamic or kinematic body off at the export
+  still isn't built: a step with one of its colliders on ends the run (`PhysicsWorld.Unbodied`). A coroutine on an
+  object off in the hierarchy doesn't start, as in Unity (a tree in an unloaded zone doesn't grow).
 - Buy-max boxes (`IE_BuyMax`, the statue's boosted Courses 1 and 2): on build 25630570 the coroutine buys a level, then
   waits for the next physics step (`WaitForFixedUpdate`): one level a tick at any frame rate
   ([`docs/fulltas.md`](../docs/fulltas.md#clones-and-buy-max-build-25630570)). Offline `Shop.FixedStep` (`Shop.cs:148`,
@@ -1750,8 +1756,10 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
     never inside a turbo run; `cuts.txt` drops them.
   - Not reproduced: a block swap's re-activated boxes (upgradeBox.cs:804, behind a purchase that ends the run), and the
     `Start` of what a tree segment wakes the first time (its box's `LightFlicker` and `upgradeBox.Start`, its trunks' and
-    lights' `RandomAnimSpeedComponent`), which 1x runs in the next frame's Start pass and turbo never reaches. The Omni
-    Dash buy's Area 2 → 1 transition
+    lights' `RandomAnimSpeedComponent`: one draw, two or three). Start runs before a behaviour's first Update: for an
+    object woken in the buy's physics step (OnTriggerStay2D) in that same rendered frame, before the frame's
+    Movement.Update and clone draws; for one woken at a frame's end (IE_Grow's box, an auto-triggered segment) in the
+    next frame. Turbo never reaches them; left to Task 7's 1x probe. The Omni Dash buy's Area 2 → 1 transition
     (`Zone2to1TransitionController.doStateVisuals`) runs to its first yield, as in turbo; at 1x its later frames turn
     `closedObject` off (the "Transition ground" collider over the box) 4.31 s after the buy at the earliest, so a run
     still going then ends (`Economy.TransitionOpensAfter`).

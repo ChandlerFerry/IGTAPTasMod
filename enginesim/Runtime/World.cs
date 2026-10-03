@@ -27,6 +27,9 @@ namespace IGTAP.EngineSim
         public float Friction, Bounciness;
         public ColliderData Composite;
         public ShapeData[] SourceShapes;
+        /// <summary>A CompositeCollider2D's generated paths (GetPath, the collider's local space): its geometry even while it
+        /// is off, when the export's shapes are empty.</summary>
+        public Vector2[][] Paths;
     }
 
     public sealed class World
@@ -155,6 +158,14 @@ namespace IGTAP.EngineSim
                 }
                 if (c.TryGetProperty("sourceShapes", out JsonElement source) && source.ValueKind == JsonValueKind.Object)
                     data.SourceShapes = source.GetProperty("list").EnumerateArray().Select(ReadShape).ToArray();
+                if (c.TryGetProperty("paths", out JsonElement paths) && paths.ValueKind == JsonValueKind.Array)
+                    data.Paths = paths.EnumerateArray().Select(path =>
+                    {
+                        float[] v = path.EnumerateArray().Select(x => x.GetSingle()).ToArray();
+                        var points = new Vector2[v.Length / 2];
+                        for (int i = 0; i < points.Length; i++) points[i] = new Vector2(v[2 * i], v[2 * i + 1]);
+                        return points;
+                    }).ToArray();
                 Colliders.Add(data);
                 _pendingColliders.Add((data, c.GetProperty("props").Clone()));
             }
@@ -187,6 +198,8 @@ namespace IGTAP.EngineSim
                 box.InitSize(Vec2(props.GetProperty("size")));
                 box.edgeRadius = props.GetProperty("edgeRadius").GetSingle();
             }
+            if (c is CompositeCollider2D composite0 && props.TryGetProperty("edgeRadius", out JsonElement edge) && edge.ValueKind == JsonValueKind.Number)
+                composite0.edgeRadius = edge.GetSingle();
             if (c is CapsuleCollider2D capsule)
                 capsule.InitShape(Vec2(props.GetProperty("size")), props.GetProperty("direction").GetInt32());
             c.attachedRigidbody = Ref(props, "attachedRigidbody") as Rigidbody2D;
@@ -195,8 +208,10 @@ namespace IGTAP.EngineSim
             data.Bounciness = props.GetProperty("bounciness").GetSingle();
             c.friction = data.Friction;
             c.bounciness = data.Bounciness;
+            // Off at the export, a source's `composite` reads null: it is the CompositeCollider2D on its Rigidbody2D's object (a
+            // tree segment's ground).
             if (props.TryGetProperty("compositeOperation", out JsonElement operation) && operation.ValueKind == JsonValueKind.Number && operation.GetInt32() != 0
-                && Ref(props, "composite") is Collider2D composite)
+                && (Ref(props, "composite") as Collider2D ?? c.attachedRigidbody?.gameObject.GetComponent<CompositeCollider2D>()) is Collider2D composite)
                 data.Composite = composite.BackendData as ColliderData;
         }
 

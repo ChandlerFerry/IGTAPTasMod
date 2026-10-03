@@ -102,7 +102,7 @@ namespace UnityEngine
     }
     public sealed class PolygonCollider2D : Collider2D { public int pathCount { get; set; } }
     public sealed class EdgeCollider2D : Collider2D { public float edgeRadius { get; set; } }
-    public sealed class CompositeCollider2D : Collider2D { public int pathCount { get; set; } }
+    public sealed class CompositeCollider2D : Collider2D { public int pathCount { get; set; } public float edgeRadius { get; set; } }
 
     public struct RaycastHit2D
     {

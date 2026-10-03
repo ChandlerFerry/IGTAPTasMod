@@ -1344,8 +1344,9 @@ namespace IGTAP.EngineSim
         /// upgradeBox.OnEnable twice (the multibuy text's repeat rate, customBoxUpdate's first delay), ObjectBobber.OnEnable
         /// once, except in a Full-TAS run, where 1x and turbo give a bobber's draw back (README exception 11: a buy-max box's
         /// "buy N" text turns on from its multibuy timer at 1x only). Start (LightFlicker, RandomAnimSpeedComponent,
-        /// JiggleDropScript, upgradeBox) waits for the next frame's Start pass, which a turbo run never reaches, so its draws
-        /// are not made here.
+        /// JiggleDropScript, upgradeBox) runs before the behaviour's first Update: at 1x in the same rendered frame for an object
+        /// woken in a physics step, in the next for one woken at a frame's end. A turbo run never reaches it, so its draws are
+        /// not made here.
         /// </summary>
         internal static void Activate(GameObject g, bool fullTas)
         {

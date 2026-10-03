@@ -906,9 +906,20 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
   next sync (`PhysicsWorld.SyncMoved`, pending moves in the physics snapshot), and the transforms a script moves are in
   snapshots (`SimSnapshot.Transforms`, `SnapshotStore` format 5). The zip mover and refill orb buys write through to the
   static dictionary (`Economy.WriteStatic`). A coroutine on an object off in the hierarchy doesn't start, as in Unity.
-  Still open: a segment's ground (its `Rigidbody2D` was off at every export, so no body or geometry: a step with it on
-  ends the run, `PhysicsWorld.Unbodied`), and the `Start` draws of what a segment wakes the first time (1x only).
+  A segment's ground is off at the export: its static `Rigidbody2D` is exported (the engine skipped it), and its
+  composite's `paths`, but no `shapes`. The engine now builds static bodies that are off at the export, links an off
+  source to the composite on its body's object, and builds the composite from its paths (`PhysicsWorld.PathShapes`).
   FalseEnding%-280 and TouchGrass-ANY% replay unchanged; `determinism` on FalseEnding%-280 is DETERMINISTIC.
+- **Residual risk (for Task 7's 1x probe):**
+  - The ground is a closed chain of two-sided edges per path, not Unity's convex polygons (a Polygons composite; Unity's
+    decomposition isn't in the export and isn't matched). The top and side surfaces are the same lines. What differs:
+    contacts at Unity's internal seams (ghost contacts on its polygon edges, none on the chain), polygon-vs-edge
+    manifolds against a polygon-vs-polygon one at a corner, and the inside (a point or a body inside the outline is
+    inside Unity's polygons, not the chain's).
+  - `Start` draws (LightFlicker 1, RandomAnimSpeedComponent 2 or 3) of what a segment wakes the first time. Start runs
+    before a behaviour's first Update: a segment woken in the buy's physics step draws in that same rendered frame,
+    before its Movement.Update and clone draws; one woken at a frame's end (the box, an auto-triggered segment) in the
+    next frame. Not made offline (turbo never reaches them).
 - **Where:** `Shop.GrowTree`, `Simulation` (`InterpolatedFrames`, `Continues`, `RestoreTransforms`), `Scheduler`,
   `PhysicsWorld` (`TransformChanged`, `SyncMoved`, `Unbodied`), `Economy` (`WriteStatic`, `Activate`, `BoughtGlobal`),
   `Shim/Engine` (`Time`, `Transform`, `GameObject`, `Renderer.bounds`).
