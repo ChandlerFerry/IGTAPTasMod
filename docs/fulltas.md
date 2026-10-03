@@ -2369,8 +2369,9 @@ the boosts come up to 0.5 s later.
 
 ## TouchGrass-ANY% and TrueEnding% (2026-10-03)
 
-`TouchGrass-ANY%` ends on the block-swap box (`buy:buyblockswap5`, 9.49e34 W) and the drop through the hole left of
-Course 4. The order is 1 → 2 → 3 → 5 → breaker → 3 → boost at 4 → block swap. The boost (`buyprestige4`) is bought after
+`TouchGrass-ANY%` ends at the checkpoint (16669, 3212.8) below Course 4 (`at:16669,3574.8,400,800`, its trigger), after
+the block-swap box (`buy:buyblockswap5`, 9.49e34 W) and the drop through the hole left of Course 4. The fall from the hole
+takes 269 physics ticks that take no input. The order is 1 → 2 → 3 → 5 → breaker → 3 → boost at 4 → block swap. The boost (`buyprestige4`) is bought after
 the breaker, where Course 4's tier is 29.5 ([Tiers through the trip breaker](#tiers-through-the-trip-breaker)). Before
 the breaker it would lift Courses 1-3 only to 10^11 against Course 5's 10^16.5 (about a month to the breaker's 3.16e22),
 and it would be gone for after.
@@ -2397,7 +2398,8 @@ an area goal takes the goal back, so area goals can't stand in for checkpoints.
 bonus 15 396.75 s, Course 5's gate 401.18 s, bonus 22 655.84 s, the breaker 662.01 s, Course 3's gate after it
 691.09 s, the boost 721.98 s, the block swap 725.96 s.
 `fulltas --auto` took it to **699.29 s** over four sessions (2026-10-03). The largest gain, 19.5 s, was a revived
-window through goals 305-306 (the first Course 5 laps), 1210 ticks ahead by goal 377.
+window through goals 305-306 (the first Course 5 laps), 1210 ticks ahead by goal 377. With the checkpoint goal (499
+goals) the same route plus the fall is **704.67 s** (33,332 ticks; score 948.67, 122 grace ticks).
 
 **`TrueEnding%`** has the same goals with every bonus taken by the block swap: bonus 22 inside the Course 5 farm, and
 `buyglobalreward4` and bonus 8 above Course 4 after the boost. The model puts these at +3 s and +9 s against

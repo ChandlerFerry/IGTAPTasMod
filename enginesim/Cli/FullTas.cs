@@ -1506,7 +1506,14 @@ namespace IGTAP.EngineSim.Cli
             }
             int end = (int)through.GoalInput[limit - 1];
             if (end > inputs.Count) Pad(inputs, end);
-            else inputs.RemoveRange(end, inputs.Count - end);
+            else
+            {
+                // A goal reached in ticks that take no input (TouchGrass-ANY%'s 269-tick fall to the checkpoint below Course 4) counts
+                // the input tick before them: cut there, the run's inputs are spent and it ends 20 ticks into them (the gate's idle
+                // rule). With no old tail to follow, keep the next input pending, as the window's own run had it.
+                int keep = tail.Progress >= limit ? end : Math.Min(end + 1, inputs.Count);
+                inputs.RemoveRange(keep, inputs.Count - keep);
+            }
             if (tail.Progress >= limit) inputs.AddRange(tail.Inputs.Skip((int)tail.GoalInput[limit - 1]));
             for (int i = 1; i < inputs.Count; i++) if (inputs[i].reset && inputs[i - 1].reset) return null;
             return Evaluate(inputs);
