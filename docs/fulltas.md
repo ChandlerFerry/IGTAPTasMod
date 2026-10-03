@@ -2039,7 +2039,7 @@ earlier. The model's income needs calibrating against the trace's Cash before a 
 
 `zip-plan` plans Area 2's buy order from a run's state to the zip movers (`buy:buytree16`, `ZipMoversUnlock`, 625,000,000
 NP) on a model of the game's economy (`enginesim/Cli/ZipPlan.cs`), because the engine's economy ends a run at Area 2
-(green clones, clone dust, the atoms' collider and the tree are unmodeled, below: an atom box's course reset is
+(the atoms' collider and the tree are unmodeled, below: an atom box's course reset is
 modeled, its atom ends the run). The start is the trace's start, or `--route FILE`
 (a `fulltas/<run>.json` or any `{inputs}` file) replayed on it to input `--ticks N` (default: all of it): the currencies,
 global and local upgrades, clone counts and paths, box levels and costs, the tree's grown segments and the atoms, as the
@@ -2142,7 +2142,8 @@ The whole run needs Cash offline. A start state whose economy carries the clones
 economy natively (`enginesim/Runtime/Economy.cs`): course-finish rewards, comp boost, new-best clone paths, clone spawns
 and payouts on and off screen (the clonesLoD trigger; the current build's rule:
 [Clones and buy-max](#clones-and-buy-max-build-25630570)), what the courses' local boxes change (reward, clone count, clone
-multiplier) and the global boxes `GLOBALcashPerLoop` (its own course's reward; the game updates the others on a random
+multiplier), colour clones (`checkIfColourClone`: red power to `rpCap`, green power) and clone dust (clone and finish
+payouts, `CloneDustGpCdMult` recomputed after each) and the global boxes `GLOBALcashPerLoop` (its own course's reward; the game updates the others on a random
 5 s phase), the global clone speed and size caps (`maxCloneFastness`, `maxCloneBigness`: dictionary only while both
 clone chances are 0) and the statue (`unlockPrestige`: a global clone multiplier instead of its own entry). A prestige
 box — the statue and Course 4's `buyprestige4` — also runs `BoostOldCourses`: each old course's reward tier becomes the
@@ -2155,7 +2156,7 @@ buy (`FalseEnding2-Any%` buys Course 2's three boosted boxes to their caps with 
 statue, `buy:buydj` 83 s sooner). The block swap (`buyswap`) is modeled as the purchase's bookkeeping
 and its buy goal only — the colliders it swaps aren't — so it works as a run's last goal and any run past it ends
 (`Unmodeled purchase: block swap (collider changes)`). Cases the model can't follow end the run (`Unmodeled economy:
-...`): clone speed/size/colour rolls, clone dust, the other global boxes and a prestige buy while Vman is active. A Vman
+...`): clone speed/size rolls, the other global boxes and a prestige buy while Vman is active. A Vman
 course completion pays its `completionReward` once (`Shop`), and a Vman clock that runs out ends the run.
 
 The trip breaker (`buyprestige5`) is modeled in full: `BoostOldCourses`, then each of Courses 1–5 through

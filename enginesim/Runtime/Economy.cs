@@ -11,6 +11,9 @@ namespace IGTAP.EngineSim
     {
         const BindingFlags Fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         static readonly FieldInfo BaseRewardField = typeof(courseScript).GetField("baseReward", Fields);
+        static readonly FieldInfo BaseGpRewardField = typeof(courseScript).GetField("baseGpReward", Fields);
+        static readonly FieldInfo BaseRpRewardField = typeof(courseScript).GetField("baseRpReward", Fields);
+        static readonly FieldInfo BaseCdRewardField = typeof(courseScript).GetField("baseCdReward", Fields);
         static readonly FieldInfo BestPathTimeField = typeof(courseScript).GetField("bestPathTime", Fields);
         static readonly FieldInfo CourseClonesField = typeof(courseScript).GetField("clones", Fields);
         static readonly FieldInfo ClonesCourseField = typeof(clonesScript).GetField("course", Fields);
@@ -55,7 +58,7 @@ namespace IGTAP.EngineSim
         {
             public float Pointer;
             public int Fastness, Bigness;
-            public bool Coloured;
+            public bool Red, Green;   // cloneIsRed, cloneIsGreen (cloneIsBlue is never set on this build: clonesScript.cs:399)
         }
 
         internal struct CloneValues
@@ -85,6 +88,7 @@ namespace IGTAP.EngineSim
             public double[] Global;
             public bool TripBroken;
             public float TransitionOpensIn;
+            public double CdMult;
         }
 
         readonly Simulation _sim;
@@ -99,6 +103,8 @@ namespace IGTAP.EngineSim
         bool _tripBroken;
         // Seconds of run time until the Omni Dash buy's Area 2 → 1 transition can open at 1x (0: none under way).
         float _transitionOpensIn;
+        // globalStats.CloneDustGpCdMult: green power and clone dust payouts are multiplied by it (RecalcCdMult).
+        double _cdMult;
 
         internal readonly double[] Income = new double[7];   // per globalStats.Currencies, what the economy paid since the start
         public double Earned => Income[(int)globalStats.Currencies.Cash];
@@ -152,6 +158,17 @@ namespace IGTAP.EngineSim
                 _byScript[script] = clones;
             }
             _stepped = _clones.Where(c => c.Script.gameObject.activeInHierarchy).ToArray();
+            RecalcCdMult();
+        }
+
+        /// <summary>globalStats.RecalcCloneDustMult (globalStats.cs:1126-1140) on the clone dust the run holds: the game runs it
+        /// after every clone dust payout (and RubbleDisplayScript's readout), so at a start it is the held clone dust's.</summary>
+        void RecalcCdMult()
+        {
+            double cd = _sim.Shop.Holds(globalStats.Currencies.CloneDust);
+            double m = cd == 0.0 ? 0.0 : Math.Log10(cd);   // math.log10: Unity.Mathematics, double
+            m += Global(globalStats.globalUpgradeSet.additionalCDdigits);
+            _cdMult = Math.Pow(m, 1.7) * 1.05 + 1.0;
         }
 
         void SetGlobal(Dictionary<globalStats.globalUpgradeSet, double> dict)
@@ -196,7 +213,6 @@ namespace IGTAP.EngineSim
             var bigness = field("cloneBigness") as List<int> ?? new List<int>();
             var red = field("cloneIsRed") as List<bool> ?? new List<bool>();
             var green = field("cloneIsGreen") as List<bool> ?? new List<bool>();
-            var blue = field("cloneIsBlue") as List<bool> ?? new List<bool>();
             var colour = field("ColourCloneCounter") as double[] ?? new[] { 50.0, 50.0, 50.0 };
             clones.V = new CloneValues
             {
@@ -215,7 +231,7 @@ namespace IGTAP.EngineSim
             clones.Active.Clear();
             for (int i = 0; i < pointers.Count; i++)
                 clones.Active.Add(new Clone { Pointer = pointers[i], Fastness = i < fastness.Count ? fastness[i] : 0, Bigness = i < bigness.Count ? bigness[i] : 0,
-                    Coloured = i < red.Count && red[i] || i < green.Count && green[i] || i < blue.Count && blue[i] });
+                    Red = i < red.Count && red[i], Green = i < green.Count && green[i] });
         }
 
         bool Unmodeled(string what)
@@ -339,20 +355,31 @@ namespace IGTAP.EngineSim
                 {
                     c.V.OffscreenDivisor = 1f;
                     c.V.Pooled--;
-                    c.Active.Add(new Clone { Pointer = 0f, Fastness = i, Bigness = j });
                     // Build 25640326: a timer still at Start's 10000 (>= 4000) goes to 0, any other keeps the overshoot.
                     c.V.SinceLast = c.V.SinceLast >= 4000f ? 0f : (float)(c.V.SinceLast - (double)c.V.NextDue);
-                    if (!ColourCheck(c)) return false;
+                    // AssignCloneColour (clonesScript.cs:462-495): the colours go on the clone and pay at its path's end.
+                    if (!ColourCheck(c, out bool isRed, out bool isGreen)) return false;
+                    c.Active.Add(new Clone { Pointer = 0f, Fastness = i, Bigness = j, Red = isRed, Green = isGreen });
                 }
                 return true;
             }
             if (c.V.Count <= 0) return true;
             if ((object)c.Course == null) return Unmodeled("clones without a course");
-            double pay = Math.Ceiling(Pay(c, j) / (double)c.V.OffscreenDivisor);
+            double boost = Boost(c.Course), divisor = c.V.OffscreenDivisor;
+            double pay = Math.Ceiling(Pay(c, j) / divisor);
             Add(globalStats.Currencies.Cash, pay);
             Spawned?.Invoke(c.Course.courseNumber, c.Script.GetInstanceID(), false, divisorBefore, i, j, pay);
-            if (!ColourCheck(c)) return false;
-            if (Local(c.Local, localUpgrades.localUpgradeSet.enableCloneDustGeneration) >= 1.0) return Unmodeled("clone dust");
+            // clonesScript.cs:243-283, SpawnClone's mult 1 (only a Vman course passes another, VmanScript.cs:124): each pay
+            // in the game's order of operations; array[2] (blue) is never set (clonesScript.cs:399).
+            if (!ColourCheck(c, out bool red, out bool green)) return false;
+            double size = j * 2 + 1;
+            if (red && !PayRed(c.Course.rpReward * size * boost / divisor)) return false;
+            if (green) Add(globalStats.Currencies.GreenPower, Math.Ceiling(c.Course.gpReward * size * _cdMult * boost / divisor));
+            if (Local(c.Local, localUpgrades.localUpgradeSet.enableCloneDustGeneration) >= 1.0)
+            {
+                Add(globalStats.Currencies.CloneDust, Math.Ceiling(c.Course.CdReward * size * boost * _cdMult / divisor));
+                RecalcCdMult();
+            }
             c.V.SinceLast = 0f;
             c.V.OffscreenDivisor = c.V.NextDue;
             c.V.NextDue = 1f;
@@ -363,28 +390,67 @@ namespace IGTAP.EngineSim
         /// competition boost, in the game's order.</summary>
         double Pay(Clones c, int bigness)
         {
-            double boost = 1.0;
-            if (c.Course.compBoostTimeLeft > 0.0) boost = c.Course.compBoostBonus;
+            double boost = Boost(c.Course);
             double pay = c.Course.reward * (double)(bigness * 2 + 1);
             double mult = 0.1 + Global(globalStats.globalUpgradeSet.cloneMult) * 0.2 + Local(c.Local, localUpgrades.localUpgradeSet.cloneMult) * 0.1;
             pay *= mult;
             return pay * boost;
         }
 
-        bool ColourCheck(Clones c)
+        static double Boost(courseScript course) { return course.compBoostTimeLeft > 0.0 ? course.compBoostBonus : 1.0; }
+
+        /// <summary>A red clone's red power (clonesScript.cs:250-254, 330-334): capped at globalStats.rpCap as the world holds it
+        /// (UpdateRpCap runs at Movement.Start; the RP cap boxes are global upgrades BoughtGlobal refuses).</summary>
+        bool PayRed(double value)
         {
-            c.V.Green += Global(globalStats.globalUpgradeSet.greenCloneClance);
-            if (c.V.Green > 100.0 || c.V.Red > 100.0) return Unmodeled("colour clone");
+            globalStats stats = Singleton<globalStats>.Instance;
+            if ((object)stats == null) return Unmodeled("red power without globalStats (the game throws)");
+            Add(globalStats.Currencies.RedPower, Math.Ceiling(value));
+            double held = _sim.Shop.Holds(globalStats.Currencies.RedPower);
+            // ponytail: lands exactly on the cap while the held sum and the cap are integers below 2^53; a Shop setter if not.
+            if (held > stats.rpCap) Income[(int)globalStats.Currencies.RedPower] -= held - stats.rpCap;
             return true;
         }
 
+        /// <summary>clonesScript.checkIfColourClone (clonesScript.cs:379-401): the green counter grows each spawn, a pass over 100
+        /// makes the clone green and grows the red counter (off Area 2), a red pass over 100 makes it red; each pass draws
+        /// Random.Range(-15, 15).</summary>
+        bool ColourCheck(Clones c, out bool red, out bool green)
+        {
+            red = green = false;
+            c.V.Green += Global(globalStats.globalUpgradeSet.greenCloneClance);
+            if (c.V.Green > 100.0)
+            {
+                if ((object)c.Course == null) return Unmodeled("a green clone without a course (the game throws)");
+                c.V.Green -= 100.0;
+                c.V.Green += UnityEngine.Random.Range(-15, 15);
+                green = true;
+                if (c.Course.area != 2) c.V.Red += Global(globalStats.globalUpgradeSet.redCloneChance);
+            }
+            if (c.V.Red > 100.0)
+            {
+                c.V.Red -= 100.0;
+                c.V.Red += UnityEngine.Random.Range(-15, 15);
+                red = true;
+            }
+            return true;
+        }
+
+        /// <summary>clonesScript.DestroyClone (clonesScript.cs:289-375): its pays at the comp boost, with no divisor; cloneIsBlue's
+        /// is never set on this build (clonesScript.cs:399).</summary>
         bool DestroyClone(Clones c, int index)
         {
             Clone clone = c.Active[index];
-            if (clone.Coloured) return Unmodeled("colour clone");
             if ((object)c.Course == null || c.Local < 0) return Unmodeled("clones without a course");
+            double boost = Boost(c.Course), size = clone.Bigness * 2 + 1;
             Add(globalStats.Currencies.Cash, Math.Ceiling(Pay(c, clone.Bigness)));
-            if (Local(c.Local, localUpgrades.localUpgradeSet.enableCloneDustGeneration) >= 1.0) return Unmodeled("clone dust");
+            if (clone.Red && !PayRed(c.Course.rpReward * size * boost)) return false;
+            if (clone.Green) Add(globalStats.Currencies.GreenPower, Math.Ceiling(c.Course.gpReward * size * _cdMult * boost));
+            if (Local(c.Local, localUpgrades.localUpgradeSet.enableCloneDustGeneration) >= 1.0)
+            {
+                Add(globalStats.Currencies.CloneDust, Math.Ceiling(c.Course.CdReward * size * boost * _cdMult));
+                RecalcCdMult();
+            }
             c.V.Pooled++;
             c.Active.RemoveAt(index);
             return true;
@@ -415,7 +481,12 @@ namespace IGTAP.EngineSim
                 || !Effect(effect, globalStats.globalUpgradeSet.moreWatts, out double moreWatts)
                 || !Effect(effect, globalStats.globalUpgradeSet.wattPower, out double wattPower)
                 || !Effect(baseEffect, globalStats.globalUpgradeSet.compBoostStrength, out double strengthBase)
-                || !Effect(effect, globalStats.globalUpgradeSet.compBoostStrength, out double strength))
+                || !Effect(effect, globalStats.globalUpgradeSet.compBoostStrength, out double strength)
+                || !Effect(effect, globalStats.globalUpgradeSet.increasedGreenPower, out double increasedGreenPower)
+                || !Effect(effect, globalStats.globalUpgradeSet.moreGP, out double moreGP)
+                || !Effect(effect, globalStats.globalUpgradeSet.increasedRP, out double increasedRP)
+                || !Effect(effect, globalStats.globalUpgradeSet.moreRP, out double moreRP)
+                || !Effect(effect, globalStats.globalUpgradeSet.IncreasedCloneDust, out double increasedCloneDust))
                 return false;
             double reward = Math.Ceiling((double)(int)BaseRewardField.GetValue(course)
                 * (1.0 + Global(globalStats.globalUpgradeSet.increasedWatts) * (increasedWatts / 100.0) + Global(globalStats.globalUpgradeSet.tripleThreatIncrease) * (tripleThreat / 100.0))
@@ -425,6 +496,19 @@ namespace IGTAP.EngineSim
                 * (1.0 + Global(globalStats.globalUpgradeSet.moreWatts) * (moreWatts / 100.0))
                 * _gameSpeed * _vmanMult * Math.Pow(10.0, course.rewardTier));
             course.reward = Math.Ceiling(Math.Pow(reward, 1.0 + Global(globalStats.globalUpgradeSet.wattPower) * wattPower));
+            // courseScript.cs:497-499
+            course.gpReward = Math.Ceiling((double)BaseGpRewardField.GetValue(course)
+                * (1.0 + Local(local, localUpgrades.localUpgradeSet.GreenCloneRewardBase))
+                * (1.0 + Global(globalStats.globalUpgradeSet.increasedGreenPower) * (increasedGreenPower / 100.0) + Global(globalStats.globalUpgradeSet.tripleThreatIncrease) * (tripleThreat / 100.0))
+                * (1.0 + Global(globalStats.globalUpgradeSet.moreGP) * (moreGP / 100.0))
+                * _gameSpeed * _vmanMult);
+            course.rpReward = Math.Ceiling((double)BaseRpRewardField.GetValue(course)
+                * (1.0 + Local(local, localUpgrades.localUpgradeSet.baseRP))
+                * (1.0 + Global(globalStats.globalUpgradeSet.increasedRP) * (increasedRP / 100.0))
+                * (1.0 + Global(globalStats.globalUpgradeSet.moreRP) * (moreRP / 100.0))
+                * _gameSpeed);
+            course.CdReward = Math.Ceiling((double)BaseCdRewardField.GetValue(course)) * _gameSpeed
+                * (1.0 + Global(globalStats.globalUpgradeSet.IncreasedCloneDust) * (increasedCloneDust / 100.0)) * _vmanMult;
             course.compBoostBonus = strengthBase + strength * Global(globalStats.globalUpgradeSet.compBoostStrength);
             return true;
         }
@@ -451,7 +535,15 @@ namespace IGTAP.EngineSim
             Add(globalStats.Currencies.Cash, Math.Ceiling(reward));
             int local = LocalIndex(course.localUpgradesScript);
             if (local < 0) { Unmodeled("course " + course.courseNumber + " without local upgrades"); return; }
-            if (Local(local, localUpgrades.localUpgradeSet.enableCloneDustGeneration) >= 1.0) { Unmodeled("clone dust"); return; }
+            if (Local(local, localUpgrades.localUpgradeSet.enableCloneDustGeneration) >= 1.0)
+            {
+                // courseScript.cs:396-407
+                double cd = course.CdReward * 10.0;
+                if (course.compBoostTimeLeft > 0.0) cd *= course.compBoostBonus;
+                cd *= _cdMult;
+                Add(globalStats.Currencies.CloneDust, Math.Ceiling(cd));
+                RecalcCdMult();
+            }
             if (!TryActivateCompBoost(course)) return;
             var script = CourseClonesField.GetValue(course) as clonesScript;
             if ((object)script == null || !_byScript.TryGetValue(script, out Clones c)) { Unmodeled("course " + course.courseNumber + " without clones"); return; }
@@ -891,7 +983,7 @@ namespace IGTAP.EngineSim
         {
             var s = new State { Income = (double[])Income.Clone(), Values = new CloneValues[_clones.Length], Active = new Clone[_clones.Length][],
                 Locals = (double[][])_locals.Clone(), LocalsHash = _localsHash, Global = _global, TripBroken = _tripBroken,
-                TransitionOpensIn = _transitionOpensIn };
+                TransitionOpensIn = _transitionOpensIn, CdMult = _cdMult };
             for (int i = 0; i < _clones.Length; i++)
             {
                 s.Values[i] = _clones[i].V;
@@ -914,6 +1006,7 @@ namespace IGTAP.EngineSim
             _global = s.Global;
             _tripBroken = s.TripBroken;
             _transitionOpensIn = s.TransitionOpensIn;
+            _cdMult = s.CdMult;
         }
 
         internal void AddTo(ref HashCode h)
@@ -925,13 +1018,14 @@ namespace IGTAP.EngineSim
                 h.Add(v.Count); h.Add(v.Pooled); h.Add(v.PathSamples); h.Add(v.ArrayFull); h.Add(v.OnScreen);
                 h.Add(v.BaseInterval); h.Add(v.SinceLast); h.Add(v.NextDue); h.Add(v.OffscreenDivisor); h.Add(v.PathLength);
                 h.Add(v.Red); h.Add(v.Green); h.Add(v.Blue);
-                foreach (Clone clone in c.Active) { h.Add(clone.Pointer); h.Add(clone.Fastness); h.Add(clone.Bigness); h.Add(clone.Coloured); }
+                foreach (Clone clone in c.Active) { h.Add(clone.Pointer); h.Add(clone.Fastness); h.Add(clone.Bigness); h.Add(clone.Red); h.Add(clone.Green); }
                 h.Add(-1);
             }
             h.Add(_localsHash);
             foreach (double g in _global) h.Add(g);
             h.Add(_tripBroken);
             h.Add(_transitionOpensIn);
+            h.Add(_cdMult);
         }
 
         int HashLocals()

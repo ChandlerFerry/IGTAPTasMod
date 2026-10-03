@@ -73,6 +73,7 @@ namespace IGTAP.EngineSim
             Array.Clear(_spent, 0, _spent.Length);
             Array.Clear(_awarded, 0, _awarded.Length);
             _buyMax.Clear();
+            Economy = null;   // the new economy's constructor reads Holds: not the last start's income
             Economy = economy.TryGetProperty("clones", out _) ? new Economy(_sim, economy) : null;
         }
 

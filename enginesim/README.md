@@ -1670,8 +1670,11 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
     Fastness/Bigness and the next spawn's due time). On build 25640326 an on-screen course calls it on every frame
     its timer is past due: rarely while its pool fills, then, as a full pool banks the timer, on every rendered frame
     (12 draws a tick at 280 fps): [`docs/fulltas.md`](../docs/fulltas.md#clones-on-build-25640326).
-  - `clonesScript.checkIfColourClone` (clonesScript.cs:379,389): drawn only when a colour counter passes 100; such a
-    run ends (`Unmodeled economy: colour clone`), so the draws are never needed.
+  - `clonesScript.checkIfColourClone` (b640raw clonesScript.cs:379-401): one `Random.Range(-15, 15)` each time a
+    colour counter passes 100 (green each spawn by `greenCloneClance`, red by `redCloneChance` on a green pass off
+    Area 2) — modeled in `Runtime/Economy.cs` (`ColourCheck`): an on-screen clone keeps its colours and pays them at
+    its path's end, an off-screen spawn pays them at once (red power capped at `globalStats.rpCap`, green power and
+    clone dust times `CloneDustGpCdMult`, recomputed after each clone dust payout).
   - `Movement.playSFX` (Movement.cs:1869-1919): a clip (or wall-slide time) draw and a pitch draw, plus the two draws
     of the `Audio.PlayAudio` its land/grassLand cases make. `cuts.txt` empties it; `hooks.txt`'s `OnPlaySfx` keeps the
     draws (`Movement::PlayFootstep` and `Movement::PlayWallSlideSfx` run un-cut: their bodies only dispatch here).
