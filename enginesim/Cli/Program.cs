@@ -286,9 +286,13 @@ namespace IGTAP.EngineSim.Cli
         static int Replay(string[] args)
         {
             bool verbose = args.Contains("--verbose");
+            // --ticks-out FILE: the offline economy per physics tick (FullTas.EconomyRow), as `fulltas --check --ticks-out` writes
+            // it, for tools/economy-diff.py against a 1x probe of the same inputs.
+            string ticksOut = Solve.Option(args, "--ticks-out", (string)null);
+            using StreamWriter econOut = ticksOut == null ? null : new StreamWriter(ticksOut);
             int failures = 0;
             var assetRef = new System.Text.RegularExpressions.Regex("\\{\"\\$ref\":(-?\\d+)\\}");
-            foreach (string path in args.Where(a => !a.StartsWith("--") && !a.EndsWith(".world.json", StringComparison.OrdinalIgnoreCase)))
+            foreach (string path in args.Where(a => !a.StartsWith("--") && a != ticksOut && !a.EndsWith(".world.json", StringComparison.OrdinalIgnoreCase)))
             {
                 var (sim, trace, inputs) = Open(path);
                 _normalize = s => assetRef.Replace(s, m => sim.World.Objects.ContainsKey(int.Parse(m.Groups[1].Value)) ? m.Value : "null");
@@ -301,6 +305,8 @@ namespace IGTAP.EngineSim.Cli
                 string cashLine = null, randomLine = null, bigCashLine = null;
                 RunResult run = sim.Run(inputs, extraTicks: 1000000, onStep: step =>
                 {
+                    Dictionary<string, object> econ = econOut == null && (step >= ticks.Length || !ticks[step].TryGetProperty("econ", out _)) ? null : FullTas.EconomyRow(sim);
+                    econOut?.WriteLine(JsonSerializer.Serialize(new { physics = sim.Engine.PhysicsTicks, input = sim.Engine.RunTicks, econ }));
                     if (step >= ticks.Length || firstDiff >= 0 && !verbose) return;
                     var here = new List<string>();
                     JsonElement t = ticks[step];
@@ -325,6 +331,11 @@ namespace IGTAP.EngineSim.Cli
                         }
                     }
                     if (t.TryGetProperty("cash", out JsonElement cash) && Compare(here, "cash", Json(sim.Shop.CashNow), cash) && firstCashDiff < 0) firstCashDiff = step;
+                    // Turbo's economy (the plugin's TasPlugin.EconomyNow on a trace tick) against the engine's, field by field (the
+                    // grid's call count is the session's in the plugin and the run's here: tools/economy-diff.py lines up its steps).
+                    if (t.TryGetProperty("econ", out JsonElement turboEcon))
+                        foreach (JsonProperty f in turboEcon.EnumerateObject())
+                            if (f.Name != "cash" && f.Name != "gridCalls" && econ.TryGetValue(f.Name, out object mine)) Compare(here, f.Name, Json(mine), f.Value);
                     if (bigCashLine == null && cash.ValueKind == JsonValueKind.Number && Math.Abs(sim.Shop.CashNow - cash.GetDouble()) >= 1.0)
                         bigCashLine = "tick " + step + ": cash " + Json(sim.Shop.CashNow) + " != " + cash.GetRawText();
                     if (t.TryGetProperty("random", out JsonElement random))

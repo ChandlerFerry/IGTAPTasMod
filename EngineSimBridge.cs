@@ -933,6 +933,15 @@ namespace IGTAPTasMod
                     w.WritePropertyName("contacts");
                     WriteContacts(json, player.GetComponent<Rigidbody2D>());
                     w.WritePropertyName("cash"); w.WriteValue(globalStats.currencyLookup[globalStats.Currencies.Cash]);
+                    // The economy for `replay`'s check against the engine and tools/economy-diff.py (TasPlugin.EconomyNow).
+                    w.WritePropertyName("econ"); w.WriteStartObject();
+                    foreach (KeyValuePair<string, object> f in TasPlugin.EconomyNow())
+                    {
+                        w.WritePropertyName(f.Key);
+                        if (f.Value is int[] counts) { w.WriteStartArray(); foreach (int n in counts) w.WriteValue(n); w.WriteEndArray(); }
+                        else w.WriteValue(f.Value);
+                    }
+                    w.WriteEndObject();
                 }
             }
             w.WriteEndObject();

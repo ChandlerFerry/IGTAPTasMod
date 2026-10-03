@@ -34,6 +34,8 @@ def show(name):
             print(f"tick {row['physics']:4} in {row['input']:4} pos {row['x']:9.2f},{row['y']:9.2f} v {row['vx']:8.2f},{row['vy']:8.2f}"
                   f" m {row['mx']:8.2f},{row['my']:8.2f} {row['mode']:5} dash={row['dash']} f={row['f']} wall={row['wall']} ground={row['ground']}")
             continue
+        if row["kind"] != "frame":
+            continue
         if last_frame is not None and not ticked and (abs(row["x"] - last_frame["x"]) > 0.01 or abs(row["y"] - last_frame["y"]) > 0.01):
             paused = " (paused)" if row.get("paused") else ""
             print(f"  frame {row['frame']} timeScale {row['timeScale']}{paused}: moved {row['x'] - last_frame['x']:+.2f},{row['y'] - last_frame['y']:+.2f}"

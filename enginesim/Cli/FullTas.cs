@@ -179,6 +179,27 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
+        /// The economy as a `--ticks-out` row (and `replay --ticks-out`) carries it, under the names the plugin's 1x probe rows and
+        /// trace ticks use (TasPlugin.EconomyNow), for tools/economy-diff.py: each currency held, the atom collider's atoms per tier
+        /// and waiting atoms, globalStats' NP per tick, its cap, the comp boost's NP factor and the clone dust multiplier, and the
+        /// upgrade trees' grown segments.
+        /// </summary>
+        internal static Dictionary<string, object> EconomyRow(Simulation sim)
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            Func<globalStats.Currencies, double> held = c => sim.Shop.Holds(c);
+            return new Dictionary<string, object>
+            {
+                ["cash"] = held(globalStats.Currencies.Cash), ["gp"] = held(globalStats.Currencies.GreenPower),
+                ["np"] = held(globalStats.Currencies.AtomicPower), ["cd"] = held(globalStats.Currencies.CloneDust),
+                ["rp"] = held(globalStats.Currencies.RedPower), ["atoms"] = sim.Shop.Economy?.AtomCounts ?? Array.Empty<int>(),
+                ["waiting"] = sim.Shop.Economy?.WaitingAtoms ?? 0, ["npTick"] = stats?.NPrewardPerTick ?? 0.0, ["npCap"] = stats?.NPrewardCap ?? 0.0,
+                ["npBoost"] = stats?.EffectOfNpCompBoost ?? 1.0, ["cdMult"] = sim.Shop.Economy?.CdMult ?? 1.0,
+                ["gridCalls"] = sim.Shop.Economy?.GridCalls ?? 0, ["segments"] = sim.World.All<TreeController>().Sum(t => t.GrownSegments.Count),
+            };
+        }
+
+        /// <summary>
         /// --check &lt;route.json&gt;: replays a route (a run file's "inputs" or an offline best's "ticks") from the trace's start under
         /// the trace's goals and prints each goal's input and physics tick, where the replay ended and why. Searches and writes
         /// nothing: a quick look at an old or foreign route before seeding a solve with it.
@@ -238,7 +259,7 @@ namespace IGTAP.EngineSim.Cli
                         held = _eval.Engine.HeldFrames, ground = _eval.Player.onGround, dashes = _eval.Player.airDashesLeft, jumps = _eval.Player.airJumpsLeft, omni = _eval.Player.omniDashUnlocked, maxJumps = _eval.Player.maxAirJumps,
                         cash = _eval.Shop.CashNow, npBoost = Singleton<globalStats>.Instance?.EffectOfNpCompBoost ?? 1.0,
                         rewards = _eval.Courses.Select(c => new[] { c.courseNumber, c.reward, c.rewardTier, c.gameObject.activeInHierarchy ? 1 : 0, c.compBoostTimeLeft }),
-                        clones = _eval.Shop.Economy?.CloneStates(),
+                        clones = _eval.Shop.Economy?.CloneStates(), econ = EconomyRow(_eval),
                         random = new[] { rng.s0, rng.s1, rng.s2, rng.s3 } }));
                 });
                 Console.WriteLine($"ticks -> {_args[ticksOut + 1]}");

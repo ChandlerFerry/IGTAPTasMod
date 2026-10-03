@@ -149,8 +149,42 @@ namespace IGTAPTasMod
                 dash = ProbeDashActive.GetValue(movement), f = ProbeSinceDash.GetValue(movement), facingRight = ProbeFacing.GetValue(movement),
                 dashDir = new[] { d.x, d.y }, originX = origin.x, originY = origin.y,
                 lastHyperY = TechLastHyperYField == null ? (float?)null : (float)TechLastHyperYField.GetValue(movement),
-                fields, movers,
+                fields, movers, econ = EconomyNow(),
             });
+        }
+
+        static readonly AccessTools.FieldRef<AtomColliderSystem, List<List<GameObject>>> AtomContents =
+            AccessTools.FieldRefAccess<AtomColliderSystem, List<List<GameObject>>>("contents");
+        static readonly AccessTools.FieldRef<AtomColliderSystem, int> AtomWaiting = AccessTools.FieldRefAccess<AtomColliderSystem, int>("waitingAtoms");
+        static AtomColliderSystem _econAtoms;
+        /// <summary>Every callAddNewAtom Unity or turbo has run in this session (<see cref="BeforeProbeAtomCall"/>): rows compare its
+        /// steps, not its value.</summary>
+        static int _gridCalls;
+        static TreeController[] _econTrees;
+
+        /// <summary>
+        /// The economy as a probe row and a trace tick carry it (<c>econ</c>), under the names enginesim's <c>--ticks-out</c> rows
+        /// use (FullTas.EconomyRow), for tools/economy-diff.py and <c>replay</c>: each currency held, the atom collider's atoms per
+        /// tier (<c>contents[i].Count</c>) and waiting atoms, globalStats' NP per tick, its cap, the comp boost's NP factor and the
+        /// clone dust multiplier, and the upgrade trees' grown segments. Reads only.
+        /// </summary>
+        internal static Dictionary<string, object> EconomyNow()
+        {
+            if (_econAtoms == null) _econAtoms = FindAnyObjectByType<AtomColliderSystem>(FindObjectsInactive.Include);
+            if (_econTrees == null || Array.Exists(_econTrees, t => t == null))
+                _econTrees = FindObjectsByType<TreeController>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            globalStats stats = Singleton<globalStats>.Instance;
+            Dictionary<globalStats.Currencies, double> c = globalStats.currencyLookup;
+            return new Dictionary<string, object>
+            {
+                ["cash"] = c[globalStats.Currencies.Cash], ["gp"] = c[globalStats.Currencies.GreenPower], ["np"] = c[globalStats.Currencies.AtomicPower],
+                ["cd"] = c[globalStats.Currencies.CloneDust], ["rp"] = c[globalStats.Currencies.RedPower],
+                ["atoms"] = _econAtoms == null ? new int[0] : AtomContents(_econAtoms).Select(tier => tier.Count).ToArray(),
+                ["waiting"] = _econAtoms == null ? 0 : AtomWaiting(_econAtoms),
+                ["npTick"] = stats == null ? 0.0 : stats.NPrewardPerTick, ["npCap"] = stats == null ? 0.0 : stats.NPrewardCap,
+                ["npBoost"] = stats == null ? 1.0 : stats.EffectOfNpCompBoost, ["cdMult"] = stats == null ? 1.0 : stats.CloneDustGpCdMult,
+                ["gridCalls"] = _gridCalls, ["segments"] = _econTrees.Sum(t => t.GrownSegments.Count),
+            };
         }
 
         // A probe's clone log (rows of kind "clone"): every clonesScript.SpawnClone with the clonesScripts whose Update ran
@@ -225,6 +259,17 @@ namespace IGTAPTasMod
                 method = __originalMethod.DeclaringType.Name + "." + __originalMethod.Name, obj = (__instance as Component)?.gameObject.name,
                 random = CourseStart.Words(after),
             });
+        }
+
+        /// <summary>A probe's atom grid log (rows of kind "atom"): each <c>AtomColliderSystem.callAddNewAtom</c> Unity runs (its
+        /// InvokeRepeating, every 0.4 s of game time from OnEnable), with the frame, physics tick and game time it ran at and the
+        /// atoms then waiting, so the grid's phase and the tick an atom lands on line up with turbo's and the engine's.</summary>
+        private static void BeforeProbeAtomCall(AtomColliderSystem __instance)
+        {
+            _gridCalls++;
+            if (Instance == null || !Instance.ProbeLogsClones) return;
+            Instance._probe.rows.Add(new { kind = "atom", frame = Time.frameCount, physics = Instance._engine.PhysicsTicks, input = Instance._engine.RunTicks,
+                time = Time.timeAsDouble, fixedTime = Time.fixedTimeAsDouble, waiting = AtomWaiting(__instance) });
         }
 
         void ProbeAfterTick(Movement movement)

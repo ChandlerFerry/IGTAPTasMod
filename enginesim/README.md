@@ -802,6 +802,17 @@ after. Their offline counterpart is `fulltas <trace> --check <route> --ticks-out
 screen, divisor, fastness and bigness rolled, payout) and per draw (the engine method that drew). Compare Cash as the
 sequence of values each side takes, not tick by tick: 1x's physics count runs ahead through dash freezes.
 
+The economy has one shape in all three legs, `econ` (`TasPlugin.EconomyNow` on every probe row and every trace tick,
+`FullTas.EconomyRow` on every `--ticks-out` line): `cash`, `gp`, `np`, `cd`, `rp` (held), `atoms` (the atom collider's
+atoms per tier), `waiting` (atoms bought, not landed), `npTick`, `npCap`, `npBoost` (`globalStats`' NP per tick, its cap,
+the comp boost's NP factor), `cdMult` (`CloneDustGpCdMult`), `segments` (the upgrade trees' grown segments) and
+`gridCalls` (the atom grid's `callAddNewAtom` calls so far: the session's in the plugin, the run's offline, so only its
+steps compare). A probe also logs a row of kind `atom` for each grid call Unity runs (frame, physics tick, game time,
+atoms waiting). `replay <trace> --ticks-out FILE` writes the offline rows for a category trace as `fulltas --check
+--ticks-out` does for a Full-TAS one, and `replay` compares a trace tick's `econ` with the engine's field by field.
+`python tools/economy-diff.py <a> <b>` compares two of them (a probe log, `--ticks-out` lines or a trace), each field
+as the sequence of values it takes, and names the first value where they part.
+
 Every position write in `Movement.FixedUpdate` (a jump's `+2`/`+5`, a wall jump's `+1`, the dash's `−20`) starts from
 the transform, which holds the last rendered frame's blend of the body's last two positions, so each one pulls the
 body back by that frame's lag. On the wall clock the lag changes from run to run, and so does the route; playback's

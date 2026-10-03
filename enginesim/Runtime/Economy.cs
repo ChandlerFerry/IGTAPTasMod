@@ -324,6 +324,14 @@ namespace IGTAP.EngineSim
 
         internal double GlobalOf(globalStats.globalUpgradeSet upgrade) { return Global(upgrade); }
 
+        /// <summary>The atom collider's atoms per tier (contents[i].Count) and its waiting atoms (--ticks-out).</summary>
+        internal int[] AtomCounts => (int[])_atoms.Clone();
+        internal int WaitingAtoms => _waitingAtoms;
+        /// <summary>The grid's callAddNewAtom calls so far (--ticks-out, a diagnostic: not in snapshots).</summary>
+        internal int GridCalls;
+        /// <summary>globalStats.CloneDustGpCdMult as the run has it (--ticks-out).</summary>
+        internal double CdMult => _cdMult;
+
         /// <summary>Each course's clones now (--ticks-out): course, count, path length, on screen, in flight, spawn timer.</summary>
         internal IEnumerable<object[]> CloneStates()
         {
@@ -832,6 +840,7 @@ namespace IGTAP.EngineSim
         internal void AtomTick(AtomColliderSystem collider)
         {
             if (!ReferenceEquals(collider, _atomCollider)) { Unmodeled("callAddNewAtom on a collider that isn't the world's AtomColliderSystem"); return; }
+            GridCalls++;
             if (_waitingAtoms <= 0) return;
             Add(globalStats.Currencies.AtomicPower, 1.0);
             if (!AtomTier(out int tier) || !AddAtom(tier)) return;
