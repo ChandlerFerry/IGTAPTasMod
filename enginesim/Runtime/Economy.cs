@@ -1126,7 +1126,8 @@ namespace IGTAP.EngineSim
                     return Unmodeled("the atom box's first buy opens its door (doorToOpen.ForceNextPhase) unless PlayerPrefs hold "
                         + "\"OpenA2Door\", and this start doesn't say whether they do (economy.openA2Door)");
                 // A Course 6-15 start has the door at its open stop already (CourseStart.OpenAtomDoor, README ### Rules 21), so on
-                // a machine without the key this buy moves it on to its next stop, shut, as the game does there.
+                // a machine without the key this buy moves it on to its next stop, shut: the game's branch on the stand-in's state,
+                // which a real game never has (a load opens the door only with the key or TimesUsed != 0, upgradeBox.cs:264).
                 _sim.Touch(door);
                 door.ForceNextPhase();
             }

@@ -2171,7 +2171,9 @@ Then the atoms (Course 6's atom box: landings, crafting, first-merge NP x1000, N
 10's NP and atom level boxes in turbo and the engine, and a growth's `Start` draws (README ### Rules, exception 12). The comp
 boost and Area 2 clones aren't checked: [`fidelity-log.md`](fidelity-log.md), *Area 2 economy checked against 1x* and
 *Atom grid a tick late, and the atom start*. An atom box buy writes PlayerPrefs `OpenA2Door` on the machine (the game's own
-write, upgradeBox.cs:648), which the atom box's first buy reads: a trace start records it (`enginesim/README.md`).
+write, upgradeBox.cs:648), which the atom box's first buy reads: a trace start records it (`enginesim/README.md`). On a
+machine without the key, a Course 6-15 start's stand-in open door (README ### Rules 21) is shut by that first buy, a
+state a real game never reaches (its load opens the door only with the key or the box bought, upgradeBox.cs:264).
 
 The trip breaker (`buyprestige5`) is modeled in full: `BoostOldCourses`, then each of Courses 1–5 through
 `localUpgrades.OnPrestige` (local upgrades and clones reset, the best path on Courses 4–5 only; Courses 1–3 get the breaker layer's tier mods,

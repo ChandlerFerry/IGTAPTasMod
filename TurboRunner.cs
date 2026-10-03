@@ -1287,8 +1287,6 @@ namespace IGTAPTasMod
                     // clonesScript.Update and AtomColliderSystem.Update run in every frame too, on that frame's Time.deltaTime (0 in a
                     // freeze's or pause's repeats), then the frame's WaitForEndOfFrame resumes (a tree's IE_Grow), as the engine's
                     // Simulation.InterpolatedFrames.
-                    // Behaviours woken in the physics step start in its first frame, ones an end-of-frame routine wakes in the next.
-                    bool woke = true;
                     for (int k = 0; k < alphas.Length; k++)
                     {
                         int repeats = MacroEngine.FrameRepeats(k, alphas.Length, frozen, _pauseFrames, _pauseAfter);
@@ -1297,8 +1295,8 @@ namespace IGTAPTasMod
                         TasPlugin.CountHeldFrames(repeats);
                         for (int repeat = repeats; repeat >= 0; repeat--)
                         {
-                            if (woke && StartWaiting.Count > 0) StartPass();
-                            woke = false;
+                            // Every frame's Start pass, before its Updates, as the engine's (README ### Rules, exception 12).
+                            if (StartWaiting.Count > 0) StartPass();
                             Vector3 at = Place(player, Vector2.Lerp(_stepFrom, _stepTo, alphas[k]));
                             _update(movement);
                             if (player.position != at)
@@ -1324,7 +1322,6 @@ namespace IGTAPTasMod
                                 _atomDue += atomRepeat;
                                 if (_atomCollider != null) CallInvoked(_atomCollider, AtomCall);
                             }
-                            woke = Routines.Exists(r => r.wait == Wait.EndOfFrame);
                             Resume(Wait.EndOfFrame, frameDt);
                         }
                     }

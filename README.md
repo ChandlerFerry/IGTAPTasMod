@@ -54,6 +54,9 @@
     room's door (`AtomColliderArea/Door`) is open, as a game load opens it with PlayerPrefs `OpenA2Door` (the atom box's
     `doorToOpen.JumpToNextState()`), without buying the atom, its prestige or any PlayerPrefs write (`CourseStart.OpenAtomDoor`,
     in the plugin's category start and the offline engine's course trace load). Course 9's end is reachable only through it.
+    On a machine without the `OpenA2Door` key, the atom box's first buy then shuts the door: the game's first-buy branch
+    (upgradeBox.cs:644-646) applied to a state a real game never has (a load opens the door only with the key or the box
+    bought, upgradeBox.cs:264).
 22. Their lowest category is `WJ_DS_DJ_BS`.
 23. Courses 11–15 are Courses 1–5 with Area 1 overgrown: the game's own Course 1–5 gates and timer on the overgrown
     terrain (spikes, moss, zip movers) and boxes (no movement, prestige, breaker-light or unlock-prestige box in Courses

@@ -1660,7 +1660,8 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   bottom trigger is at world (21292, -266) from a Course 6 start). A trace start says whether the key is there
   (`economy.openA2Door`, read only) and the engine then runs the game's `ForceNextPhase` on the door (a start that doesn't
   say ends the run there). A Course 6-15 start has the door open already (`CourseStart.OpenAtomDoor`), so without the
-  key that buy shuts it, as the game does. Every atom buy writes the key on the machine (`PlayerPrefs.SetInt`,
+  key that buy shuts it: the game's first-buy branch (upgradeBox.cs:644-646) applied to the stand-in's state, which a real
+  game never has (a load opens the door only with the key or the box bought, upgradeBox.cs:264). Every atom buy writes the key on the machine (`PlayerPrefs.SetInt`,
   upgradeBox.cs:648): the game's own write, not the plugin's; after the first, every later start has it.
 - Atoms (`AtomColliderSystem`, `Economy`'s atoms region): the collider's state (atoms per tier, waiting atoms, the tier
   counter, crafting) is the economy's; the counts it keeps on `globalStats` (`effectiveAtomCount`, `grossAtomCount`,

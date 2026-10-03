@@ -1062,7 +1062,9 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
   - The atom box's door branch is modelled. The trace start says whether PlayerPrefs hold `OpenA2Door`
     (`economy.openA2Door`), and the engine runs the door's `ForceNextPhase` instead of ending the run. Only
     `AtomUpgrades/AtomUpgrade` has a door (its bottom trigger at world (21292, -266)), and a Course 6-15 start has
-    already opened it (README ### Rules 21), so on a machine without the key that buy shuts it, as the game does.
+    already opened it (README ### Rules 21), so on a machine without the key that buy shuts it: the game's first-buy
+    branch (upgradeBox.cs:644-646) applied to the stand-in's state, which a real game never has (a load opens the door
+    only with the key or the box bought, upgradeBox.cs:264).
     `t7-atoms-nokey` (turbo, the key not yet on this machine) and the engine agree on every tick. That turbo run wrote
     the key; it has been on this machine since.
 - **Check:**
