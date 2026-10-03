@@ -2145,7 +2145,12 @@ and payouts on and off screen (the clonesLoD trigger; the current build's rule:
 multiplier), colour clones (`checkIfColourClone`: red power to `rpCap`, green power) and clone dust (clone and finish
 payouts, `CloneDustGpCdMult` recomputed after each) and the global boxes `GLOBALcashPerLoop` (its own course's reward; the game updates the others on a random
 5 s phase), the global clone speed and size caps (`maxCloneFastness`, `maxCloneBigness`: dictionary only while both
-clone chances are 0) and the statue (`unlockPrestige`: a global clone multiplier instead of its own entry). A prestige
+clone chances are 0), the statue (`unlockPrestige`: a global clone multiplier instead of its own entry), NP
+(`globalStats.DoConstantCurrency` once a physics step, `Economy.FixedStep`: `NPrewardPerTick` under `NPrewardCap`, past it
+nothing or the softcap's (cap / NP)³, times the comp boost's NP effect with `compBoostDoublesNP`), the NP boxes
+(`increasedNuclearPower`, `tripleThreatIncrease`: `RecalcNpRewardPerTick`), the RP cap boxes (`UpdateRpCap`), the
+atom-prestige exemption and a course's buy-max box (`EnableBuyMax`) and every other global box as a dictionary entry
+(the reward inputs reach a course at its next `UpdateReward`, as in the game). A prestige
 box — the statue and Course 4's `buyprestige4` — also runs `BoostOldCourses`: each old course's reward tier becomes the
 buying course's tier plus its own mod and its reward updates, and its boxes gain half their cap multiplier, become
 buy-max and turn back on. A buy-max box's touch buys what `GetNumPlayerCouldBuy` counts (`IE_BuyMax`): the first during
@@ -2156,7 +2161,8 @@ buy (`FalseEnding2-Any%` buys Course 2's three boosted boxes to their caps with 
 statue, `buy:buydj` 83 s sooner). The block swap (`buyswap`) is modeled as the purchase's bookkeeping
 and its buy goal only — the colliders it swaps aren't — so it works as a run's last goal and any run past it ends
 (`Unmodeled purchase: block swap (collider changes)`). Cases the model can't follow end the run (`Unmodeled economy:
-...`): clone speed/size rolls, the other global boxes and a prestige buy while Vman is active. A Vman
+...`): clone speed/size rolls, the atom boxes and the atom level box (atoms), the gate, Area 2 door, teleporter,
+Vman start, zip mover, refill orb and tree-planting boxes (`Economy.BoughtGlobal`) and a prestige buy while Vman is active. A Vman
 course completion pays its `completionReward` once (`Shop`), and a Vman clock that runs out ends the run.
 
 The trip breaker (`buyprestige5`) is modeled in full: `BoostOldCourses`, then each of Courses 1–5 through

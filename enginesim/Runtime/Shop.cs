@@ -151,6 +151,7 @@ namespace IGTAP.EngineSim
 
         internal void FixedStep()
         {
+            Economy?.FixedStep();
             _continuing = true;
             for (int i = 0; i < _buyMax.Count; i++)
             {
@@ -277,15 +278,9 @@ namespace IGTAP.EngineSim
             string why;
             if (global || kind == localUpgrades.localUpgradeSet.prestige)
             {
-                bool known = kind == localUpgrades.localUpgradeSet.prestige
-                    || box.globalUpgrade == globalStats.globalUpgradeSet.cashPerLoop
-                    || box.globalUpgrade == globalStats.globalUpgradeSet.maxCloneFastness
-                    || box.globalUpgrade == globalStats.globalUpgradeSet.maxCloneBigness
-                    || box.globalUpgrade == globalStats.globalUpgradeSet.unlockPrestige
-                    || box.globalUpgrade == globalStats.globalUpgradeSet.spawnNewAtom;
-                modeled = known && Economy != null && (kind != localUpgrades.localUpgradeSet.prestige || !VmanScript.isCurrentlyVman);
-                why = !known ? " (global upgrade " + box.globalUpgrade + ")"
-                    : Economy == null ? " (a global upgrade needs the native economy: this trace's start state has no clones)"
+                // A global upgrade the engine doesn't model is refused by Economy.BoughtGlobal (Unmodeled).
+                modeled = Economy != null && (kind != localUpgrades.localUpgradeSet.prestige || !VmanScript.isCurrentlyVman);
+                why = Economy == null ? " (a global upgrade needs the native economy: this trace's start state has no clones)"
                     : " (a Vman prestige: the game returns before ScaleBoxCost and spends nothing)";
             }
             else if (kind == localUpgrades.localUpgradeSet.Movement)

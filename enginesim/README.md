@@ -1612,6 +1612,12 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
 - Upgrade boxes: `hooks.txt` replaces `upgradeBox.OnTriggerStay2D` with `Runtime/Shop.cs` (the buy rule, Cash, cost,
   cap, movement unlocks, Full-TAS buy goals; clone income from the native economy, `Runtime/Economy.cs`). Traces of
   Course 1's reward and clone purchases (one waiting on clone income) match turbo's result and Cash on every tick.
+  NP (`globalStats.DoConstantCurrency`) is paid once a physics step in `Shop.FixedStep` (`Economy.FixedStep`, before the
+  buy-max levels; the game's runs in FixedUpdate, before the step's triggers: Task 7 checks the order at 1x) from
+  `globalStats`' `NPrewardPerTick`/`NPrewardCap`, which the NP boxes recompute (`Economy.RecalcNp`); the RP cap boxes
+  rewrite `globalStats.rpCap` (`UpdateRpCap`). `Economy.BoughtGlobal` follows `DoBuyUpgrade`'s switch and refuses
+  (`Unmodeled economy`) what it can't follow: atoms, the gate, Area 2 door, teleporter and Vman start boxes, and the
+  zip mover, refill orb and tree-planting boxes, which native code reads from the static `globalUpgradeDict`.
   In a category run (not Full-TAS) a purchase that changes the category's unlocks (the Wall jump box without WJ, any
   dash or double-jump box) ends the run (`Category unlocks changed`): the game's gate rejects such a route (the root
   `README.md` rules: *Unlocks match the category exactly, on every tick*),

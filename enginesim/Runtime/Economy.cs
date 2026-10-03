@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using UnityEngine;
+using G = globalStats.globalUpgradeSet;
 
 namespace IGTAP.EngineSim
 {
@@ -40,6 +41,7 @@ namespace IGTAP.EngineSim
         static readonly FieldInfo OrangeBlocksField = typeof(colouredBlockSwapper).GetField("orange", Fields);
         static readonly FieldInfo BlueBlocksField = typeof(colouredBlockSwapper).GetField("blue", Fields);
         static readonly FieldInfo BoxDoorToOpenField = typeof(upgradeBox).GetField("doorToOpen", Fields);
+        static readonly FieldInfo CourseToExemptField = typeof(upgradeBox).GetField("courseToExemptReference", Fields);
         static readonly FieldInfo RpAtomBoxField = typeof(OvergrowthLoadScript).GetField("rpAtomBox", Fields);
         static readonly FieldInfo A1CoursesField = typeof(OvergrowthLoadScript).GetField("courses", Fields);
         static readonly FieldInfo BoxesToEnableField = typeof(OvergrowthLoadScript).GetField("boxesToEnable", Fields);
@@ -400,7 +402,7 @@ namespace IGTAP.EngineSim
         static double Boost(courseScript course) { return course.compBoostTimeLeft > 0.0 ? course.compBoostBonus : 1.0; }
 
         /// <summary>A red clone's red power (clonesScript.cs:250-254, 330-334): capped at globalStats.rpCap as the world holds it
-        /// (UpdateRpCap runs at Movement.Start; the RP cap boxes are global upgrades BoughtGlobal refuses).</summary>
+        /// (UpdateRpCap runs at Movement.Start and at an RP cap box's buy: <see cref="UpdateRpCap"/>).</summary>
         bool PayRed(double value)
         {
             globalStats stats = Singleton<globalStats>.Instance;
@@ -633,31 +635,151 @@ namespace IGTAP.EngineSim
             return true;
         }
 
+        /// <summary>
+        /// DoBuyUpgrade's GLOBAL branch (upgradeBox.cs:706-779). A reward input (watts, GP, RP, clone dust, triple threat) is
+        /// read by each course on its next UpdateReward, not at the buy: its 5 s InvokeRepeating (courseScript.cs:268; in a
+        /// Full-TAS run MacroEngine.RefreshRewards), its clones going on or off screen (clonesScript.cs:529, clonesLoD.cs:21),
+        /// its comp boost's end (courseScript.cs:312) and a prestige (courseScript.cs:563), which the engine runs where the game
+        /// does. Only cashPerLoop updates its own course at once (upgradeBox.cs:745-751).
+        /// </summary>
         internal bool BoughtGlobal(upgradeBox box)
         {
-            globalStats.globalUpgradeSet upgrade = box.globalUpgrade;
+            G upgrade = box.globalUpgrade;
             // DoBuyUpgrade's spawnNewAtom (upgradeBox.cs:752-754): BuyNewAtom queues an atom (waitingAtoms++) that
             // AtomColliderSystem.callAddNewAtom, its 0.4 s InvokeRepeating, turns into AtomicPower and an atom (crafting, NP).
             // The engine doesn't step the collider. The touch's course reset ran first (AtomPrestige).
-            if (upgrade == globalStats.globalUpgradeSet.spawnNewAtom)
+            if (upgrade == G.spawnNewAtom)
                 return Unmodeled("an atom (AtomColliderSystem.BuyNewAtom: the collider that lands it, +1 AtomicPower every 0.4 s, isn't stepped)");
-            if (upgrade != globalStats.globalUpgradeSet.cashPerLoop && upgrade != globalStats.globalUpgradeSet.maxCloneFastness
-                && upgrade != globalStats.globalUpgradeSet.maxCloneBigness && upgrade != globalStats.globalUpgradeSet.unlockPrestige)
-                return Unmodeled("global upgrade " + upgrade);
+            switch (upgrade)
+            {
+                case G.startVmanSpeedrun: return Unmodeled("a Vman speedrun's start (VmanScript.SetupVmanSpeedrun, upgradeBox.cs:710)");
+                case G.openGate: return Unmodeled("the gate box (gateAnim's \"open\" trigger and deactivate, upgradeBox.cs:731-732: the gate's collider)");
+                case G.area2DoorOpen: return Unmodeled("the Area 2 door box (doorToOpen.ForceNextPhase, upgradeBox.cs:756: the door's collider)");
+                case G.unlockTeleporters: return Unmodeled("teleporters (TeleporterScript.updateVisuals, upgradeBox.cs:767-769: TeleporterScript reads the static dictionary)");
+                // Native code the engine steps reads these from globalStats' static dictionary, which a buy here doesn't write
+                // and snapshots don't carry.
+                case G.zipMoversUnlocked: return Unmodeled("zip movers (PlatformMover.cs:134 reads the static globalUpgradeDict)");
+                case G.unlockJiggleDrops: return Unmodeled("refill orbs (JiggleDropScript.FixedUpdate, JiggleDropScript.cs:88, reads the static globalUpgradeDict)");
+                case G.treeGrowth: return Unmodeled("the upgrade tree's growth (TreeSegmentActivationComponent.IE_Grow turns its boxes and ground on; Shop.GrowTree only draws its sound)");
+            }
             _global = (double[])_global.Clone();
             double effectMult = (double)BoxEffectMultField.GetValue(box);
-            if (upgrade == globalStats.globalUpgradeSet.unlockPrestige)
+            if (upgrade == G.RPcap || upgrade == G.MoreRpCap)
             {
-                _global[(int)globalStats.globalUpgradeSet.cloneMult] += 1.0 * effectMult;
-                var text = BoxStatuePrestigeTextField.GetValue(box) as GameObject;
-                if ((object)text == null) return Unmodeled("unlock prestige box without its statue text (the game throws)");
-                Activate(text);
-                return BoostOldCourses(box);
+                _global[(int)upgrade] += 1.0 * effectMult;
+                return UpdateRpCap();
             }
-            _global[(int)upgrade] += 1.0 * effectMult;
-            if (upgrade != globalStats.globalUpgradeSet.cashPerLoop) return true;
-            var course = BoxCourseField.GetValue(box) as courseScript;
-            return (object)course == null || UpdateReward(course);
+            if (upgrade == G.blueCloneChance && Global(G.blueCloneChance) == 0.0 || upgrade == G.redCloneChance && Global(G.redCloneChance) == 0.0)
+            {
+                // upgradeBox.cs:717-721: the next box is marked visible (read by upgradeBox.Start at the next load, not now).
+                GameObject reference = BoxObjectReferenceField.GetValue(box) as GameObject;
+                upgradeBox next = (object)reference == null ? null : reference.GetComponent<upgradeBox>();
+                if ((object)next == null) return Unmodeled("a first colour clone chance box without its ObjectReference box (the game throws)");
+                _sim.Touch(next);
+                next.visible = true;
+                _global[(int)upgrade] += 1.0 * effectMult;
+                return true;
+            }
+            switch (upgrade)
+            {
+                case G.atomLevelChance:
+                    _global[(int)upgrade] += 1.0 * effectMult;
+                    return ClearAtoms();
+                case G.increasedNuclearPower:
+                case G.tripleThreatIncrease:
+                    _global[(int)upgrade] += 1.0 * effectMult;
+                    return RecalcNp();
+                case G.unlockPrestige:
+                {
+                    _global[(int)G.cloneMult] += 1.0 * effectMult;
+                    var text = BoxStatuePrestigeTextField.GetValue(box) as GameObject;
+                    if ((object)text == null) return Unmodeled("unlock prestige box without its statue text (the game throws)");
+                    Activate(text);
+                    return BoostOldCourses(box);
+                }
+                case G.cashPerLoop:
+                {
+                    _global[(int)upgrade] += 1.0 * effectMult;
+                    var course = BoxCourseField.GetValue(box) as courseScript;
+                    return (object)course == null || UpdateReward(course);
+                }
+                case G.exemptCourseFromAtomPrestige:
+                {
+                    if (CourseToExemptField.GetValue(box) is not courseScript course) return Unmodeled("an exempt box without its course (the game throws)");
+                    _sim.Touch(course);
+                    course.exemptFromAtomPrestige = true;
+                    return true;
+                }
+                case G.makeCourseBuyMax:
+                {
+                    // courseScript.EnableBuyMax (courseScript.cs:714-725): the course's active local boxes buy max.
+                    if (CourseToExemptField.GetValue(box) is not courseScript course || (object)course.localUpgradesScript == null)
+                        return Unmodeled("a buy max box without its course or its local upgrades (the game throws)");
+                    foreach (upgradeBox b in course.localUpgradesScript.transform.GetComponentsInChildren<upgradeBox>())
+                    {
+                        if (b.upgrade == localUpgrades.localUpgradeSet.GLOBAL || b.upgrade == localUpgrades.localUpgradeSet.Movement
+                            || b.upgrade == localUpgrades.localUpgradeSet.prestige) continue;
+                        _sim.Touch(b);
+                        b.buyMax = true;
+                    }
+                    return true;
+                }
+                default:   // IncreasedCloneDust (its own case, the same) and every other global
+                    _global[(int)upgrade] += 1.0 * effectMult;
+                    return true;
+            }
+        }
+
+        /// <summary>AtomColliderSystem.ClearAtoms (AtomColliderSystem.cs:140-172), the atom level box's: Task 5 models the atoms.</summary>
+        bool ClearAtoms() { return Unmodeled("atoms (AtomColliderSystem.ClearAtoms): Task 5"); }
+
+        /// <summary>globalStats.UpdateRpCap (globalStats.cs:1142-1147) into the world's globalStats, which PayRed caps at.</summary>
+        bool UpdateRpCap()
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            if ((object)stats == null) return Unmodeled("the RP cap without globalStats (the game throws)");
+            Dictionary<G, double> effect = globalStats.globalUpgradeEffectDict, baseEffect = globalStats.globalUpgradeBaseEffectDict;
+            if (!Effect(baseEffect, G.RPcap, out double capBase) || !Effect(effect, G.RPcap, out double cap) || !Effect(effect, G.MoreRpCap, out double more))
+                return false;
+            _sim.Touch(stats);
+            stats.rpCap = capBase + Global(G.RPcap) * cap;
+            stats.rpCap *= Global(G.MoreRpCap) * more + 1.0;
+            stats.rpCap *= _vmanMult;
+            return true;
+        }
+
+        /// <summary>globalStats.RecalcNpRewardPerTick (globalStats.cs:1158-1163) on the world's globalStats: NP a tick from the
+        /// atoms (effectiveAtomCount, AtomCountInTermsOfWhiteAtoms) and its cap.</summary>
+        internal bool RecalcNp()
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            if ((object)stats == null) return Unmodeled("NP without globalStats (the game throws)");
+            Dictionary<G, double> effect = globalStats.globalUpgradeEffectDict;
+            if (!Effect(effect, G.increasedNuclearPower, out double nuclear) || !Effect(effect, G.tripleThreatIncrease, out double triple)) return false;
+            _sim.Touch(stats);
+            stats.NPrewardPerTick = stats.effectiveAtomCount * (1.0 + stats.AtomCountInTermsOfWhiteAtoms / 60.0)
+                * (1.0 + Global(G.increasedNuclearPower) * (nuclear / 100.0) + Global(G.tripleThreatIncrease) * (triple / 100.0));
+            stats.NPrewardCap = stats.NPrewardPerTick * 50.0 * 120.0;
+            stats.NPrewardCap *= _vmanMult;
+            return true;
+        }
+
+        /// <summary>
+        /// globalStats.FixedUpdate's DoConstantCurrency (globalStats.cs:1100-1124), once a physics step: NP a tick below the cap,
+        /// past it nothing or, with NpCapIsSoftcap, the rate times (cap / NP)³; doubled per running comp boost with
+        /// compBoostDoublesNP. lastAppliedNpRewardPerTick is only the readout's. No globalStats, no FixedUpdate: nothing.
+        /// </summary>
+        internal void FixedStep()
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            if ((object)stats == null) return;
+            double np = _sim.Shop.Holds(globalStats.Currencies.AtomicPower), add;
+            if (np < stats.NPrewardCap) add = stats.NPrewardPerTick * 1.0 * (1.0 + Global(G.NpGenerationSpeed)) * _gameSpeed;
+            else if (Global(G.NpCapIsSoftcap) != 0.0)
+                add = stats.NPrewardPerTick * 1.0 * (1.0 + Global(G.NpGenerationSpeed)) * _gameSpeed * Math.Pow(stats.NPrewardCap / np, 3.0);
+            else add = 0.0;
+            if (Global(G.compBoostDoublesNP) != 0.0) add *= stats.EffectOfNpCompBoost;
+            Add(globalStats.Currencies.AtomicPower, add);
         }
 
         /// <summary>
