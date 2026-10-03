@@ -2167,8 +2167,11 @@ grows them, and the zip mover and refill orb boxes write the game's static dicti
 course completion pays its `completionReward` once (`Shop`), and a Vman clock that runs out ends the run. Checked against
 1x and turbo on an Area 2 stretch (2026-10-03, `tools/economy-diff.py`: Course 6's start in a new game with currencies set,
 a tree planted, its moss ground stood on, its first box bought three times): every economy field equal, on the same ticks.
-Atoms, NP income, comp boost and Area 2 clones aren't checked yet, and a tree's growth leaves the RNG off 1x's (its lights'
-`Start` draws): [`fidelity-log.md`](fidelity-log.md), *Area 2 economy checked against 1x*.
+Then the atoms (Course 6's atom box: landings, crafting, first-merge NP x1000, NP income) on every value and tick, Course
+10's NP and atom level boxes in turbo and the engine, and a growth's `Start` draws (README ### Rules, exception 12). The comp
+boost and Area 2 clones aren't checked: [`fidelity-log.md`](fidelity-log.md), *Area 2 economy checked against 1x* and
+*Atom grid a tick late, and the atom start*. An atom box buy writes PlayerPrefs `OpenA2Door` on the machine (the game's own
+write, upgradeBox.cs:648), which the atom box's first buy reads: a trace start records it (`enginesim/README.md`).
 
 The trip breaker (`buyprestige5`) is modeled in full: `BoostOldCourses`, then each of Courses 1–5 through
 `localUpgrades.OnPrestige` (local upgrades and clones reset, the best path on Courses 4–5 only; Courses 1–3 get the breaker layer's tier mods,

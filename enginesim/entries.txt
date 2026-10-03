@@ -49,3 +49,5 @@ upgradeBox::OnTriggerStay2D
 TreeController::growSegments
 TreeController::EndAudioCooldown
 TreeSegmentActivationComponent/<<growTreePart>g__IE_Grow|7_0>d::MoveNext
+# The atom box's first buy on a machine without PlayerPrefs "OpenA2Door" (Economy.AtomPrestige).
+PlatformMover::ForceNextPhase

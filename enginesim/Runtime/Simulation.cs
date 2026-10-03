@@ -217,7 +217,12 @@ namespace IGTAP.EngineSim
                 if (t.m_Parent != null && t != Player.transform && !_poseAsLoaded.ContainsKey(t) && t.m_GameObject.GetComponent<Rigidbody2D>() == null)
                     TrackTransform(t);
             };
-            IGTAP.EngineSim.Engine.Activated = g => { if (!Physics.Suspended) Economy.Activate(g, Goals != null); };
+            IGTAP.EngineSim.Engine.Activated = g =>
+            {
+                if (Physics.Suspended) return;
+                Economy.Activate(g, Goals != null);
+                Shop.Economy?.Woken(g);
+            };
             // PlatformMover's coroutines are gameplay: MakeIntangible's 0.15 s off the Ground layer after a jump off a zip mover,
             // PlayerExit's contact clear two physics steps after the player leaves it, a zip mover's move once unlocked.
             // TreeSegmentActivationComponent.IE_Grow (Shop.GrowTree): the segment's ground off until its trunks have grown, its box
@@ -1005,6 +1010,8 @@ namespace IGTAP.EngineSim
                 Engine.CountHeldFrames(repeats);
                 for (int repeat = repeats; repeat >= 0; repeat--)
                 {
+                    // The frame's Start pass comes before its Updates (README ### Rules, exception 12).
+                    Shop.Economy?.StartPass();
                     Player.transform.StoreWorldPosition(Vector3.Lerp(_stepFrom, _stepTo, alphas[k]));
                     _update();
                     if (Physics.PlayerTransformDirty)
@@ -1017,6 +1024,7 @@ namespace IGTAP.EngineSim
                     }
                     float dt = repeat == repeats ? Frames.Step(ticks, k) : 0f;
                     Shop.StepClones(dt);
+                    if (k == 0 && repeat == repeats) Shop.Economy?.GridFrame();
                     OnFrame?.Invoke(alphas[k], repeat > 0);
                     Scheduler.FrameDeltaTime = dt;
                     Scheduler.Resume(Scheduler.Wait.EndOfFrame);

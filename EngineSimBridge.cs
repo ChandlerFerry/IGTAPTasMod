@@ -895,6 +895,8 @@ namespace IGTAPTasMod
                 if (s.economy.atomEnabledAt is float enabledAt) { w.WritePropertyName("atomEnabledAt"); json.Float(enabledAt); }
                 if (s.economy.atomLastCall is float lastCall) { w.WritePropertyName("atomLastCall"); json.Float(lastCall); }
                 if (s.economy.atomTimeNow is float timeNow) { w.WritePropertyName("atomTimeNow"); json.Float(timeNow); }
+                w.WritePropertyName("openA2Door"); w.WriteValue(s.economy.openA2Door);
+                WriteAtomStart(json, s.economy);
                 globalStats stats = Singleton<globalStats>.Instance;
                 if (stats != null)
                 {
@@ -966,6 +968,42 @@ namespace IGTAPTasMod
                 w.WriteEndArray();
             }
             w.WriteEndArray();
+        }
+
+        /// <summary>
+        /// The atom collider and globalStats' atom and NP fields as the snapshot holds them (TurboRunner.Economy.atoms,
+        /// atomStats), for the engine to start from. The world export is written after the start's capture run, so its
+        /// collider and globalStats are some ticks on (atoms landed, crafted, NP paid since).
+        /// </summary>
+        static void WriteAtomStart(EngineSimJson json, TurboRunner.Economy e)
+        {
+            JsonTextWriter w = json.W;
+            if (e.atoms.collider != null && e.atoms.fields != null)
+            {
+                FieldInfo[] fields = TurboRunner.EconomyFields(typeof(AtomColliderSystem));
+                object Field(string name) => e.atoms.fields[Array.FindIndex(fields, f => f.Name == name)];
+                w.WritePropertyName("atomCollider"); w.WriteStartObject();
+                w.WritePropertyName("atoms"); w.WriteStartArray();
+                foreach (List<GameObject> tier in (List<List<GameObject>>)Field("contents")) w.WriteValue(tier.Count);
+                w.WriteEndArray();
+                w.WritePropertyName("crafting"); w.WriteStartArray();
+                foreach (bool b in (List<bool>)Field("craftingInProgress")) w.WriteValue(b);
+                w.WriteEndArray();
+                w.WritePropertyName("progress"); w.WriteStartArray();
+                foreach (float f in (List<float>)Field("craftingProgress")) json.Float(f);
+                w.WriteEndArray();
+                w.WritePropertyName("waiting"); w.WriteValue((int)Field("waitingAtoms"));
+                w.WritePropertyName("handledTier"); w.WriteValue((int)Field("currentlyHandledTier"));
+                w.WritePropertyName("isCrafting"); w.WriteValue((bool)Field("isCrafting"));
+                w.WritePropertyName("tierUpCounter"); w.WriteValue((double)Field("atomTierUpCounter"));
+                w.WriteEndObject();
+            }
+            if (e.atomStats != null)
+            {
+                w.WritePropertyName("atomStats"); w.WriteStartArray();
+                foreach (double v in e.atomStats) w.WriteValue(v);
+                w.WriteEndArray();
+            }
         }
 
         static void WriteFieldValues(EngineSimJson json, Type type, object[] values)

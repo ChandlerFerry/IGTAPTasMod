@@ -136,6 +136,58 @@ namespace IGTAPTasMod
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeHandleAfterimages))));
             harmony.Patch(AccessTools.Method(typeof(Movement), "HandleAfterimages"),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeHandleAfterimages))));
+            foreach (Type drawer in StartDrawers)
+                harmony.Patch(AccessTools.Method(drawer, "Start"), prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeDrawingStart))),
+                    postfix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(AfterDrawingStart))));
+        }
+
+        // README ### Rules, exception 12: the Start draws of what a run wakes. Unity runs a woken behaviour's Start before its
+        // first Update, in the rendered frame after the wake (the same frame when woken in the physics step, the next when
+        // woken at a frame's end), but a run is one Unity frame: its Start would draw after the run, at another point of the
+        // RNG's sequence than 1x's. Turbo draws them at the modelled frame (StartPass) and puts UnityEngine.Random's state
+        // back around Unity's later real Start (as TasPlugin.PresentationDraw does for exception 11).
+        static readonly Type[] StartDrawers = { typeof(LightFlicker), typeof(RandomAnimSpeedComponent), typeof(JiggleDropScript) };
+        static readonly AccessTools.FieldRef<RandomAnimSpeedComponent, bool> AnimIsBroken = AccessTools.FieldRefAccess<RandomAnimSpeedComponent, bool>("isBroken");
+        /// <summary>Behaviours whose Start a run drew and Unity hasn't run yet (in snapshots: a restore before the wake undoes it).</summary>
+        static HashSet<Behaviour> _startsModelled = new HashSet<Behaviour>();
+        /// <summary>Behaviours whose real Start Unity ran (it never runs again, whatever a restore puts back).</summary>
+        static readonly HashSet<Behaviour> StartsRun = new HashSet<Behaviour>();
+        /// <summary>This run's candidates: drawing behaviours off at its start whose Start hasn't run or been drawn.</summary>
+        static readonly List<Behaviour> StartWaiting = new List<Behaviour>();
+
+        static void BeforeDrawingStart(Behaviour __instance, out UnityEngine.Random.State? __state)
+        {
+            StartsRun.Add(__instance);
+            __state = _startsModelled.Remove(__instance) ? UnityEngine.Random.state : (UnityEngine.Random.State?)null;
+        }
+
+        static void AfterDrawingStart(UnityEngine.Random.State? __state)
+        {
+            if (__state is UnityEngine.Random.State drawn) UnityEngine.Random.state = drawn;
+        }
+
+        static void CollectStartWaiting()
+        {
+            StartWaiting.Clear();
+            foreach (Type drawer in StartDrawers)
+                foreach (UnityEngine.Object o in UnityEngine.Object.FindObjectsByType(drawer, FindObjectsInactive.Include, FindObjectsSortMode.None))
+                    if (o is Behaviour b && !b.isActiveAndEnabled && !StartsRun.Contains(b) && !_startsModelled.Contains(b)) StartWaiting.Add(b);
+        }
+
+        /// <summary>A modelled frame's Start pass, before its Updates: each waiting behaviour now on draws what its Start draws
+        /// (LightFlicker.cs:26: 1; RandomAnimSpeedComponent.cs:16-21: 2, 3 when broken; JiggleDropScript.cs:41: 1).</summary>
+        static void StartPass()
+        {
+            for (int i = StartWaiting.Count - 1; i >= 0; i--)
+            {
+                Behaviour b = StartWaiting[i];
+                if (b == null) { StartWaiting.RemoveAt(i); continue; }
+                if (!b.isActiveAndEnabled) continue;
+                int draws = b is RandomAnimSpeedComponent anim ? (AnimIsBroken(anim) ? 3 : 2) : 1;
+                for (int d = 0; d < draws; d++) _ = UnityEngine.Random.value;
+                _startsModelled.Add(b);
+                StartWaiting.RemoveAt(i);
+            }
         }
 
         /// <summary>
@@ -201,8 +253,8 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// The grid in a run, as the engine's Scheduler has it: the run tick its next callAddNewAtom is due at (-1: none),
-        /// fired at that tick's start with the other Invokes, then every 0.4 s (20 ticks). Unity's own InvokeRepeating runs on
+        /// The grid in a run, as the engine's Economy has it: the run tick in whose first rendered frame (after its Updates)
+        /// callAddNewAtom comes next (-1: none), then every 0.4 s (20 ticks); one tick before what AtomGridTicks counts. Unity's own InvokeRepeating runs on
         /// Time.time, which stands still through a run (one Unity frame), so turbo takes the grid over: at the run's start
         /// from a restore or the last run (<see cref="_atomHeldDue"/>) or else from Unity's (<see cref="AtomGridDueIn"/>),
         /// and hands it back to Unity at the end (<see cref="HandAtomGrid"/>).
@@ -224,7 +276,7 @@ namespace IGTAPTasMod
         static int? AtomGridTicks(AtomColliderSystem collider, int next, out float? dueIn)
         {
             dueIn = null;
-            if (Active) return _atomDue >= 0 ? _atomDue - next : _atomUnseen ? (int?)null : -1;
+            if (Active) return _atomDue >= 0 ? _atomDue + 1 - next : _atomUnseen ? (int?)null : -1;
             if (Time.time == _atomHeldAt) return _atomHeldDue;
             if (collider == null || !collider.IsInvoking(AtomCall)) return -1;
             dueIn = AtomGridDueIn(collider);
@@ -243,7 +295,7 @@ namespace IGTAPTasMod
             if (collider == null || due == null) return;
             collider.CancelInvoke(AtomCall);
             if (due < 0) return;
-            float delay = due.Value * Time.fixedDeltaTime;
+            float delay = Mathf.Max(0f, (due.Value - 1) * Time.fixedDeltaTime + 0.5f / MacroEngine.PlaybackFrameRate);
             collider.InvokeRepeating(AtomCall, delay, AtomRepeat);
             _atomEnabledAt = Time.time + delay;
             _atomLastCall = float.NegativeInfinity;
@@ -254,7 +306,7 @@ namespace IGTAPTasMod
         {
             if (!Active || !(__instance is AtomColliderSystem collider) || methodName != AtomCall) return true;
             _atomCollider = collider;
-            _atomDue = _tick + Mathf.FloorToInt(time / Time.fixedDeltaTime) + 1;
+            _atomDue = _tick + Mathf.FloorToInt(time / Time.fixedDeltaTime);
             _atomUnseen = false;
             return false;
         }
@@ -479,6 +531,8 @@ namespace IGTAPTasMod
             public float rotation, angularVelocity;
             public (Vector2 offset, Vector2 size, int exclude, bool enabled)[] colliders;
             public (int due, MonoBehaviour target, string method)[] pending;
+            /// <summary>Behaviours whose Start a run drew that Unity hasn't run (<see cref="StartPass"/>).</summary>
+            public Behaviour[] startsModelled;
             public Economy economy;
             public Vman vman;
             /// <summary>
@@ -545,6 +599,9 @@ namespace IGTAPTasMod
             /// (floor(dueIn / fixedDeltaTime) is that tick; whole ticks don't all survive the float round trip).
             /// </summary>
             public float? atomGridDueIn, atomEnabledAt, atomLastCall, atomTimeNow;
+            /// <summary>For the trace start: whether the machine's PlayerPrefs hold "OpenA2Door" (read only), which the atom box's
+            /// first buy reads (upgradeBox.cs:644) and every atom buy writes (:648). A restore can't take it back.</summary>
+            public bool openA2Door;
         }
 
         internal sealed class Scene
@@ -763,6 +820,7 @@ namespace IGTAPTasMod
                 atomEnabledAt = raw && !float.IsNegativeInfinity(_atomEnabledAt) ? _atomEnabledAt : (float?)null,
                 atomLastCall = raw && !float.IsNegativeInfinity(_atomLastCall) ? _atomLastCall : (float?)null,
                 atomTimeNow = raw ? Time.time : (float?)null,
+                openA2Door = PlayerPrefs.HasKey("OpenA2Door"),
                 visitedTeleporters = Singleton<globalStats>.Instance.visitedTeleporters == null ? null : new List<int>(Singleton<globalStats>.Instance.visitedTeleporters),
                 locals = Array.ConvertAll(locals, l => (l, l.localUpgradeDict == null ? null : new Dictionary<localUpgrades.localUpgradeSet, double>(l.localUpgradeDict))),
                 clones = Array.ConvertAll(clones, c =>
@@ -863,7 +921,7 @@ namespace IGTAPTasMod
                 rotation = body.rotation, angularVelocity = body.angularVelocity,
                 colliders = Array.ConvertAll(movement.GetComponents<BoxCollider2D>(),
                     c => (c.offset, c.size, (int)c.excludeLayers, c.enabled)),
-                pending = pending, economy = economy ? CaptureEconomy(next) : null, vman = Vman.Capture(),
+                pending = pending, startsModelled = _startsModelled.ToArray(), economy = economy ? CaptureEconomy(next) : null, vman = Vman.Capture(),
                 camera = movement.cam != null ? FieldState.Capture(movement.cam) : null,
                 origin = origin != null ? origin.currentOrigin : Vector3.zero, rebasing = _rebase != null,
                 stepFrom = Active ? _stepFrom : body.position, stepTo = Active ? _stepTo : body.position,
@@ -918,6 +976,7 @@ namespace IGTAPTasMod
         public static void Restore(Snapshot s, Movement movement)
         {
             movement.CancelInvoke();
+            _startsModelled = s.startsModelled == null ? new HashSet<Behaviour>() : new HashSet<Behaviour>(s.startsModelled);
             if (s.canonical is Vector3 reference) PutCanonicalOrigin(reference); else PutOrigin(s.origin);
             RestoreMovers(s);
             Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
@@ -1153,9 +1212,10 @@ namespace IGTAPTasMod
             globalStats stats = Singleton<globalStats>.Instance;
             _atomCollider = FindAtomCollider();
             int? atomStart = AtomGridTicks(_atomCollider, 0, out _);
-            _atomDue = atomStart ?? -1;
+            _atomDue = atomStart is int startDue && startDue >= 0 ? Math.Max(0, startDue - 1) : -1;
             _atomUnseen = atomStart == null;
             int atomRepeat = Math.Max(1, Mathf.FloorToInt(AtomRepeat / dt));
+            CollectStartWaiting();
             Active = true;
             if (resume != null && resume.rebasing) OriginFrame();
             if (numbers != null) numbers.ActuallySpawnText = false;
@@ -1173,11 +1233,6 @@ namespace IGTAPTasMod
                         var (_, target, method) = Pending[i];
                         Pending.RemoveAt(i--);
                         if (target != null) CallInvoked(target, method);
-                    }
-                    if (_atomDue >= 0 && _atomDue <= _tick)
-                    {
-                        _atomDue = _tick + atomRepeat;
-                        if (_atomCollider != null) CallInvoked(_atomCollider, AtomCall);
                     }
                     Resume(Wait.Seconds);
                     if (stats != null && stats.isActiveAndEnabled) _statsFixedUpdate(stats);
@@ -1232,6 +1287,8 @@ namespace IGTAPTasMod
                     // clonesScript.Update and AtomColliderSystem.Update run in every frame too, on that frame's Time.deltaTime (0 in a
                     // freeze's or pause's repeats), then the frame's WaitForEndOfFrame resumes (a tree's IE_Grow), as the engine's
                     // Simulation.InterpolatedFrames.
+                    // Behaviours woken in the physics step start in its first frame, ones an end-of-frame routine wakes in the next.
+                    bool woke = true;
                     for (int k = 0; k < alphas.Length; k++)
                     {
                         int repeats = MacroEngine.FrameRepeats(k, alphas.Length, frozen, _pauseFrames, _pauseAfter);
@@ -1240,6 +1297,8 @@ namespace IGTAPTasMod
                         TasPlugin.CountHeldFrames(repeats);
                         for (int repeat = repeats; repeat >= 0; repeat--)
                         {
+                            if (woke && StartWaiting.Count > 0) StartPass();
+                            woke = false;
                             Vector3 at = Place(player, Vector2.Lerp(_stepFrom, _stepTo, alphas[k]));
                             _update(movement);
                             if (player.position != at)
@@ -1258,6 +1317,14 @@ namespace IGTAPTasMod
                                 try { _atomUpdate(_atomCollider); }
                                 finally { _modelDeltaTime = null; }
                             }
+                            // The grid's call in the first rendered frame after the step of the tick before its due one, after
+                            // the frame's Updates, as Unity runs it (the engine's Economy.GridFrame).
+                            if (k == 0 && repeat == repeats && _atomDue >= 0 && _atomDue <= _tick)
+                            {
+                                _atomDue += atomRepeat;
+                                if (_atomCollider != null) CallInvoked(_atomCollider, AtomCall);
+                            }
+                            woke = Routines.Exists(r => r.wait == Wait.EndOfFrame);
                             Resume(Wait.EndOfFrame, frameDt);
                         }
                     }
@@ -1287,7 +1354,7 @@ namespace IGTAPTasMod
                     r.target.StartCoroutine(Continue(r.body, wait));
                 }
                 Routines.Clear();
-                HandAtomGrid(_atomDue >= 0 ? _atomDue - _tick : _atomUnseen ? (int?)null : -1);
+                HandAtomGrid(_atomDue >= 0 ? _atomDue + 1 - _tick : _atomUnseen ? (int?)null : -1);
                 if (_rebase != null)
                 {
                     FloatingOrigin origin = TasPlugin.CurrentFloatingOrigin();

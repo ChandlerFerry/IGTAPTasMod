@@ -807,7 +807,9 @@ The economy has one shape in all three legs, `econ` (`TasPlugin.EconomyNow` on e
 atoms per tier), `waiting` (atoms bought, not landed), `npTick`, `npCap`, `npBoost` (`globalStats`' NP per tick, its cap,
 the comp boost's NP factor), `cdMult` (`CloneDustGpCdMult`), `segments` (the upgrade trees' grown segments) and
 `gridCalls` (the atom grid's `callAddNewAtom` calls so far: the session's in the plugin, the run's offline, so only its
-steps compare). A probe also logs a row of kind `atom` for each grid call Unity runs (frame, physics tick, game time,
+steps compare). A probe's tick row also has `econPre`, the economy at that tick's `globalStats.FixedUpdate` before its
+NP payout: what the last tick's frames left, the point the trace's and `--ticks-out` rows are taken at, which
+`economy-diff.py` uses. A probe also logs a row of kind `atom` for each grid call Unity runs (frame, physics tick, game time,
 atoms waiting). `replay <trace> --ticks-out FILE` writes the offline rows for a category trace as `fulltas --check
 --ticks-out` does for a Full-TAS one, and `replay` compares a trace tick's `econ` with the engine's field by field.
 `python tools/economy-diff.py <a> <b>` compares two of them (a probe log, `--ticks-out` lines or a trace), each field
@@ -1653,7 +1655,13 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   free. `setA1CoursePowMults` only runs on a zone load, which never happens in a run. An atom box touch
   (upgradeBox.cs:641-654, `Economy.AtomPrestige`) resets every `coursesToReset` course not `exemptFromAtomPrestige` at its
   own tiers and zeroes Cash, except a Green Power box once `GPAtomsDontResetCourses` is bought; the Green Power box's
-  first buy ends the run (its door opens unless the machine's PlayerPrefs hold `OpenA2Door`).
+  first buy opens its door unless the machine's PlayerPrefs hold `OpenA2Door`. Only `AtomUpgrades/AtomUpgrade` has a door
+  (`zone 2/area2/AtomColliderArea/Door/ZipMoverMovingPart`, a plain mover between its shut stop and 380 up; the box's
+  bottom trigger is at world (21292, -266) from a Course 6 start). A trace start says whether the key is there
+  (`economy.openA2Door`, read only) and the engine then runs the game's `ForceNextPhase` on the door (a start that doesn't
+  say ends the run there). A Course 6-15 start has the door open already (`CourseStart.OpenAtomDoor`), so without the
+  key that buy shuts it, as the game does. Every atom buy writes the key on the machine (`PlayerPrefs.SetInt`,
+  upgradeBox.cs:648): the game's own write, not the plugin's; after the first, every later start has it.
 - Atoms (`AtomColliderSystem`, `Economy`'s atoms region): the collider's state (atoms per tier, waiting atoms, the tier
   counter, crafting) is the economy's; the counts it keeps on `globalStats` (`effectiveAtomCount`, `grossAtomCount`,
   `AtomCountInTermsOfWhiteAtoms`) stay there, touched. A buy queues an atom (`BuyNewAtom`); `callAddNewAtom` (`hooks.txt`
@@ -1669,13 +1677,21 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   any (`TurboRunner.AtomGridDueIn`). The engine queues the invoke there (`floor(dueIn / fixedDeltaTime)` ticks, as the
   start's other pending Invokes, then every 20 ticks). The engine loads no zone within a run, so a run that drops into
   zone 2 never starts the grid; a waiting atom without it (that, or a start captured before the field) ends the run
-  (`Unmodeled economy: a waiting atom ...`, `Economy.AtomsLand`). At 1x (a probe from Course 6's start, 69 calls) Unity
-  calls it in the first rendered frame after a physics tick (that tick's `fixedTime` + 0.0025 s), every 20 ticks on the
-  280 fps clock, so an atom it lands is first paid for by the next tick's NP. The engine and turbo fire it at a tick's
-  start, before NP, on the same ticks as each other from a trace start (`gridCalls`). Not checked at 1x (an atom box buy
-  writes PlayerPrefs `OpenA2Door`, upgradeBox.cs:648): whether that start is the tick after 1x's call, an atom landing,
-  crafting (1x's call lands within a rendered frame; the engine's atom first crafts in the frames of the tick it fires on) and NP
-  income, and whether the grid keeps firing after zone 1 loads again. Turbo models the same (`TurboRunner`): it runs
+  (`Unmodeled economy: a waiting atom ...`, `Economy.AtomsLand`). At 1x (a probe from Course 6's start) Unity calls it in
+  the first rendered frame after a physics tick (that tick's `fixedTime` + 0.0025 s), after the frame's Updates, every 20
+  ticks on the 280 fps clock: an atom it lands is first paid for by the next tick's NP and crafts from the frame after.
+  The engine and turbo fire it there (`Economy.GridFrame`): in the first rendered frame of the tick before the one
+  `floor(dueIn / fixedDeltaTime)` counts, after the frame's clone and atom steps. (They used to fire it at that tick's
+  start, a tick late, so every crafting merge came a tick late and its NP x1000 and the next tick's NP at the new rate
+  were off.) A grid whose phase falls later in a tick's frames isn't modeled; a category start's is at the tick (the probe).
+  The trace start carries the collider (`economy.atomCollider`: atoms per tier, crafting, waiting atoms, the tier counter)
+  and `globalStats`' atom and NP fields (`economy.atomStats`) as the start had them; the world export, written after the
+  start's capture run, is some ticks on. The atom count terms (`Mathf.Pow(...) * 0.001f`) are double products, as the
+  game's Mono JIT computes them on their way into the double fields. Checked: Course 6's atom box bought 88 times, 40 atom
+  landings, crafting up to tier 2, first-merge NP x1000 and NP income equal in 1x, turbo and the engine on every value and tick;
+  Course 10's NP box and atom level box (`ClearAtoms`, with 8 atoms and 28 waiting) equal in turbo and the engine on every
+  tick ([`docs/fidelity-log.md`](../docs/fidelity-log.md), *Atom grid a tick late, and the atom start*). Not checked: whether
+  the grid keeps firing after zone 1 loads again. Turbo models the same (`TurboRunner`): it runs
   `AtomColliderSystem.Update` in each modelled frame on that frame's `Time.deltaTime` (the sprites' `HandleMovement`
   skipped), and takes the grid over for a run, since Unity's `InvokeRepeating` runs on `Time.time`, which a run holds
   still: from the grid a restore or the last run left, else from Unity's as above, fired at a tick's start every 20
@@ -1715,9 +1731,11 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   against 1x (Course 6's start, The Tree's PlantTreeBox and its first segment's GreenCloneChanceBox, which grows two
   more): the segments grow, the box can be hit and NP is spent on the same physics ticks in 1x, turbo and the engine,
   and the player stands on the grown Moss ground at the same height (`docs/fidelity-log.md`, *Area 2 economy checked
-  against 1x*). Not reproduced: the `Start` of what a segment wakes (`RandomAnimSpeedComponent`, 2 draws a trunk light,
-  3 when broken, in the buy's frame; the box's `LightFlicker`, 1, the frame after `IE_Grow` turns it on). The engine
-  makes none and turbo makes them after its run, so after a growth the RNG differs from 1x in both.
+  against 1x*). The `Start` draws of what a segment wakes (`RandomAnimSpeedComponent`, 2 a trunk light, 3 when broken, in
+  the buy's frame; the box's `LightFlicker`, 1, the frame after `IE_Grow` turns it on; a refill orb's `JiggleDropScript`, 1)
+  are made at that frame's Start pass (README ### Rules, exception 12): the engine's `Economy.StartPass`, turbo's
+  `TurboRunner.StartPass`, which puts the RNG back around Unity's later real `Start`. The draws per growth event (14, 4, 17
+  and 8 on The Tree's first three segments) match 1x's.
 - Buy-max boxes (`IE_BuyMax`, the statue's boosted Courses 1 and 2): on build 25630570 the coroutine buys a level, then
   waits for the next physics step (`WaitForFixedUpdate`): one level a tick at any frame rate
   ([`docs/fulltas.md`](../docs/fulltas.md#clones-and-buy-max-build-25630570)). Offline `Shop.FixedStep` (`Shop.cs:148`,

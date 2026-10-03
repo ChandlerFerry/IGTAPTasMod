@@ -998,7 +998,8 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
     `callAddNewAtom` in the first rendered frame after a physics tick, every 20 ticks.
 - **Differences found:**
   - The clone dust multiplier at a start: fixed (above, *Clone dust multiplier at a start*).
-  - **The `Start` draws of what a segment wakes.** At 1x a segment woken by a buy runs `RandomAnimSpeedComponent.Start`
+  - **The `Start` draws of what a segment wakes** (since fixed: *Start draws of what a run wakes*, below). At 1x a
+    segment woken by a buy runs `RandomAnimSpeedComponent.Start`
     on each trunk light in the buy's own frame (2 draws each, 3 when broken: TreePart0 has 3 lights, TreeParts 1 and 2
     have 3 between them). The box's `LightFlicker.Start` (1 draw) runs the frame after `IE_Grow` turns the box on. Turbo makes these draws after
     its run, in Unity's next Start pass. The engine makes none. So after a growth the RNG is off 1x's in both, and every
@@ -1011,9 +1012,68 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
 - **Not checked yet:**
   - Atoms landing and crafting, NP income, the atom level box and the comp boost: every atom box buy writes PlayerPrefs
     `OpenA2Door` on the machine (upgradeBox.cs:648). The engine also ends the run at a first buy, because it can't read
-    that key. This needs a ruling.
+    that key. (Since ruled and checked, except the comp boost: *Atom grid a tick late, and the atom start*, below.)
   - Clones, green power and clone dust on an Area 2 course: a new game's Area 2 courses have no clone path, and a
     category run ends at its course's finish.
   - Whether the grid keeps firing after zone 1 loads again.
 - **Where:** `tools/economy-diff.py`, `TasPlugin.EconomyNow` (probe rows, trace ticks, `atom` rows), `FullTas.EconomyRow`,
   `replay --ticks-out`.
+
+## Start draws of what a run wakes
+
+- **Symptom:** (2026-10-03, Task 7's tree probe) after a tree box's buy, turbo and the engine had drawn the RNG fewer
+  times than 1x: at 1x, The Tree's first segment took 14 draws over its buy's tick, its box 4 the tick it came on, the next
+  two segments 17 and their boxes 8. Turbo and the engine took 6, 1, 6 and 2 fewer (footsteps aside, which a category run
+  draws at 1x only).
+- **Cause:** Unity runs a woken behaviour's `Start` before its first `Update`: `RandomAnimSpeedComponent.Start` on a
+  segment's lights in the buy's own frame, `LightFlicker.Start` on its box the frame after `IE_Grow` turns it on. A turbo
+  run is one Unity frame, so Unity ran those `Start`s after the run. The engine ran none.
+- **Fix:** README ### Rules, exception 12. At each modelled frame's start, turbo (`TurboRunner.StartPass`) and the engine
+  (`Economy.StartPass`, woken through `Simulation`'s Activated hook) make the draws of each `LightFlicker`,
+  `RandomAnimSpeedComponent` and `JiggleDropScript` the run woke whose `Start` hasn't run (off at the export, or at the
+  run's start). Turbo then puts `UnityEngine.Random`'s state back around Unity's real `Start` (a Harmony prefix and
+  postfix). Snapshots hold the woken set (engine `Economy.State`, `SnapshotStore` format 6; turbo `Snapshot.startsModelled`).
+  The draws per event now match 1x (14, 4, 17, 8), turbo and the engine draw identically on every tick, and
+  FalseEnding%-280 and TouchGrass-ANY% replay unchanged (no run of theirs wakes one).
+- **Residual risk:** turbo takes "not started" from Unity's real `Start` calls it has seen and the run's start. An object
+  started once, switched off before the export and woken again counts as never started in the engine (no draw at 1x).
+- **Where:** `TurboRunner` (`StartPass`, `BeforeDrawingStart`, `AfterDrawingStart`), `Economy` (`Woken`, `StartPass`),
+  `Simulation` (Activated hook, `InterpolatedFrames`), README ### Rules exception 12.
+
+## Atom grid a tick late, and the atom start
+
+- **Symptom:** (2026-10-03, Task 7's atom probe: Course 6's start in a new game, 1e9 GP and no NP, the atom box bought 88
+  times from below) the atoms landed and crafted one tick later in turbo and the engine than at 1x. So the first merge's
+  NP x1000 came a tick late and NP stayed 0.114 lower from then on. Also, after the first merge `effectiveAtomCount`
+  was 1.7e-9 off turbo's in the engine. And from a start taken with atoms waiting (Course 10 after the atom stretch), the
+  engine started with one more atom landed and one fewer waiting than the start had.
+- **Cause:**
+  - 1x calls `callAddNewAtom` in the first rendered frame after a physics tick, after that frame's Updates (the probe's
+    atom rows: the tick's `fixedTime` + 0.0025 s). Turbo and the engine fired it at the next tick's start.
+  - The game's Mono JIT keeps `Mathf.Pow(...) * 0.001f` in double precision on its way into the double field; the
+    engine multiplied in float.
+  - The engine read the collider's state and `globalStats`' atom and NP fields from the world export. That export is
+    written after the start's capture run, some ticks later.
+- **Fix:**
+  - The grid fires in the first rendered frame of the tick before the one it used to, after the frame's clone and atom
+    steps: `Economy.GridFrame` and turbo's frame loop.
+  - The atom terms are double products.
+  - The trace start carries the collider (`economy.atomCollider`) and the `globalStats` fields (`economy.atomStats`).
+  - The atom box's door branch is modelled. The trace start says whether PlayerPrefs hold `OpenA2Door`
+    (`economy.openA2Door`), and the engine runs the door's `ForceNextPhase` instead of ending the run. Only
+    `AtomUpgrades/AtomUpgrade` has a door (its bottom trigger at world (21292, -266)), and a Course 6-15 start has
+    already opened it (README ### Rules 21), so on a machine without the key that buy shuts it, as the game does.
+    `t7-atoms-nokey` (turbo, the key not yet on this machine) and the engine agree on every tick. That turbo run wrote
+    the key; it has been on this machine since.
+- **Check:**
+  - The atom stretch: 1x, turbo and the engine equal on every economy value and on the same ticks. That covers 40
+    landings, crafting up to tier 2, the first merge's NP x1000 and NP income.
+  - Course 10 from the atom stretch's end (the NP box, then the atom level box's `ClearAtoms` with 8 atoms and 28
+    waiting): turbo and the engine equal on every tick. It has no 1x leg, because 1x keeps landing atoms and paying NP
+    between two runs, so no 1x run starts where the trace does.
+  - `determinism` on both stretches is DETERMINISTIC. FalseEnding%-280 and TouchGrass-ANY% replay unchanged. The
+    FalseEnding%-280 turbo judge and every non-farm category route judge as before.
+- **Residual risk:** a grid whose phase falls in a later frame of a tick (a zone 2 load inside a frame grid) isn't
+  modelled. Whether the grid keeps firing after zone 1 loads again is unchecked.
+- **Where:** `Economy` (`GridFrame`, `AtomPrestige`, constructor), `Simulation.InterpolatedFrames`, `TurboRunner` (`Run`,
+  `AtomGridTicks`, `HandAtomGrid`, `Economy.openA2Door`), `EngineSimBridge.WriteAtomStart`, `entries.txt`.

@@ -178,6 +178,15 @@
     timer turns on at 1x only) play and put `UnityEngine.Random`'s state back after them
     (`TasPlugin.PresentationDraw`; the offline engine makes no bobber draw in a Full-TAS
     run, `Economy.Activate`), so the fixed seed's draws are the same at 1x as judged.
+12. Relaxes rule 39. The `Start` draws of what a run wakes: a `LightFlicker` (a box's pulse light, 1 draw), a
+    `RandomAnimSpeedComponent` (a tree segment's lights, 2, 3 when broken) and a `JiggleDropScript` (a refill orb, 1)
+    that a run switches on before Unity ever started it. Unity runs `Start` before the behaviour's first `Update`: in the
+    same rendered frame when it was woken in the physics step (a tree box's buy), in the next when woken at a frame's end
+    (`IE_Grow` turning a segment's box on). Turbo draws them at that modelled frame and puts `UnityEngine.Random`'s state
+    back around Unity's later real `Start` (`TurboRunner.StartPass`, as `TasPlugin.PresentationDraw` does for exception 11);
+    the offline engine makes the same draws at the same frame (`Economy.StartPass`). 1x is untouched. A course's `Start`
+    draws too (`InvokeRepeating("UpdateReward", Random.Range(0, 5), 5)`), but no run wakes a course (zone loads happen
+    outside runs).
 
 Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run with goals:
 [`docs/fulltas.md`](docs/fulltas.md). What a human can put into the game, and how routes match it:

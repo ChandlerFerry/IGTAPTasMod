@@ -98,6 +98,9 @@ namespace IGTAP.EngineSim
             public int WaitingAtoms, HandledTier;
             public double TierUpCounter;
             public bool IsCrafting;
+            public bool? OpenA2Door;
+            public int GridDue;
+            public Behaviour[] Woken, Starting;
         }
 
         readonly Simulation _sim;
@@ -127,6 +130,18 @@ namespace IGTAP.EngineSim
         int _waitingAtoms, _handledTier;                // waitingAtoms, currentlyHandledTier
         double _tierUpCounter;                          // atomTierUpCounter
         bool _isCrafting;
+        // The machine's PlayerPrefs "OpenA2Door" as the start had it (the trace start's economy.openA2Door), then set by every
+        // atom buy (upgradeBox.cs:648); null: the start didn't say, and a door box's first buy ends the run.
+        bool? _openA2Door;
+        // The 0.4 s grid: the tick (the Scheduler's) in whose first rendered frame callAddNewAtom comes next (-1: none).
+        int _gridDue = -1;
+        // Start's draws (README ### Rules, exception 12): the drawing behaviours off at the export (their Start hasn't run),
+        // those of them woken since (Start drawn; copied on write, so a capture shares it) and those woken whose Start comes
+        // at the next rendered frame's Start pass.
+        readonly HashSet<Behaviour> _neverStarted;
+        Behaviour[] _woken = Array.Empty<Behaviour>();
+        readonly List<Behaviour> _starting = new List<Behaviour>();
+        static readonly FieldInfo AnimIsBroken = typeof(RandomAnimSpeedComponent).GetField("isBroken", Fields);
 
         internal readonly double[] Income = new double[7];   // per globalStats.Currencies, what the economy paid since the start
         public double Earned => Income[(int)globalStats.Currencies.Cash];
@@ -213,12 +228,49 @@ namespace IGTAP.EngineSim
                 _handledTier = A<int>("currentlyHandledTier");
                 _isCrafting = A<bool>("isCrafting");
                 _tierUpCounter = _atomCollider.atomTierUpCounter;
-                // The grid as 1x had it at the start (the plugin's TurboRunner.AtomGridDueIn): its next call counted in ticks as
-                // the start's other pending Invokes are (Simulation.LoadStart), every 0.4 s after. A start without it has none.
+                // The start's own collider state (the plugin's WriteAtomStart): the world export comes some ticks after it.
+                if (economy.TryGetProperty("atomCollider", out JsonElement start))
+                {
+                    int[] counts = start.GetProperty("atoms").EnumerateArray().Select(x => x.GetInt32()).ToArray();
+                    _atoms = Array.Empty<int>();
+                    _crafting = Array.Empty<bool>();
+                    _craftProgress = Array.Empty<float>();
+                    GrowTiers(counts.Length);
+                    Array.Copy(counts, _atoms, counts.Length);
+                    bool[] startCrafting = start.GetProperty("crafting").EnumerateArray().Select(x => x.GetBoolean()).ToArray();
+                    float[] startProgress = start.GetProperty("progress").EnumerateArray().Select(World.ReadFloat).ToArray();
+                    Array.Copy(startCrafting, _crafting, Math.Min(startCrafting.Length, _crafting.Length));
+                    Array.Copy(startProgress, _craftProgress, Math.Min(startProgress.Length, _craftProgress.Length));
+                    _waitingAtoms = start.GetProperty("waiting").GetInt32();
+                    _handledTier = start.GetProperty("handledTier").GetInt32();
+                    _isCrafting = start.GetProperty("isCrafting").GetBoolean();
+                    _tierUpCounter = start.GetProperty("tierUpCounter").GetDouble();
+                }
+                // The grid as 1x had it at the start (the plugin's TurboRunner.AtomGridDueIn): floor(dueIn / fixedDeltaTime) ticks
+                // counted as the start's other pending Invokes are (Simulation.LoadStart). 1x calls it in the first rendered frame
+                // after the tick before that one (time = that tick's fixedTime + half a frame, after the frame's Updates: a 1x
+                // probe from Course 6's start), so it first reaches that tick's NP, and crafting from that frame on.
                 if (economy.TryGetProperty("atomGridDueIn", out JsonElement due))
-                    sim.Scheduler.Queue.Add(new Scheduler.Pending { Due = Mathf.FloorToInt(World.ReadFloat(due) / Time.fixedDeltaTime),
-                        Target = _atomCollider, Method = "callAddNewAtom", Repeat = 0.4f });
+                    _gridDue = Math.Max(0, Mathf.FloorToInt(World.ReadFloat(due) / Time.fixedDeltaTime) - 1);
             }
+            if (economy.TryGetProperty("openA2Door", out JsonElement door)) _openA2Door = door.GetBoolean();
+            // globalStats' atom counts, NP rates, comp boost NP factor, clone dust multiplier and RP cap as the start had them
+            // (TurboRunner.AtomStats' order), over the world's, which comes some ticks after the start.
+            globalStats live = Singleton<globalStats>.Instance;
+            if (economy.TryGetProperty("atomStats", out JsonElement statsJson) && (object)live != null)
+            {
+                _sim.Touch(live);
+                double[] v = statsJson.EnumerateArray().Select(x => x.GetDouble()).ToArray();
+                live.effectiveAtomCount = v[0];
+                live.grossAtomCount = v[1];
+                live.AtomCountInTermsOfWhiteAtoms = v[2];
+                live.NPrewardPerTick = v[3];
+                live.NPrewardCap = v[4];
+                live.EffectOfNpCompBoost = v[5];
+                if (v.Length > 7) { live.CloneDustGpCdMult = v[6]; live.rpCap = v[7]; _cdMult = v[6]; }
+            }
+            _neverStarted = new HashSet<Behaviour>(world.All<LightFlicker>().Cast<Behaviour>().Concat(world.All<RandomAnimSpeedComponent>())
+                .Concat(world.All<JiggleDropScript>()).Where(b => !b.isActiveAndEnabled));
         }
 
         /// <summary>globalStats.RecalcCloneDustMult (globalStats.cs:1126-1140) on the clone dust the run holds: the game runs it
@@ -831,11 +883,18 @@ namespace IGTAP.EngineSim
         /// </summary>
         bool AtomsLand()
         {
-            if (_waitingAtoms <= 0) return true;
-            foreach (Scheduler.Pending p in _sim.Scheduler.Queue)
-                if (ReferenceEquals(p.Target, _atomCollider) && p.Method == "callAddNewAtom") return true;
+            if (_waitingAtoms <= 0 || _gridDue >= 0) return true;
             return Unmodeled("a waiting atom with AtomColliderSystem's 0.4 s grid not running: it starts when zone 2 loads, which the engine "
                 + "doesn't do within a run, and this trace's start had no grid (atomGridDueIn)");
+        }
+
+        /// <summary>A tick's first rendered frame, after its Updates (Simulation.InterpolatedFrames): the grid's call when it is due,
+        /// then every 0.4 s (20 ticks), as Unity runs the InvokeRepeating after a frame's Updates.</summary>
+        internal void GridFrame()
+        {
+            if (_gridDue < 0 || _sim.Scheduler.Tick < _gridDue || (object)_atomCollider == null) return;
+            _gridDue += Math.Max(1, Mathf.FloorToInt(0.4f / Time.fixedDeltaTime));
+            AtomTick(_atomCollider);
         }
 
         /// <summary>AtomColliderSystem.callAddNewAtom (AtomColliderSystem.cs:117-126), the 0.4 s grid's call (hooks.txt replaces
@@ -875,7 +934,9 @@ namespace IGTAP.EngineSim
             _atoms[tier]++;
             _sim.Touch(stats);
             stats.grossAtomCount += 1 + tier * (tier - 1);
-            stats.effectiveAtomCount += Mathf.Pow(_atomEffectiveness + 10 * tier, tier) * 0.001f;
+            // The game's Mono JIT keeps Pow(...) * 0.001f in double precision on its way into the double field (a float32 product
+            // left effectiveAtomCount 1.7e-9 off turbo's after the first merge, Task 7's atom probe), so the product is a double.
+            stats.effectiveAtomCount += (double)Mathf.Pow(_atomEffectiveness + 10 * tier, tier) * (double)0.001f;
             stats.AtomCountInTermsOfWhiteAtoms += Factorial(2 + tier) / 2.0;
             return RecalcNp();
         }
@@ -952,13 +1013,13 @@ namespace IGTAP.EngineSim
             _sim.Touch(stats);
             for (int i = 0; i < 2 + tier; i++)
             {
-                stats.effectiveAtomCount -= Mathf.Pow(_atomEffectiveness + 10 * tier, tier) * 0.001f;
+                stats.effectiveAtomCount -= (double)Mathf.Pow(_atomEffectiveness + 10 * tier, tier) * (double)0.001f;
                 stats.grossAtomCount -= 1 + tier * (tier - 1);
                 stats.AtomCountInTermsOfWhiteAtoms -= Factorial(2 + tier) / 2.0;
             }
-            stats.effectiveAtomCount -= Mathf.Pow((float)_atomEffectiveness + 10f * (float)tier, tier) * 0.001f;
+            stats.effectiveAtomCount -= (double)Mathf.Pow((float)_atomEffectiveness + 10f * (float)tier, tier) * (double)0.001f;
             stats.AtomCountInTermsOfWhiteAtoms -= Factorial(2 + tier) / 2.0;
-            stats.effectiveAtomCount += Mathf.Pow(_atomEffectiveness + 10 * (tier + 1), tier + 1) * 0.001f;
+            stats.effectiveAtomCount += (double)Mathf.Pow(_atomEffectiveness + 10 * (tier + 1), tier + 1) * (double)0.001f;
             stats.AtomCountInTermsOfWhiteAtoms += Factorial(2 + tier + 1) / 2.0;
             stats.grossAtomCount += 1 + tier * (tier - 1);
             _atoms[tier + 1]++;
@@ -1056,9 +1117,21 @@ namespace IGTAP.EngineSim
         /// </summary>
         internal bool AtomPrestige(upgradeBox box, globalStats.Currencies currency)
         {
-            if (box.TimesUsed == 0 && (object)(BoxDoorToOpenField.GetValue(box) as PlatformMover) != null)
-                return Unmodeled("the atom box's first buy opens its door (doorToOpen.ForceNextPhase) unless PlayerPrefs hold "
-                    + "\"OpenA2Door\", which the engine can't read");
+            // Only AtomUpgrades/AtomUpgrade (the free Green Power box by the atom room, its bottom trigger at world (21292, -266)
+            // from a Course 6 start) has a door: zone 2/area2/AtomColliderArea/Door/ZipMoverMovingPart, a plain mover (not a
+            // zip mover) between its shut stop and 380 up. The trace start says whether the machine's PlayerPrefs hold the key.
+            if (BoxDoorToOpenField.GetValue(box) is PlatformMover door && (object)door != null && box.TimesUsed == 0 && _openA2Door != true)
+            {
+                if (_openA2Door == null)
+                    return Unmodeled("the atom box's first buy opens its door (doorToOpen.ForceNextPhase) unless PlayerPrefs hold "
+                        + "\"OpenA2Door\", and this start doesn't say whether they do (economy.openA2Door)");
+                // A Course 6-15 start has the door at its open stop already (CourseStart.OpenAtomDoor, README ### Rules 21), so on
+                // a machine without the key this buy moves it on to its next stop, shut, as the game does there.
+                _sim.Touch(door);
+                door.ForceNextPhase();
+            }
+            // Every atom buy writes the key on the machine (PlayerPrefs.SetInt("OpenA2Door", 1), upgradeBox.cs:648).
+            _openA2Door = true;
             if (currency == globalStats.Currencies.GreenPower && Global(globalStats.globalUpgradeSet.GPAtomsDontResetCourses) != 0.0) return true;
             if (BoxCoursesToResetField.GetValue(box) is not courseScript[] reset) return Unmodeled("an atom box without coursesToReset (the game throws)");
             foreach (courseScript course in reset)
@@ -1369,6 +1442,41 @@ namespace IGTAP.EngineSim
                 if (b.enabled) UnityEngine.Random.Draw();
         }
 
+        /// <summary>
+        /// A SetActive(true) woke these (Simulation's Activated hook): each drawing behaviour among them whose Start hasn't run
+        /// (off at the export and not woken since) waits for the next rendered frame's Start pass (<see cref="StartPass"/>).
+        /// Start runs before a behaviour's first Update: in the same frame when woken in the physics step, the next when woken
+        /// at a frame's end (README ### Rules, exception 12).
+        /// </summary>
+        internal void Woken(GameObject g)
+        {
+            foreach (Behaviour b in g.GetComponentsInChildren<LightFlicker>(false).Cast<Behaviour>()
+                .Concat(g.GetComponentsInChildren<RandomAnimSpeedComponent>(false)).Concat(g.GetComponentsInChildren<JiggleDropScript>(false)))
+                if (b.enabled && _neverStarted.Contains(b) && Array.IndexOf(_woken, b) < 0 && !_starting.Contains(b)) _starting.Add(b);
+        }
+
+        /// <summary>
+        /// A rendered frame's Start pass, before its Updates: the draws of each woken behaviour still on (LightFlicker.Start's
+        /// Random.Range(0, 100), LightFlicker.cs:26; RandomAnimSpeedComponent.Start's speed and normalized time, and a broken
+        /// one's state, RandomAnimSpeedComponent.cs:16-21; JiggleDropScript.Start's normalized time, JiggleDropScript.cs:41).
+        /// What they set is presentation. One switched off again first keeps waiting, as Unity's Start does.
+        /// </summary>
+        internal void StartPass()
+        {
+            if (_starting.Count == 0) return;
+            List<Behaviour> started = null;
+            for (int i = 0; i < _starting.Count; i++)
+            {
+                Behaviour b = _starting[i];
+                if (!b.isActiveAndEnabled) continue;
+                int draws = b is RandomAnimSpeedComponent anim ? ((bool)AnimIsBroken.GetValue(anim) ? 3 : 2) : 1;
+                for (int d = 0; d < draws; d++) UnityEngine.Random.Draw();
+                (started ??= new List<Behaviour>()).Add(b);
+                _starting.RemoveAt(i--);
+            }
+            if (started != null) _woken = _woken.Concat(started).ToArray();
+        }
+
         static bool Under(Transform t, Transform root)
         {
             for (Transform p = t; p != null; p = p.parent) if (p == root) return true;
@@ -1381,7 +1489,9 @@ namespace IGTAP.EngineSim
                 Locals = (double[][])_locals.Clone(), LocalsHash = _localsHash, Global = _global, TripBroken = _tripBroken,
                 TransitionOpensIn = _transitionOpensIn, CdMult = _cdMult, Atoms = (int[])_atoms.Clone(), Crafting = (bool[])_crafting.Clone(),
                 CraftProgress = (float[])_craftProgress.Clone(), WaitingAtoms = _waitingAtoms, HandledTier = _handledTier,
-                TierUpCounter = _tierUpCounter, IsCrafting = _isCrafting };
+                TierUpCounter = _tierUpCounter, IsCrafting = _isCrafting, OpenA2Door = _openA2Door, Woken = _woken,
+                GridDue = _gridDue < 0 ? -1 : _gridDue - _sim.Scheduler.Tick - 1,
+                Starting = _starting.Count == 0 ? Array.Empty<Behaviour>() : _starting.ToArray() };
             for (int i = 0; i < _clones.Length; i++)
             {
                 s.Values[i] = _clones[i].V;
@@ -1413,6 +1523,11 @@ namespace IGTAP.EngineSim
             _handledTier = s.HandledTier;
             _tierUpCounter = s.TierUpCounter;
             _isCrafting = s.IsCrafting;
+            _openA2Door = s.OpenA2Door;
+            _gridDue = s.GridDue;
+            _woken = s.Woken;
+            _starting.Clear();
+            _starting.AddRange(s.Starting);
         }
 
         internal void AddTo(ref HashCode h)
@@ -1434,6 +1549,7 @@ namespace IGTAP.EngineSim
             h.Add(_cdMult);
             for (int i = 0; i < _atoms.Length; i++) { h.Add(_atoms[i]); h.Add(_crafting[i]); h.Add(_craftProgress[i]); }
             h.Add(_waitingAtoms); h.Add(_handledTier); h.Add(_tierUpCounter); h.Add(_isCrafting);
+            h.Add(_openA2Door); h.Add(_woken.Length); h.Add(_starting.Count); h.Add(_gridDue < 0 ? -1 : _gridDue - _sim.Scheduler.Tick);
         }
 
         int HashLocals()
