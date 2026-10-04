@@ -146,6 +146,8 @@ namespace IGTAP.EngineSim
         static readonly MethodInfo UpdateMethod = typeof(Movement).GetMethod("Update", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly MethodInfo CourseFixedUpdateMethod = typeof(courseScript).GetMethod("FixedUpdate", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly string[] CoursePathLists = { "currentPlayerPath", "currentPlayerSprites", "currentPlayerScales" };
+        static readonly MethodInfo MoverOnEnable = typeof(PlatformMover).GetMethod("OnEnable", BindingFlags.Instance | BindingFlags.NonPublic);
+        static readonly FieldInfo OvergrowthCourses = typeof(OvergrowthLoadScript).GetField("courses", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly MethodInfo OrbFixedUpdateMethod = typeof(JiggleDropScript).GetMethod("FixedUpdate", BindingFlags.Instance | BindingFlags.NonPublic);
         static readonly AccessTools.FieldRef<JiggleDropScript, float> OrbCooldown = AccessTools.FieldRefAccess<JiggleDropScript, float>("cooldown");
         static readonly AccessTools.FieldRef<JiggleDropScript, int> OrbSequence = AccessTools.FieldRefAccess<JiggleDropScript, int>("ActivationSequence");
@@ -222,12 +224,28 @@ namespace IGTAP.EngineSim
                 if (Physics.Suspended) return;
                 Economy.Activate(g, Goals != null);
                 Shop.Economy?.Woken(g);
+                // The other OnEnables with an effect: a zip mover's JumpToState (its pose and its reset coroutine,
+                // PlatformMover.cs:221-233) and the atom collider's grid (AtomColliderSystem.cs:111-115).
+                foreach (PlatformMover m in g.GetComponentsInChildren<PlatformMover>(false))
+                    if (m.enabled)
+                    {
+                        Touch(m);
+                        MoverOnEnable.Invoke(m, null);
+                    }
+                foreach (AtomColliderSystem a in g.GetComponentsInChildren<AtomColliderSystem>(false))
+                    if (a.enabled) Shop.Economy?.GridStart(a);
+            };
+            Hooks.OvergrowthLoad = script =>
+            {
+                foreach (courseScript c in (courseScript[])OvergrowthCourses.GetValue(script) ?? Array.Empty<courseScript>())
+                    if ((object)c != null) foreach (upgradeBox b in c.transform.GetComponentsInChildren<upgradeBox>(true)) Touch(b);
             };
             // PlatformMover's coroutines are gameplay: MakeIntangible's 0.15 s off the Ground layer after a jump off a zip mover,
             // PlayerExit's contact clear two physics steps after the player leaves it, a zip mover's move once unlocked.
             // TreeSegmentActivationComponent.IE_Grow (Shop.GrowTree): the segment's ground off until its trunks have grown, its box
             // falling into place.
-            Scheduler.Continues = t => t is PlatformMover || t is TreeSegmentActivationComponent;
+            // ZoneLoader.IE_Load: a zone activator's load, two yields after its trigger (zoneChanger.OnTriggerEnter2D).
+            Scheduler.Continues = t => t is PlatformMover || t is TreeSegmentActivationComponent || t is ZoneLoader;
             Scheduler.Stepping = Touch;
             Scheduler.Unmodeled = what => { if (Engine.IsRunning) Engine.Abort("Unmodeled: " + what); };
             Shop = new Shop(this, world);
@@ -824,7 +842,13 @@ namespace IGTAP.EngineSim
                 Scheduler.Queue.Add(new Scheduler.Pending { Due = p[0].GetInt32(), Target = Player, Method = p[1].GetString(), Repeat = -1f });
             Physics.ResetPlayer(World.Vec2(start.GetProperty("bodyPosition")), World.Vec2(start.GetProperty("velocity")),
                 World.ReadFloat(start.GetProperty("rotation")), World.ReadFloat(start.GetProperty("angularVelocity")));
-            if (start.TryGetProperty("economy", out JsonElement economy)) Shop.LoadStart(economy, ApplyFields);
+            if (start.TryGetProperty("economy", out JsonElement economy))
+            {
+                Shop.LoadStart(economy, ApplyFields);
+                // The zone loaded at the start (the world export can come some ticks after it): what a zone activator compares.
+                if (economy.TryGetProperty("activeZone", out JsonElement zone) && World.All<ZoneLoader>().FirstOrDefault() is ZoneLoader loader)
+                    loader.activeZone = zone.GetInt32();
+            }
             if (start.TryGetProperty("vman", out JsonElement vman) != VmanScript.isCurrentlyVman)
                 throw new InvalidOperationException(VmanScript.isCurrentlyVman ? "The world is a Vman speedrun's, but the trace's start has no Vman clock: capture both again."
                     : "The trace's start is a Vman speedrun's, but its world isn't: capture both again.");
@@ -996,7 +1020,7 @@ namespace IGTAP.EngineSim
         /// show it. The transform goes back to the body for the rest of the tick (goals, rebases, snapshots): the step's end,
         /// which a rebase this tick has moved with the world (the body itself follows at the next sync), as turbo's
         /// Place(player, _stepTo). Without the <paramref name="player"/> (the economy drive, EconomyDrive.cs) only the frames'
-        /// economy runs: the Start pass, the clone and atom steps, the atom grid and the end-of-frame resumes.
+        /// economy runs: the Start pass, the clone and atom steps, the atom grid and the frame and end-of-frame resumes.
         /// </summary>
         void InterpolatedFrames(bool player = true)
         {
@@ -1011,6 +1035,7 @@ namespace IGTAP.EngineSim
                 Engine.CountHeldFrames(repeats);
                 for (int repeat = repeats; repeat >= 0; repeat--)
                 {
+                    if (k > 0 || repeat < repeats) Scheduler.Frame++;
                     // The frame's Start pass comes before its Updates (README ### Rules, exception 12).
                     Shop.Economy?.StartPass();
                     if (player)
@@ -1031,6 +1056,10 @@ namespace IGTAP.EngineSim
                     if (k == 0 && repeat == repeats) Shop.Economy?.GridFrame();
                     if (player) OnFrame?.Invoke(alphas[k], repeat > 0);
                     Scheduler.FrameDeltaTime = dt;
+                    // The frame's yield-null resumes after its Updates (a zone load, ZoneLoader.IE_Load, in its third frame), then
+                    // the atom grid's first call when the load woke the collider (Economy.GridStart): turbo's order.
+                    Scheduler.Resume(Scheduler.Wait.Frame);
+                    Shop.Economy?.GridNow();
                     Scheduler.Resume(Scheduler.Wait.EndOfFrame);
                 }
             }
@@ -1123,7 +1152,7 @@ namespace IGTAP.EngineSim
             for (int i = 0; i < routines.Length; i++)
             {
                 Scheduler.Routine r = parked[i];
-                routines[i] = (r.Target, Scheduler.Copy(r.Body), r.Handle, r.Wait, r.Due - Scheduler.Tick - 1);
+                routines[i] = (r.Target, Scheduler.Copy(r.Body), r.Handle, r.Wait, r.Wait == Scheduler.Wait.Frame ? r.Due - Scheduler.Frame : r.Due - Scheduler.Tick - 1);
             }
             return routines;
         }
@@ -1259,6 +1288,7 @@ namespace IGTAP.EngineSim
             RestorePose(s);
             Scheduler.Queue.Clear();
             Scheduler.Tick = 0;
+            Scheduler.Frame = 0;
             _driven = false;
             foreach (var (due, target, method, repeat) in s.Pending)
                 Scheduler.Queue.Add(new Scheduler.Pending { Due = due, Target = target, Method = method, Repeat = repeat });
@@ -1457,7 +1487,6 @@ namespace IGTAP.EngineSim
                     _stepTo -= by;
                 }
                 InterpolatedFrames();
-                EconomyTickEnd();
                 FloatingOriginFrame();
                 // The plugin's box tests read the body (BoundsPose); a rebase this tick has moved the transform's world, not the body.
                 Vector3? boundsPose = _rebases.Length == rebasesBefore ? BoundsPose() : null;

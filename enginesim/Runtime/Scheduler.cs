@@ -24,7 +24,8 @@ namespace IGTAP.EngineSim
             Seconds,
             /// <summary><c>WaitForFixedUpdate</c>: right after the next physics step (one yielded inside its callbacks: that step).</summary>
             FixedUpdate,
-            /// <summary><c>yield return null</c>: after the next <c>Update</c>.</summary>
+            /// <summary><c>yield return null</c>: after the Updates of a later rendered frame than the one it yielded in
+            /// (<see cref="Routine.Due"/>, a <see cref="Scheduler.Frame"/>), Simulation.InterpolatedFrames.</summary>
             Frame,
             /// <summary><c>WaitForEndOfFrame</c>: at the end of each rendered frame (a dash freeze's and a pause's held frames
             /// included, on Time.deltaTime 0), Simulation.InterpolatedFrames.</summary>
@@ -44,6 +45,8 @@ namespace IGTAP.EngineSim
         /// <summary>Coroutines parked on a yield, in start order.</summary>
         public readonly List<Routine> Routines = new List<Routine>();
         public int Tick;
+        /// <summary>The rendered frames so far (a held frame included; a tick's physics step is in its first): Simulation counts them.</summary>
+        public int Frame;
         /// <summary>
         /// Targets whose coroutines run on past their first yield. The rest run to it and stop there: their later steps are
         /// presentation or real-time work turbo never runs within a run (enginesim/README.md).
@@ -135,6 +138,7 @@ namespace IGTAP.EngineSim
                     break;
                 case null:
                     r.Wait = Wait.Frame;
+                    r.Due = Frame;
                     break;
                 default:
                     Unmodeled?.Invoke(r.Target.GetType().Name + " coroutine yields " + yielded.GetType().Name);
@@ -153,6 +157,8 @@ namespace IGTAP.EngineSim
         /// <summary>Resumes every coroutine parked on <paramref name="wait"/> that is due, each one step, in start order.</summary>
         public void Resume(Wait wait)
         {
+            // Unity stops a coroutine when its object goes off (a zone unloaded: its zip movers mid-move, a tree growing).
+            Routines.RemoveAll(r => !r.Target || !r.Target.gameObject.activeInHierarchy);
             int count = Routines.Count;
             if (count == 0) return;
             if (_due.Length < count) _due = new Routine[count];
@@ -160,7 +166,7 @@ namespace IGTAP.EngineSim
             for (int i = 0; i < count; i++)
             {
                 Routine r = Routines[i];
-                if (r.Wait != wait || wait == Wait.Seconds && r.Due > Tick) continue;
+                if (r.Wait != wait || wait == Wait.Seconds && r.Due > Tick || wait == Wait.Frame && r.Due >= Frame) continue;
                 _due[n++] = r;
             }
             if (n == 0) return;
@@ -173,7 +179,8 @@ namespace IGTAP.EngineSim
                 while (resumed < n)
                 {
                     Routine r = _due[resumed++];
-                    if (!r.Target) continue;
+                    // One an earlier routine's step switched off (a zone load's) is stopped.
+                    if (!r.Target || !r.Target.gameObject.activeInHierarchy) continue;
                     Stepping?.Invoke(r.Target);
                     if (r.Body.MoveNext()) Park(r, r.Body.Current);
                 }

@@ -13,8 +13,7 @@ namespace IGTAP.EngineSim
     /// Invokes and Seconds waits (<see cref="EconomyTickStart"/>), globalStats' NP (Economy.FixedStep), the course, Vman clock,
     /// refill orb and box cooldown FixedUpdates (<see cref="EconomyFixedUpdates"/>), the buy-max steps and FixedUpdate waits
     /// after the physics step (<see cref="EconomyAfterStep"/>), each rendered frame's Start pass, clone and atom steps, atom grid
-    /// and end-of-frame resumes (<see cref="InterpolatedFrames"/> without the player) and the frame waits
-    /// (<see cref="EconomyTickEnd"/>). The drive plays the same pieces in the same order with the player's half left out: no
+    /// and frame and end-of-frame resumes (<see cref="InterpolatedFrames"/> without the player). The drive plays the same pieces in the same order with the player's half left out: no
     /// input, no Movement FixedUpdate or Update, no physics step, no FloatingOrigin rebase. What the physics step's callbacks
     /// do for the economy it does as they do it, at the step's place in the tick: a clonesLoD trigger's enter or exit where
     /// the player arrives (its boxes standing there, the first tick's step), a box's OnTriggerStay2D, a course's stopTracking
@@ -125,6 +124,8 @@ namespace IGTAP.EngineSim
         /// <summary>Before the tick's other FixedUpdates: the due Invokes, then the Seconds waits, in the frame that will cross the tick.</summary>
         void EconomyTickStart()
         {
+            // The tick's physics step is in its first rendered frame (InterpolatedFrames counts the others).
+            Scheduler.Frame++;
             Scheduler.FireDue();
             Scheduler.FrameDeltaTime = Frames.Step(MacroEngine.FrameGrid.NextTicks(Engine.GridTicks), 0);
             Scheduler.Resume(Scheduler.Wait.Seconds);
@@ -152,13 +153,6 @@ namespace IGTAP.EngineSim
             Scheduler.Resume(Scheduler.Wait.FixedUpdate);
         }
 
-        /// <summary>After the tick's rendered frames: the frame waits, on the crossing frame's deltaTime.</summary>
-        void EconomyTickEnd()
-        {
-            Scheduler.FrameDeltaTime = Frames.Step(Engine.GridTicks, 0);
-            Scheduler.Resume(Scheduler.Wait.Frame);
-        }
-
         /// <summary>The drive's tick: Run's tick without the player, <paramref name="physicsStep"/> the step's callbacks.</summary>
         void EconomyTick(Action physicsStep)
         {
@@ -177,7 +171,6 @@ namespace IGTAP.EngineSim
                 physicsStep?.Invoke();
                 EconomyAfterStep();
                 InterpolatedFrames(player: false);
-                EconomyTickEnd();
             }
             finally { Driving = false; }
             if (!Engine.IsRunning) throw new InvalidOperationException("The economy drive stopped: " + Engine.Status);

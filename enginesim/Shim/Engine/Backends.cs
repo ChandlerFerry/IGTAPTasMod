@@ -57,7 +57,7 @@ namespace IGTAP.EngineSim
         [ThreadStatic] public static Action<object, bool> SwapBlocks;
         [ThreadStatic] public static Action<object, float> TimeStop;
         [ThreadStatic] public static Action<object> RefillOrbState;
-        [ThreadStatic] public static Action<object> AtomTick;
+        [ThreadStatic] public static Action<object> AtomTick, OvergrowthLoad;
         [ThreadStatic] public static Action<object, Vector2> HitSpring;
         [ThreadStatic] public static Action<object> SteppedUp;
         [ThreadStatic] public static Action<object, float> SpecialWallJump;
@@ -86,5 +86,6 @@ namespace IGTAP.EngineSim
         public static void OnCheckForSuperJump(object movement, bool isDashBounce) { SuperJumpCheck?.Invoke(movement); }
         public static void OnDetermineSpriteDirection(object movement) { SpriteDirection?.Invoke(movement); }
         public static void OnMakeIntangible(object mover) { Intangible?.Invoke(mover); }
+        public static void OnOvergrowthLoad(object script) { OvergrowthLoad?.Invoke(script); }
     }
 }

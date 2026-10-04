@@ -51,3 +51,7 @@ TreeController::EndAudioCooldown
 TreeSegmentActivationComponent/<<growTreePart>g__IE_Grow|7_0>d::MoveNext
 # The atom box's first buy on a machine without PlayerPrefs "OpenA2Door" (Economy.AtomPrestige).
 PlatformMover::ForceNextPhase
+# A zone load (zoneChanger's trigger, ZoneLoader.IE_Load on the Scheduler): a woken zip mover's OnEnable (JumpToState and its
+# coroutine) and Area 1's OnLoad.
+PlatformMover::OnEnable
+OvergrowthLoadScript::OnLoad

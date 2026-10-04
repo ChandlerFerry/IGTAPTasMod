@@ -54,3 +54,5 @@ prefix PlatformMover::MakeIntangible OnMakeIntangible
 # AtomColliderSystem's 0.4 s grid (OnEnable's InvokeRepeating) lands a waiting atom: the host economy keeps the atoms
 # (Economy.AtomTick), the counts on globalStats.
 replace AtomColliderSystem::callAddNewAtom OnAtomTick
+# Area 1's OnLoad (a zone load back into zone 1) writes its courses' boxes' cost scaling: the host keeps them in snapshots first.
+prefix OvergrowthLoadScript::OnLoad OnOvergrowthLoad

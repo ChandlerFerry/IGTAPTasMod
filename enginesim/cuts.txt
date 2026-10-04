@@ -1,6 +1,6 @@
 # Game methods replaced with empty bodies in the host. Only presentation (camera, audio, particles, sprites, UI,
-# Steam) or work that turbo never sees happen within a run (coroutines, zone streaming). Nothing here may change
-# movement, collision, the course timer, or anything they read.
+# Steam) or work that turbo never sees happen within a run. Nothing here may change movement, collision, the course
+# timer, or anything they read. Zone loads are not cut: a zone activator's ZoneLoader.IE_Load runs on the Scheduler.
 # Format: Type::method  (all overloads)  or  Type::method(paramCount)
 
 # Physics callbacks with no gameplay effect during a turbo run.
@@ -12,8 +12,6 @@ GenericSpriteDisabler::OnTriggerEnter2D
 GenericSpriteDisabler::OnTriggerExit2D
 LoadingPopupScript::OnTriggerEnter2D
 LoadingPopupScript::OnTriggerExit2D
-# Zone streaming runs in a coroutine over real frames; turbo runs never see it.
-zoneChanger::OnTriggerEnter2D
 # Teleporter prompts/visited list: teleporting needs a stick-up input the solver never gives.
 TeleporterScript::OnTriggerEnter2D
 TeleporterScript::OnTriggerExit2D

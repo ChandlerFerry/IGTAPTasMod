@@ -135,6 +135,8 @@ namespace IGTAP.EngineSim
         bool? _openA2Door;
         // The 0.4 s grid: the tick (the Scheduler's) in whose first rendered frame callAddNewAtom comes next (-1: none).
         int _gridDue = -1;
+        // The grid's first call is due in this frame's coroutine pass (GridStart): never across a tick, so not in snapshots.
+        bool _gridNow;
         // Start's draws (README ### Rules, exception 12): the drawing behaviours off at the export (their Start hasn't run),
         // those of them woken since (Start drawn; copied on write, so a capture shares it) and those woken whose Start comes
         // at the next rendered frame's Start pass.
@@ -269,7 +271,16 @@ namespace IGTAP.EngineSim
                 live.EffectOfNpCompBoost = v[5];
                 if (v.Length > 7) { live.CloneDustGpCdMult = v[6]; live.rpCap = v[7]; _cdMult = v[6]; }
             }
-            _neverStarted = new HashSet<Behaviour>(world.All<LightFlicker>().Cast<Behaviour>().Concat(world.All<RandomAnimSpeedComponent>())
+            // The start's own (the plugin's TurboRunner.NeverStarted: drawers, the atom collider, upgrade boxes); an older trace's,
+            // the drawers off at the export. One already on (woken in the frame before the start) starts at the first Start pass.
+            if (economy.TryGetProperty("neverStarted", out JsonElement never))
+            {
+                _neverStarted = new HashSet<Behaviour>();
+                foreach (JsonElement id in never.EnumerateArray())
+                    if (world.Objects.TryGetValue(id.GetInt32(), out UnityEngine.Object o) && o is Behaviour b) _neverStarted.Add(b);
+                _starting.AddRange(_neverStarted.Where(b => b.isActiveAndEnabled));
+            }
+            else _neverStarted = new HashSet<Behaviour>(world.All<LightFlicker>().Cast<Behaviour>().Concat(world.All<RandomAnimSpeedComponent>())
                 .Concat(world.All<JiggleDropScript>()).Where(b => !b.isActiveAndEnabled));
         }
 
@@ -790,7 +801,7 @@ namespace IGTAP.EngineSim
             {
                 if (!OwnCollider(box)) return false;
                 _waitingAtoms++;
-                return AtomsLand();
+                return true;
             }
             switch (upgrade)
             {
@@ -893,16 +904,24 @@ namespace IGTAP.EngineSim
         }
 
         /// <summary>
-        /// Waiting atoms land only on the collider's 0.4 s grid, OnEnable's InvokeRepeating("callAddNewAtom", 0, 0.4)
-        /// (AtomColliderSystem.cs:111-115), which 1x starts when ZoneLoader._LoadZone(2) turns zone 2 on. The engine runs no
-        /// OnEnable and loads no zone within a run (cuts.txt: zoneChanger): the grid runs only if the start had it (the trace's
-        /// atomGridDueIn), and otherwise a waiting atom ends the run.
+        /// The collider's OnEnable (AtomColliderSystem.cs:111-115, a zone load waking it: Simulation's Activated hook): its
+        /// InvokeRepeating("callAddNewAtom", 0, 0.4) restarts the grid. Its 0 delay calls it in the frame's own coroutine pass,
+        /// after the load (<see cref="GridNow"/>), then in the first rendered frame of every 20th tick after (<see cref="GridFrame"/>):
+        /// a 1x probe of the zone 1 → 2 crossing (the load at k = 2, the calls at k = 2, then k = 0 of T + 20, T + 40, ...).
         /// </summary>
-        bool AtomsLand()
+        internal void GridStart(AtomColliderSystem collider)
         {
-            if (_waitingAtoms <= 0 || _gridDue >= 0) return true;
-            return Unmodeled("a waiting atom with AtomColliderSystem's 0.4 s grid not running: it starts when zone 2 loads, which the engine "
-                + "doesn't do within a run, and this trace's start had no grid (atomGridDueIn)");
+            if (!ReferenceEquals(collider, _atomCollider)) { Unmodeled("an AtomColliderSystem that isn't the world's woke"); return; }
+            _gridNow = true;
+            _gridDue = _sim.Scheduler.Tick + Math.Max(1, Mathf.FloorToInt(0.4f / Time.fixedDeltaTime));
+        }
+
+        /// <summary>The grid's first call, after the frame's yield-null resumes that woke the collider (<see cref="GridStart"/>).</summary>
+        internal void GridNow()
+        {
+            if (!_gridNow) return;
+            _gridNow = false;
+            AtomTick(_atomCollider);
         }
 
         /// <summary>A tick's first rendered frame, after its Updates (Simulation.InterpolatedFrames): the grid's call when it is due,
@@ -1114,7 +1133,6 @@ namespace IGTAP.EngineSim
         /// </summary>
         internal void FixedStep()
         {
-            if (!AtomsLand()) return;
             globalStats stats = Singleton<globalStats>.Instance;
             if ((object)stats == null) return;
             double np = _sim.Shop.Holds(globalStats.Currencies.AtomicPower), add;
@@ -1469,7 +1487,8 @@ namespace IGTAP.EngineSim
         internal void Woken(GameObject g)
         {
             foreach (Behaviour b in g.GetComponentsInChildren<LightFlicker>(false).Cast<Behaviour>()
-                .Concat(g.GetComponentsInChildren<RandomAnimSpeedComponent>(false)).Concat(g.GetComponentsInChildren<JiggleDropScript>(false)))
+                .Concat(g.GetComponentsInChildren<RandomAnimSpeedComponent>(false)).Concat(g.GetComponentsInChildren<JiggleDropScript>(false))
+                .Concat(g.GetComponentsInChildren<AtomColliderSystem>(false)).Concat(g.GetComponentsInChildren<upgradeBox>(false)))
                 if (b.enabled && _neverStarted.Contains(b) && Array.IndexOf(_woken, b) < 0 && !_starting.Contains(b)) _starting.Add(b);
         }
 
@@ -1487,7 +1506,11 @@ namespace IGTAP.EngineSim
             {
                 Behaviour b = _starting[i];
                 if (!b.isActiveAndEnabled) continue;
-                int draws = b is RandomAnimSpeedComponent anim ? ((bool)AnimIsBroken.GetValue(anim) ? 3 : 2) : 1;
+                // An upgrade box's Start is run by neither turbo nor the engine: only one that changes nothing a run reads.
+                if (b is upgradeBox box && IGTAPTasMod.WokenStarts.Unmodeled(box, _openA2Door == true) is string why) { if (_sim.Engine.IsRunning) _sim.Engine.Abort(why); return; }
+                // AtomColliderSystem.Start (AtomColliderSystem.cs:106-109) recomputes NP.
+                if (b is AtomColliderSystem) RecalcNp();
+                int draws = b is RandomAnimSpeedComponent anim ? ((bool)AnimIsBroken.GetValue(anim) ? 3 : 2) : b is LightFlicker || b is JiggleDropScript ? 1 : 0;
                 for (int d = 0; d < draws; d++) UnityEngine.Random.Draw();
                 (started ??= new List<Behaviour>()).Add(b);
                 _starting.RemoveAt(i--);

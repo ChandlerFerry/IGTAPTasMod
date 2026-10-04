@@ -22,6 +22,7 @@
     <Compile Include="..\..\FullTas.cs" Link="Shared\FullTas.cs" />
     <Compile Include="..\..\Categories.cs" Link="Shared\Categories.cs" />
     <Compile Include="..\..\CourseStart.cs" Link="Shared\CourseStart.cs" />
+    <Compile Include="..\..\WokenStarts.cs" Link="Shared\WokenStarts.cs" />
   </ItemGroup>
 
   <ItemGroup>

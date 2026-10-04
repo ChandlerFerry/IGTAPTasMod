@@ -94,6 +94,9 @@ namespace IGTAP.EngineSim.Cli
                 ["dash"] = pl.dashActive, ["f"] = pl.framesSinceLastDash, ["facingRight"] = pl.facingRight,
                 ["dashDir"] = new[] { Round(d.x), Round(d.y) },
                 ["courseTime"] = sim.TimingCourse() is courseScript timing ? (object)Round(Simulation.CourseTime(timing)) : null,
+                // The zone loaded, the RNG's last word and the atom grid's calls so far: a zone load's frame against the 1x probe's zone rows.
+                ["zone"] = sim.World.All<ZoneLoader>().FirstOrDefault()?.activeZone ?? -1, ["random"] = UnityEngine.Random.state.s3,
+                ["gridCalls"] = sim.Shop.Economy?.GridCalls ?? -1,
             };
             for (int i = 0; i < extraFields.Length; i++) row[extraFields[i]] = Plain(extraInfos[i].GetValue(sim.Player));
             return row;
