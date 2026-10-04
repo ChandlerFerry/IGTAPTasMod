@@ -1473,16 +1473,18 @@ namespace IGTAP.EngineSim.Cli
                 }
                 if (target == null || TimeUp) continue;
                 PlanResult p;
-                try { p = Replan(on, GoalsOf(e.Labels), kept, new[] { target }, true); }
+                // A plan that buys the target after the best did can't win: not realized. The budget is what the part has left.
+                int te0 = Array.IndexOf(e.Labels, target, kept), ob = te0 < 0 ? -1 : e.OldOf[te0];
+                long cap = ob >= 0 && ob < best.Progress ? best.GoalPhysics[ob] : best.Last;
+                try { p = Replan(on, GoalsOf(e.Labels), kept, new[] { target }, true, cap, Math.Max(60, (_minutes - _clock.Elapsed.TotalMinutes) * 60)); }
                 catch (Exception ex) { Log($"auto goals: reroute of {e.Text}: {ex.GetBaseException().Message}"); continue; }
                 Route r = p.Run;
                 bool complete = r != null && r.Progress == p.Goals.Length;
                 Log($"auto goals: reroute of {e.Text}: goals {kept + 1}.. to {target} planned again ({p.Planned?.Length ?? 0} goals): "
                     + (complete ? $"{r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s, {r.Last - best.Last:+0;-0} ticks against the best" : "doesn't play through"));
                 if (!complete || r.Live >= best.Live) continue;
-                // The planned goals map to no old goal; those before the ladder and after the target to the edit's.
-                int tp = Array.IndexOf(p.Goals, target, kept), te = Array.IndexOf(e.Labels, target, kept);
-                int[] oldOf = Enumerable.Range(0, p.Goals.Length).Select(j => j < kept ? e.OldOf[j] : j >= tp ? e.OldOf[j - tp + te] : -1).ToArray();
+                // The planned goals (and any a stray fit put in) map to no old goal; the rest through the edit's (Join's map, fits included).
+                int[] oldOf = p.OldOf.Select(j => j < 0 ? -1 : e.OldOf[j]).ToArray();
                 var planned = new GoalEdit { Kind = "reroute", Text = $"{e.Text}, rerouted to {target}", Key = e.Key + ":reroute", Labels = p.Goals, OldOf = oldOf,
                     Inputs = r.Inputs, First = e.First, Last = e.Last };
                 if (AdoptGoals(planned, r, best)) return true;

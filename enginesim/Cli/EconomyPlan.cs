@@ -791,6 +791,7 @@ namespace IGTAP.EngineSim.Cli
             // --join FILE: no search; a route --realize wrote (its goals and inputs through the target) joined to the best's way on again.
             string joinFile = Solve.Option<string>(args, "--join", null);
             if (joinFile != null) return JoinAgain(args, joinFile, kept, targetGoal - 1, outFile);
+            if (args.Contains("--replan")) return ReplanCheck(args, kept, targets, targetGoal - 1);
             EconomyPlanResult free = skipFree ? new EconomyPlanResult { Why = "--skip-free" } : Plan(null);
             if (!skipFree) EconomyPlan.Print("free search", free);
             var rows = new List<(string name, EconomyPlanResult plan)>();
@@ -851,7 +852,7 @@ namespace IGTAP.EngineSim.Cli
                 Log($"realize {name}: from goal {kept} {place} on tick {startTick}");
                 Realization z = Realize(plan, start, route, startTick, place, prefix, moves, (s, p, pre) => PlanFrom(s, p, pre, moves, settings, goalOf), goalOf);
                 moves.Save(movesFile);
-                var (run, goals) = z.Done ? Join(z.Planned, z.Inputs, all, kept, targetIndex) : (null, null);
+                var (run, goals, _) = z.Done ? Join(z.Planned, z.Inputs, all, kept, targetIndex) : (null, null, null);
                 realized.Add((name, z, run, goals ?? all.Take(kept).Concat(z.Planned).Select(g => g.label).ToArray()));
             }
             string best = targetIndex < _best.Progress ? _best.GoalPhysics[targetIndex].ToString(CultureInfo.InvariantCulture) : "-";
@@ -891,6 +892,34 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
+        /// fulltas-plan --replan [--replan-seconds S] [--replan-cap T]: the goals part's call (FullTas.Replan, as Reroute makes it: the
+        /// run's goals, joined, the best's tick at the target as the cap unless --replan-cap) once, on the run's best. Checks that it
+        /// returns within its budget (plus a piece search's --piece-minutes) and that its goal map is the labels it names: each goal
+        /// it maps to the run's goal of that index has that label. Exits 1 on a FAIL.
+        /// </summary>
+        int ReplanCheck(string[] args, int kept, string[] targets, int targetIndex)
+        {
+            foreach (string path in _seedFiles) _seeds.Add(ReadSeed(path));
+            double seconds = Solve.Option(args, "--replan-seconds", 300.0);
+            long cap = Solve.Option(args, "--replan-cap", targetIndex >= 0 && targetIndex < _best.Progress ? _best.GoalPhysics[targetIndex] : _best.Last);
+            FullTasGoal[] all = _runGoals.Goals;
+            double t0 = _clock.Elapsed.TotalSeconds;
+            PlanResult p = Replan(_best, all, kept, targets, true, cap, seconds);
+            double took = _clock.Elapsed.TotalSeconds - t0;
+            int fails = 0;
+            void Check(bool ok, string what) { Console.WriteLine((ok ? "PASS " : "FAIL ") + what); if (!ok) fails++; }
+            Console.WriteLine($"replan: done {p.Done}, target {p.Target} on tick {p.Tick} (the best's {p.Old}, cap {cap}), {p.Goals.Length} goals"
+                + (p.Run != null ? $", route reaches {p.Run.Progress}" + (p.Run.Progress == p.Goals.Length ? $" in {p.Run.LiveSeconds:0.00} s" : "") : "") + (p.Why == null ? "" : "; " + p.Why));
+            Check(took <= seconds + _pieceMinutes * 60 * 4, $"returned in {took:0} s, budget {seconds:0} s (+ a piece search's {_pieceMinutes * 4:0.#} min at most)");
+            int mapped = Enumerable.Range(0, p.Goals.Length).Count(j => p.OldOf[j] >= 0);
+            Check(p.OldOf.Length == p.Goals.Length && Enumerable.Range(0, p.Goals.Length).All(j => p.OldOf[j] < 0 || p.OldOf[j] < all.Length && all[p.OldOf[j]].label == p.Goals[j]),
+                $"goal map: {p.OldOf.Length} entries for {p.Goals.Length} goals, {mapped} mapped to the run's goal of the same label, {p.Goals.Length - mapped} new");
+            Check(p.Done || p.Why != null, "not done says why");
+            Console.WriteLine(fails == 0 ? "replan: PASS" : $"replan: {fails} FAIL");
+            return fails == 0 ? 0 : 1;
+        }
+
+        /// <summary>
         /// fulltas-plan --join FILE: the realized stretch of a route file --realize wrote (its goals after --from through the target,
         /// and its inputs to the target) joined to the best's way on after the target again (<see cref="Join"/>), written as --route
         /// writes; for a join that changed (bridges, stray fits) without realizing the plan again.
@@ -911,7 +940,7 @@ namespace IGTAP.EngineSim.Cli
             BuildFrom(all, kept, targetIndex);
             FullTasGoal GoalOf(string label) => all.FirstOrDefault(g => g.label == label) ?? NewGoal(label)?.goal ?? throw new ArgumentException($"{file}: no goal {label}");
             List<FullTasGoal> planned = labels.Skip(kept).Take(end + 1 - kept).Select(GoalOf).ToList();
-            var (run, goals) = Join(planned, inputs.Take((int)Math.Min(inputs.Count, goalInput[end] + 2)).ToList(), all, kept, targetIndex);
+            var (run, goals, _) = Join(planned, inputs.Take((int)Math.Min(inputs.Count, goalInput[end] + 2)).ToList(), all, kept, targetIndex);
             Console.WriteLine($"joined: {run.Progress} of {goals.Length} goals" + (run.Progress == goals.Length ? $", {run.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)} s live ({run.Last} ticks)" : $": {run.EndReason}"));
             string routeFile = Solve.Option<string>(args, "--route", null);
             if (routeFile != null)
@@ -929,11 +958,14 @@ namespace IGTAP.EngineSim.Cli
             EconomyPlanResult Search(int width, bool stand) => EconomyPlan.Search(_eval, start, moves, place, ps.Targets, ps.Bonuses, ps.MaxStates, goalOf, ps.Seconds,
                 prefix, Log, ps.Levels, ps.Only, width, stand);
             if (ps.Mode == "beam") return Search(ps.Width, ps.Stand != "off");
+            var clock = Stopwatch.StartNew();
             EconomyPlanResult exact = Search(0, ps.Stand == "on");
             // A --compare step that doesn't play stops the beam too.
             if (ps.Mode == "exact" || exact.Proven || exact.PrefixFailed) return exact;
             string exactWhy = exact.Why;
             Log($"plan: the exact search isn't proven ({exactWhy}); the beam of {ps.Width}");
+            // The beam gets what the exact search left of the settings' seconds (at least one).
+            ps = ps with { Seconds = Math.Max(1, ps.Seconds - clock.Elapsed.TotalSeconds) };
             EconomyPlanResult then = Search(ps.Width, ps.Stand != "off");
             // The better of the two: the capped search's completion stands when the beam is no sooner.
             if (exact.Done && (!then.Done || exact.Tick <= then.Tick))
@@ -982,7 +1014,7 @@ namespace IGTAP.EngineSim.Cli
         /// then takes the builder's way to its box.
         /// </summary>
         Realization Realize(EconomyPlanResult plan, SimSnapshot at, List<InputTick> route, long tick, string place, IReadOnlyList<string> prefix, MoveTable moves,
-            Func<SimSnapshot, string, IReadOnlyList<string>, EconomyPlanResult> replan, Func<string, FullTasGoal> goalOf)
+            Func<SimSnapshot, string, IReadOnlyList<string>, EconomyPlanResult> replan, Func<string, FullTasGoal> goalOf, long tickCap = long.MaxValue)
         {
             var z = new Realization { Inputs = route.ToList(), State = at, Tick = tick };
             var pending = (prefix ?? Array.Empty<string>()).ToList();
@@ -991,6 +1023,7 @@ namespace IGTAP.EngineSim.Cli
             int i = 0;
             z.PlanTicks.Add(plan.Done ? plan.Tick : -1);
             if (!plan.Done) { z.Why = "the plan isn't done: " + plan.Why; return z; }
+            if (plan.Tick > tickCap) { z.Why = $"the plan's target on tick {plan.Tick} comes after the cap, tick {tickCap}"; return z; }
             Log($"realize: round 0, the plan's target on tick {plan.Tick}");
             bool Again(string why)
             {
@@ -1003,6 +1036,7 @@ namespace IGTAP.EngineSim.Cli
                 Log($"realize: round {z.Rounds}, planned again from {from} on tick {z.Tick} ({why}): " + (next.Done ? $"the target on tick {next.Tick}" : "no plan (" + next.Why + ")"));
                 z.Log.Add(new { round = z.Rounds, from, tick = z.Tick, why, plan = next.Done ? next.Tick : -1, estimated = next.Estimated });
                 if (!next.Done) { z.Why = $"round {z.Rounds}: no plan from {from} on tick {z.Tick} ({next.Why})"; return false; }
+                if (next.Tick > tickCap) { z.Why = $"round {z.Rounds}: the plan's target on tick {next.Tick} comes after the cap, tick {tickCap}"; return false; }
                 plan = next;
                 i = 0;
                 restarts.Clear();
@@ -1010,6 +1044,7 @@ namespace IGTAP.EngineSim.Cli
             }
             while (z.Why == null)
             {
+                if (PlanOver) { z.Why = $"out of time on tick {z.Tick} at {from}"; break; }
                 if (i >= plan.Steps.Length) { z.Why = "the plan's steps ran out before its target"; break; }
                 PlanStep s = plan.Steps[i];
                 if (s.Kind == "restart")

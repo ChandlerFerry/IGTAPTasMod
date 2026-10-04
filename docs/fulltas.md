@@ -1841,6 +1841,17 @@ them together from pieces instead:
   state (`Shop.Describe`: bought/cap, cost, what the run holds); before a searched buy the log shows the same state.
 - The build is saved as the run's best every minute and when it stops.
 
+Stretches can be planned and built in parallel: the loop pieces (`archive/fulltas-pieces.json`) are written under a lock
+(`fulltas-pieces.json.lock`) and merged with what other processes filed since, and shared files get a per-process temp
+name (two plans crashed on one `.tmp`). The builder and `fulltas-plan` play the goals of the trace's header, not
+`fulltas.json`: to plan or build a stretch on top of a planned route, capture the start again with its goals first.
+
+`--harvest FILE` (the solve and `fulltas-plan`) plays a saved route (a `fulltas/<run>.json`: its goals and inputs, goals
+of the run's labels) under its own goals from the run's start and files each of its goals as a library piece. After a
+plan changes the goals, the builder then plays the old route's laps and box walks wherever the player stands as it did,
+and only searches the steps that changed: `FalseEnding-Any%`'s run after a new Course 1 plan (goal 129 on) was rebuilt
+in 3 minutes with the 499.42 s route harvested, where the build had done 25 goals in 3 minutes without it.
+
 ### Buy table
 
 ```powershell
@@ -2128,8 +2139,14 @@ inputs through the target), no search. `fulltas <trace> --check <route> --goals 
 one: save the goals (**Save goals**, which marks the run's saved routes stale), put the route in `fulltas/<run>.json`,
 submit it (`/api/fulltas/submit`) and **Capture start** again.
 
-The goals part's reroutes (`FullTas.Replan`) plan the same way: the search (`--mode auto`, at most 10 minutes), then
-realize, joined.
+The goals part's reroutes (`FullTas.Replan`) plan the same way: the search (`--mode auto`), then realize, joined, within
+one budget (the part's time left, at least a minute; 10 minutes by default): each search gets what is left of it (the
+beam what the exact search left), and realize and the join's bridges stop when it runs out (a piece search running then
+can overrun it by its `--piece-minutes`, four times over at most). A plan whose target comes after the best's tick there
+(the cap) is not realized: it can't win. Its result maps every goal to the goal list it was given (`OldOf`: -1 for the
+plan's own goals and for any a stray fit put in), so the reroute's edit maps the joined goals, stray fits included.
+`fulltas-plan --replan [--replan-seconds S] [--replan-cap T]` makes that call once on the run's best and checks it returns
+within its budget and that its map names goals of the same labels.
 
 On FalseEnding%-280 from goal 86 to `buy:buyds` (the best: tick 10758; beam 200, `--bonuses bonus1`; scoped is `--only
 lap:2,record:2,buy:buyreward2,buy:buyclone2,buy:buyclonemult2,buy:buyglobalreward2`), each plan's target tick per round

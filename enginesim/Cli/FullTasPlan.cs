@@ -39,7 +39,12 @@ namespace IGTAP.EngineSim.Cli
             public long Tick, Old, AfterBonus1;
             /// <summary>The plan's goals, and the whole list: the goals before the stretch, the plan, the goals after the target.</summary>
             public string[] Planned, Goals;
+            /// <summary>Per goal of <see cref="Goals"/>, its index in the planned list (Replan's <c>all</c>); -1 for a goal the plan
+            /// or a stray fit put in.</summary>
+            public int[] OldOf;
             public List<object> Log;
+            /// <summary>Why it isn't done (null: it is).</summary>
+            public string Why;
             /// <summary>With join: the plan's route under <see cref="Goals"/>, the best's way on after the target joined when it plays
             /// on, re-timed from the start (Retune from goal 0) when it reaches every goal. Null when the plan isn't done.</summary>
             public Route Run;
@@ -50,9 +55,11 @@ namespace IGTAP.EngineSim.Cli
         /// plays, not necessarily the run's) from goal <paramref name="kept"/> (the goals before it stay) until it buys the last of
         /// <paramref name="targets"/>: searched (EconomyPlan.Search, --mode auto) and realized (Realize), with <paramref name="join"/>
         /// the route too (<see cref="PlanResult.Run"/>). Callable from the goals part (a reroute after an edit changed the economy):
-        /// the solve's best, goals and simulation factory are put back after it.
+        /// the solve's best, goals and simulation factory are put back after it. <paramref name="tickCap"/>: a plan whose target
+        /// comes after this tick is not realized (it can't beat the best); <paramref name="seconds"/>: the whole call's budget
+        /// (searches, realize, join; a piece search running at the end can overrun it by --piece-minutes).
         /// </summary>
-        PlanResult Replan(Route best, FullTasGoal[] all, int kept, string[] targets, bool join)
+        PlanResult Replan(Route best, FullTasGoal[] all, int kept, string[] targets, bool join, long tickCap = long.MaxValue, double seconds = ReplanMinutes * 60)
         {
             var saved = (_best, _runGoals, _labels, _goals, _create, _kept, _planBase, _borrow, _pieceState);
             _best = best;
@@ -61,19 +68,31 @@ namespace IGTAP.EngineSim.Cli
             try
             {
                 Track(all.ToList());
-                return PlanAndRealize(all, kept, targets, join);
+                _planDeadline = _clock.Elapsed.TotalSeconds + seconds;
+                return PlanAndRealize(all, kept, targets, join, tickCap);
             }
             finally
             {
+                _planDeadline = double.PositiveInfinity;
                 (_best, _runGoals, _labels, _goals, _create, _kept, _planBase, _borrow, _pieceState) = saved;
                 _eval.UseGoals(_runGoals);
             }
         }
 
-        /// <summary>The goals part's plans: at most this long a search (the beam's, after a capped exact one).</summary>
+        /// <summary>The goals part's plans: at most this long, search, realize and join together.</summary>
         const double ReplanMinutes = 10;
 
-        PlanResult PlanAndRealize(FullTasGoal[] all, int kept, string[] targets, bool join)
+        /// <summary>When a Replan's budget runs out (_clock seconds; infinite outside one): its searches get what is left, and
+        /// realize and the join stop where they are.</summary>
+        double _planDeadline = double.PositiveInfinity;
+
+        bool PlanOver => TimeUp || _clock.Elapsed.TotalSeconds >= _planDeadline;
+
+        /// <summary>A search's settings with the budget left (at least a second; the settings' own when no Replan budget runs).</summary>
+        PlanSettings Budgeted(PlanSettings ps) => double.IsPositiveInfinity(_planDeadline) ? ps
+            : ps with { Seconds = Math.Max(1, Math.Min(ps.Seconds, _planDeadline - _clock.Elapsed.TotalSeconds)) };
+
+        PlanResult PlanAndRealize(FullTasGoal[] all, int kept, string[] targets, bool join, long tickCap)
         {
             string targetLabel = targets[targets.Length - 1];
             int targetIndex = Array.FindIndex(all, kept, g => g.label == targetLabel);
@@ -89,18 +108,20 @@ namespace IGTAP.EngineSim.Cli
                 : resolved[label] = all.FirstOrDefault(x => x.label == label) ?? NewGoal(label)?.goal;
             var settings = new PlanSettings(targets, Array.Empty<string>(), Seconds: ReplanMinutes * 60);
             long start = _best.GoalPhysics[kept - 1];
-            EconomyPlanResult plan = PlanFrom(at, place, null, moves, settings, GoalOf);
-            Realization z = Realize(plan, at, route, start, place, null, moves, (s, p, prefix) => PlanFrom(s, p, prefix, moves, settings, GoalOf), GoalOf);
+            EconomyPlanResult plan = PlanFrom(at, place, null, moves, Budgeted(settings), GoalOf);
+            Realization z = Realize(plan, at, route, start, place, null, moves, (s, p, prefix) => PlanFrom(s, p, prefix, moves, Budgeted(settings), GoalOf), GoalOf, tickCap);
             moves.Save(MovesFile);
             long bonus1 = Array.FindIndex(all, g => g.label == "reward:bonus1") is int b && b >= 0 && b < _best.Progress ? _best.GoalPhysics[b] : 0;
             string[] tokens = z.Planned.Select(g => g.label).ToArray();
             var result = new PlanResult
             {
                 Done = z.Done, Target = targetLabel, Tick = z.Tick, Old = targetIndex < _best.Progress ? _best.GoalPhysics[targetIndex] : -1, AfterBonus1 = z.Tick - bonus1,
-                Planned = tokens, Log = z.Log,
+                Planned = tokens, Log = z.Log, Why = z.Why,
                 Goals = all.Take(kept).Select(g => g.label).Concat(tokens).Concat(z.Done ? all.Skip(targetIndex + 1).Select(g => g.label) : Array.Empty<string>()).ToArray(),
+                OldOf = Enumerable.Range(0, kept).Concat(Enumerable.Repeat(-1, tokens.Length))
+                    .Concat(z.Done ? Enumerable.Range(targetIndex + 1, all.Length - targetIndex - 1) : Enumerable.Empty<int>()).ToArray(),
             };
-            if (join && z.Done) (result.Run, result.Goals) = Join(z.Planned, z.Inputs, all, kept, targetIndex);
+            if (join && z.Done) (result.Run, result.Goals, result.OldOf) = Join(z.Planned, z.Inputs, all, kept, targetIndex);
             return result;
         }
 
@@ -149,9 +170,10 @@ namespace IGTAP.EngineSim.Cli
         /// the two or 0-24 idle ticks (a reset segment's way: the same Quick Restart, from the plan's end). Where every join dies
         /// or stops before a goal (the plan's end left another checkpoint, frame phase or Cash for the old way), that goal is played
         /// the builder's way (Play: the library, the best's own ways, a piece search) and the old route joined again from it, at most
-        /// JoinBridges goals; one that stops on a stray buy gets its goals fitted (below). The route and its goal labels.
+        /// JoinBridges goals; one that stops on a stray buy gets its goals fitted (below). The route, its goal labels and per goal its
+        /// index in <paramref name="all"/> (-1: the plan's, or one a stray fit put in). Stops bridging when the Replan budget is out.
         /// </summary>
-        (Route run, string[] goals) Join(List<FullTasGoal> planned, List<InputTick> route, FullTasGoal[] all, int kept, int targetIndex)
+        (Route run, string[] goals, int[] oldOf) Join(List<FullTasGoal> planned, List<InputTick> route, FullTasGoal[] all, int kept, int targetIndex)
         {
             string targetLabel = all[targetIndex].label;
             var full = _kept.Concat(planned).Concat(all.Skip(targetIndex + 1)).ToList();
@@ -167,15 +189,15 @@ namespace IGTAP.EngineSim.Cli
             List<InputTick> written = route;
             int reached = kept + planned.Count;
             var saved = _borrow;
+            // Each goal's goal in the old route (-1: the plan's, or one a stray fit put in), kept in step with the fits.
+            var oldOf = Enumerable.Range(0, kept).Concat(Enumerable.Repeat(-1, reached - kept)).Concat(Enumerable.Range(targetIndex + 1, full.Count - reached)).ToList();
             // The bridges borrow the best's own ways to the goals after the target too.
             _borrow = (all.Select(g => g.label).ToArray(), kept, Math.Min(all.Length, _best.Progress) - 1);
             try
             {
                 List<InputTick> basis = route;
                 (List<InputTick> inputs, RunResult result, int wait) furthest = (null, null, 0);
-                // Each goal's goal in the old route (-1: the plan's, or one a stray fit put in), kept in step with the fits.
-                var oldOf = Enumerable.Repeat(-1, reached).Concat(Enumerable.Range(targetIndex + 1, full.Count - reached)).ToList();
-                for (int at = reached, bridges = 0; r.Progress >= reached && at < full.Count;)
+                for (int at = reached, bridges = 0; r.Progress >= reached && at < full.Count && !PlanOver;)
                 {
                     int old = at == reached ? targetIndex : oldOf[at - 1];
                     int oldCut = old < 0 ? -1 : (int)Math.Min(_best.GoalInput[old], _best.Inputs.Count);
@@ -219,9 +241,12 @@ namespace IGTAP.EngineSim.Cli
                     // next buy goal moved up to the stray, else its label put in there; the join replayed, at most once a goal.
                     RunResult fitted = furthest.result;
                     var fits = new List<string>();
+                    // A box that strays again at the goal it was fitted at would be fitted there forever: once per goal and box.
+                    var fitAt = new HashSet<(int, string)>();
                     while (fits.Count < full.Count && fitted.Progress < full.Count)
                     {
                         string box = StrayBox(fitted.EndReason);
+                        if (box == null || !fitAt.Add((fitted.Progress, box))) break;
                         bool Stray(FullTasGoal g) => g.kind == FullTasGoal.Buy && g.boxes?.Length == 1 && g.boxes[0].Split('#')[0] == box && FullTasGoal.IsEconomy(g.label);
                         int p = fitted.Progress, later = box == null ? -1 : full.FindIndex(p, Stray);
                         FullTasGoal g = box == null ? null : later >= 0 ? full[later] : all.FirstOrDefault(Stray);
@@ -298,7 +323,7 @@ namespace IGTAP.EngineSim.Cli
                 run = t;
             }
             Log($"route: reaches {run.Progress} of {full.Count} goals" + (run.Progress == full.Count ? $" in {run.LiveSeconds:0.00}s live ({run.Last} ticks)" : ""));
-            return (run, full.Select(g => g.label).ToArray());
+            return (run, full.Select(g => g.label).ToArray(), oldOf.ToArray());
         }
 
         /// <summary>A saved course route's inputs from the quick restart the planner makes: a standing one as it is, a restart
