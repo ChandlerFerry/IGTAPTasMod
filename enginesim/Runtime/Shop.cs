@@ -136,7 +136,7 @@ namespace IGTAP.EngineSim
                 for (int i = 0; i < levels; i++)
                 {
                     need[currency] += cost;
-                    cost = Math.Ceiling(Math.Ceiling(Math.Pow(cost + b.upgradeAddFactor, b.upgradePowerScaleFactor) * b.upgradeScaleFactor));
+                    cost = NextCost(cost, b);
                 }
             }
             return need;
@@ -449,12 +449,16 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        internal static void ScaleBoxCost(upgradeBox box)
+        internal static void ScaleBoxCost(upgradeBox box) { box.upgradeCost = NextCost(box.upgradeCost, box); }
+
+        /// <summary>A box's cost after a buy at <paramref name="cost"/>, as upgradeBox raises it (upgradeBox.cs:941-944: add, power,
+        /// ceiling of the scaled cost, ceiling).</summary>
+        static double NextCost(double cost, upgradeBox box)
         {
-            box.upgradeCost += box.upgradeAddFactor;
-            box.upgradeCost = Math.Pow(box.upgradeCost, box.upgradePowerScaleFactor);
-            box.upgradeCost = Math.Ceiling(box.upgradeCost * box.upgradeScaleFactor);
-            box.upgradeCost = Math.Ceiling(box.upgradeCost);
+            cost += box.upgradeAddFactor;
+            cost = Math.Pow(cost, box.upgradePowerScaleFactor);
+            cost = Math.Ceiling(cost * box.upgradeScaleFactor);
+            return Math.Ceiling(cost);
         }
 
         internal void ZeroCash() { _spent[Cash] = _start[Cash] + _awarded[Cash]; }
