@@ -23,7 +23,7 @@ namespace IGTAP.EngineSim.Cli
     // `fulltas-buytable <trace> --from <goal> [--until <goal>] [--out file] [--max-set 3] [--entry-minutes m]
     //   [--entry-stall m] [--triple-reach u] [--techniques walk,jump,dash] [--retry-miss] [--targets reward:bonusN,lap:N]`
     // writes fulltas/<run>.buytable.json, cached per run and trace (an entry measured before is skipped; a miss is cached
-    // too and retried only with --retry-miss). The format (tools/plan-buytable.py is its first reader):
+    // too and retried only with --retry-miss). The format (the economy planner reads it, EconomyMoves.cs):
     //   { run, trace, from, until, boxes[],
     //     places: [{id, name, kind: start|restart|gate|finish|box, box?, x, y, caps, tick, restart?: {press, land}}],
     //     entries: [{place: <id>, boxes: [<labels in the order bought>], technique: walk|jump-through|dash-through|miss,

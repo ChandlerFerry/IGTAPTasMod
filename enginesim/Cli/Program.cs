@@ -45,7 +45,6 @@ namespace IGTAP.EngineSim.Cli
                     case "fulltas-plan": return EconomyPlan.Run(args.Skip(1).ToArray());
                     case "plan-selftest": return EconomyPlanCheck.Run();
                     case "fulltas-buytable": return FullTas.BuyTable(args.Skip(1).ToArray());
-                    case "zip-plan": return ZipPlan.Run(args.Skip(1).ToArray());
                     case "plan-check": return PlanCheck(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
                     case "grid": return Grid();
@@ -249,12 +248,6 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         jump-through, dash-through), each engine-confirmed; cached in\n"
                             + "                                         fulltas/<run>.buytable.json (the planner reads it);\n"
                             + "                                         --targets reward:bonusN,lap:N measures those from every place instead\n"
-                            + "  zip-plan <trace.json> [--route <route.json> [--ticks N]] [--config zip-plan.json] [--plan steps] [--target token] [--minutes M] [--out plan.json]\n"
-                            + "                                         the buy order from the trace's start (or the route replayed to input N)\n"
-                            + "                                         to the zip movers (buytree16; --target another tree box), on a model of\n"
-                            + "                                         Area 2's economy; laps from\n"
-                            + "                                         the saved routes, else zip-plan.json's estimates; --plan buy:<token>,all:<token>,\n"
-                            + "                                         lap:<N>,atoms:<k> starts from those steps; prints the Full-TAS goals\n"
                             + "  plan-check <trace.json> <route.json> --at N [--ticks T] [--buy | --finish | --flip on|off | --stray BOX]\n"
                             + "                                         the economy drive (Simulation.EconomyIdle/Buy/Finish) against the full\n"
                             + "                                         simulation: T (2000) idle ticks where the player rests after goal N of a\n"

@@ -216,10 +216,7 @@ namespace IGTAP.EngineSim.Cli
             _strayRetime = _strayAvoid = Part("stray");
             _tailMinutes = Solve.Option(args, "--tail-minutes", _windowMinutes);
             _combineRepairMinutes = Solve.Option(args, "--combine-repair-minutes", _tailMinutes / 3);
-            // The goals part's record laps: a lap searched from the quick restart for each course and unlock set with none saved.
-            _recordSearchMinutes = Solve.Option(args, "--record-search-minutes", _recordSearchMinutes);
             _stretchMinutes = Solve.Option(args, "--stretch-minutes", _stretchMinutes);
-            foreach (string s in Solve.Args(args, "--insert-goal")) InsertGoalOption(s);
             // A focus is goals picked by number: the goals part, which renumbers them, stays off.
             bool focused = ReadFocus(args);
             if (focused && _parts.Remove("goals")) Log("auto: --focus: the goals part is off (it edits the goal list the focus numbers)");

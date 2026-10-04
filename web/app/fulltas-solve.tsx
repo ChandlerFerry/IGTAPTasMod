@@ -147,12 +147,12 @@ function lastPull(log: string[]): { lever: string; goal: number; label: string }
 
 export const LEVERS: Record<string, string> = { window: "window search", lookahead: "look-ahead window", span: "long window", polish: "input polish",
   graft: "graft from a known route", plan: "contact planner", dropreset: "dropping a quick restart", combine: "splicing known routes",
-  revive: "reviving a known route", goals: "goal edits" };
+  revive: "reviving a known route", goals: "economy planner" };
 
 function recordItem(e: FullTasEvent, goals: string[]): Item {
   const prev = e.previous as RouteJson, best = e.best as RouteJson, of = goals.length;
   const how = str(e.how);
-  // Improve's goals part changed the goal list (laps dropped or added): its words, e.g. "Dropped 2 Course 1 laps (goals 88-91): -1.62 s".
+  // Improve's goals part changed the goal list: its words, e.g. "economy planned: goals 12-40 planned to buy:buyds on tick 9000".
   if (e.goalsEdit) return { key: `r${e.at}`, at: e.at, tone: "best", title: str(e.goalsEdit),
     detail: `New record ${s2(best.time)} · ${best.progress} goals; the game takes this goal list when it saves the record` };
   if (e.firstComplete) return { key: `r${e.at}`, at: e.at, tone: "best", title: `First complete route: ${of} goals in ${s2(best.time)}`,

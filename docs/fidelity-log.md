@@ -203,7 +203,7 @@ ordered as the sections they came from.
   (`MacroEngine.FrameGrid.Step`), 0 in a freeze's or pause's repeats. The engine's `--check` of the 359.70 route now
   meets every goal on 1x's tick (125 of them, `buy:buyreward2` at 8940) and stops there (strict buys). `zip-plan`'s
   clone frame is 1/280 s.
-- **Where:** `TurboRunner.Run`, `Simulation.InterpolatedFrames`, `Shop.StepClones`, `ZipPlan`.
+- **Where:** `TurboRunner.Run`, `Simulation.InterpolatedFrames`, `Shop.StepClones`, `ZipPlan` (deleted 2026-10-04).
 
 ## Clone order changed between sessions
 
@@ -744,9 +744,10 @@ ordered as the sections they came from.
   ([`docs/fulltas.md`](fulltas.md#clones-on-build-25640326)). The scenes gained `Moss` tilemaps (no other collider
   changed).
 - **Fix:** the engine's spawn does the same (`Economy.cs:318`); turbo runs the game's own. The engine matches the game's
-  turbo trace (`fe-b640-34674`) in RNG, Cash and position on every tick to the death at 5270. `plan_fulltas.py` fills
-  bought clones and a break's refill one an interval.
-- **Where:** `Economy.cs:318`, `tools/plan_fulltas.py`.
+  turbo trace (`fe-b640-34674`) in RNG, Cash and position on every tick to the death at 5270. The planners fill
+  bought clones and a break's refill one an interval (`plan_fulltas.py`, deleted 2026-10-04: now the engine's own economy,
+  `FullTasAutoLib.cs` `ClonePay`).
+- **Where:** `Economy.cs:318`, `FullTasAutoLib.cs`.
 
 ## Game build 25630570: clones and buy-max
 
@@ -760,7 +761,7 @@ ordered as the sections they came from.
 - **Fix:** ed1784b: the engine's spawn keeps the overshoot, and the engine and turbo resume `IE_BuyMax` after every
   physics step, the touch's included. The engine then matches the new-build turbo through tick 14122 of the 353.32 s
   route. A scene diff of the builds (4,036 objects each side) changes no gameplay field, so nothing was captured again.
-  `ZipPlan.ClonePay` and `plan_fulltas.py` are ported too. Buy-max: a 1x probe of the route (inputs to 15200) buys 2 levels on the touch's tick, then 1 a tick
+  `ClonePay` (then in `ZipPlan.cs`, since 2026-10-04 in `FullTasAutoLib.cs`) and `plan_fulltas.py` were ported too. Buy-max: a 1x probe of the route (inputs to 15200) buys 2 levels on the touch's tick, then 1 a tick
   (offline Cash equal level by level from tick 15040). Routes judged before the build are judged again.
 - **Where:** `Economy.cs:308`, `Economy.CloneStates`, `Shop.FixedStep` (`Shop.cs:148`, `Simulation.cs:1313`),
   `TurboRunner.cs:181` and 238-239.

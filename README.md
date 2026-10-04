@@ -211,7 +211,7 @@ Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run wit
 | `ProbeRunner.cs` | 1x probes: exact inputs at normal speed from a category start or savestate, logged every tick and rendered frame (`enginesim/README.md#probe`). |
 | `TasPlugin.Editor.cs`, `TasPlugin.Share.cs`, `TasMarkup.cs` | The TAS editor (studio **TAS** tab, `/api/tas/*`): frame advance, rewind and tick editing on the live game, re-recording, suggestions, sharing, and routes as text ([`docs/tas-markup.md`](docs/tas-markup.md)). |
 | `web/` | Next.js studio, served by the plugin. |
-| `tools/` | Capture, redeploy, `validate.py`, `audit-traces.py`, `enginesim-rays.py` (Unity vs offline raycasts), `plan_fulltas.py`, `upgrade-boxes.py` (every one-off box; adds free ones to `courses.json` as bonuses), `probe.py` (a 1x probe and its per-frame log), `economy-diff.py` (two legs' economy, field by field as value sequences), `tech-check.py` (every tech demo, turbo against the offline engine), `tas-check.py` (the TAS editor's seek, rewind, text and share against 1x). |
+| `tools/` | Capture, redeploy, `validate.py`, `audit-traces.py`, `enginesim-rays.py` (Unity vs offline raycasts), `upgrade-boxes.py` (every one-off box; adds free ones to `courses.json` as bonuses), `probe.py` (a 1x probe and its per-frame log), `economy-diff.py` (two legs' economy, field by field as value sequences), `tech-check.py` (every tech demo, turbo against the offline engine), `tas-check.py` (the TAS editor's seek, rewind, text and share against 1x). |
 
 ## Build
 

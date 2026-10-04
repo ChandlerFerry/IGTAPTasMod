@@ -369,7 +369,7 @@ namespace IGTAP.EngineSim
 
         double Global(globalStats.globalUpgradeSet upgrade) { return _global[(int)upgrade]; }
 
-        // Reads for zip-plan's start state: a course's upgrades, the global upgrades and a course's clone count and path length as
+        // Reads for the clone income model (FullTasAutoLib.cs CloneIncome): a course's upgrades, the global upgrades and a course's clone count and path length as
         // the run holds them now (the objects keep their loaded values).
         internal double LocalOf(localUpgrades script, localUpgrades.localUpgradeSet upgrade)
         {

@@ -377,24 +377,6 @@ namespace IGTAP.EngineSim.Cli
                 Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
                 return 0;
             }
-            // --ladder-study C --k K: Course C's record-break ladders of K laps, their slowed laps and each played whole
-            // (FullTasAutoLadder.cs); then stops.
-            int ladder = Solve.Option(_args, "--ladder-study", 0);
-            if (ladder > 0)
-            {
-                LadderStudy(ladder, Solve.Option(_args, "--k", 4));
-                Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
-                return 0;
-            }
-            // --record-lap K: the lap finishing at goal K searched on the course timer from its restart (FullTasAutoGoals.cs); then stops.
-            int recordLap = Solve.Option(_args, "--record-lap", 0);
-            if (recordLap > 0)
-            {
-                RecordLapSearch(recordLap);
-                Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
-                return 0;
-            }
-
             (int, long) reachFrontier = (-1, -1);
             int reachRound = 0, reachBack = 0, polishedTo = 0;
             string stopped = null;

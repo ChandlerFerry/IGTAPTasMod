@@ -407,55 +407,12 @@ credits, `enginesim/fulltas/TrueEnding-ANY%-v1-tail.json`). That stretch needs t
 so the farm comes before it.
 Its Course 1 buys (20 `buyreward`, 9 `buyclone`, then `buywj`) are timed for 82-tick
 laps: an ordering planned for slower laps asks for a clone before the clones have paid for it, and the run stalls at
-that box. Its Course 2 goals (after `reward:bonus1` through `buy:buyds`) are planned from its own best:
-
-```
-python tools/plan_fulltas.py --run TrueEnding-ANY% --measure --write
-```
-
-`--measure` reads the run's offline best (`enginesim/fulltas/<run>.json`) and its trace (`fulltas-<run>.json`, of that
-best or of an earlier best it extends, reaching `reward:bonus1`: **Capture start** first if it isn't) and takes from them the Cash at `reward:bonus1`, the ticks
-from there to Course 2's start gate, Course 2's lap (start gate to finish) and restart-to-gate lead, a repeat buy's
-ticks and the extra per box row crossed, and Course 2's best run (game timer), which is the clones' path. `--write`
-replaces the goals from `reward:bonus1` through `buy:buyds` and keeps the run's goals after it. Rerun it after the
-run's Course 2 laps or box walks get faster; a goals edit makes the saved routes stale, so solve again afterwards.
-
-The plan's Course 2 clones follow the pre-2026-09-30 build: a clone spawns from the pool only once `BaseCloneInterval`
-(best path ÷ clone count) has passed since the last spawn, runs the path (best run + 1 tick), pays, and is back in the
-pool a tick later. The current build spawns into a free slot every frame while the course stays on screen
-([Clones and buy-max](#clones-and-buy-max-build-25630570)); the model isn't ported yet. Replaying `TrueEnding-ANY%`'s
-buys through it lands within ~6 ticks of the best's buy ticks (`buy:buyds` 3539 planned against 3533 after
-`reward:bonus1`).
-
-Its Course 3 (`start:3` through `buy:buydj`, after the shaft goal `at:7645,6050,230,1500`) is planned the same way:
-
-```
-python tools/plan_fulltas.py --run TrueEnding-ANY% --measure --dj-farm at:7645,6050,230,1500 --write
-```
-
-`--dj-farm GOAL` replays the run's goals from `reward:bonus1` through `buy:buyds` in the model, then plans Course 3
-from its start gate: `reward:bonus3` first (170 ticks, one more global cash box), then the greedy phases main's plan
-uses (`buyreward3`, `buyclone3`, `buyclonemult3`, `buyglobalreward3`, `buyfast3`, laps) to `buy:buystatue`, then to
-`buy:buydj`. The statue adds 1 to the global clone multiplier and boosts Courses 1 and 2 to Course 3's tier, so their
-clones pay off screen from then on. It puts the goals right after GOAL, replacing the Course 3 goals (and
-`reward:bonus3`) already there; `--write` touches only those. The ticks from `buy:buyds` to Course 3's gate come from the run's best (its
-`start:3` there, or GOAL plus a straight-line guess to the gate) or `--dj-arrive`; the Course 3 lap (start gate to
-finish) and restart lead (to the start gate) from the best's farm laps, else 233 and 29. Without a trace of the best, `--measure` refuses: pass `--cash`, `--arrive`, `--lap`, `--lead`,
-`--clone-path`, `--repeat` and `--row-step` instead. A planned buy is one the run can pay for when it gets to the box:
-the plan never has the player stand at a box waiting for clone income (a search window can't find hundreds of idle
-ticks, and a reach window on such a buy never ends); when Cash is short, it runs the course again. Only `--measure`'s
-replay of the run's own goals waits, as the route did. The greedy prices the walk to a phase's last box from where the
-player stands (`buydj` is 130 ticks from `buyreward3`, not a repeat buy's 22): priced as a repeat buy, it put three
-`buyreward3` (~20 GW that never paid back) between the last lap and `buydj` in the 482.98 s route. The plan buys
-`buystatue` 5288 ticks after Course 3's gate and `buydj` 10555 ticks (211 s) after it, against 17697 without bonus 3
-and the statue. The model pays ~20% more than the
-665.48 s route earned over its late laps (its farm replayed: `buydj` 23191 ticks after `reward:bonus1` against the
-route's 24767, which stood 1868 ticks at the box), so expect the route to need a few more laps than planned. The
-run's avoid box over Course 3's start gate was removed for it.
-
-A Course 2 clone bought before `reward:bonus1` doesn't pay for itself: Cash at `finish:2` is 761 W against the clone's
-800 W, so the run would wait ~100 ticks near the box and walk ~90 more, and the model's break-even detour is 100–190
-ticks (`buy:buyds` −41 ticks with the clone 700 ticks before the bonus and a 100-tick detour, +59 with 200).
+that box. Its Course 2 and Course 3 goals (after `reward:bonus1` through `buy:buyds`, and Course 3's through `buy:buydj`) were planned
+by `tools/plan_fulltas.py`, a Python model of the economy deleted with the other old planners on 2026-10-04 (git history
+has it and its notes: the pre-2026-09-30 clone model it replayed `buy:buyds` with at 3539 ticks against the best's 3533,
+the Course 3 plan with `buystatue` 5288 ticks after the gate and `buydj` 10555). The goals in `fulltas.json` stay as they
+were planned. To plan them again, use the economy planner on the run's best ([Economy planner](#economy-planner)):
+it plans from the engine's own economy, not a copy of it.
 
 ### Course laps from a quick restart
 
@@ -975,13 +932,6 @@ under the box), the way back into a box between two of its buys. With the schedu
 between two buys of the same box once, after the scheduler's windows run out (they never pull the reset study), and
 not at a buy with no spare Cash. Studied first, they held `FalseEnding-Any%`'s windows off for 8 minutes for nothing.
 
-`--record-lap K` searches the lap finishing at goal K from where the best's quick restart before it lands (for a lap the
-best walks into, a quick restart as the walk touches the gate), scored on the course timer (the course's path time), for
-`--minutes`, and writes it to `offline-best` as `<course>_<caps>-<time>-restart.json` for record laps, with its human
-version. The goals part runs the same search on its own (see Record laps under [Auto](#auto)). A record lap also tries a
-saved route with its first tick on the restart's own tick (its stick only): a saved route starts one settling tick
-behind a run's restart landing (Course 2's 2.20 s route dies on its spikes one tick later).
-
 `--lookahead N` makes each polish and repair window search on N goals past its own last goal and scores it there, so a
 window whose own goal is reached later but with more speed wins when it gains by the goal after next.
 
@@ -1280,164 +1230,17 @@ baseline). The default is set by the measurements below, and has every part exce
    on tick 10575, 183 before the best (its plan 10296: without re-plans `buyds` waited 220 ticks for its Cash); its join
    (85 stray fits, 2 bridges: the best's Course 3 order on the new economy) reached all 308 goals in 424.40 s. The second
    stretch found no plan in its 11 minutes; the third built `buydj` 352 ticks after that route's and was not kept. A full
-   pass needs about an hour a stretch, hence the default. Until 2026-10-04 a pull played the edits
-   below on copies of the best instead (a FalseEnding-Any% pull took about 7 minutes, 2500 CPU s, and rarely gained); it
-   no longer plays them:
-   - **Drops**: the last lap (start and finish goals, the inputs from the quick restart before the gate to the next step's)
-     of each run of back-to-back laps of a course, and its last two.
-   - **Adds**: 1..N more laps of a course in place of a wait (a lap earns its reward, standing earns nothing): n copies of
-     the nearest lap before an idle stretch of 20 ticks or more (its quick restart to its finish) are put in at that lap's
-     finish, and the idle stretch, up to the next lap goal of any course and on either side of the quick restart, is cut
-     out; the goals after it put back only the idle ticks they miss. n runs while the laps take fewer ticks than the wait
-     (n laps of L ticks, wait W, n * L < W; a run that takes as many ticks or more can't be shorter, and only a shorter run
-     is adopted). On `FalseEnding-Any%` that is the 112 idle ticks after Course 1's last lap (goal 85, a 107-tick lap)
-     before the quick restart to `buy:buywj`: N = 1, at most 5 ticks. Its other waits fit no lap (Course 1's 25 ticks at
-     goal 51; Course 3's 22-34 ticks between buys, a Course 3 lap being 185-204), and the wait before `buy:buydj` isn't
-     idle ticks (a walk of 480 inputs with loops in it). The lap offered plays 5 ticks ahead at every goal from
-     `buy:buywj` to goal 240 of 284 with no wait put back (`--check`), then its extra Cash buys a Course 3 box early on
-     the walk to goal 241 (`buy:buyglobalreward3`, a stray buy) and no wait passes it. An add whose partial run stops
-     ahead of the best (`AddAhead`) is therefore re-found as an investment, as an inserted record lap is (the two that
-     get furthest, 150 CPU s a goal left): from the 360.17 s best, `--parts goals` on 8 threads re-found goals 241-284
-     in 463 s wall (3545 CPU s) and adopted 284 goals at 358.69 s (17202 ticks, -74; the fresh check kept it, and
-     `--check` of the route under the 284-goal list reaches every goal).
-     A wait after a later quick restart gets the laps at that restart too (it lands at the course's start: after the
-     statue's Course 2 buys the restart lands at the top, by Course 3's gate). A buy reached as its Cash comes waits by
-     walking, not standing: the climb to `buy:buydj` is 605 ticks against a bound of 145 with 17 ticks of spare Cash (the
-     model's `Gap` and `Spare`, [Auto](#auto)), and has no loop in it to cut (no two inputs 20 or more apart where the
-     player stands within 16 units at the same speed). So a Cash-bound buy (spare under its gap) gets n laps (n * L under
-     the gap) at the lap's finish (the buy right after it) or at the last quick restart before it, nothing cut, and the
-     goals from the buy on re-found as an investment from the laps' finish (`GoalEdit.Refind`; a buy the laps' walk
-     passes after its Cash came is a stray: 3 Course 3 laps at the top bought `buydj` on the way). On the 357.08 s best
-     (278 goals): 1-6 Course 2 laps in place of the climb, 3.2 min on 8 threads to re-find the 11 goals from `buydj`
-     (1650 CPU s): 5 laps re-found 363.10 s, and the replan dropped them back to 1 (357.46 s, then 357.25 s, +16 ticks);
-     on 357.73 s the same to +9. A Course 2 lap earned about what the clones pay while standing: none paid (on the
-     pre-2026-09-30 build).
-     An add that plays through keeps every later wait for Cash as the best has it (the 310 idle ticks before the statue
-     walk), so the laps' extra Cash is never spent: such an add alone is never faster. So the two fastest adds of a pull
-     that play through but aren't faster (`AddRetunes`) get every wait after their laps re-timed to their Cash (`Retune`,
-     as a ladder's: front to back, each wait before a quick restart cut to the touch of the next one's goal) and play again.
-     The laps offered aren't only the one before the wait: the shortest lap of each course the run laps goes in at the last
-     quick restart before any wait of 20 idle ticks or more where the last gate crossed is that course's (the restart lands
-     there). A copy goes in only at a restart with no press or dash in the 17 inputs before it, and only from a lap whose
-     own restart had none (a dash pressed before a restart fires after it, into the copy). Adds played before this are
-     played once more (their memory key changed).
-   - **Inserted reward goals** (`--insert-goal reward:bonusN@K`, repeatable): a bonus the run doesn't take, put in at goal K
-     (its box: the one nearest the bonus's end rect in `courses.json`), re-found as an investment from the goal before it.
-     While one is due a pull offers nothing else. It adds a reward goal to the skeleton, so the game won't adopt the list
-     from a judged route (`EditRefused`): put it in `fulltas.json` by hand. A later `--auto` resumes on such an adopted
-     list (its run file's `goalsFrom`) without the option: the inserted goal's entry is made again from `courses.json`, and
-     the list is taken only if the run file's route plays it through faster than the trace's best. Bonus 5's box (`buyfree3`, free) is +1 global
-     cashPerLoop level, as bonuses 1-3 are: every reward goes with 3 + 2n (n global levels), 15 -> 17 at Course 3's
-     start. On the 350.35 s record, `reward:bonus5@174` (after bonus 2: from bonus 2's quick restart at Checkpoint (3),
-     120 ticks to the box and a quick restart back) is 2.65 s behind at `start:3` and re-found to 348.50 s (one pull).
-   - **Cash goals** (`CashEdits`): a reward or buy goal of a GLOBAL cashPerLoop box (`Shop.GlobalCashAt`: bonuses 1-16's
-     and 22's boxes, `buyglobalreward2`-`5`; +1 level of every course's reward). One taken earlier raises the income of
-     everything after it and costs its detour or price sooner. Each of the best's is dropped and moved 1, 4 and 16 goals
-     earlier and later (`CashMoves`); a buy one is bought once more before its first buy and after its last; one the run
-     doesn't have (a `bonusN` in `courses.json`, an economy box) goes in after the goal where the best stands nearest its
-     box, within 4000 units (`CashNear`). A reward goal whose detour ends in a quick restart before the next goal is cut
-     out (from the quick restart before its touch, else the goal before) and, when it starts with one, put in before the
-     quick restart that starts the step it moves to: those play as spliced, a moved one with its later waits re-timed when
-     it plays through but isn't faster (`AddRetunes`, as an add). Every other edit keeps the best's inputs, which don't
-     play it, and is re-found as an investment from the goal before the change without a play (`RefindFrom`). The goals
-     part holds its edits to `EditRefused` with the cash goals (and `--insert-goal`'s) taken out (`GoalsRefused`): the game
-     still won't adopt a list that adds, drops or moves a reward goal from a judged route; put it in `fulltas.json` by
-     hand. A later `--auto` resumes on such a list as on an `--insert-goal`'s (an added buy goal's entry made from its box).
-   - **Regroups**: two single buys after a buy of box x, as one `buy:a+b` goal played with the buy table's measured way
-     from x's spot (`fulltas/<run>.buytable.json`, [Buy table](#buy-table); either order it has, so a reorder too).
-   - **Record laps**: a lap replaced by a quick restart, 0-40 idle ticks and a faster lap played from there: the saved
-     course routes of that course (`offline-best` and `offline-best\judged` beside the trace, the 12 fastest of each
-     unlock set the player holds there, fastest first, until 4 play from the restart) and the best's own laps of the
-     course (the 6 shortest), when it leaves the course a faster best time: the clones' path, so every clone pays more
-     from then on, and the clones in flight pay at the finish (a record break,
-     [Clones and buy-max](#clones-and-buy-max-build-25630570)). Each spot offers two laps when they differ: the one
-     that leaves the fastest best time, and the one that finishes soonest while still beating it (a faster time can cost
-     ticks: `2_wjds-1.50-restart` crosses the
-     line 9 ticks after the best's own 1.68 s lap from the same restart). Tried at the course's last lap before its
-     first clone buy, its first lap after one, its first lap after each unlock buy (new unlocks, a faster way), and
-     every lap the best walks into (no quick restart before the gate): the walk is kept to the gate and a quick restart
-     goes 0-3 inputs after it, the fastest and the soonest of those kept.
-     `FalseEnding-Any%`'s first Course 2 lap with the dash walked in from the boxes in 103 ticks; its next lap, from a
-     quick restart, took 84. Each is offered alone, with the same lap in place of each slower lap right after it (the
-     visit's back-to-back laps), and each of those with the last 1-3 laps of the course's last run of laps before the
-     next goal that isn't economy dropped. A course and unlock set with no `-restart` lap saved gets one searched first
-     (the `--record-lap` search from its earliest spot, `--record-search-minutes`, default 2, on every thread; 0: off),
-     once per session, and its spots are played again with it. The lap found is sent to the
-     game as a course route too (not with `--no-submit`): the run's quick restart lands where the category starts, so
-     it is judged as `<course>_<CAT>` and saved when it's a record (`2_wjds-1.50-restart` became `2_WJ_DS 1.50` over
-     1.62).
-   - **Inserted record laps**: `start:N finish:N` right after an unlock buy, played as a quick restart there, 0-40 idle
-     ticks and the course's fastest lap from where it lands (saved routes and the best's own laps, when it beats the
-     course's best time), for every course the run laps after the buy. The clones then run that path through everything
-     after: `FalseEnding-Any%`'s Course 2 lap with the dash right after `buy:buyds`, before the run leaves Course 2, not
-     on the drop back after the statue. Each is offered alone and with the course's next visit dropped (its back-to-back
-     laps first after the next unlock buy, the last one with or without a quick restart after it, cut from the goal
-     before them to the quick restart that ended them, or to a quick restart in place of the last finish: after the
-     statue's Course 2 buys the restart lands at the top, by the shaft to `buy:buydj`; both post-statue laps go, the
-     second climbing to `buydj` from its finish). The best's way on starts at the buy's box, not the lap's finish, so none
-     plays as spliced: they are re-found as **investments**, InvestTries (2) of each kind (inserts, adds ahead, walk adds,
-     payout breaks), furthest (then soonest) first. From one pool of two, the two inserts took both, and every edit a pull
-     plays is marked played (memory `edits`), so an add or payout break behind them was never re-found; an edit still
-     waiting for its investment (the pull adopted a drop first, or it ranked past InvestTries) isn't marked, and the next
-     pull offers it again. The edit's goals become the run's for it, the goals after where its partial run stops are
-     repaired as a window's are (the old best's inputs as seeds), and falling behind the best doesn't end it (an
-     investment is behind until its income pays; the model's bounds and cost-to-go are the old goals', and the repair
-     doesn't search again from where a complete run falls behind): only its CPU budget does (150 CPU s a goal left), or
-     the whole run then not beating the best (the fresh check, as every best). One re-found to the end but no faster is
-     **replanned**: the goals after its change get the goals part's drops and adds on its route (its own model for the
-     walk adds), the fastest that beats the investment becomes it and is planned again; with none played through faster,
-     its adds and the drops that stop ahead of it (the extra Cash strays into a box the old buy walk only brushed) are
-     re-found as investments of their own, held to the best, the fastest that beats the investment becoming it. The
-     goals change back when none is kept. First run on the 361.68 s best: the Course 2 lap after `buyds` cost 121 ticks
-     at its finish; each repair reached goal 250 of 284 on a 60 CPU s budget, which is why it's 150 now. At 150 both
-     complete, in a fraction of it: on the 357.73 s best (280 goals) the insert re-found goals 177-282 in 11.6 min on 8
-     threads (361.10 s, +141 ticks) and with the post-statue laps dropped goals 177-278 in 7.3 min (360.02 s, +102); on
-     the 357.08 s best (278 goals) 9.5 min (359.99 s, +118). Their replans: the insert alone drops one post-statue
-     Course 2 lap (359.13 s, +55 on 357.73); every Course 3 lap drop after it misses a buy (the lap's Cash comes sooner,
-     the old buy walk strays into `CloneCount`, `CloneMult`, `CashPerLoop` or `FastCloneChance`, and no wait passes it);
-     with the laps dropped the restart to the top waits 829 ticks for `buydj` (bound 133, 67 spare), and 3 Course 3 laps
-     there bought `buydj` on the way (a stray).
-   - **Payout breaks** (`FullTasAutoPayout.cs`, the Tech tab's *Record-break payout*): a finish that beats the course's
-     best time replaces the clone path, and every clone on the old path pays on the spot (`clonesScript.updateClonePath`;
-     what a break and a ladder of them pay on the current build: [Clones and buy-max](#clones-and-buy-max-build-25630570)).
-     A lap at the best time without beating it pays nothing extra. This edit plays every earlier lap that set or tied the
-     best time (back to the last prestige that reset it, at most 40) one tick slower, so a later lap f breaks the record
-     and the clones in flight pay there, up to one best time sooner. A lap f slower than the best time plays the lap that
-     set it again (both from a quick restart): the record held back to f. Each slowed lap is its own lap with one tick
-     added that holds the input before it (no new press), put in at each point after the gate: of those whose course
-     timer comes out slower, the one that finishes soonest. Offered at the last lap of each run of back-to-back laps, at
-     the one or two laps before it with the laps after it dropped, and at the last with the last lap of one of the next
-     three runs of laps dropped; the 48 with the fewest slowed laps play. A break that doesn't play through spliced is
-     re-found as an investment, as an inserted record lap is, when it is behind the best by less than the best time it
-     breaks where its old way on stops (the clones' Cash comes forward by at most that). Adopted edits stack: the next
-     pull can break again one lap earlier (the slowed laps one more tick slower), so a course climbs down a ladder of
-     best times, one payout each. On `FalseEnding-Any%` (359.46 s, 2026-09-30, the pre-update build, where a faster
-     path raised the income less) none paid: its only breaks are Course 1's
-     1.40 s lap (goals 22-23) or Course 3's 3.80 s lap (goals 193-194) held back, which costs 101-155 ticks (the record
-     lap plays twice and the clones run the slower path in between), the earlier Cash makes the walks through the box
-     rows buy a box early, and the two re-found as investments (142 and 166 ticks behind) came out no faster. Not yet
-     measured on the current build, where a break gains for good only while its course still holds `Start`'s spawn
-     timer reserve ([Clones and buy-max](#clones-and-buy-max-build-25630570)).
-     **Ladders** (`FullTasAutoLadder.cs`): K = 2-8 laps back to back, the course's fastest lap from the quick restart
-     (T ticks on the course timer) played T+K-1, ..., T+1, T, so each finish breaks the record the one before set. A lap
-     is made exactly k ticks slower by k ticks that hold the input before them (no new press) after the gate touch, of
-     every point the one that finishes soonest; a k no point gives is split over two or more. Each lap is built where the
-     one before leaves the player (from a finish's restart Course 3's 190-tick lap plays as 194, so T rises to 194).
-     Offered in place of each run of back-to-back laps (all of it, or its last K), right after each unlock buy and at the
-     last quick restart before one; when T+K-1 doesn't beat the best time there, the laps that set it are held back to
-     exactly T+K and the waits after them re-timed (`Retune`) first. The waits from the ladder on are re-timed too; one
-     that doesn't play through is re-found as an investment. Only where the course has clones and keeps the reserve, or
-     right before a Cash-bound buy. `fulltas <trace> --ladder-study C --k K` (0: every K) prints each spot's laps (course
-     time, finish, held ticks) and each ladder played whole, with every finish's course time and pay. A goals pull builds
-     ladders for `LadderSeconds` (240 s) at most, and the next pull goes on from the spot where this one stopped. Each rung
-     is a `SlowOne` search that replays the lap from every point in it, so a long lap (Course 5's 600 ticks) takes
-     minutes. On `TouchGrass-ANY%` (unlock buys before four farmed courses) the ladders alone outlasted a 2-hour `--auto`,
-     and the pull's other edits never played.
+   pass needs about an hour a stretch, hence the default. Until 2026-10-04 a pull played edits on copies of the
+   best instead (lap drops and adds, inserted reward goals and record laps, cash goals, regroups, record-break payouts and
+   ladders of slowed laps, each re-found as an investment; a FalseEnding-Any% pull took about 7 minutes, 2500 CPU s, and
+   rarely gained). The planner takes all of those as steps of its one search (laps, record laps, bonuses, cash boxes,
+   grouped buys: [Economy planner](#economy-planner)), and the edits, `--insert-goal`, `--record-lap`,
+   `--record-search-minutes`, `--ladder-study` and the ladders' and payouts' files were deleted with the planners
+   (git history before the commit "One economy planner" has them and their measurements).
 
-   An edit that misses a goal after the change gets idle ticks before the last quick restart ahead of that goal (every 5
-   up to its lead there plus 60, then each below the first that passes: a stray buy isn't monotone in the wait), up to 6
-   times. The fastest edit that reaches every goal and beats the best is adopted, never one that drops or reorders the
-   end goal, an area or reward goal (but a cash goal's or an `--insert-goal`'s) or an unlock buy (`GoalsRefused`).
+   The fastest whole route that reaches every goal and beats the best is adopted, never one that drops or reorders the
+   end goal, an area or reward goal (but a cash goal's, or a box the planner took that the run didn't have) or an
+   unlock buy (`GoalsRefused`).
    Adopting: the trace's header with the
    new list makes every simulation from then on, the fresh check keeps the route or the old goals stay, and the loop's
    goal-numbered state (references, arms, library, model, parts) starts again from the new best. The run file, the
@@ -1450,29 +1253,8 @@ baseline). The default is set by the measurements below, and has every part exce
    title; `fulltas/<run>.auto.jsonl` has every edit tried (`goalEdit`) and every adopted list (`goals`). Off with
    `--course` and `--focus`.
 
-   Measured, `--parts goals` alone on 2 threads from the judged 375.52 s (300 goals), the record FE360 then took by hand
-   to 373.90 s (294 goals: a record lap and three lap drops, measured one by one with `--check`): pull 1 (45 edits, 29 s,
-   45 CPU s) adopted a record Course 1 lap at goals 25-26 (the human `1_none-1.42` route from the quick restart: best time
-   1.62 → 1.42 s) with 2 Course 1 laps dropped (goals 88-91), 373.58 s at 38 s. Then, each pull 23 s and 33-35 CPU s,
-   one lap each: Course 1 goals 89-90 (371.86 s, 62 s), Course 2 goals 282-283 (371.62 s, 85 s), Course 1 goals 50-51
-   (371.42 s, 107 s, 290 goals); pull 5 found nothing more. The two regroups the Course 2 buy table offered gained 2
-   ticks and 0.
-
-   From the 369.84 s `--auto` best of FE360's 294 goals (same settings): pull 1 (34 edits, 29 s, 33 CPU s) dropped the
-   Course 1 lap at goals 89-90, 367.46 s at 87 s (FE360 found the same drop by hand at the same time); then a Course 2
-   lap (367.32 s), the regroup `buy:buyclonemult2+buyclone2` at goals 110-111 (367.28 s) and a Course 3 lap (367.26 s,
-   287 goals, 170 s); pull 5 found nothing more. The game judged the 367.26 s route in turbo from its submission (its
-   `goalsFrom` held the game's 292-goal list), saved it as the record and made its 287 goals the run's, keeping
-   `fulltas.json.20260929-063956.bak`.
-
-   Measured on private copies (2026-09-30, `--parts goals`, 8 threads), the drops the pull after the 358.69 s adoption
-   never played: from 358.69 s, Course 3 laps 257-258 (358.28 s) and 259-260 (357.73 s, 280 goals), the list the gate
-   took with 357.71 s; from 357.35 s one of the two post-statue Course 2 laps (goals 268-269: 357.08 s, 278 goals), and
-   from the 355.92 s record the same (355.67 s: the same ticks, the lap's 70 frozen frames gone, 109 idle ticks before the
-   climb's quick restart). Dropping both misses `buydj`: the climb starts from the lap's finish. The item-2 plan (issue
-   22: a 2_WJ_DS lap before leaving Course 2, the restart to the top, Course 3 laps until `buydj`) came out behind: the
-   insert re-found +102 to +184 ticks, its replans +55 at best, and no Course 3 drop after it re-found to the end (the
-   extra Cash strays the old buy walks, and one re-found as an investment found no way to the next `start:3`).
+   The edits' own measurements (FE360's 375.52 s to 367.26 s by lap drops, a record lap and a regroup; the Course 3
+   and post-statue Course 2 drops of the 358.69 s to 355.67 s runs) belong to the deleted edits; the planner's are above.
 
 6. **Wall-coyote restart** (`wallreset`, opt-in; `enginesim\Cli\FullTasAutoWallReset.cs`; the Tech tab's *Wall coyote restart*,
    `techs.json` `wall-coyote-restart`, and the community's `checkpoint-midair-walljump`): a quick restart leaves
@@ -1678,7 +1460,7 @@ baseline). The default is set by the measurements below, and has every part exce
      chain under 9.2 u a tick there, a wall or a gap, says nothing); without it, the run's fastest flat 10 ticks with those
      unlocks.
    - `laps`: the last lap of each run of back-to-back laps of a course; its stake is the model's economy slack there, and
-     its lever the goals part's lap drop (no arm).
+     its lever was the goals part's lap drop (gone with the edits: the planner decides laps; no arm).
 
    Each goal's stake adds 0.5 × it to the goal's movement headroom (held to the spare Cash with the rest) and gives it a
    `waste` arm: a window from the goal to the goal after its last finding. Every window over a finding's goal is seeded with
@@ -1899,7 +1681,7 @@ dash, read from its caps id such as `wjds`: the buy cooldown is per box). Every 
 set's buys (the set's goals appended to the run's, as a plan step's): a way that buys any other box ends the run
 there and is not measured, so each named box is confirmed bought and the tick is the goal's. The table prices movement,
 not income: each entry is measured with the place's Cash plus the set's price, on a copy of the place's snapshot (the
-buy planner adds the economy itself). With unlimited Cash every box a walk passes buys (a strict stray), and standing in
+economy planner adds the economy itself). With unlimited Cash every box a walk passes buys (a strict stray), and standing in
 the set's last box past its 0.2 s cooldown buys it again (the first run's pairs from Course 2's clone box all missed);
 with the set's price the other
 boxes stay as affordable as the run had them there. A set whose box is capped or locked at the place is filed as
@@ -1918,12 +1700,12 @@ tick, and a restart's `restart` `{press, land}`), and `entries` (`place` an id, 
 `ticks` from the place's tick to the last box's, `searched` seconds, `caps`, and `inputs` as `Solve.EncodeTicks` runs). An
 entry found no way in its budget is cached as `technique: "miss"` with `ticks: null` and retried only with `--retry-miss`,
 so a table fills in across runs (an entry measured before is skipped). The boxes' order matters: every ordered set gets
-its own entry, and the buy planner (which prefers the cheapest technique per set and emits `buy:a+b` goals where one walk
+its own entry, and the economy planner (which prefers the cheapest technique per set and emits `buy:a+b` goals where one walk
 buys several) chains single buys at places a set has no entry from.
 
 `--targets reward:bonus1,lap:2` measures those instead of the phase's box sets, from every place: the economy planner's
 costs to take a bonus or run a lap from anywhere in the phase. `reward:bonusN` is the bonus's reward box as a one-box set
-(the run's own goal, else the box nearest the bonus's end rect in `courses.json`, as `--insert-goal` resolves it); the
+(the run's own goal, else the box nearest the bonus's end rect in `courses.json`, as `NewGoal` resolves it); the
 box is free, so no Cash is added, and once bought it is `capped` at the places after. `lap:N` is Course N's gate then
 its finish, played as the plan plays a lap (`FullTasPlan.Lap`: the library's pieces as they are, else after a quick
 restart, then a piece search per goal within `--entry-minutes`), from the place's own state. The entry's `boxes` is the
@@ -1992,6 +1774,14 @@ routes. `plan-check --moves <trace> [--buytable FILE]` checks a table against th
 ([`enginesim/README.md`](../enginesim/README.md)).
 
 ### Economy planner
+
+The one planner for a Full-TAS run's economy (since 2026-10-04; it replaced `tools/plan_fulltas.py`'s Python copy of the
+game's economy, `tools/plan-buytable.py`'s buy-table planner, `zip-plan`'s Area 2 model, the greedy `fulltas-plan`, and
+`--auto`'s goals-part edits and their ladders and payout breaks). What it searches: whole schedules of laps, record
+laps, buys, bonuses and quick restarts to a target buy, on the engine's own economy. Its steps: below. Its table of
+movement costs: [Movement table](#movement-table), made from the best, the [buy table](#buy-table) and the saved
+routes. Realize turns a plan into a route: [Realize](#realize). `fulltas --auto`'s goals part pulls it once per economy
+stretch ([Auto](#auto), item 5). Area 2: [below](#area-2-the-zip-movers).
 
 ```powershell
 & $exe fulltas-plan $traces\fulltas-FalseEnding%-280.json --from 86 --target buy:buyds --bonuses bonus1,bonus2,bonus3,bonus5 --buytable plan.buytable.json --out plan.json --compare "lap:2,reward:bonus1" "reward:bonus1,lap:2"
@@ -2243,139 +2033,15 @@ bridges and the stray fits, the free plan's route is 415 ticks ahead at bonus 3 
 stops short of Cash at `buy:buydj` (goal 275 of 285). The stretch after `buy:buyds` has to be planned for the new
 economy too (the goals part, per stretch).
 
-### Buy planner
+### Area 2: the zip movers
 
-```powershell
-python tools/plan-buytable.py --table $traces\fulltas\FalseEnding-Any%.buytable.json --out planned.json   # --run R, --best FILE, --trace FILE, --goals FILE, --record S, --max-set 3, --verbose
-```
+`fulltas-plan` plans Area 2 too: the target `buy:buytree16` (the zip movers, `ZipMoversUnlock`, 625,000,000 NP) has the tree's
+boxes as earlier targets, and the atom box, the atom level boxes and the NP boxes are steps (`--only`; the engine models
+the atoms: `enginesim/README.md`). It replaced `zip-plan`, a hand model of Area 2's economy (`ZipPlan.cs`, deleted
+2026-10-04 with `plan_fulltas.py` and `plan-buytable.py`; git history has them), once it planned the same start.
 
-`plan-buytable.py` chooses a buy phase's buy order and grouping from the measured time-to-buy table
-([Buy table](#buy-table)): the engine's ticks from each place the run stands at (the phase's start, the start gate,
-the finish, each box's spot, the quick restart's landing) to buy each box and each ordered set of 2-3 boxes in one pass.
-On top of it runs `plan_fulltas.py`'s Course 2 economy on build 25630570 ([Clones and
-buy-max](#clones-and-buy-max-build-25630570): a bought clone flies on the next frame and every clone pays once a path
-plus 1.5 frames, a break pays every clone in flight and the pool runs on in step; box costs, lap rewards, Course 1's
-clones off screen every 50 ticks; the later phases lose a course's reserve once the run leaves it with clones, and then
-a bought clone waits half an interval and a break refills the pool over a life; a buy-max touch buys what the Cash pays
-on the touch, a level a tick while the player walks on), and a Dijkstra search over its states (tick first, the model's
-dominance on box levels, place and
-Cash) finds the goal list that buys the target soonest. Each step is a lap (`start:2 finish:2`, or `finish:2` from the
-gate), a ladder of K such laps (`--fast-lap N`, the fastest known lap's course-timer ticks, and `--ladder-max`: K
-record laps from the quick restart, the fastest slowed by K-1, ..., 0 ticks, each a break; `plan_fulltas.py` takes the same two for Course 2 and plans the later
-courses' ladders on their own laps), a quick restart to the gate (`start:2`), or a buy of a set: a walk from where the player stands or a quick
-restart and a walk from its landing, whichever the table has cheaper. Until the plan first crosses Course 2's gate (a
-box bought on the way from the phase's start), a quick restart lands at the checkpoint before the course: those restarts
-use the phase's earliest landing and its measured walks (its gate walk is ~404 ticks against 25 from Course 2's own), so
-a plan doesn't buy before the gate and then count on a cheap restart lap. A set of several boxes is one goal,
-`buy:buyreward2+buyclone2` (each of these boxes, any order), so the list stays strict. A plan never waits at a box for
-income: when the Cash isn't there on arrival, a lap earns it. Only Course 2's stretch (`reward:bonus1` through
-`buy:buyds`) has the economy model; a table of another phase is refused.
-
-The model is calibrated on the run's offline best and its trace (streamed, not loaded: a Full-TAS trace is ~600 MB):
-Cash, Course 1's levels and path and Course 2's reward at `reward:bonus1`, Course 2's best path at the first
-`buy:buyclone2` (the clones' path; the first lap sets it, 2.70 s -> 2.44 s on `FalseEnding-Any%`), the ticks to the
-gate, the typical lap and restart-to-gate lead. The run's current list is replayed through the same model and walks,
-so both predictions compare like for like. A replayed buy the model can't pay for on arrival either waits at the box
-or runs the course on its walk first (a finish that isn't the next goal pays and changes nothing else:
-`FalseEnding-Any%`'s goal 100 walk runs Course 2 and is paid 1128 W for it), whichever is sooner. With that, the
-replay of the best's own walks lands within 40 ticks of the best's buy ticks through goal 126.
-
-It prints the calibration, both predictions (the target's tick after the phase's start, laps, buy goals, grouped buys,
-ticks walking and waiting), the predicted total (the best's, and `--record`'s), the box levels the plan reaches
-soonest against the current list, and the changed goal blocks, largest first. A single buy the table hasn't measured
-falls back to the model's distance estimate and is listed. `--out` writes the whole planned goal list (the goals
-before `reward:bonus1` and after `buy:buyds` kept) with the prediction, for a copy of the run to be solved from
-(`fulltas --auto` on a trace whose header has the planned goals); the real run's goals change only by hand.
-
-First measurement (2026-09-29, `FalseEnding-Any%`): the Course 2 table from the 390.38 base has 363 entries over 14
-places (all singles and ordered pairs, 23 triples; jump-through won 52, dash-through never applies there: no dash before
-`buyds`). The planner predicts `buy:buyds` 3746 ticks after `reward:bonus1` against 3927 for the current list (-181),
-with 18 grouped goals. Built alike from goal 97 on a copy of the record's capture (`fulltas --unsolved --harvest` of the
-record's best, no `--auto`), the planned list reaches `buy:buyds` at tick 11236 and the current list at 11237: a 1-tick
-gain. The build follows the model within 22 ticks through goal 113, then falls behind it (+137 by goal 124, +304 by the
-last lap), mostly waiting for Cash at the clone buys and before `buyds`: the Course 2 income the model is calibrated
-with is optimistic (it also puts the current list 247 ticks ahead of the record's own), and more so for a plan that buys
-earlier. The model's income needs calibrating against the trace's Cash before a plan's prediction can be trusted.
-
-### Zip planner
-
-```powershell
-& $exe zip-plan $traces\fulltas-TouchGrass-ANY%.json --route $traces\fulltas\TouchGrass-ANY%.json --minutes 5 --out zip.json
-```
-
-`zip-plan` plans Area 2's buy order from a run's state to the zip movers (`buy:buytree16`, `ZipMoversUnlock`, 625,000,000
-NP) on a model of the game's economy (`enginesim/Cli/ZipPlan.cs`), because the engine's economy ends a run at Area 2
-(an atom ends the run: the engine models the atoms but not when their 0.4 s grid starts, `enginesim/README.md`). The
-start is the trace's start, or `--route FILE` (a `fulltas/<run>.json` or any `{inputs}` file) replayed on it to input `--ticks N` (default: all of it): the currencies,
-global and local upgrades, clone counts and paths, box levels and costs, the tree's grown segments and the atoms, as the
-engine holds them there.
-
-The model follows the decompiled code:
-
-- **Clones** (`clonesScript.Update`/`SpawnClone`), frame by frame as 1x, turbo and the engine step them (one frame per
-  rendered 280 fps frame, `cloneFrameSeconds`): off screen a course with clones and a path spawns once
-  `timeSinceLastClone` reaches 1 s and pays `ceil(value (2j+1) / previous interval)`; on screen (the player
-  inside the course's `activeCloneArea`, its `clonesLoD` polygon: Course 9's covers most of zone 2, or lapping it) one
-  spawns once the rolled interval's frames pass and the pool has one free, and pays `ceil(value (2j+1))` at its path's
-  end (the pre-2026-09-30 rule; the current build spawns into a free slot every frame,
-  [Clones and buy-max](#clones-and-buy-max-build-25630570), which `ZipPlan.ClonePay` models). The interval is path / clones with
-  the speed and size rolls (`Random.Range(0, 101)` against the chances, per tier) averaged exactly. Watts are `reward ×
-  clone multiplier`, green power `gpReward × clone dust multiplier` on a
-  green clone (a fraction `greenCloneClance / 100` of spawns: TreePart0's box, 1 % a level), clone dust `CdReward ×
-  clone dust multiplier` with clone dust on. The `ceil` makes every course with one clone worth at least one GP per
-  green spawn off screen, and one more clone or reward level often worth nothing until a few come together. Against
-  the engine's own clone economy (`FalseEnding-Any%` replayed, 60-70 s idle, Courses 1-3 with Course 3 on screen) the
-  model's W per second is within 1-3 %.
-- **Rewards** (`courseScript.UpdateReward`): W, GP, CD rewards and the comp boost (`2 + 0.5 × strength`, `30 + 10 ×
-  time` s, renewed by a lap once TreePart12's box is bought).
-- **Atoms** (`AtomColliderSystem`): the atom box (`AtomUpgrades/AtomUpgrade`, GP, buy-max) first resets Courses 1-10
-  that aren't exempt (local upgrades, clone counts; paths kept) and sets W to 0 (`doNewAtomPrestige`; not once
-  `GPAtomsDontResetCourses` is bought), then queues its
-  atoms; one lands every 0.4 s (+1 NP), its tier from `atomLevelChance × 25` per atom, `3 + t` atoms of tier t merge
-  into one of t + 1 (craft time from `HandleTierLogic`), the first merge into a new tier pays 1000 ticks of NP. The
-  collider stops while zone 1 is loaded. The atom level boxes (`buyatomlevel9`, `buyatomlevel10`) clear the atoms and
-  the atom box's price.
-- **NP** (`globalStats.DoConstantCurrency`): `NPrewardPerTick` per physics tick while NP is under the cap, 6000 ticks'
-  worth. The zip box needs the cap at 625,000,000: about 104,000 NP per tick.
-- **Boxes** (`upgradeBox`): local costs `ceil` their scaling and reset with an atom, global ones round it and stay (the
-  model's costs match the engine's on every box `FalseEnding-Any%` bought); a touch buys once per 0.2 s cooldown, a
-  buy-max box all `GetNumPlayerCouldBuy` counts; exempting and buy-max boxes, tree growth (each trunk 1/0.6 s, the land
-  1/3.5 s, the box's 2000-unit drop ln(400)/3 s, auto-grown segments).
-- **Where**: the player's position is followed; a walk is estimated from the distance (`travel` in `zip-plan.json`:
-  units per tick sideways, up and down, plus overhead ticks) unless `legs` names it (`"<from>><to>": seconds`). Zone 2
-  is a drop from zone 1: once in it, nothing in zone 1 is reachable (`wayBackToZone1` or the game's
-  `Zone2toZone1PathOpen` lifts that).
-
-**Course times.** A lap takes the course's farm time (a lap of its steady loop, finish to finish: README `### Rules` 30)
-or its record plus the walk to it; the clones' path is the record. Both come from the saved routes (`routes.json`'s
-`<course>_<CAT> <time>` and `<course>_<CAT> farm <lap>`, fastest in `categories`, non-stale first) as they're saved, and from
-`zip-plan.json`'s `laps` until then (Courses 7-10 have none yet: their estimates are printed as `ESTIMATE`; `"force":
-true` on an entry overrides a saved route). Which courses the plan may lap: `lapCourses` (default 1-10).
-
-**The plan** is a list of steps (`buy:<token>` once, `all:<token>` every level it can pay for, `lap:<course>`,
-`atoms:<count>`: saves GP for that many and touches the box); whatever it can't pay for yet it earns first, lapping the
-course that earns it fastest (its reward and the comp boost on its clones) or standing. After the steps an autopilot
-finishes the run: the tree's boxes from the root to the zip box as it can pay for them, the free first atom, and when
-the NP cap can't reach the next box's price, the purchase (1 to 32 levels of a box, or a course's first clone or clone
-dust with the lap after it) that pays for the atoms it needs soonest, or those atoms. The search builds the steps
-greedily, then polishes them on every core (delete, swap, move, insert one or two, resize) for `--minutes` (default
-5), and drops steps that don't help. `--plan "all:buynp10,buy:buyatomlevel10"` starts from a
-given list instead (with `--minutes 0`: only evaluates it). It prints the timeline (each step's times, currencies,
-rates, NP cap and atoms), the plan as `--plan` text and the Full-TAS goals (`start:N finish:N` per lap, `buy:<token>` per
-purchase); `--out` writes them as JSON.
-
-From `TouchGrass-ANY%`'s best replayed (goal 529 of 543: Course 4 farmed after the breaker, 9.5e24 W, no clones): 11.2
-min in the model after a 4-minute search. The W is spent before the first atom resets it: 100 Course 9 clones with
-clone dust on (`buycd9`) and a lap (the clone dust stays through the atoms' resets and multiplies green power from then
-on), `buyatomlevel10` and 20 `buynp10` (+175 % NP a level); then the tree, green clones on Courses 6 and 7, atoms in
-three buys (3, 4, then 21 for the cap: 104,000 NP per tick) and the zip box. Courses 7-10's laps are estimates until
-their routes are saved, and the walks are distance guesses. The engine can't play these goals yet (Area 2's economy is
-unmodeled there); the plan is for building the run's goals.
-
-`--target <token>` ends the plan at another tree box than the zip movers' (the comparison below).
-
-**Against `fulltas-plan` (2026-10-04).** No Full-TAS best reaches Area 2 (TouchGrass-ANY%'s ends in Area 1), and a
-Full-TAS savestate start loads zone 1, so both planners start from Task 7's Course 6 stretch (`t7-c6-area2`: a
+**Against `zip-plan` (2026-10-04).** No Full-TAS best reaches Area 2 (TouchGrass-ANY%'s ends in Area 1), and a
+Full-TAS savestate start loads zone 1, so both planners started from Task 7's Course 6 stretch (`t7-c6-area2`: a
 `WJ_DS_DJ_BS` category start on a fresh new game with 1e6 Cash and NP, 1e9 GP, 1e4 RP and CD, no clones, no atoms) made a
 Full-TAS run's trace: its header with a `fulltas` section added (goals `buy:buyplant`, `buy:buytree0` three times, then
 the target) and `courseAuto` on, as `course --auto` writes its synthetic traces, so the start is the category's. Its
@@ -2392,14 +2058,16 @@ tick through the air, against zip-plan's 9.2 u a tick sideways, 6 up). Ticks are
 Every plan to the zip movers buys Course 9's atom level box first (`buyatomlevel9`: atoms land a tier up; without it no
 plan's NP cap reaches the zip box's price), then atoms with the GP, the tree's way with `buytree5` (NP) and `buytree6`
 (triple threat) levels, a second atom touch after `buytree13`, and stands about 5000 ticks at the zip box for the
-625,000,000 NP (the NP per tick sets the cap: 6000 ticks' worth). On paper the engine's plans are about 1000 ticks
-(20 s) sooner than zip-plan's. Where they differ: the walks (`buy:buyplant` to `buyatomlevel9` is 545 ticks estimated,
+625,000,000 NP (the NP per tick sets the cap: 6000 ticks' worth). On paper the engine's plans were about 1000 ticks
+(20 s) sooner than zip-plan's. Where they differed: the walks (`buy:buyplant` to `buyatomlevel9` is 545 ticks estimated,
 a lower bound, against zip-plan's 31.2 s; realize measured the atom box's walk 89 against 83 estimated); the segments'
-growth (both count `IE_Grow`'s drop now: the drive touches a tree box only where its trigger reaches the player at its
+growth (both count `IE_Grow`'s drop: the drive touches a tree box only where its trigger reaches the player at its
 spot, 197 ticks a segment, against zip-plan's 4 s; the loop builder's ways meet a box on its way down, 140-152 ticks a
 segment); and the atoms (the engine's first buy-max touch leaves 1.6e8 of the 9.4e8 GP, so its plans touch again;
-zip-plan's spends 9.33e8 at once). Not compared: Courses 6-10's laps (no saved routes: the movement table has none,
-zip-plan's are estimates) and the Area 2 courses' boxes (no clones without a lap's path).
+zip-plan's spent 9.33e8 at once). Not compared: Courses 6-10's laps (no saved routes: the movement table has none,
+zip-plan's were estimates) and the Area 2 courses' boxes (no clones without a lap's path). Caveats: the zip-movers plan
+isn't built (the walk to the atom level box doesn't play), so 9008 is a plan, not a route; both models' walks are
+estimates.
 
 ## When a game update breaks a route
 
@@ -2556,9 +2224,9 @@ needs the wall jump. Float32 simulation (`C:\tmp\igtap\clonesim640.py`, 280 fps 
 - **Record breaks** refill one an interval: the "reserve lost" column of the 25630570 break table holds everywhere
   (-0.1 to -3 payouts per extra break). A banked timer refills part of the pool one a frame, once: +3 payouts per extra
   break at most (52 clones, 0.7 s banked; banking 0.7 s takes about 140 laps), usually within ±0.1. Ladders and
-  hold-backs stay in the planners (`FullTasPlan`, `FullTasAutoLadder` gate on the course's real timer; `plan_fulltas.py`
-  on whether the course has clones): a break still brings about C/2 payouts, half a path of clone income, forward, which
-  can pay right before a Cash-bound buy, more so on long courses (Courses 6-15).
+  hold-backs were dropped from the planner (a ladder of slowed laps was the deleted `FullTasAutoLadder.cs`; the planner
+  takes a record lap as a step, no ladder): a break still brings about C/2 payouts, half a path of clone income,
+  forward, which can pay right before a Cash-bound buy, more so on long courses (Courses 6-15).
 - **RNG:** `SpawnClone` runs only on frames its timer is past due: a few percent of frames while the pool fills, then
   every frame once the banked timer passes the interval (Courses 1 and 2 within about a minute; Course 3's 19 clones at
   3.80 s half the frames after two minutes).
@@ -2587,7 +2255,7 @@ went from `timeSinceLastClone = 0f` to `timeSinceLastClone -= nextCloneDue`, and
 the touch's included (`Shop.FixedStep`, `Shop.cs:148`, called at `Simulation.cs:1313`; turbo parks it as a
 `WaitForFixedUpdate` routine, `TurboRunner.cs:181`, resumed at 238-239). `--ticks-out` rows carry each course's clones
 (`Economy.CloneStates`: count, path, on screen, in flight, spawn timer). The engine matches the new-build turbo through
-tick 14122 of the 353.32 s route. `ZipPlan.ClonePay` and `plan_fulltas.py` model it too (a slot cycles every lifetime + 1 frame). Buy-max: a 1x probe of the route (inputs to 15200) buys 2 levels on the touch's tick, then 1 a tick,
+tick 14122 of the 353.32 s route. `FullTasAutoLib.cs`'s `ClonePay` models it too (a slot cycles every lifetime + 1 frame). Buy-max: a 1x probe of the route (inputs to 15200) buys 2 levels on the touch's tick, then 1 a tick,
 so L levels take L − 1 ticks; offline Cash is equal level by level from tick 15040. A scene diff of the two builds (4,036 objects each side) finds no collider, `upgradeBox`, `courseScript`,
 `clonesScript`, spring, spike, mover or checkpoint field changed, only presentation and runtime state (the statue's
 `StatuePrestigeText` lost a MeshFilter): no world or trace needs capturing again for the build.
@@ -2697,9 +2365,8 @@ and it would be gone for after.
 - Back to Course 3: three laps with buy-max touches.
 - The way along `3to4_REC Course3_To_Course4_WJ_DS_DJ`'s path to the boost box, then the boost and the block swap.
 
-The Course 5 farm and the Course 3 laps were planned with `plan_fulltas.py`'s late model on the 2026-10-02 course routes
-(`C:\tmp\igtap\tg\plan_tg.py`, `post_tg.py`), not yet with `fulltas-plan`. The model's walks are guesses, and the farm
-came up one lap short of the breaker.
+The Course 5 farm and the Course 3 laps were planned with the deleted `plan_fulltas.py`'s late model on the 2026-10-02 course routes, not with
+`fulltas-plan`. The model's walks were guesses, and the farm came up one lap short of the breaker.
 
 Area goals guide the stretches with no saved route: bonus 6's own path after bonus 7, bonus 16's from bonus 6's box, and
 bonus 15's from bonus 16's drop. Bonus 7's route touches the checkpoint at (12085, 11357), so the quick restart after
@@ -2869,14 +2536,14 @@ route over only when they beat the record.
 
 ## Status (2026-09-25)
 
-- `main` has 609 goals, all from `python tools/plan_fulltas.py --write` after `reward:bonus1`: Course 2's economy up
+- `main` has 609 goals, all from the deleted `tools/plan_fulltas.py --write` after `reward:bonus1`: Course 2's economy up
   to dash (~236 s), the dash bonuses, then Course 3 to `buyclonespeed` and `buystatue`, Courses 1 and 2 bought to
   their boosted caps with a lap each, Course 3 to `buydj`, and Course 4 lapped, `buyprestige4`, then `buyswap`, with
   clone speed/size chance buys on Courses 3 and 4 (the plan counts their rolls at their average; ~15.8 min in the
   plan; its 3 -> 1 and 3 -> 4 transitions are guesses, no route exists yet).
 - Not in the goals: the free global boxes with no known route (`buyfree3`, `buyfree4a/b/c`) and Course 4's 3e12 W
   `buyglobalreward4`.
-- `ANY%` has 789 goals from `python tools/plan_fulltas.py --any-pct --out FILE`: `main`'s goals through `buy:buydj`,
+- `ANY%` has 789 goals from the deleted `tools/plan_fulltas.py --any-pct`: `main`'s goals through `buy:buydj`,
   `reward:bonus5`, Course 5 farmed (with `reward:bonus4`, `reward:bonus15`, `buyfree5`, two `buyglobalreward5`) to
   `buy:buyprestige5`, then Course 4 farmed (its reward tier is 29.5 after the breaker; Course 5's 16.5 would take
   ~1e15 ticks to 9.49e34 W) to `buy:buyblockswap5` (~19.7 min in the plan). Its 3 -> 5 and 5 -> 4 transitions and the

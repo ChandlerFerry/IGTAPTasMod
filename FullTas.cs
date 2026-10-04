@@ -17,7 +17,7 @@ namespace IGTAPTasMod
         public const float RewardBoxRange = 400f;
 
         // Every box a Full-TAS goal can buy (buy:<token>), by hierarchy path and sibling index (BoxId). Shared with enginesim, whose
-        // zip-plan names its purchases with these tokens.
+        // economy planner names its purchases with these tokens.
         public static readonly (string token, string path, int sibling)[] Boxes = {
             ("buyreward", "Courses/course 1/localUpgrades/CashPerLoop", 0),
             ("buyclone", "Courses/course 1/localUpgrades/Clone", 1),
