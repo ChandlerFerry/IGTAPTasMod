@@ -31,7 +31,9 @@ namespace IGTAP.EngineSim
         // 3: the engine state leaves out MacroEngine._steps (FieldState.For), so its values sit one slot earlier after it.
         // 4: Feed hashes turnY (a steep dash turn), so prefixes differing only in it no longer share a stored state.
         // 5: the transforms a script moved (SimSnapshot.Transforms).
-        public const int Format = 6;
+        // 7: dynamic and kinematic bodies off at the export are built (disabled), so the physics world has more bodies than an
+        // older state's (b2World.LoadState refuses a body count that differs).
+        public const int Format = 7;
 
         /// <summary>A stable hash of the fields a snapshot writes for type (names and declared types, in order).</summary>
         static int Layout(Type type)

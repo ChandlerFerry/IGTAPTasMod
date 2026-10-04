@@ -113,7 +113,7 @@ b2Fixture)`), `RayCast`/`QueryAABB` (delegates on `b2World` + `b2RayCastCallback
 
 `b2Body`: `CreateFixture(b2FixtureDef)` (returns `b2Fixture`), `DestroyFixture`,
 `SetTransform`, `GetTransform`/`GetPosition`/`GetAngle`, `Set/GetLinearVelocity`,
-`Set/GetAngularVelocity`, `ResetMassData`, `Type()`, `IsBullet`, `Set/IsAwake`, `IsEnabled`,
+`Set/GetAngularVelocity`, `ResetMassData`, `Type()`, `IsBullet`, `Set/IsAwake`, `Set/IsEnabled`,
 `GetFixtureList`/`GetContactList`/`GetNext`/`GetWorld`, `UserData` (object, settable).
 
 `b2Fixture`: `GetBody`/`GetShape`/`GetNext`, `IsSensor`, `TestPoint(in b2Vec2)`,
@@ -169,6 +169,18 @@ provides exact branching at lower cost than cloning object graphs (an exact clon
 must preserve broadphase proxy ids and intrusive list order — which the in-place
 snapshot already does). If object-graph cloning is ever needed it can be layered on
 `SaveState` with a body/fixture reference map.
+
+### Disabled bodies
+
+`b2Body.SetEnabled` is v2.4.1's `b2Body::SetEnabled`, literal: enabling creates every fixture's proxies at `m_xf` and
+sets `m_newContacts` (contacts come at the next step's `FindNewContacts`); disabling destroys every fixture's proxies,
+then the body's contacts (`b2ContactManager.Destroy`, so a touching one leaves `m_touchOrder`), and clears
+`m_contactList`. Velocity, sleep and pose are left as they are, as in C++. `b2BodyDef.enabled` builds a body disabled
+(`CreateFixture` then makes no proxies). The flag is in `b2BodyFlags`, so `SaveState`/`LoadState` restore it with the
+proxies and contacts it implies (`BodyRec.flags`, the proxy ids and counts, the broadphase copy). The offline engine
+builds a dynamic or kinematic body whose object is off at the world export disabled and toggles it with the object
+(`PhysicsWorld.SyncEnabled`, enabling it at its transform's pose and at rest, as Unity makes the body again).
+`IGTAP.EngineSim body-selftest` checks it on a toy world.
 
 ## Verification
 

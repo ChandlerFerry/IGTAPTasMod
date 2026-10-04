@@ -44,6 +44,7 @@ namespace IGTAP.EngineSim.Cli
                     case "macros": return FullTasAutoMacros.Command(args.Skip(1).ToArray());
                     case "fulltas-plan": return EconomyPlan.Run(args.Skip(1).ToArray());
                     case "plan-selftest": return EconomyPlanCheck.Run();
+                    case "body-selftest": return BodyEnableCheck.Run();
                     case "fulltas-buytable": return FullTas.BuyTable(args.Skip(1).ToArray());
                     case "plan-check": return PlanCheck(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
@@ -241,6 +242,7 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         the fastest whole route; --join joins a written route again;\n"
                             + "                                         --replan checks the goals part's call (budget, goal map) once\n"
                             + "  plan-selftest                          the planner on a toy economy against a brute force over every order\n"
+                            + "  body-selftest                          b2Body.SetEnabled on a toy world: built disabled, enabled, disabled, restored\n"
                             + "  fulltas-buytable <trace.json> --from <goal> [--until <goal>] [--out file] [--max-set N] [--entry-minutes m] [--techniques walk,jump,dash] [--targets ids]\n"
                             + "                                         the measured time-to-buy table: per place the run stands at in the goal span\n"
                             + "                                         (its start, the course's start/restart/finish spots, each box), the ticks to buy\n"

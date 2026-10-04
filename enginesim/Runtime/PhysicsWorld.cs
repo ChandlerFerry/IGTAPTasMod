@@ -154,12 +154,12 @@ namespace IGTAP.EngineSim
             _b2.SetSubStepping(SettingBool("useSubStepping", false));
             _ground = _b2.CreateBody(new b2BodyDef());
 
-            // A static body off at the export is built too (a tree segment's ground, TreeSegmentActivationComponent.IE_Grow): it
-            // never moves and has fixtures only while its colliders are on (Live). A dynamic or kinematic one off at the export
-            // isn't (this Box2D can't disable a body): one turned on ends the run at the next step (Unbodied).
+            // A body off at the export is built too. A static one (a tree segment's ground, TreeSegmentActivationComponent.IE_Grow)
+            // never moves and has fixtures only while its colliders are on (Live); a dynamic or kinematic one (zone 2's zip movers
+            // and course start gates) is built disabled, and its object's activation turns it on and off (SyncEnabled).
             foreach (Rigidbody2D rb in world.Bodies)
             {
-                if (!rb.simulated || !rb.gameObject.activeInHierarchy && rb.bodyType != RigidbodyType2D.Static) continue;
+                if (!rb.simulated) continue;
                 var state = new BodyState { Rigidbody = rb };
                 rb.BackendData = state;
                 _bodies[rb] = state;
@@ -174,6 +174,7 @@ namespace IGTAP.EngineSim
                     bullet = rb.collisionDetectionMode == CollisionDetectionMode2D.Continuous,
                     gravityScale = rb.gravityScale,
                     allowSleep = true,
+                    enabled = rb.gameObject.activeInHierarchy || rb.bodyType == RigidbodyType2D.Static,
                 };
                 state.Body = _b2.CreateBody(def);
                 state.Body.UserData = state;
@@ -296,11 +297,11 @@ namespace IGTAP.EngineSim
             b2Body body = s.Body?.Body ?? _ground;
             foreach (b2Fixture f in s.Fixtures) body.DestroyFixture(f);
             s.Fixtures.Clear();
-            if (!Live(s))
-            {
-                if (_loaded && Unbodied(s)) _unbodied.Add(s);
-                return;
-            }
+            if (!Live(s)) return;
+            // Its body's object is on (the collider's is, at or under it): on before its fixtures, as Unity makes a body before
+            // the colliders it attaches, so they get their proxies in the order they are built (a child collider is rebuilt before
+            // its parent's ActiveChanged).
+            if (s.Body != null) SyncEnabled(s.Body);
             float friction = s.Data.Friction, restitution = s.Data.Bounciness;
             if (s.Collider is BoxCollider2D box && s.Body != null && s.Body.Rigidbody.bodyType == RigidbodyType2D.Dynamic)
             {
@@ -384,22 +385,6 @@ namespace IGTAP.EngineSim
                     AdjacentStart = loop[path.Length - 1], UseAdjacentEnd = true, AdjacentEnd = loop[1] });
             }
             return shapes.ToArray();
-        }
-
-        // Colliders that were on without their body at a rebuild (Unbodied): the next step ends the run if one still is.
-        readonly HashSet<ColliderState> _unbodied = new HashSet<ColliderState>();
-
-        /// <summary>
-        /// On, its Rigidbody2D on too, but that body is dynamic or kinematic and was off at the world export, so the engine has
-        /// no body for it (static ones are built). A composite has nothing without its sources. On only between two steps, it
-        /// is never seen.
-        /// </summary>
-        static bool Unbodied(ColliderState s)
-        {
-            Collider2D c = s.Collider;
-            Rigidbody2D rb = c.attachedRigidbody;
-            return s.Body == null && rb != null && rb.simulated && c.m_Enabled && c.gameObject.m_ActiveInHierarchy
-                && rb.gameObject.m_ActiveInHierarchy && c is not CompositeCollider2D;
         }
 
         // A dynamic box's corners (b2PolygonShape.Set copies them).
@@ -542,7 +527,36 @@ namespace IGTAP.EngineSim
             if (!Suspended && _colliders.TryGetValue(collider, out ColliderState s)) Changed(s);
         }
 
-        public void ActiveChanged(GameObject gameObject) { LayerChanged(gameObject); }
+        public void ActiveChanged(GameObject gameObject)
+        {
+            Rigidbody2D rb = gameObject.GetComponent<Rigidbody2D>();
+            if (!Suspended && rb != null && _bodies.TryGetValue(rb, out BodyState b)) SyncEnabled(b);
+            LayerChanged(gameObject);
+        }
+
+        /// <summary>
+        /// A dynamic or kinematic body is on while its object is (b2Body.SetEnabled): Unity has no body for an object that is
+        /// off, and makes it again when the object comes on, at its transform's pose and at rest (velocity reset: Unity's
+        /// MelvMay lists "the GameObject is being disabled/enabled" among what resets a Rigidbody2D's velocity,
+        /// discussions.unity.com/t/1494932). A restore puts the flag back with the rest of the body (b2World.LoadState).
+        /// </summary>
+        void SyncEnabled(BodyState b)
+        {
+            b2Body body = b.Body;
+            bool on = b.Rigidbody.gameObject.m_ActiveInHierarchy;
+            if (on == body.IsEnabled() || body.Type() == b2BodyType.Static) return;
+            if (on)
+            {
+                Transform t = b.Rigidbody.transform;
+                body.SetTransform(new b2Vec2(t.m_Position.x, t.m_Position.y), t.m_Rotation.eulerAngles.z * (MathF.PI / 180f));
+                body.SetLinearVelocity(b2Vec2.Zero);
+                body.SetAngularVelocity(0f);
+                body.SetAwake(true);
+                b.TransformDirty = false;
+            }
+            body.SetEnabled(on);
+            _moversDirty = true;
+        }
 
         /// <summary>
         /// A GameObject changed layer (PlatformMover.MakeIntangible): Unity filters its contacts and queries by the new layer at
@@ -667,20 +681,12 @@ namespace IGTAP.EngineSim
         public void Simulate(float deltaTime)
         {
             SyncTransforms();
-            if (_unbodied.Count != 0 && _sim.Engine.IsRunning)
-                foreach (ColliderState s in _unbodied)
-                    if (Unbodied(s))
-                    {
-                        _sim.Engine.Abort("Unmodeled physics: " + s.Collider.name + "'s " + s.Collider.GetType().Name
-                            + " is on, its dynamic or kinematic Rigidbody2D off at the world export (the engine has no body for it)");
-                        break;
-                    }
             FindLapsedTouches();
             _b2.Step(deltaTime, _velocityIterations, _positionIterations);
             for (int bi = 0; bi < _bodyList.Length; bi++)
             {
                 BodyState b = _bodyList[bi];
-                if (b.Rigidbody.bodyType == RigidbodyType2D.Static) continue;
+                if (b.Rigidbody.bodyType == RigidbodyType2D.Static || !b.Body.IsEnabled()) continue;
                 b2Vec2 p = b.Body.GetPosition();
                 Transform t = b.Rigidbody.transform;
                 t.StoreWorldPosition(new Vector3(p.x, p.y, t.m_Position.z));

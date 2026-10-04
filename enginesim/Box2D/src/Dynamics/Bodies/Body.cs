@@ -505,6 +505,58 @@ namespace Box2D
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool IsEnabled() => HasFlag(b2BodyFlags.Enabled);
 
+        /// <summary>
+        ///  Allow a body to be disabled. A disabled body is not simulated and cannot be collided with or woken up.
+        ///  If you pass a flag of true, all fixtures will be added to the broad-phase.
+        ///  If you pass a flag of false, all fixtures will be removed from the broad-phase and all contacts will be destroyed.
+        ///  Fixtures and joints are otherwise unaffected. (C++ v2.4.1 b2Body::SetEnabled.)
+        /// </summary>
+        public void SetEnabled(bool flag)
+        {
+            //Debug.Assert(_world.IsLocked() == false);
+
+            if (flag == IsEnabled())
+            {
+                return;
+            }
+
+            b2BroadPhase broadPhase = m_world.m_contactManager.m_broadPhase;
+            if (flag)
+            {
+                SetFlag(b2BodyFlags.Enabled);
+
+                // Create all proxies.
+                for (b2Fixture f = m_fixtureList; f != null; f = f.m_next)
+                {
+                    f.CreateProxies(broadPhase, m_xf);
+                }
+
+                // Contacts are created at the beginning of the next time step.
+                m_world.m_newContacts = true;
+            }
+            else
+            {
+                UnsetFlag(b2BodyFlags.Enabled);
+
+                // Destroy all proxies.
+                for (b2Fixture f = m_fixtureList; f != null; f = f.m_next)
+                {
+                    f.DestroyProxies(broadPhase);
+                }
+
+                // Destroy the attached contacts.
+                b2ContactEdge ce = m_contactList;
+                while (ce != null)
+                {
+                    b2ContactEdge ce0 = ce;
+                    ce = ce.next;
+                    m_world.m_contactManager.Destroy(ce0.contact);
+                }
+
+                m_contactList = null;
+            }
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public b2Fixture GetFixtureList() => m_fixtureList;
 
