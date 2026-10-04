@@ -2225,6 +2225,18 @@ Cash holds its 1.2e15; a touch short of it sets the cooldown to 0.2 s for good a
 While tripped every `UpdateReward` paints the course's reward red (`courseScript.cs:503`), a fixed area's too after its
 breaker-light box turned it green. It is display only: no payout reads `currentA1State` or `fixedAreas`.
 
+### Clones on build 25706930
+
+Steam's update of 2026-10-04 (build 25706930, `Assembly-CSharp.dll` 02:48) changed `clonesScript` only (decompiles:
+`C:	mp\igtap640raw`, `C:	mp\igtap706raw`). An on-screen `SpawnClone` sets `timeSinceLastClone` to 0 when it is
+at least twice the clone's interval (`nextCloneDue * 2`, was 4000), so a timer banked behind a full pool no longer
+refills on the next frame. `spawnNewCloneVisual` recomputes the interval on every clone bought (with the array full too)
+and pools a new clone only while the pool and the active clones are short of the count. It also logs every frame of an
+on-screen course (`Debug.Log`, no gameplay). The engine plays both (`Economy.SpawnClone`, `Economy.Bought`): its Cash
+equals the new build's turbo on all 1118 values, on the same ticks, through TouchGrass-ANY% 704.67's first 13359 ticks,
+where that route now strays (`buyreward3` at input 12707 before `buy:buyclone3`'s Cash; turbo, playing on, misses goal
+260). Every Full-TAS route judged before it pays different Cash: judge it again.
+
 ### Clones on build 25640326
 
 Steam's update of 2026-09-30 16:37 (build 25640326) changed one statement: an on-screen `clonesScript.SpawnClone` sets

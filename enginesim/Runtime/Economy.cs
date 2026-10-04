@@ -494,8 +494,9 @@ namespace IGTAP.EngineSim
                 {
                     c.V.OffscreenDivisor = 1f;
                     c.V.Pooled--;
-                    // Build 25640326: a timer still at Start's 10000 (>= 4000) goes to 0, any other keeps the overshoot.
-                    c.V.SinceLast = c.V.SinceLast >= 4000f ? 0f : (float)(c.V.SinceLast - (double)c.V.NextDue);
+                    // Build 25706930: a timer at two intervals or more (Start's 10000, a long wait) goes to 0, any other keeps
+                    // the overshoot (clonesScript.cs:212-219).
+                    c.V.SinceLast = c.V.SinceLast >= c.V.NextDue * 2f ? 0f : (float)(c.V.SinceLast - (double)c.V.NextDue);
                     // AssignCloneColour (clonesScript.cs:462-495): the colours go on the clone and pay at its path's end.
                     if (!ColourCheck(c, out bool isRed, out bool isGreen)) return false;
                     c.Active.Add(new Clone { Pointer = 0f, Fastness = i, Bigness = j, Red = isRed, Green = isGreen });
@@ -735,12 +736,13 @@ namespace IGTAP.EngineSim
                 {
                     var script = BoxClonesField.GetValue(box) as clonesScript;
                     if ((object)script == null || !_byScript.TryGetValue(script, out Clones c)) return Unmodeled("clone box without clones");
+                    // spawnNewCloneVisual (build 25706930, clonesScript.cs:509-528): the interval always, a pooled clone only
+                    // while the pool and the active clones are short of the count.
                     for (int j = 0; (double)j < effectMult; j++)
                     {
                         c.V.Count++;
-                        if (c.V.ArrayFull) continue;
-                        c.V.Pooled++;
                         UpdateCloneInterval(c);
+                        if (c.V.Pooled + c.Active.Count < c.V.Count && !c.V.ArrayFull) c.V.Pooled++;
                     }
                     if ((object)course == null) return Unmodeled("box without a course");
                     return UpdateReward(course);

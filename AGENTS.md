@@ -75,7 +75,11 @@ Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/so
 - Turbo and the offline engine keep a physics callback's position write as 1x does (a sideways spring's 10u push,
   `Movement.hitSpring`). Routes judged before this that take a sideways spring may die at 1x (`5_WJ_DS_DJ 13.46` does);
   judge them again.
-- The game is build 25640326 (Steam, 2026-09-30 16:37): a course's first on-screen clone spawn spends `Start`'s spawn
+- The game is build 25706930 (Steam, 2026-10-04): an on-screen clone spawn resets a timer at two intervals or more,
+  so a full pool's banked timer no longer refills a freed slot on the next frame, and every clone bought recomputes
+  the interval ([`docs/fulltas.md`](docs/fulltas.md#clones-on-build-25706930)). Full-TAS routes judged before it pay
+  different Cash (`TouchGrass-ANY%` 704.67 strays at goal 255): judge them again.
+- Build 25640326 (Steam, 2026-09-30 16:37): a course's first on-screen clone spawn spends `Start`'s spawn
   reserve, so bought clones and a record break's refill come one an interval, not one a frame, and record-break ladders
   no longer pay for good (a break only brings about C/2 payouts forward); a full pool still refills a freed slot on the
   next frame. It also adds solid `Moss` tilemaps (a `MossBlue` patch on the blue blocks at x 1474-1662, y 334-510 from
