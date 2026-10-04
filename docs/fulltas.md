@@ -2228,7 +2228,7 @@ breaker-light box turned it green. It is display only: no payout reads `currentA
 ### Clones on build 25706930
 
 Steam's update of 2026-10-04 (build 25706930, `Assembly-CSharp.dll` 02:48) changed `clonesScript` only (decompiles:
-`C:	mp\igtap640raw`, `C:	mp\igtap706raw`). An on-screen `SpawnClone` sets `timeSinceLastClone` to 0 when it is
+`C:\tmp\igtap\b640raw`, `C:\tmp\igtap\b706raw`). An on-screen `SpawnClone` sets `timeSinceLastClone` to 0 when it is
 at least twice the clone's interval (`nextCloneDue * 2`, was 4000), so a timer banked behind a full pool no longer
 refills on the next frame. `spawnNewCloneVisual` recomputes the interval on every clone bought (with the array full too)
 and pools a new clone only while the pool and the active clones are short of the count. It also logs every frame of an
