@@ -55,8 +55,9 @@ namespace IGTAP.EngineSim.Cli
         /// FalseEnding%-280 (2026-10-04, beam 200): buy:buywj to buy:buyds searches about 11 minutes a round, reward:bonus3 to
         /// buy:buystatue 19.</summary>
         double _stretchMinutes = 60;
-        /// <summary>The stretches pulled (the route planned from, to its start, and the target), kept in the memory with the
-        /// movement table's stamp then (<see cref="MovesStamp"/>): a pull skips them until the table changes.</summary>
+        /// <summary>The stretches planned to the end (the route planned from, to its start, the target and --stretch-minutes; only
+        /// a Replan that is <see cref="PlanResult.Complete"/>: one that timed out, threw or was cut short is planned again), kept in
+        /// the memory with the movement table's stamp then (<see cref="MovesStamp"/>): a pull skips them until the table changes.</summary>
         readonly HashSet<string> _stretchPulled = new HashSet<string>();
         string _stretchMoves;
         /// <summary>fulltas/&lt;run&gt;.moves.json's write time and length ("" when there is none).</summary>
@@ -128,9 +129,11 @@ namespace IGTAP.EngineSim.Cli
                         + "before the stretch's start or with no way of the best's on after its target; the stretches after it aren't planned");
                     break;
                 }
-                // Planned before from this route with these moves (an earlier pull or session): it plans the same way again.
-                string key = Hex(SnapshotIndex.Hash(from.Inputs, (int)Math.Min(from.GoalInput[kept - 1], from.Inputs.Count))) + ":" + labels[t];
-                if (!_stretchPulled.Add(key))
+                // Planned to the end before from this route with these moves and minutes (an earlier pull or session): it plans the
+                // same way again.
+                string key = Hex(SnapshotIndex.Hash(from.Inputs, (int)Math.Min(from.GoalInput[kept - 1], from.Inputs.Count))) + ":" + labels[t]
+                    + ":" + _stretchMinutes.ToString(CultureInfo.InvariantCulture);
+                if (_stretchPulled.Contains(key))
                 {
                     Log($"auto goals: {what}: planned before from this route, the movement table unchanged since");
                     if (through) continue;
@@ -147,6 +150,7 @@ namespace IGTAP.EngineSim.Cli
                     if (through) continue;
                     break;
                 }
+                if (p.Complete) _stretchPulled.Add(key);
                 Route r = p.Run;
                 bool whole = r != null && r.Progress == p.Goals.Length;
                 string plans = p.PlanTicks == null || p.PlanTicks.Length == 0 ? "no plan" : "planned " + string.Join(" > ", p.PlanTicks.Select(x => x < 0 ? "-" : x.ToString(CultureInfo.InvariantCulture)));

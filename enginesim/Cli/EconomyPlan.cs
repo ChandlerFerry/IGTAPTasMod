@@ -55,6 +55,9 @@ namespace IGTAP.EngineSim.Cli
         public int Width, Nodes, Pruned, Prechecked, NoIncome;
         /// <summary>A --compare step didn't play (or isn't offered): the search never ran.</summary>
         public bool PrefixFailed;
+        /// <summary>The search ran out of states to play before any cap: no schedule under the search's rules reaches the target, and
+        /// more time wouldn't find one.</summary>
+        public bool Exhausted;
         public long PeakBytes;
     }
 
@@ -360,7 +363,8 @@ namespace IGTAP.EngineSim.Cli
                 long? end = Played(at, o, out string why, out int extra);
                 if (end == null) return Failed(at, $"step {i + 1} {prefix[i]} doesn't play from {at.Place} on tick {at.Tick}: " + (why ?? "not enough Cash on arrival"));
                 at = Made(at, o, end.Value, o.End, extra);
-                if (at.Done) return Finish(at, true, null);
+                // The order alone reaches the target: its tick, nothing searched (not proven).
+                if (at.Done) return Finish(at, false, "the --compare order reaches the target: its own tick, nothing searched");
             }
             if (width > 0) return Beam(at);
             Dominated(at);
@@ -403,6 +407,7 @@ namespace IGTAP.EngineSim.Cli
                         + string.Join(", ", result.Profile.Select(p => $"{p.Key} {p.Value.played}/{p.Value.failed}/{p.Value.dominated} {p.Value.seconds:0}s")));
                 }
             }
+            result.Exhausted = capped == null;
             capped ??= "the queue ran out: no schedule reaches the target";
             if (stand == null) return Finish(at, false, capped);
             // Capped: the richest kept states, each finished by standing at the target until it can pay (not proven).
@@ -541,6 +546,7 @@ namespace IGTAP.EngineSim.Cli
                             + string.Join(", ", result.Profile.Select(p => $"{p.Key} {p.Value.played}/{p.Value.failed}/{p.Value.dominated}")));
                     }
                 }
+                result.Exhausted = why == null;
                 return Finish(start, false, $"beam {width}: " + (why ?? "the queue ran out") + "; no plan reached the target");
             }
         }
@@ -1127,8 +1133,8 @@ namespace IGTAP.EngineSim.Cli
             if (ps.Mode == "beam") return Search(ps.Width, ps.Stand != "off");
             var clock = Stopwatch.StartNew();
             EconomyPlanResult exact = Search(0, ps.Stand == "on");
-            // A --compare step that doesn't play stops the beam too.
-            if (ps.Mode == "exact" || exact.Proven || exact.PrefixFailed) return exact;
+            // A --compare step that doesn't play stops the beam too, as does an order that reaches the target alone.
+            if (ps.Mode == "exact" || exact.Proven || exact.PrefixFailed || exact.Done && prefix != null && exact.Steps.Length == prefix.Count) return exact;
             string exactWhy = exact.Why;
             Log($"plan: the exact search isn't proven ({exactWhy}); the beam of {ps.Width}");
             // The beam gets what the exact search left of the settings' seconds (at least one).
@@ -1312,7 +1318,8 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>One plan step played with the builder from the realization's state (<see cref="Realize"/>); null when no way
-        /// plays (_whyNot says where).</summary>
+        /// plays (_whyNot says where). <paramref name="walked"/>: its ticks less any wait for its Cash (-1: not known, the way
+        /// waited inside it).</summary>
         (List<InputTick> inputs, SimSnapshot state, long tick)? PlayStep(PlanStep s, Realization z, Func<string, FullTasGoal> goalOf, out FullTasGoal[] goals, out long walked,
             bool stood = false, int levels = 1)
         {
@@ -1337,11 +1344,17 @@ namespace IGTAP.EngineSim.Cli
             bool? affordable = boxes.Length == 0 ? true : Affordable(z.State, boxes);
             var played = Play(z.State, z.Inputs, z.Planned, goals, affordable == true);
             // A step the plan stood for (Area 2's buys: its Cash, or its box still growing) waits as the target's stand does.
-            // Standing still where the step before left the player can buy that box again (a strict stray): then a piece search.
-            if (played == null && stood && affordable != true) played = Waited(z, goals, s.Ticks, StandWait) ?? Play(z.State, z.Inputs, z.Planned, goals, true);
+            // Standing still where the step before left the player can buy that box again (a strict stray): then a piece search,
+            // whose way waits for the Cash inside it, so its ticks aren't the walk's (walked -1: not measured).
+            bool searched = false;
+            if (played == null && stood && affordable != true)
+            {
+                played = Waited(z, goals, s.Ticks, StandWait);
+                if (played == null) { played = Play(z.State, z.Inputs, z.Planned, goals, true); searched = true; }
+            }
             else if (played == null && affordable == false && s.Kind == "target") played = Waited(z, goals, s.Ticks);
             else if (played == null && affordable == false) _whyNot += ", short of Cash";
-            if (played != null) walked = played.Value.tick - z.Tick - _waited;
+            if (played != null) walked = searched ? -1 : played.Value.tick - z.Tick - _waited;
             if (played == null || s.Kind != "all") return played;
             var all = goals.ToList();
             var (inputs, state, tick) = played.Value;

@@ -30,12 +30,13 @@ namespace IGTAP.EngineSim.Cli
     /// The economy planner's movement model (docs/fulltas.md, "Movement table"): ticks between places, per unlock set (Caps.Id).
     /// A move into a box the planner buys (an economy buy, FullTasGoal.IsEconomy) ends at the player's arrival, the first physics
     /// step its touch could buy (the box's trigger stay with its cooldown over): the Cash it waits for there is the economy's, not
-    /// the walk's. Sources, by trust: realize's measurements (<see cref="Measured"/>, the latest per pair); the buy table's entries
+    /// the walk's. Sources, by trust: the engine's measurements, realize's (<see cref="Measured"/>), the buy table's entries
     /// (walk, jump-through, dash-through) and the best's own splits (goal to goal and through each quick restart's landing, and a
-    /// lap `lap:N` where the best plays a gate then its finish), both engine measurements: the fewer ticks of the two; the saved
-    /// course routes (routes.json): a farm route as a lap from the course's finish, a record as `record:N` from its gate. A pair
-    /// none of them has is estimated, and marked so: the stored moves chained through the places they end at, else the straight
-    /// line at the unlocks' top path speed (FullTasAuto's, the best's path and the cached speed probes); a box set as its boxes
+    /// lap `lap:N` where the best plays a gate then its finish): the fewest ticks of them (a way that played once can play
+    /// again); the saved course routes (routes.json): a farm route as a lap from the course's finish, a record as `record:N`
+    /// from its gate. A pair none of them has is estimated, and marked so: the stored moves chained through the places they
+    /// end at, else the walkable distance (<see cref="Walk"/>) at the unlocks' top path speed (FullTasAuto's, the best's path
+    /// and the cached speed probes); a box set as its boxes
     /// one after another, a lap or record as the walk to its gate and the course's known run. A quick restart is never estimated: where it lands is the checkpoint the run last touched
     /// (README ### Rules 35-36), which the table doesn't follow, so <see cref="Restarts"/> offers only the landings a restart from
     /// that place was seen to reach. The planner expands a place through <see cref="Targets"/> (estimates included) and
@@ -46,7 +47,7 @@ namespace IGTAP.EngineSim.Cli
     {
         static readonly Dictionary<string, int> Trust = new Dictionary<string, int>
         {
-            ["measured"] = 0, ["buytable"] = 1, ["best"] = 1, ["farm"] = 2, ["record"] = 3,
+            ["measured"] = 0, ["buytable"] = 0, ["best"] = 0, ["farm"] = 2, ["record"] = 3,
         };
         /// <summary>One place per spot within this reach (the buy table's PieceReach).</summary>
         internal const float PlaceReach = 48f;
@@ -129,9 +130,13 @@ namespace IGTAP.EngineSim.Cli
             return _targets.TryGetValue((from, caps), out List<string> to) ? to.Where(t => t.StartsWith("restart@", StringComparison.Ordinal)) : Enumerable.Empty<string>();
         }
 
-        /// <summary>Realize's real ticks for a move made with these unlocks: outranks every other source, and the latest measurement
-        /// of a pair replaces the one before (the build as it plays now).</summary>
-        public void Measured(Move m, string caps) => Put(m with { Source = "measured", Estimated = false }, caps);
+        /// <summary>Realize's real ticks for a move made with these unlocks: an engine measurement as the buy table's and the best's
+        /// are, so it replaces an estimate, a saved route's lap or a slower measurement of the pair, never a faster one. A move
+        /// whose ticks aren't known (negative: realize's way waited inside it for its Cash) isn't recorded.</summary>
+        public void Measured(Move m, string caps)
+        {
+            if (m.Ticks >= 0) Put(m with { Source = "measured", Estimated = false }, caps);
+        }
 
         public void Save(string file)
         {
@@ -139,7 +144,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 MoveTable old = Read(file);
                 foreach (var kv in old._moves)
-                    if (kv.Value.Source == "measured" && !(_moves.TryGetValue(kv.Key, out Move ours) && ours.Source == "measured")) Put(kv.Value, kv.Key.caps);
+                    if (kv.Value.Source == "measured") Put(kv.Value, kv.Key.caps);
                 foreach (Place p in old._places.Values) _places.TryAdd(p.Id, p);
                 foreach (var v in old._speeds)
                     if (!_speeds.TryGetValue(v.Key, out double s) || v.Value > s) _speeds[v.Key] = v.Value;
@@ -204,7 +209,7 @@ namespace IGTAP.EngineSim.Cli
             if (_moves.TryGetValue(key, out Move was))
             {
                 int rank = Rank(m), wasRank = Rank(was);
-                if (rank > wasRank || rank == wasRank && m.Source != "measured" && m.Ticks >= was.Ticks) return;
+                if (rank > wasRank || rank == wasRank && m.Ticks >= was.Ticks) return;
             }
             _moves[key] = m;
             _chains.Clear();
@@ -597,11 +602,13 @@ namespace IGTAP.EngineSim.Cli
         /// is built from. The best's goal-to-goal splits from reward:bonus1 to the first buy:buyclone2 after it are Moves of
         /// source "best" with the fewest ticks the best took between those goals with those unlocks, an economy buy's ending at the
         /// player's arrival; a pair nothing measured comes back Estimated (measured moves chained, no longer than two legs that
-        /// reach it; else the straight line at the unlocks' top path speed) and
+        /// reach it; else the walkable distance, never under the straight line, at the unlocks' top path speed) and
         /// Targets offers it; a restart landing nothing showed from a place is neither estimated nor offered, Restarts offers the
         /// best's own; a buy table entry and the best's split of the same pair: the fewer ticks; the buy table's reward box and lap
-        /// entries (fulltas-buytable --targets) read as moves to `reward:bonusN` and `lap:N`; a Measured move outranks every
-        /// other source, even when slower; Save then Read gives the same table, and Save keeps an older file's measured moves.
+        /// entries (fulltas-buytable --targets) read as moves to `reward:bonusN` and `lap:N`; a Measured move, an engine
+        /// measurement as the best's and the buy table's are, replaces an estimate (even when slower) or a slower measurement,
+        /// never a faster one, and one of -1 ticks (a wait inside its way) isn't recorded; Save then Read gives the same table,
+        /// and Save keeps an older file's measured moves.
         /// Prints each PASS or FAIL; exits 1 on a FAIL.
         /// </summary>
         internal static int MovesCheck(string[] args)
@@ -794,13 +801,25 @@ namespace IGTAP.EngineSim.Cli
                     if (lap != null && !lap.Estimated) Console.WriteLine($"lap [{caps}] {start} -> {to}: {Describe(lap)}");
                 }
 
-            // Realize's measurement outranks every other source, even a slower one.
+            // Realize's measurement, an engine measurement as the best's split is: the fewest ticks stand, so a slower one never
+            // replaces a faster one and a faster one does; it replaces an estimate even when slower; one whose ticks hold a wait
+            // (-1) isn't recorded.
             string next = Name(k1 + 1), capsK1 = table.CapsAtGoal(k1);
             Move before = table.Best(from, next, capsK1);
-            var measured = new Move(from, next, before.Ticks + 7, "measured", false);
-            table.Measured(measured, capsK1);
+            table.Measured(new Move(from, next, before.Ticks + 7, "measured", false), capsK1);
             Move after = table.Best(from, next, capsK1);
-            Check(after == measured, $"Measured {from} -> {next} [{capsK1}] {measured.Ticks} over {Describe(before)}: {Describe(after)}");
+            Check(after == before, $"Measured {from} -> {next} [{capsK1}] {before.Ticks + 7}, slower than {Describe(before)}: {Describe(after)}");
+            var measured = new Move(from, next, before.Ticks - 3, "measured", false);
+            table.Measured(measured, capsK1);
+            after = table.Best(from, next, capsK1);
+            Check(after == measured, $"Measured {from} -> {next} [{capsK1}] {measured.Ticks}, faster than {Describe(before)}: {Describe(after)}");
+            table.Measured(new Move(from, next, measured.Ticks + 1, "measured", false), capsK1);
+            Check(table.Best(from, next, capsK1) == measured, $"Measured again {measured.Ticks + 1}, slower than the last: {Describe(table.Best(from, next, capsK1))}");
+            table.Measured(new Move(from, next, -1, "measured", false), capsK1);
+            Check(table.Best(from, next, capsK1) == measured, $"Measured -1 (a wait inside the way): not recorded, {Describe(table.Best(from, next, capsK1))}");
+            var walkedOver = new Move(from, there.Id, guess.Ticks + 50, "measured", false);
+            table.Measured(walkedOver, at);
+            Check(table.Best(from, there.Id, at) == walkedOver, $"Measured {from} -> {there.Id} [{at}] {walkedOver.Ticks}, over its estimate {Describe(guess)}: {Describe(table.Best(from, there.Id, at))}");
 
             // Save and Read round-trip; a later Save keeps the file's measured moves (merged across runs).
             string file = Path.Combine(dir, "moves.json");

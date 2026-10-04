@@ -173,6 +173,11 @@ namespace IGTAP.EngineSim.Cli
             PlanResult forced = EconomyPlan.Search(toy, 0, "c1", p => Options(toy, p), 1000000, 60, new[] { "reward:bonus", "lap:1" });
             Check(forced.Done && forced.Steps.Take(2).Select(s => s.Arg).SequenceEqual(new[] { "reward:bonus", "lap:1" }) && forced.Tick >= plan.Tick,
                 $"--compare reward:bonus,lap:1: tick {forced.Tick} ({string.Join(", ", forced.Steps.Select(s => s.Arg))}), the free plan's {plan.Tick}");
+            // An order that reaches the target alone: its own tick, nothing searched, so not proven.
+            toy.Restore(new Toy().Capture());
+            PlanResult order = EconomyPlan.Search(toy, 0, "c1", p => Options(toy, p), 1000000, 60, plan.Steps.Select(s => s.Arg).ToArray());
+            Check(order.Done && order.Tick == plan.Tick && !order.Proven && !order.Exhausted,
+                $"--compare of the free plan's own order: tick {order.Tick}, {(order.Proven ? "proven" : "not proven")}");
             // A capped search finishes its richest states by standing at the target, each asked from its own state: the stand is
             // offered only while the target isn't bought, so one asked from the last completion's state (bought) is never offered.
             toy.Restore(new Toy().Capture());

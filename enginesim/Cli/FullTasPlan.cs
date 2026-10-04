@@ -34,9 +34,13 @@ namespace IGTAP.EngineSim.Cli
         sealed class PlanResult
         {
             public bool Done;
+            /// <summary>The call ran to its end within its budget, each search finding a plan or running out of states (none
+            /// stopped by the clock short of a plan, no re-plan skipped for time): planned again from the same route on the same
+            /// moves and budget, it plans the same way (GoalsPull's stretch memory).</summary>
+            public bool Complete;
             public string Target;
             /// <summary>The target's physics tick in the plan, and in the best (-1: the best doesn't reach it).</summary>
-            public long Tick, Old, AfterBonus1;
+            public long Tick, Old;
             /// <summary>Each round's plan's target tick (-1: no plan), the first the search's from the start.</summary>
             public long[] PlanTicks;
             /// <summary>The plan's goals, and the whole list: the goals before the stretch, the plan, the goals after the target.</summary>
@@ -120,25 +124,32 @@ namespace IGTAP.EngineSim.Cli
             double took = _clock.Elapsed.TotalSeconds - t0;
             // A re-plan takes about as long as the first search (FalseEnding%-280's buy:buywj to buy:buyds: 11, 12 and 11 minutes):
             // one that half the time left can't fit isn't tried, and the plan plays on as it is (its building needs the rest).
+            bool squeezed = false;
             EconomyPlanResult Again(SimSnapshot s, string p, IReadOnlyList<string> prefix)
             {
                 double left = _planDeadline - _clock.Elapsed.TotalSeconds;
-                return left / 2 < took ? new EconomyPlanResult { Why = $"no time to plan again ({left:0} s left, the first search took {took:0} s)" }
-                    : PlanFrom(s, p, prefix, moves, Budgeted(settings, 0.5), GoalOf);
+                if (left / 2 >= took)
+                {
+                    EconomyPlanResult r = PlanFrom(s, p, prefix, moves, Budgeted(settings, 0.5), GoalOf);
+                    squeezed |= !(r.Done || r.Exhausted);
+                    return r;
+                }
+                squeezed = true;
+                return new EconomyPlanResult { Why = $"no time to plan again ({left:0} s left, the first search took {took:0} s)" };
             }
             Realization z = Realize(plan, at, route, start, place, null, moves, Again, GoalOf, tickCap);
             moves.Save(MovesFile);
-            long bonus1 = Array.FindIndex(all, g => g.label == "reward:bonus1") is int b && b >= 0 && b < _best.Progress ? _best.GoalPhysics[b] : 0;
             string[] tokens = z.Planned.Select(g => g.label).ToArray();
             var result = new PlanResult
             {
-                Done = z.Done, Target = targetLabel, Tick = z.Tick, Old = targetIndex < _best.Progress ? _best.GoalPhysics[targetIndex] : -1, AfterBonus1 = z.Tick - bonus1,
+                Done = z.Done, Target = targetLabel, Tick = z.Tick, Old = targetIndex < _best.Progress ? _best.GoalPhysics[targetIndex] : -1,
                 Planned = tokens, Log = z.Log, Why = z.Why, PlanTicks = z.PlanTicks.ToArray(),
                 Goals = all.Take(kept).Select(g => g.label).Concat(tokens).Concat(z.Done ? all.Skip(targetIndex + 1).Select(g => g.label) : Array.Empty<string>()).ToArray(),
                 OldOf = Enumerable.Range(0, kept).Concat(Enumerable.Repeat(-1, tokens.Length))
                     .Concat(z.Done ? Enumerable.Range(targetIndex + 1, all.Length - targetIndex - 1) : Enumerable.Empty<int>()).ToArray(),
             };
             if (join && z.Done) (result.Run, result.Goals, result.OldOf) = Join(z.Planned, z.Inputs, all, kept, targetIndex);
+            result.Complete = (plan.Done || plan.Exhausted) && !squeezed && !PlanOver;
             return result;
         }
 
