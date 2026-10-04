@@ -851,9 +851,10 @@ with the fewest ticks the best took between those two goals with those unlocks; 
 its box ends its move at the arrival (shown before and after); a pair nothing measured comes back estimated, the
 straight line at the unlocks' top path speed, and `Targets` offers it; a restart landing nothing showed from a place is
 neither estimated nor a target, and `Restarts` lists the best's own; a buy table entry and the best's split of the same
-pair give the fewer ticks; a `Measured` move outranks every source, even a slower one; `Save` then `Read` gives the same
+pair give the fewer ticks; the buy table's reward box and lap entries (`fulltas-buytable --targets`) are moves to
+`reward:bonusN` and `lap:N` that `Best` and `Targets` give; a `Measured` move outranks every source, even a slower one; `Save` then `Read` gives the same
 table, and a second `Save` into the file keeps the first's measured moves. Checked: FalseEnding%-280 (its splits, goals
-89-97; goal 134's arrival) with a buy table of bonus 1 to `buy:buyds`, single boxes.
+89-97; goal 134's arrival) with a buy table of goal 1 to `buy:buyds` measured with `--targets reward:bonus1,lap:2`.
 
 Every position write in `Movement.FixedUpdate` (a jump's `+2`/`+5`, a wall jump's `+1`, the dash's `−20`) starts from
 the transform, which holds the last rendered frame's blend of the body's last two positions, so each one pulls the

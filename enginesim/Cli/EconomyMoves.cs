@@ -474,7 +474,8 @@ namespace IGTAP.EngineSim.Cli
         /// source "best" with the fewest ticks the best took between those goals with those unlocks, an economy buy's ending at the
         /// player's arrival; a pair nothing measured comes back Estimated (the straight line at the unlocks' top path speed) and
         /// Targets offers it; a restart landing nothing showed from a place is neither estimated nor offered, Restarts offers the
-        /// best's own; a buy table entry and the best's split of the same pair: the fewer ticks; a Measured move outranks every
+        /// best's own; a buy table entry and the best's split of the same pair: the fewer ticks; the buy table's reward box and lap
+        /// entries (fulltas-buytable --targets) read as moves to `reward:bonusN` and `lap:N`; a Measured move outranks every
         /// other source, even when slower; Save then Read gives the same table, and Save keeps an older file's measured moves.
         /// Prints each PASS or FAIL; exits 1 on a FAIL.
         /// </summary>
@@ -572,6 +573,14 @@ namespace IGTAP.EngineSim.Cli
                 Console.WriteLine($"buy table {buyTable}: {entries.Count} measured entries");
                 var shared = entries.GroupBy(e => (from: e.move.From, to: e.move.To, e.caps)).Where(g => bests.ContainsKey(g.Key))
                     .Select(g => (key: g.Key, table: (long)g.Min(e => e.move.Ticks), best: bests[g.Key])).ToList();
+                // Its reward box and lap entries (--targets) are read under the table's own ids, as moves Best weighs.
+                foreach (string kind in new[] { "reward:", "lap:" })
+                {
+                    var e = entries.FirstOrDefault(e => e.move.To.StartsWith(kind, StringComparison.Ordinal));
+                    Move m = e.move == null ? null : table.Best(e.move.From, e.move.To, e.caps);
+                    Check(m != null && m.Ticks <= e.move.Ticks && !m.Estimated && table.Targets(e.move.From, e.caps).Contains(e.move.To),
+                        e.move == null ? $"the buy table has no measured {kind} entry" : $"buy table {e.move.From} -> {e.move.To} [{e.caps}] {e.move.Ticks}: {Describe(m)}");
+                }
                 if (shared.Count == 0) Console.WriteLine("SKIP no buy table entry shares a pair with the best's splits");
                 foreach (var (key, fromTable, fromBest) in shared.Take(4))
                 {

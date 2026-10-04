@@ -1979,6 +1979,15 @@ so a table fills in across runs (an entry measured before is skipped). The boxes
 its own entry, and the buy planner (which prefers the cheapest technique per set and emits `buy:a+b` goals where one walk
 buys several) chains single buys at places a set has no entry from.
 
+`--targets reward:bonus1,lap:2` measures those instead of the phase's box sets, from every place: the economy planner's
+costs to take a bonus or run a lap from anywhere in the phase. `reward:bonusN` is the bonus's reward box as a one-box set
+(the run's own goal, else the box nearest the bonus's end rect in `courses.json`, as `--insert-goal` resolves it); the
+box is free, so no Cash is added, and once bought it is `capped` at the places after. `lap:N` is Course N's gate then
+its finish, played as the plan plays a lap (`FullTasPlan.Lap`: the library's pieces as they are, else after a quick
+restart, then a piece search per goal within `--entry-minutes`), from the place's own state. The entry's `boxes` is the
+target's id (`["reward:bonus1"]`, `["lap:2"]`), its `ticks` from the place's tick to the reward box's buy or the lap's
+finish, and the movement table reads it as a move to that id.
+
 ### Movement table
 
 `MoveTable` (`enginesim/Cli/EconomyMoves.cs`) is the economy planner's movement model: physics ticks between places, per

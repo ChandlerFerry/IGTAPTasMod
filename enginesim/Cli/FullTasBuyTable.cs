@@ -21,7 +21,7 @@ namespace IGTAP.EngineSim.Cli
     // seeded with that technique's inputs and the library's pieces (FullTasPlan.cs's machinery).
     //
     // `fulltas-buytable <trace> --from <goal> [--until <goal>] [--out file] [--max-set 3] [--entry-minutes m]
-    //   [--entry-stall m] [--triple-reach u] [--techniques walk,jump,dash] [--retry-miss]`
+    //   [--entry-stall m] [--triple-reach u] [--techniques walk,jump,dash] [--retry-miss] [--targets reward:bonusN,lap:N]`
     // writes fulltas/<run>.buytable.json, cached per run and trace (an entry measured before is skipped; a miss is cached
     // too and retried only with --retry-miss). The format (tools/plan-buytable.py is its first reader):
     //   { run, trace, from, until, boxes[],
@@ -31,6 +31,10 @@ namespace IGTAP.EngineSim.Cli
     // `tick` is the snapshot's own physics tick; a restart's `press` is the tick the reset is played from and `land` the
     // landing's, so the planner adds land - press to every restart walk. Entries come in every box-set order (order
     // matters) and per technique; the planner prefers the cheapest technique per box set.
+    // --targets measures these instead of the phase's box sets, from every place: `reward:bonusN` (the bonus's reward box as a
+    // one-box set, the box nearest its end rect: the run's goal, else NewGoal's) and `lap:N` (Course N's gate then its finish,
+    // played as the plan plays a lap: FullTasPlan.Lap). The entry's `boxes` is the target's id (`["lap:2"]`), its ticks run to
+    // the reward box's buy or the lap's finish.
     sealed partial class FullTas
     {
         public static int BuyTable(string[] args) { return new FullTas(args).BuyTableRun(args); }
@@ -52,6 +56,8 @@ namespace IGTAP.EngineSim.Cli
             if (kept < 1 || kept > _goals) throw new ArgumentException("--from wants a goal of the run");
             double entryMinutes = Solve.Option(args, "--entry-minutes", 0.2);
             double entryStall = Solve.Option(args, "--entry-stall", 0.03);
+            // A lap's searches (FullTasPlan.Play's) take the piece budget: an entry's.
+            _pieceMinutes = entryMinutes;
             int maxSet = Math.Clamp(Solve.Option(args, "--max-set", 3), 1, 3);
             // Sets of this many boxes are measured from the places near them only (a far place's multi-buy walk is chained
             // from its single buys; searching it blind costs minutes and finds nothing).
@@ -70,6 +76,9 @@ namespace IGTAP.EngineSim.Cli
             foreach (FullTasGoal g in span)
                 if ((g.kind == FullTasGoal.Buy || g.kind == FullTasGoal.Reward) && !boxes.Any(b => b.label == g.label)) boxes.Add(g);
             var gates = span.Where(g => g.kind == FullTasGoal.Start).GroupBy(g => g.label).Select(g => g.First()).ToList();
+            var only = new List<(List<FullTasGoal> set, string[] labels)>();
+            foreach (string t in (Solve.Option<string>(args, "--targets", null) ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                only.Add((TargetGoals(t), new[] { t }));
             Log($"buytable: goals {kept}..{until - 1}, {boxes.Count} boxes ({string.Join(" ", boxes.Select(b => b.label))}), gates {string.Join(" ", gates.Select(g => g.label))}");
 
             // The places the run stands at in the phase: its start, each goal cut (a course's start gate, its finish, a box
@@ -183,16 +192,17 @@ namespace IGTAP.EngineSim.Cli
             var ordered = places.OrderBy(p => p.place.Kind == "box" ? 0 : p.place.Kind == "restart" ? 1 : 2)
                 .ThenBy(p => p.place.Name, StringComparer.Ordinal).ToList();
             bool retryMiss = args.Contains("--retry-miss");
-            for (int size = 1; size <= maxSet; size++)
+            for (int size = 1; size <= (only.Count > 0 ? 1 : maxSet); size++)
                 foreach (var (placeAt, length, place) in ordered)
                 {
-                    foreach (List<FullTasGoal> set in Targets(boxes, gates, place, maxSet, places, tripleReach))
+                    var due = only.Count > 0 ? only : Targets(boxes, gates, place, maxSet, places, tripleReach)
+                        .Where(set => set.Count == size).Select(set => (set, set.Select(g => g.label).ToArray()));
+                    foreach (var (set, labels) in due)
                     {
-                        if (set.Count != size) continue;
                         if (_clock.Elapsed.TotalMinutes >= deadline) goto done;
-                        string key0 = EntryKey(place.Id, set.Select(g => g.label).ToArray(), "");
+                        string key0 = EntryKey(place.Id, labels, "");
                         if (seen.Any(k => k.StartsWith(key0, StringComparison.Ordinal) && (!retryMiss || !k.EndsWith("(miss)", StringComparison.Ordinal)))) continue;
-                        Measure(placeAt, length, place, set, want, entryMinutes, entryStall, table, seen, ref measured);
+                        Measure(placeAt, length, place, set, labels, want, entryMinutes, entryStall, table, seen, ref measured);
                         if (++attempts % 25 == 0) Save();
                     }
                 }
@@ -201,6 +211,18 @@ namespace IGTAP.EngineSim.Cli
             Log($"buytable: {measured} entries measured, {table["entries"].AsArray().Count} in {outPath}");
             SavePieces();
             return 0;
+        }
+
+        /// <summary>A --targets id's goals: `reward:bonusN` its reward box (the run's goal, else as the game resolves it, NewGoal),
+        /// `lap:N` Course N's gate and finish.</summary>
+        List<FullTasGoal> TargetGoals(string target)
+        {
+            if (target.StartsWith("lap:", StringComparison.Ordinal) && int.TryParse(target.Substring(4), out int course))
+                return new List<FullTasGoal> { RunGoal("start:" + course, FullTasGoal.Start, course), RunGoal("finish:" + course, FullTasGoal.Finish, course) };
+            if (target.StartsWith("reward:bonus", StringComparison.Ordinal))
+                return new List<FullTasGoal> { _runGoals.Goals.FirstOrDefault(g => g.label == target) ?? NewGoal(target)?.goal
+                    ?? throw new ArgumentException($"--targets {target}: no such bonus in courses.json, or no box near its end") };
+            throw new ArgumentException($"--targets {target}: reward:bonusN or lap:N");
         }
 
         static string EntryKey(string place, string[] boxes, string technique) => place + " | " + string.Join(",", boxes) + " | " + technique;
@@ -253,7 +275,7 @@ namespace IGTAP.EngineSim.Cli
         /// table and filed as a library piece (the pieces' key is the set's labels joined). The set's goals are appended to the
         /// run's goals for the measurement (as the plan appends a step's), so a walk that buys another box ends it and the
         /// engine confirms each named box is bought, in order.</summary>
-        void Measure(SimSnapshot at, int length, TablePlace place, List<FullTasGoal> set, HashSet<string> want, double minutes, double stall,
+        void Measure(SimSnapshot at, int length, TablePlace place, List<FullTasGoal> set, string[] boxLabels, HashSet<string> want, double minutes, double stall,
             JsonNode table, HashSet<string> seen, ref int measured)
         {
             // The run's own goals up to the place (_planBase): _runGoals is the previous entry's list once Track has run, which
@@ -263,7 +285,6 @@ namespace IGTAP.EngineSim.Cli
             SimSnapshot here = at.WithGoal(Fresh(list.Count, at.Goal.Next));
             string key = set.Select(g => g.label).Aggregate((a, b) => a + " + " + b);
             double c0 = _clock.Elapsed.TotalSeconds;
-            string[] boxLabels = set.Select(g => g.label).ToArray();
             void FileEntry(JsonObject entry)
             {
                 foreach (JsonNode e in table["entries"].AsArray().Where(e => e["place"].GetValue<string>() == place.Id
@@ -289,9 +310,11 @@ namespace IGTAP.EngineSim.Cli
             // own Shop state, so every restore keeps it). The other boxes stay as affordable as the run had them there: with
             // unlimited Cash every box a walk passes would buy (a strict stray), and standing in the set's last box once its
             // 0.2 s cooldown is over would buy it again; neither happens to the run, which spends what it holds.
-            if (here.Economy?.Awarded != null && boxIds.Length > 0)
+            // A reward box is free: nothing to add.
+            double price = boxIds.Length > 0 ? set.Where(g => g.boxes != null).Sum(g => Cost(here, g)) : 0.0;
+            if (here.Economy?.Awarded != null && price > 0.0)
             {
-                double need = set.Where(g => g.boxes != null).Sum(g => Cost(here, g)) * 1.01 + 1.0;
+                double need = price * 1.01 + 1.0;
                 var awarded = (double[])here.Economy.Awarded.Clone();
                 awarded[(int)globalStats.Currencies.Cash] += need;
                 here.Economy = new Shop.State { Spent = here.Economy.Spent, Awarded = awarded, Economy = here.Economy.Economy, BuyMax = here.Economy.BuyMax };
@@ -310,12 +333,24 @@ namespace IGTAP.EngineSim.Cli
                 if (step == null && search) step = SolvePiece(here, prefix, here.Goal.Next, target, minutes, stall, seeds);
                 if (step != null && (best.step == null || step.Physics < best.step.Physics)) best = (technique, step);
             }
+            // A lap is played as the plan plays one (FullTasPlan.Lap: library pieces as they are, else after a quick restart, then a
+            // piece search per goal), from the place's own state (no Cash added: none is spent), the run's goals to it kept.
+            bool lap = boxLabels[0].StartsWith("lap:", StringComparison.Ordinal);
+            if (lap)
+            {
+                // A search's workers start at the step's goal (Play's target is its list's last, Track's _goals - 1): a stored
+                // prefix state carries another entry's goal list.
+                _pieceState = s => s.WithGoal(Fresh(_goals, _goals - 1));
+                _kept = _planBase.Goals.Take(at.Goal.Next).ToArray();
+                if (Lap(at, prefix, new List<FullTasGoal>(), set.ToArray()) is var (inputs, state, tick))
+                    best = ("walk", new Step { Inputs = inputs.Skip(prefix.Count).ToList(), Physics = tick, Next = state });
+            }
             // Walk: the library's pieces and the best's own ways to the same goals (BorrowedInputs), then a plain search.
-            if (want.Contains("walk")) Try("walk", BorrowedInputs(here, target), true);
+            else if (want.Contains("walk")) Try("walk", BorrowedInputs(here, target), true);
             // Jump-through and dash-through: generated passes, both directions (the set's own order decides which wins).
-            if (set.Count > 1 && want.Contains("jump")) Try("jump-through", PassSeeds(here, jump: true), true);
+            if (!lap && set.Count > 1 && want.Contains("jump")) Try("jump-through", PassSeeds(here, jump: true), true);
             // The place's caps are an id (`wjds`): its dash is the parsed caps', not an upper-case label's.
-            if (set.Count > 1 && want.Contains("dash") && Caps.TryParse(place.Caps, out Caps caps) && caps.Dash)
+            if (!lap && set.Count > 1 && want.Contains("dash") && Caps.TryParse(place.Caps, out Caps caps) && caps.Dash)
                 Try("dash-through", PassSeeds(here, jump: false), true);
             double spent = _clock.Elapsed.TotalSeconds - c0;
             if (best.step == null)
@@ -326,7 +361,7 @@ namespace IGTAP.EngineSim.Cli
                     ["place"] = place.Id, ["boxes"] = new JsonArray(boxLabels.Select(b => (JsonNode)b).ToArray()),
                     ["technique"] = "miss", ["ticks"] = null, ["searched"] = Math.Round(spent, 1), ["caps"] = place.Caps,
                 });
-                Log($"buytable: {place.Id} {place.Name} {key}: no way found ({spent:0.0} s)");
+                Log($"buytable: {place.Id} {place.Name} {string.Join(" + ", boxLabels)}: no way found ({spent:0.0} s)");
                 return;
             }
             long ticks = best.step.Physics - place.Tick;
@@ -337,7 +372,7 @@ namespace IGTAP.EngineSim.Cli
                 ["inputs"] = Solve.EncodeTicks(best.step.Inputs),
             });
             measured++;
-            Log($"buytable: {place.Id} {place.Name} {key} [{best.technique}]: {ticks} ticks ({spent:0.0} s)");
+            Log($"buytable: {place.Id} {place.Name} {string.Join(" + ", boxLabels)} [{best.technique}]: {ticks} ticks ({spent:0.0} s)");
         }
 
         /// <summary>

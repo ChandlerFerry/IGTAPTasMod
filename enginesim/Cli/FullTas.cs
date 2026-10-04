@@ -72,7 +72,9 @@ namespace IGTAP.EngineSim.Cli
 
         readonly string _trace;
         readonly int _threads, _window, _onlyGoal;
-        readonly double _minutes, _windowMinutes, _stallMinutes, _pieceMinutes;
+        readonly double _minutes, _windowMinutes, _stallMinutes;
+        /// <summary>--piece-minutes: a piece search's budget (the buy table's runs set it to their --entry-minutes).</summary>
+        double _pieceMinutes;
         readonly bool _submit, _fresh, _groupBuys, _resetStudy;
         /// <summary>--lookahead N: a polish or repair window searches on N goals past its own and is scored there (arrival at the
         /// goal after next), so a way that reaches its own goal later but faster, and gains after it, is found and kept.</summary>
