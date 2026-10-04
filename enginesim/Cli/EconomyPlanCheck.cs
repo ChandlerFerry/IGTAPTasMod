@@ -22,9 +22,11 @@ namespace IGTAP.EngineSim.Cli
             /// <summary>The target's price, and whether the clone box is offered (a toy whose only income is laps).</summary>
             public double Cost = 2000;
             public bool Clones = true;
+            /// <summary>Ticks played (Idle's and Buy's), for the stand checks.</summary>
+            public int Played;
             public ToySnap Capture() => new ToySnap(_cash, _clones, _mult, _targets, _earned);
             public void Restore(ToySnap s) => (_cash, _clones, _mult, _targets, _earned) = (s.Cash, s.Clones, s.Mult, s.Targets, s.Earned);
-            public void Idle(int ticks, string place) { if (place != "c1") Gain(_clones * ticks); }
+            public void Idle(int ticks, string place) { Played += ticks; if (place != "c1") Gain(_clones * ticks); }
             void Gain(double cash) { _cash += cash; _earned += cash; }
             public bool Buy(string box)
             {
@@ -41,7 +43,7 @@ namespace IGTAP.EngineSim.Cli
             public double[] Holds() => new[] { _cash };
             public string Key() => _clones + "," + _mult + "," + _targets;
             public double[] Earned() => new[] { _earned };
-            public double[] Price(string box) => box == "bonus" && _mult == 2 ? null : new[] { box == "clone" ? 30.0 : box == "target" ? Cost : 0.0 };
+            public double[] Price(string box, int levels = 1) => box == "bonus" && _mult == 2 ? null : new[] { box == "clone" ? 30.0 * levels : box == "target" ? Cost : 0.0 };
         }
 
         static readonly Dictionary<(string, string), int> Walk = new Dictionary<(string, string), int>
@@ -196,6 +198,22 @@ namespace IGTAP.EngineSim.Cli
             Check(poorOrder != null && poorOrder.StartsWith("reward:bonus", StringComparison.Ordinal) && poor.Done && poor.Tick == poorBest && again.plays && again.tick == poor.Tick,
                 $"laps only, target 100: beam 1000 tick {poor.Tick} ({string.Join(", ", poor.Steps.Select(x => x.Arg))}; {poor.NoIncome} estimates without income), the brute force's {poorBest} ({poorOrder})");
             (toy.Cost, toy.Clones) = (2000, true);
+
+            // Area 2's steps (Play): all:box buys every level paid for now, a goal each; atoms:N saves its N levels' price before the
+            // touch; a patient stand gives up once nothing it lacks comes in (no clones: no income), long before StandCap.
+            toy.Restore(new ToySnap(100, 0, 1, 0, 100));
+            var all = new PlanOption(new Step("all", "all:clone", 0), "clone", new[] { "clone" }, null, false, new[] { "buy:clone" }, All: true);
+            long? played = EconomyPlan.Play(toy, 0, all, out int extra);
+            Check(played == 3 && extra == 2 && toy.Capture().Clones == 3, $"all:clone from 100 Cash: {1 + extra} levels on tick {played}, {toy.Capture().Clones} clones (3, tick 3)");
+            toy.Restore(new ToySnap(0, 2, 1, 0, 0));
+            var save = new PlanOption(new Step("atoms", "atoms:3", 0), "clone", new[] { "clone" }, null, false, new[] { "buy:clone" }, Stand: true, Levels: 3);
+            played = EconomyPlan.Play(toy, 0, save, out _);
+            Check(played == 46 && toy.Capture().Clones == 3 && toy.Capture().Cash == 62, $"atoms:3 on 2 a tick: touched on tick {played} with 3 levels' 90 saved ({toy.Capture().Cash} left; 46, 62)");
+            toy.Restore(new ToySnap(0, 0, 1, 0, 0));
+            toy.Played = 0;
+            var stand = new PlanOption(new Step("target", "buy:target", 0), "target", new[] { "target" }, null, true, new[] { "buy:target" }, Stand: true, Patient: true);
+            played = EconomyPlan.Play(toy, 0, stand);
+            Check(played == null && toy.Played <= 1000, $"a patient stand with no income: {(played == null ? "gave up" : "bought on " + played)} after {toy.Played} ticks (at most 1000)");
             Console.WriteLine(fails == 0 ? "plan-selftest: PASS" : $"plan-selftest: {fails} FAIL");
             return fails == 0 ? 0 : 1;
         }

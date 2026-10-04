@@ -1264,7 +1264,7 @@ namespace IGTAP.EngineSim.Cli
             G.makeCourseBuyMax, G.moreWatts, G.moreGP, G.NpCapIsSoftcap, G.compBoostDoublesNP, G.GPAtomsDontResetCourses,
             G.NpGenerationSpeed, G.wattPower, G.moreRefreshOrbs, G.unlockJiggleDrops };
 
-        static (Data, State) Load(Simulation sim, JsonElement config, string routesFile, TextWriter log)
+        static (Data, State) Load(Simulation sim, JsonElement config, string routesFile, TextWriter log, string target = null)
         {
             World world = sim.World;
             var d = new Data();
@@ -1378,7 +1378,7 @@ namespace IGTAP.EngineSim.Cli
                 TreeController grows = Get<TreeController>(ub, "upgradeTree");
                 if ((object)grows != null) { b.GrowsTree = Array.IndexOf(trees, grows); b.Grows = Get<int[]>(ub, "SegmentsToTrigger") ?? Array.Empty<int>(); }
                 b.Zone = b.Owner >= 0 ? d.Courses[b.Owner].Zone : path.StartsWith("Zone 1/", StringComparison.Ordinal) ? 1 : 2;
-                if (!local && ub.globalUpgrade == G.zipMoversUnlocked) d.Zip = b.Index;
+                if (target == null ? !local && ub.globalUpgrade == G.zipMoversUnlocked : token == target) d.Zip = b.Index;
                 if (b.Atom && currency == GP) d.AtomBox = b.Index;
                 boxes.Add(b);
                 boxOf[ub] = b.Index;
@@ -1477,7 +1477,7 @@ namespace IGTAP.EngineSim.Cli
         {
             if (args.Length == 0 || args[0].StartsWith("--"))
             {
-                Console.Error.WriteLine("usage: zip-plan <trace.json> [--route <route.json> [--ticks N]] [--config zip-plan.json] [--plan steps] [--minutes M] [--threads N] [--out plan.json] [--seed N]");
+                Console.Error.WriteLine("usage: zip-plan <trace.json> [--route <route.json> [--ticks N]] [--config zip-plan.json] [--plan steps] [--target token] [--minutes M] [--threads N] [--out plan.json] [--seed N]");
                 return 2;
             }
             string trace = args[0];
@@ -1495,7 +1495,8 @@ namespace IGTAP.EngineSim.Cli
             string configFile = Solve.Option(args, "--config", Path.Combine(AppContext.BaseDirectory, "zip-plan.json"));
             using JsonDocument configDoc = JsonDocument.Parse(File.Exists(configFile) ? File.ReadAllText(configFile) : "{}");
             string routesFile = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(trace)), "..", "routes.json");
-            var (d, start) = Load(sim, configDoc.RootElement, routesFile, Console.Out);
+            // --target <token>: a tree box other than the zip movers' as the plan's end (fulltas-plan's comparison, docs/fulltas.md).
+            var (d, start) = Load(sim, configDoc.RootElement, routesFile, Console.Out, Solve.Option<string>(args, "--target", null));
             if (d.Zip < 0) { Console.Error.WriteLine("the world has no zip mover box (buytree16)"); return 1; }
 
             Console.WriteLine($"Zip movers: {d.Boxes[d.Zip].Token}, {start.Cost[d.Zip]:N0} {CurrencyNames[d.Boxes[d.Zip].Currency]}; the tree's way there: "

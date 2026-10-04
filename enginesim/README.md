@@ -131,7 +131,8 @@ The distance comes from a Dijkstra field over the static collision geometry on a
 the target (the course's end gate, a bonus's reward box, a transition's finish box or its finish start's gate, or the
 current `at:` goal rect in Full-TAS goal mode, which also replaces its straight-line `GoalDistance`; on a course run with
 forced-path `via` boxes, the next box the run hasn't passed yet, then the target once it has them all): free where no solid
-collider covers a cell's centre, a spike cell six steps. So the number is a heuristic — a mover, a one-way or a coloured
+collider covers a cell's centre, a spike cell six steps (a target wholly inside geometry, such as a buy box's own body,
+floods from the free cells nearest it, up to 16 cells out). So the number is a heuristic — a mover, a one-way or a coloured
 swap is in it only as the world export left it — and the picks keep their pick-count novelty; a wrong number wastes
 picks, never a run. The field builds once per world and target, over the region the target and the explored cells cover
 (`DistanceField`), and is rebuilt when the static geometry changes (a block swap or a zone load bumps its version).
@@ -870,6 +871,9 @@ states, it must finish more than one of its richest states by standing at the ta
 The beam (`--mode beam`) must find the brute force's tick at width 1000, both on the same steps and with the target's
 stand (the brute force over those steps too); at width 1, where the width cuts, still a plan that replays to its
 tick; and on a toy with only lap income the brute force's plan, which walks to the bonus first earning nothing.
+Area 2's steps (`EconomyPlan.Play`): `all:clone` from 100 Cash buys 3 levels, one a tick; `atoms:3` at 2 Cash a tick stands
+until the 3 levels' 90 is saved (tick 46), then touches; a patient stand with no income gives up after 500 ticks
+(`StandStall`), not 50000.
 
 Every position write in `Movement.FixedUpdate` (a jump's `+2`/`+5`, a wall jump's `+1`, the dash's `−20`) starts from
 the transform, which holds the last rendered frame's blend of the body's last two positions, so each one pulls the

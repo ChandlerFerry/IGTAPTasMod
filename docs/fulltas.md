@@ -1938,6 +1938,13 @@ economy's, not the walk's. Its sources, by trust (`Best` takes the most trusted 
   110 ticks in a line with the wall jump, where the measured ways there take 845 and more). A quick restart is never estimated: where
   it lands is the checkpoint the run last touched (README `### Rules` 35-36), which the table doesn't follow.
 
+A box the planner may buy that neither the best nor the buy table stood at (a target, a tree box on its way, a box
+`--only` names, the atom box: Area 2's, from a start the best only begins) gets a place at the box itself (its transform,
+the world frame, no caps: `AddBoxPlace`), so every move to or from it is a walk estimate until realize measures one. The
+walk's flood starts from the free cells nearest a target inside geometry (a box's own body; at most 16 cells out, each at
+its distance from the target): Area 2's atom box and Course 9's atom level box sit in such bodies, and had no estimate
+before.
+
 The planner expands a place through `Targets(from, caps)`: the stored moves' ends, then every place (but restart landings,
 the run's start and the place itself), gate's `lap:N` and `record:N` an estimate reaches; box sets only as stored. A
 restart step comes from `Restarts(from, caps)`, the landings a restart from that place was seen to reach (the best's or
@@ -1963,14 +1970,24 @@ routes. `plan-check --moves <trace> [--buytable FILE]` checks a table against th
 
 `fulltas-plan` (`enginesim/Cli/EconomyPlan.cs`) plans a stretch of a Full-TAS run as one search over whole schedules. It
 replays the best to goal `--from` (a number or label; its place is that goal's) and searches for the earliest physics
-tick the run can buy the last of `--target` (the ones before it bought first). A step out of a place, with the unlocks
-held there (`PlayerCaps`), is one of:
+tick the run can buy the last of `--target` (the ones before it bought first). A tree box's target (Area 2's upgrade tree:
+`buy:buytree16`, the zip movers) has the boxes whose buys grow its tree down to it as earlier targets, the ones not bought
+yet, root first (`Shop.TreeWay`: segment by segment the box whose buy grows it, else the segment whose growth triggers it);
+an earlier target is a step until it is bought, and again only if it is an economy box or one `--only` names. A step out
+of a place, with the unlocks held there (`PlayerCaps`), is one of:
 
 - `lap:N`, a lap of Course N, or `record:N`, a lap on the saved record's path (routes.json), each with its move's ticks
   and its finish's course timer: a lap's is the lap less its measured walk to the gate (never under the table's gate to
   finish run), else that run, else the whole lap (listed as estimated); a record's the record's;
 - `buy:box` (or a set `buy:a + buy:b` the table stores) for each economy box (`FullTasGoal.IsEconomy`) or earlier target
-  that is active (`Shop.Affordable`: not capped, unlocked, shown); `--only` narrows the laps and economy boxes offered;
+  that is active (`Shop.Affordable`: not capped, unlocked, shown); `--only` names the laps and boxes offered instead (an
+  unlock box too: Area 2's atom level and NP boxes, the tree's NP boxes);
+- `all:box` for each one-box buy offered that isn't buy-max (whose touch buys all it can already), and from the box's own
+  place: the box bought, then touched a tick at a time while the player stands in it as long as its next level is paid for
+  now, a goal per level (`upgradeBox.OnTriggerStay2D`: a buy each 0.2 s cooldown);
+- `atoms:N` (N 1, 2, 4, ..., 512) for Area 2's atom box (`buy:buyatom`, `AtomUpgrades/AtomUpgrade`, `spawnNewAtom`,
+  buy-max), unless `--only` leaves it out: the next N atoms' price (GP) saved at the box, then one touch, which buys all the
+  GP pays for (`atoms:1` touches now; a larger N is offered only while its price is more than the run holds);
 - `reward:bonusN` for each `--bonuses` box not bought yet;
 - `restart@x,y`, a quick restart to a landing the table saw from there (`MoveTable.Restarts`);
 - the target.
@@ -1983,10 +2000,17 @@ must have its Cash on arrival: the plan never waits at a box) or finishes the co
 own crossings of the courses' clone screens (clonesLoD) are missed, so the Cash is off by what those crossings change. It
 was about 6% low on FalseEnding%-280's walk from Course 1's `buy:buywj` to Course 2 (530 Cash after the first Course 2
 lap against the best's 566, 666 after bonus 1 against 694); a walk that leaves a course's clones on screen longer than
-its end place does would come out high instead. Only the target ever stands at its box until it can pay (its last
-Cash): in the exact search only where no lap is offered from a place, in the beam (and with `--stand on`) everywhere, at
-most 2000 ticks past its walk (`BeamStand`; a longer wait is a later state's). Ladders of record laps are not steps (a
-break only brings payouts forward on build 25640326).
+its end place does would come out high instead. Where a lap is offered, only the target ever stands at its box until it
+can pay (its last Cash): in the beam (and with `--stand on`), at most 2000 ticks past its walk (`BeamStand`; a longer wait
+is a later state's). Where no lap is offered from a place (Area 2: Courses 6-10 have no saved route, so the table has no
+lap there) every buy stands for its price, the NP coming in by itself from the atoms, and a box still growing on its tree
+segment (its segment on, the box off until `TreeSegmentActivationComponent.IE_Grow` ends) is offered and stood for until
+it comes on. Such a stand is patient: the beam doesn't cut it at 2000 ticks, but it gives up once no currency the box
+lacks has risen over 500 ticks (`StandStall`: the NP at its cap, GP with no clones to pay it), and the beam's pre-check
+doesn't queue one for a currency nothing has paid since the search's start. The drive touches a tree box the tick
+`IE_Grow` turns it on, while it still drops 2000 u onto its spot (about 2 s to land within 5 u), so a plan's tree buys can
+be up to that much early; realize touches it where it is. Ladders of record laps are not steps (a break only brings
+payouts forward on build 25640326).
 
 The search is Dijkstra on ticks, with no lower bound (an admissible one needs the most any later state can earn). Steps
 go into the queue unplayed, at their end tick (the table's), and are played when they come off it, so nothing after the
@@ -2106,15 +2130,20 @@ played the builder's way:
   lap;
 - a buy, a reward box and the target: `Play`, the library's pieces, the best's own ways (`Borrowed`), and a piece
   search only when the Cash is there now. The target short of Cash on arrival (the plan's stand) waits where the step
-  before left the player: the fewest idle ticks after which the way to its box buys it;
+  before left the player: the fewest idle ticks after which the way to its box buys it (at most 3000); so does any step
+  the plan stood for (Area 2's buys: for their Cash or for a box still growing; at most 10000);
+- `atoms:N`: the atom box's goal (one touch, its buy-max buying what the GP pays for); `all:box`: its box's goal, then the
+  same goal again as many times as the plan's step bought, while its next level is paid for;
 - `restart@x,y`: a quick restart (the builder's shortest pad) when it lands there (within 48 u: the landing is the
   checkpoint the run last touched), the steps after it measured from the landing; else none, and the step after it
   is played from where the run stands (the builder takes its own restarts: after a pad, onto a lap, before a record
   lap).
 
 Every step played is measured into the [movement table](#movement-table) as `measured`, with the unlocks it started
-with: from its place before (or before the restarts it took in) to its end, a restart to its landing, a lap's walk to
-its gate and its gate-to-finish run, a record lap's new best time (`start:N` to `record:N`). So the lap entries of the
+with: from its place before (or before the restarts it took in) to its end (a wait for Cash or for a growing box, and an
+`all:` step's later levels, left out: they are the economy's, as a move into a box ends at the arrival), a restart to
+its landing, a lap's walk to its gate and its gate-to-finish run, a record lap's new best time (`start:N` to
+`record:N`). So the lap entries of the
 buy table (the first lap `Lap` plays) and a farm route's lap (live time, held frames included) give way to the laps
 the build plays, in physics ticks. The table is saved to `fulltas/<run>.moves.json` (`--moves`) after each plan, and
 every later `fulltas-plan` reads it.
@@ -2304,6 +2333,37 @@ on), `buyatomlevel10` and 20 `buynp10` (+175 % NP a level); then the tree, green
 three buys (3, 4, then 21 for the cap: 104,000 NP per tick) and the zip box. Courses 7-10's laps are estimates until
 their routes are saved, and the walks are distance guesses. The engine can't play these goals yet (Area 2's economy is
 unmodeled there); the plan is for building the run's goals.
+
+`--target <token>` ends the plan at another tree box than the zip movers' (the comparison below).
+
+**Against `fulltas-plan` (2026-10-04).** No Full-TAS best reaches Area 2 (TouchGrass-ANY%'s ends in Area 1), and a
+Full-TAS savestate start loads zone 1, so both planners start from Task 7's Course 6 stretch (`t7-c6-area2`: a
+`WJ_DS_DJ_BS` category start on a fresh new game with 1e6 Cash and NP, 1e9 GP, 1e4 RP and CD, no clones, no atoms) made a
+Full-TAS run's trace: its header with a `fulltas` section added (goals `buy:buyplant`, `buy:buytree0` three times, then
+the target) and `courseAuto` on, as `course --auto` writes its synthetic traces, so the start is the category's. Its
+inputs, the best, buy the tree's plant box on tick 416; `fulltas-plan --from 1` starts there, and `zip-plan` on the same
+trace with `--route` its inputs `--ticks 416`. Same state, same engine world; the two differ in the economy (the
+engine's, against zip-plan's hand model) and the walks (the movement table's walkable estimate, a lower bound at 16.4 u a
+tick through the air, against zip-plan's 9.2 u a tick sideways, 6 up). Ticks are from the trace's start.
+
+| target | zip-plan (its model, 5 min) | fulltas-plan (the engine, beam) |
+|---|---|---|
+| `buy:buytree16`, the zip movers | 192.7 s: tick 10051 | none: `buy:buytree7` (TreePart7's door box, on the tree's way to the zip box) is refused by the engine, `Unmodeled("the Area 2 door box (doorToOpen.ForceNextPhase, upgradeBox.cs:756)")` |
+| the same, the door box modelled (an uncommitted two-line prototype, the atom door's `ForceNextPhase` model; not checked at 1x) | (as above) | 9034 (width 60, 12 min), 9223 (width 30); 9011 with `--compare "buy:buyatomlevel9,atoms:1"`; zip-plan's own order played then searched on 9023 |
+| `buy:buytree6` (the last box before the door: the start's NP pays for it, so a walk and the segments' growth) | 15.6 s: tick 1196 | planned 945; realized (re-planned three times) 1073, a route of 6 goals that `fulltas --check` replays |
+
+Every plan to the zip movers buys Course 9's atom level box first (`buyatomlevel9`: atoms land a tier up), then atoms with
+the GP, the tree's way with `buytree5` (NP) and `buytree6` (triple threat) levels, a second atom touch after
+`buytree13`, and stands about 5200 ticks at the zip box for the 625,000,000 NP (the NP per tick sets the cap: 6000 ticks'
+worth). The engine's plans are 1000 ticks (20 s) sooner than zip-plan's on paper. Where they differ: the walks
+(`buy:buyplant` to `buyatomlevel9` is 562 ticks estimated, zip-plan's 31.2 s; realize measured the atom box's walk 68
+against 86 estimated; the tree's boxes came 7-56 ticks after the plan's, each after a 40-100-tick wait for its segment); the segments' growth (the engine's drive touches a tree
+box the tick it turns on, about 108 ticks after the box before, while it still drops onto its spot; zip-plan counts the
+drop, about 4 s a segment); and the atoms (the engine's first buy-max touch
+leaves 1.6e8 of the 9.4e8 GP, so its plans touch again; zip-plan's spends 9.33e8 at once). Not compared: Courses 6-10's
+laps (no saved routes: the movement table has none, zip-plan's are estimates) and the Area 2 courses' boxes (no clones
+without a lap's path). The door box is the gap: `fulltas-plan` reaches the zip movers in the engine only once
+`area2DoorOpen` is modelled and checked at 1x.
 
 ## When a game update breaks a route
 

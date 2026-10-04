@@ -119,19 +119,61 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>What buying each of these boxes once costs now, per currency (their costs added); null when one of them
-        /// can't be bought (<see cref="Affordable"/>).</summary>
-        internal double[] Need(string[] boxes)
+        /// <summary>What buying each of these boxes once (<paramref name="levels"/> times: its next levels) costs now, per currency
+        /// (their costs added); null when one of them can't be bought (<see cref="Affordable"/>; or hasn't that many levels left
+        /// under its cap).</summary>
+        internal double[] Need(string[] boxes, int levels = 1)
         {
             var need = new double[CurrencyCount];
             foreach (upgradeBox b in _boxes)
             {
                 if (!Named(boxes, b)) continue;
-                if (!b.isActive || !b.gameObject.activeInHierarchy) return null;
+                if (!b.isActive || !b.gameObject.activeInHierarchy || levels > 1 && b.TimesUsed + levels > b.Cap) return null;
                 int currency = (int)Currency(b);
-                if (currency >= 0 && currency < CurrencyCount) need[currency] += b.upgradeCost;
+                if (currency < 0 || currency >= CurrencyCount) continue;
+                // The next `levels` levels' costs, each raised as ScaleBoxCost raises it after a buy.
+                double cost = b.upgradeCost;
+                for (int i = 0; i < levels; i++)
+                {
+                    need[currency] += cost;
+                    cost = Math.Ceiling(Math.Ceiling(Math.Pow(cost + b.upgradeAddFactor, b.upgradePowerScaleFactor) * b.upgradeScaleFactor));
+                }
             }
             return need;
+        }
+
+        static readonly AccessTools.FieldRef<TreeController, TreeSegmentActivationComponent[]> TreeSegments = AccessTools.FieldRefAccess<TreeController, TreeSegmentActivationComponent[]>("TreeSegments");
+        static readonly AccessTools.FieldRef<TreeSegmentActivationComponent, bool> AutoTriggerNext = AccessTools.FieldRefAccess<TreeSegmentActivationComponent, bool>("autoTriggerNext");
+        static readonly AccessTools.FieldRef<TreeSegmentActivationComponent, int> NextAuto = AccessTools.FieldRefAccess<TreeSegmentActivationComponent, int>("NextSegmentToAutoTriggerIndex");
+
+        /// <summary>
+        /// The boxes (ids, the root's first) whose buys grow an upgrade tree down to this box's segment, this box left out: segment by
+        /// segment, the box whose buy grows it (upgradeBox.upgradeTree, SegmentsToTrigger: <see cref="GrowTree"/>), else the
+        /// segment whose growth triggers it (TreeSegmentActivationComponent.autoTriggerNext, IE_Grow's end). Empty for a box on no
+        /// tree segment.
+        /// </summary>
+        internal List<string> TreeWay(string box)
+        {
+            var way = new List<string>();
+            upgradeBox target = Box(box);
+            foreach (TreeController tree in _sim.World.All<TreeController>())
+            {
+                TreeSegmentActivationComponent[] segments = TreeSegments(tree) ?? Array.Empty<TreeSegmentActivationComponent>();
+                int segment = Array.FindIndex(segments, s => s != null && s.box != null && s.box == target?.gameObject);
+                var seen = new HashSet<int>();
+                while (segment >= 0 && seen.Add(segment))
+                {
+                    upgradeBox grower = _boxes.FirstOrDefault(b => UpgradeTree(b) == tree && SegmentsToTrigger(b)?.Contains(segment) == true);
+                    if (grower != null)
+                    {
+                        way.Insert(0, _ids[grower]);
+                        segment = Array.FindIndex(segments, s => s != null && s.box != null && s.box == grower.gameObject);
+                    }
+                    else segment = Array.FindIndex(segments, s => s != null && AutoTriggerNext(s) && NextAuto(s) == segment);
+                }
+                if (way.Count > 0) break;
+            }
+            return way;
         }
 
         /// <summary>What the run has gained of a currency so far, its spending left out (<see cref="Holds"/> plus what it spent).</summary>

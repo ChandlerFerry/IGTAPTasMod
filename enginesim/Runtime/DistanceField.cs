@@ -38,6 +38,8 @@ namespace IGTAP.EngineSim
         const int SpikeLayer = 6;
         /// <summary>A step into a spike cell costs this many free steps.</summary>
         const float SpikeStep = 6f;
+        /// <summary>A target inside geometry floods from the free cells nearest it, at most this many cells out (Flood).</summary>
+        const int SeedRings = 16;
         /// <summary>Margin around the region the field covers, so wanderings grow it only every half of it in new ground.</summary>
         const float Margin = 512f;
         /// <summary>The most cells one field holds; a bigger region coarsens the cell instead.</summary>
@@ -454,10 +456,12 @@ namespace IGTAP.EngineSim
         }
 
         /// <summary>The walkable distance from the target boxes out over the free cells: 8-way steps of a cell's side or
-        /// diagonal, a spike cell six of them.</summary>
+        /// diagonal, a spike cell six of them. Target boxes wholly inside geometry (a buy box's own body, the economy planner's box
+        /// places) flood from the free cells nearest them instead (up to SeedRings cells out), their offset as their distance.</summary>
         void Flood(Field field, List<Rect> boxes)
         {
             var queue = new PriorityQueue<int, float>();
+            bool open = false;
             foreach (Rect box in boxes)
             {
                 int cx0 = Math.Max(0, Mathf.FloorToInt((box.xMin - field.X0) / field.Cell));
@@ -468,10 +472,27 @@ namespace IGTAP.EngineSim
                     for (int cx = cx0; cx <= cx1; cx++)
                     {
                         int i = cy * field.W + cx;
+                        open |= field.Cost[i] != Solid;
                         if (!(field.Distance[i] > 0f)) continue;
                         field.Distance[i] = 0f;
                         queue.Enqueue(i, 0f);
                     }
+            }
+            if (!open && boxes.Count > 0)
+            {
+                var target = new Vector2(boxes[0].x + boxes[0].width / 2f, boxes[0].y + boxes[0].height / 2f);
+                int tx = Mathf.FloorToInt((target.x - field.X0) / field.Cell), ty = Mathf.FloorToInt((target.y - field.Y0) / field.Cell);
+                for (int ring = 1; ring <= SeedRings && !open; ring++)
+                    for (int y = ty - ring; y <= ty + ring; y++)
+                        for (int x = tx - ring; x <= tx + ring; x++)
+                        {
+                            if (Math.Abs(x - tx) < ring && Math.Abs(y - ty) < ring || x < 0 || y < 0 || x >= field.W || y >= field.H) continue;
+                            int i = y * field.W + x;
+                            if (field.Cost[i] == Solid) continue;
+                            float off = MathF.Sqrt(DistanceSq(new Vector2(field.X0 + (x + .5f) * field.Cell, field.Y0 + (y + .5f) * field.Cell), target));
+                            if (off < field.Distance[i]) { field.Distance[i] = off; queue.Enqueue(i, off); }
+                            open = true;
+                        }
             }
             while (queue.TryDequeue(out int at, out float distance))
             {
