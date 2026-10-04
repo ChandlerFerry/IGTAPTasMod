@@ -13,7 +13,7 @@ namespace IGTAP.EngineSim
     {
         const int CurrencyCount = 7;
         const int Cash = (int)globalStats.Currencies.Cash;
-        static readonly AccessTools.FieldRef<upgradeBox, float> Cooldown = AccessTools.FieldRefAccess<upgradeBox, float>("boxCooldown");
+        internal static readonly AccessTools.FieldRef<upgradeBox, float> Cooldown = AccessTools.FieldRefAccess<upgradeBox, float>("boxCooldown");
         static readonly AccessTools.FieldRef<upgradeBox, globalStats.Currencies> Currency = AccessTools.FieldRefAccess<upgradeBox, globalStats.Currencies>("upgradeCurrency");
         static readonly AccessTools.FieldRef<courseScript, bool> ClearedThisVman = AccessTools.FieldRefAccess<courseScript, bool>("clearedThisVman");
 
@@ -98,7 +98,7 @@ namespace IGTAP.EngineSim
         public double CashNow => Available(Cash);
 
         /// <summary>The box is one of these (by id or hierarchy path).</summary>
-        bool Named(string[] boxes, upgradeBox b) => Array.IndexOf(boxes, _ids[b]) >= 0 || Array.IndexOf(boxes, _paths[b]) >= 0;
+        internal bool Named(string[] boxes, upgradeBox b) => Array.IndexOf(boxes, _ids[b]) >= 0 || Array.IndexOf(boxes, _paths[b]) >= 0;
 
         /// <summary>The box's id (FullTasGoal.BoxId).</summary>
         internal string Id(upgradeBox box) => _ids[box];
