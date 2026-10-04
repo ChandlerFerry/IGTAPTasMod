@@ -19,6 +19,9 @@ namespace IGTAP.EngineSim.Cli
         {
             double _cash, _earned;
             int _clones, _mult = 1, _targets;
+            /// <summary>The target's price, and whether the clone box is offered (a toy whose only income is laps).</summary>
+            public double Cost = 2000;
+            public bool Clones = true;
             public ToySnap Capture() => new ToySnap(_cash, _clones, _mult, _targets, _earned);
             public void Restore(ToySnap s) => (_cash, _clones, _mult, _targets, _earned) = (s.Cash, s.Clones, s.Mult, s.Targets, s.Earned);
             public void Idle(int ticks, string place) { if (place != "c1") Gain(_clones * ticks); }
@@ -26,7 +29,7 @@ namespace IGTAP.EngineSim.Cli
             public bool Buy(string box)
             {
                 Idle(1, box);
-                double cost = box == "clone" ? 30 : box == "target" ? 2000 : 0;
+                double cost = box == "clone" ? 30 : box == "target" ? Cost : 0;
                 if (_cash < cost || box == "bonus" && _mult == 2) return false;
                 _cash -= cost;
                 if (box == "clone") _clones++;
@@ -38,7 +41,7 @@ namespace IGTAP.EngineSim.Cli
             public double[] Holds() => new[] { _cash };
             public string Key() => _clones + "," + _mult + "," + _targets;
             public double[] Earned() => new[] { _earned };
-            public double[] Price(string box) => box == "bonus" && _mult == 2 ? null : new[] { box == "clone" ? 30.0 : box == "target" ? 2000.0 : 0.0 };
+            public double[] Price(string box) => box == "bonus" && _mult == 2 ? null : new[] { box == "clone" ? 30.0 : box == "target" ? Cost : 0.0 };
         }
 
         static readonly Dictionary<(string, string), int> Walk = new Dictionary<(string, string), int>
@@ -52,14 +55,15 @@ namespace IGTAP.EngineSim.Cli
         static IEnumerable<PlanOption> Options(Toy toy, string place, bool stand = false)
         {
             yield return new PlanOption(new Step("lap", "lap:1", Ticks(place, "c1") + 100), "c1", Array.Empty<string>(), "1", false, new[] { "start:1", "finish:1" });
-            yield return new PlanOption(new Step("buy", "buy:clone", Ticks(place, "clone")), "clone", new[] { "clone" }, null, false, new[] { "buy:clone" });
+            if (toy.Clones)
+                yield return new PlanOption(new Step("buy", "buy:clone", Ticks(place, "clone")), "clone", new[] { "clone" }, null, false, new[] { "buy:clone" });
             if (toy.Capture().Mult == 1)
                 yield return new PlanOption(new Step("reward", "reward:bonus", Ticks(place, "bonus")), "bonus", new[] { "bonus" }, null, false, new[] { "reward:bonus" });
             yield return new PlanOption(new Step("target", "buy:target", Ticks(place, "target")), "target", new[] { "target" }, null, true, new[] { "buy:target" }, Stand: stand);
         }
 
-        /// <summary>The beam's estimate on the toy: the target's 2000 until it's bought, and the walk to it.</summary>
-        static (double[] price, int ticks) Remaining(Toy toy, string place) => toy.Capture().Targets > 0 ? (new[] { 0.0 }, 0) : (new[] { 2000.0 }, Ticks(place, "target"));
+        /// <summary>The beam's estimate on the toy: the target's price until it's bought, and the walk to it.</summary>
+        static (double[] price, int ticks) Remaining(Toy toy, string place) => toy.Capture().Targets > 0 ? (new[] { 0.0 }, 0) : (new[] { toy.Cost }, Ticks(place, "target"));
 
         internal static int Run()
         {
@@ -181,8 +185,17 @@ namespace IGTAP.EngineSim.Cli
             // Width 1: still a plan that plays, no sooner than the optimum.
             PlanResult narrow = Beam(1, true);
             again = Replay(narrow, true);
-            Check(narrow.Done && narrow.Tick >= standBest && again.plays && again.tick == narrow.Tick,
-                $"beam 1: tick {narrow.Tick} ({narrow.Steps.Length} steps, {narrow.Steps.Count(x => x.Kind == "lap")} of them laps), played again {again.tick}, the optimum {standBest}");
+            Check(narrow.Done && narrow.Tick >= standBest && again.plays && again.tick == narrow.Tick && narrow.Pruned > 0,
+                $"beam 1: tick {narrow.Tick} ({narrow.Steps.Length} steps, {narrow.Steps.Count(x => x.Kind == "lap")} of them laps), {narrow.Pruned} cut by the width, played again {again.tick}, the optimum {standBest}");
+            // Income only from laps (no clone box) and a target of 100: the optimum walks to the bonus first, 150 ticks earning
+            // nothing. The beam keeps such a state (ranked on its fallback income), so it still finds it.
+            (toy.Cost, toy.Clones) = (100, false);
+            var (poorBest, poorOrder, _) = Brute(true);
+            PlanResult poor = Beam(1000, true);
+            again = Replay(poor, true);
+            Check(poorOrder != null && poorOrder.StartsWith("reward:bonus", StringComparison.Ordinal) && poor.Done && poor.Tick == poorBest && again.plays && again.tick == poor.Tick,
+                $"laps only, target 100: beam 1000 tick {poor.Tick} ({string.Join(", ", poor.Steps.Select(x => x.Arg))}; {poor.NoIncome} estimates without income), the brute force's {poorBest} ({poorOrder})");
+            (toy.Cost, toy.Clones) = (2000, true);
             Console.WriteLine(fails == 0 ? "plan-selftest: PASS" : $"plan-selftest: {fails} FAIL");
             return fails == 0 ? 0 : 1;
         }

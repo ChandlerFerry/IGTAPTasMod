@@ -49,7 +49,7 @@ namespace IGTAP.EngineSim.Cli
             ["measured"] = 0, ["buytable"] = 1, ["best"] = 1, ["farm"] = 2, ["record"] = 3,
         };
         /// <summary>One place per spot within this reach (the buy table's PieceReach).</summary>
-        const float PlaceReach = 48f;
+        internal const float PlaceReach = 48f;
         /// <summary>A saved route's seconds in physics ticks (50 Hz).</summary>
         const double TickSeconds = 0.02;
         /// <summary>A box set's labels in a To, in the order bought (as the buy table names its sets: a label has no spaces, an
@@ -66,6 +66,8 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>Per start place and unlock set, the fewest ticks to each place over stored moves chained (<see cref="Chain"/>);
         /// cleared by every <see cref="Put"/>.</summary>
         readonly Dictionary<(string from, string caps), Dictionary<string, int>> _chains = new Dictionary<(string, string), Dictionary<string, int>>();
+        /// <summary>The buy table's entries whose search found no way (<see cref="Missed"/>).</summary>
+        readonly HashSet<(string from, string to, string caps)> _misses = new HashSet<(string, string, string)>();
         /// <summary>The best's goal stops (0: the run's start), from the replay Load built the table on.</summary>
         List<FullTas.Stop> _goals;
 
@@ -213,7 +215,9 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>An estimate's ticks, -1 when it can't be made: a stored move as it is; a box set as its boxes in order; a lap or
         /// record as the walk to its gate and the course's known run; a restart landing never; else stored moves chained
         /// (<see cref="Chain"/>), else the straight line between the two places at the unlocks' top path speed (a lower bound
-        /// that walls can make far too short: a chain of played legs is a way the run can go).</summary>
+        /// that walls can make far too short: a chain of played legs is a way the run can go), never under the fewest measured
+        /// ticks to there from a spot of the same place (<see cref="Floor"/>). A pair the buy table's search found no way for
+        /// (<see cref="Missed"/>) has no estimate with those unlocks, and no straight line with more (only a chain).</summary>
         int Guess(string from, string to, string caps)
         {
             if (_moves.TryGetValue((from, to, caps), out Move m)) return m.Ticks;
@@ -240,11 +244,40 @@ namespace IGTAP.EngineSim.Cli
                 return _moves.TryGetValue((gate, "record:" + n, caps), out Move saved) ? walk + saved.Ticks : -1;
             }
             if (to.StartsWith("restart@", StringComparison.Ordinal)) return -1;
+            bool? missed = Missed(from, to, caps);
+            if (missed == true) return -1;
             int chain = Chain(from, to, caps);
             if (chain >= 0) return chain;
+            if (missed == false) return -1;
             if (!_places.TryGetValue(from, out Place a) || !_places.TryGetValue(to, out Place b) || !_speeds.TryGetValue(caps, out double v) || v <= 0) return -1;
-            return (int)Math.Ceiling(Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y)) / v);
+            return Math.Max((int)Math.Ceiling(Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y)) / v), Floor(from, to, caps));
         }
+
+        /// <summary>The buy table searched from here to there and found no way (technique `miss`): true with these very unlocks,
+        /// false with fewer (a subset; more may open a way, but nothing played shows one), null when it never missed.</summary>
+        internal bool? Missed(string from, string to, string caps)
+        {
+            if (_misses.Contains((from, to, caps))) return true;
+            if (!Caps.TryParse(caps, out Caps have)) return null;
+            foreach (var miss in _misses)
+                if (miss.from == from && miss.to == to && Caps.TryParse(miss.caps, out Caps fewer) && fewer.IsSubsetOf(have)) return false;
+            return null;
+        }
+
+        /// <summary>The fewest measured ticks to there with these unlocks from any spot of the same place (a place within
+        /// PlaceReach of this one, itself included); 0 when none was measured.</summary>
+        internal int Floor(string from, string to, string caps)
+        {
+            if (!_places.TryGetValue(from, out Place a)) return 0;
+            int fewest = 0;
+            foreach (Place p in _places.Values)
+                if (Math.Abs(p.X - a.X) <= PlaceReach && Math.Abs(p.Y - a.Y) <= PlaceReach && _moves.TryGetValue((p.Id, to, caps), out Move m) && !m.Estimated
+                    && (fewest == 0 || m.Ticks < fewest)) fewest = m.Ticks;
+            return fewest;
+        }
+
+        /// <summary>The buy table's searches that found no way (from, to, the unlocks searched with).</summary>
+        internal IEnumerable<(string from, string to, string caps)> Misses => _misses;
 
         /// <summary>The fewest ticks from one place to another over stored moves, none of them estimated, chained through the places
         /// they end at (a lap or record lap at its course's finish, a box set at its last box); -1 when no chain reaches it. Each
@@ -371,6 +404,8 @@ namespace IGTAP.EngineSim.Cli
             foreach (JsonNode e in table["entries"].AsArray())
             {
                 string technique = e["technique"].GetValue<string>();
+                if (technique == "miss" && ids.TryGetValue(e["place"].GetValue<string>(), out string missed))
+                    _misses.Add((missed, string.Join(SetJoin, e["boxes"].AsArray().Select(b => b.GetValue<string>())), e["caps"].GetValue<string>()));
                 if (technique != "walk" && technique != "jump-through" && technique != "dash-through" || e["ticks"] == null) continue;
                 if (!ids.TryGetValue(e["place"].GetValue<string>(), out string from)) continue;
                 var m = new Move(from, string.Join(SetJoin, e["boxes"].AsArray().Select(b => b.GetValue<string>())), e["ticks"].GetValue<int>(), "buytable", false);
@@ -641,6 +676,47 @@ namespace IGTAP.EngineSim.Cli
                     Move m = table.Best(key.from, key.to, key.caps);
                     Check(m != null && m.Ticks == Math.Min(fromTable, fromBest) && m.Source == (fromTable < fromBest ? "buytable" : "best"),
                         $"{key.from} -> {key.to} [{key.caps}] in the buy table ({fromTable}) and the best ({fromBest}): {Describe(m)}");
+                }
+
+                // A pair the buy table's search missed: no estimate with its unlocks; with more, only a chain of measured moves.
+                bool Subset(string few, string many) => Caps.TryParse(few, out Caps a) && Caps.TryParse(many, out Caps b) && a.IsSubsetOf(b);
+                string[] capsSeen = table.Places.Values.Select(p => p.Caps).Where(c => c != null).Distinct().OrderBy(c => c, StringComparer.Ordinal).ToArray();
+                var misses = table.Misses.Where(x => !x.to.Contains(MoveTable.SetJoin, StringComparison.Ordinal) && table.Best(x.from, x.to, x.caps)?.Estimated != false)
+                    .OrderBy(x => x.from == "finish:1" && x.to == "reward:bonus1" ? 0 : 1).ThenBy(x => x.from, StringComparer.Ordinal).ThenBy(x => x.to, StringComparer.Ordinal).ToList();
+                if (misses.Count == 0) Console.WriteLine("SKIP the buy table has no miss");
+                else
+                {
+                    var x = misses[0];
+                    Check(table.Best(x.from, x.to, x.caps) == null && !table.Targets(x.from, x.caps).Contains(x.to),
+                        $"{x.from} -> {x.to} [{x.caps}] the buy table's search missed: {Describe(table.Best(x.from, x.to, x.caps))}, not a target");
+                    var more = misses.SelectMany(y => capsSeen.Where(c => c != y.caps && Subset(y.caps, c) && table.Best(y.from, y.to, c)?.Estimated != false).Select(c => (y, c))).FirstOrDefault();
+                    if (more.c == null) Console.WriteLine("SKIP no miss with more unlocks than it was searched with");
+                    else
+                    {
+                        Move m = table.Best(more.y.from, more.y.to, more.c);
+                        int chain = table.Chain(more.y.from, more.y.to, more.c);
+                        Check(m == null ? chain < 0 : m.Ticks == chain, $"{more.y.from} -> {more.y.to} [{more.c}], missed with [{more.y.caps}]: {Describe(m)}, the chain of measured moves {chain} (no straight line)");
+                    }
+                }
+                // An estimate never under the fewest measured ticks to there from a spot of the same place.
+                var near = table.Places.Values.SelectMany(a => table.Places.Values.Where(b => b.Id != a.Id && Math.Abs(a.X - b.X) <= MoveTable.PlaceReach && Math.Abs(a.Y - b.Y) <= MoveTable.PlaceReach)
+                    .SelectMany(b => capsSeen.SelectMany(c => table.Targets(b.Id, c).Where(t => table.Places.ContainsKey(t) && t != a.Id && table.Best(b.Id, t, c) is Move bt && !bt.Estimated
+                        && table.Best(a.Id, t, c)?.Estimated == true && table.Chain(a.Id, t, c) < 0).Select(t => (a: a.Id, b: b.Id, t, c)))))
+                    .FirstOrDefault();
+                if (near.a == null)
+                {
+                    // None on this table: a made-up one (two boxes 20 u apart, one with a measured 500-tick move to a third 5000 u off).
+                    string spots = Path.Combine(dir, "spots.json");
+                    File.WriteAllText(spots, "{\"places\":[{\"id\":\"buy:a\",\"kind\":\"box\",\"box\":\"buy:a\",\"x\":0,\"y\":0,\"caps\":\"wj\"},"
+                        + "{\"id\":\"buy:b\",\"kind\":\"box\",\"box\":\"buy:b\",\"x\":20,\"y\":0,\"caps\":\"wj\"},{\"id\":\"buy:t\",\"kind\":\"box\",\"box\":\"buy:t\",\"x\":5000,\"y\":0,\"caps\":\"wj\"}],"
+                        + "\"speeds\":{\"wj\":100},\"moves\":[{\"from\":\"buy:b\",\"to\":\"buy:t\",\"caps\":\"wj\",\"ticks\":500,\"source\":\"buytable\",\"estimated\":false}]}");
+                    Move m = MoveTable.Read(spots).Best("buy:a", "buy:t", "wj");
+                    Check(m != null && m.Estimated && m.Ticks == 500, $"buy:a -> buy:t [wj] unmeasured (straight line 50), buy:b 20 u off measured 500: {Describe(m)}");
+                }
+                else
+                {
+                    Move m = table.Best(near.a, near.t, near.c), spot = table.Best(near.b, near.t, near.c);
+                    Check(m.Ticks >= spot.Ticks, $"{near.a} -> {near.t} [{near.c}] unmeasured, {near.b} at the same spot measured {spot.Ticks}: {Describe(m)}");
                 }
             }
             else Console.WriteLine($"SKIP no buy table at {buyTable}");

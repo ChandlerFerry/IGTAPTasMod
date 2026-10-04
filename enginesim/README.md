@@ -850,7 +850,9 @@ the best's goal-to-goal splits from `reward:bonus1` to the first `buy:buyclone2`
 with the fewest ticks the best took between those two goals with those unlocks; an economy buy the best waited for in
 its box ends its move at the arrival (shown before and after); a pair nothing measured comes back estimated, the
 straight line at the unlocks' top path speed where no chain of measured moves reaches it, and `Targets` offers it; one two
-measured moves chain to is an estimate no longer than the two legs; a restart landing nothing showed from a place is
+measured moves chain to is an estimate no longer than the two legs; a pair the buy table's search missed has no
+estimate with those unlocks and with more only a chain (no straight line); a straight line is never under a measured
+move to there from a spot of the same place (a made-up table when the real one has none); a restart landing nothing showed from a place is
 neither estimated nor a target, and `Restarts` lists the best's own; a buy table entry and the best's split of the same
 pair give the fewer ticks; the buy table's reward box and lap entries (`fulltas-buytable --targets`) are moves to
 `reward:bonusN` and `lap:N` that `Best` and `Targets` give; a `Measured` move outranks every source, even a slower one; `Save` then `Read` gives the same
@@ -863,7 +865,8 @@ its schedule must reach the target on the tick a brute force over every order of
 tick, have dropped a dominated state, and a `--compare` prefix must play first and finish no earlier; capped at 60
 states, it must finish more than one of its richest states by standing at the target, each asked from its own state.
 The beam (`--mode beam`) must find the brute force's tick at width 1000, both on the same steps and with the target's
-stand (the brute force over those steps too), and at width 1 still a plan that replays to its tick.
+stand (the brute force over those steps too); at width 1, where the width cuts, still a plan that replays to its
+tick; and on a toy with only lap income the brute force's plan, which walks to the bonus first earning nothing.
 
 Every position write in `Movement.FixedUpdate` (a jump's `+2`/`+5`, a wall jump's `+1`, the dash's `−20`) starts from
 the transform, which holds the last rendered frame's blend of the body's last two positions, so each one pulls the
