@@ -91,6 +91,12 @@ namespace IGTAP.EngineSim.Cli
         /// FalseEnding%-280 (2026-10-04, beam 200): buy:buywj to buy:buyds searches about 11 minutes a round, reward:bonus3 to
         /// buy:buystatue 19.</summary>
         double _stretchMinutes = 60;
+        /// <summary>The stretches pulled (the route planned from, to its start, and the target), kept in the memory with the
+        /// movement table's stamp then (<see cref="MovesStamp"/>): a pull skips them until the table changes.</summary>
+        readonly HashSet<string> _stretchPulled = new HashSet<string>();
+        string _stretchMoves;
+        /// <summary>fulltas/&lt;run&gt;.moves.json's write time and length ("" when there is none).</summary>
+        string MovesStamp() => File.Exists(MovesFile) ? $"{File.GetLastWriteTimeUtc(MovesFile).Ticks}/{new FileInfo(MovesFile).Length}" : "";
         /// <summary>When the last goals pull ended: the other parts get as long after it as it took (a pull plans for up to
         /// --stretch-minutes a stretch), so a short run's windows, idle, waste and grafts get turns between them.</summary>
         TimeSpan _goalsEnd;
@@ -108,7 +114,8 @@ namespace IGTAP.EngineSim.Cli
         /// order (<see cref="Stretches"/>), each from the route the stretches before it left: the best, or a stretch's realized and
         /// joined plan once it buys its target sooner (the best's old way on after an earlier change can stop short: the next
         /// stretch is then planned from where it stops, on the best's own way on after that stretch's target, <see cref="Onto"/>).
-        /// The pull's time (--stretch-minutes a stretch, at most what the session has left) is shared by the stretches left. The
+        /// The pull's time (--stretch-minutes a stretch, at most half what the session has left) is shared by the stretches left
+        /// by the best's ticks in each. The
         /// fastest whole route planned that beats the best is adopted (<see cref="AdoptGoals"/>). Returns whether the run's goals
         /// changed.
         /// </summary>
@@ -119,7 +126,10 @@ namespace IGTAP.EngineSim.Cli
             _goalsAt = _clock.Elapsed;
             double c0 = CpuSeconds();
             var w0 = _clock.Elapsed;
-            int count = Stretches(_labels).Count;
+            List<(int kept, int target, string[] bonuses)> own = Stretches(_labels);
+            int count = own.Count;
+            // Each stretch's share of the time left goes by the best's ticks in it (FalseEnding%-280: 5371, 3322 and 896).
+            long[] weight = own.Select(s => Math.Max(1, s.target < best.Progress ? best.GoalPhysics[s.target] - best.GoalPhysics[s.kept - 1] : 1)).ToArray();
             if (count == 0)
             {
                 Log("auto: goals: the run has no economy stretch (from an unlock buy or reward goal to the next unlock buy)");
@@ -127,7 +137,9 @@ namespace IGTAP.EngineSim.Cli
             }
             _pullNo++;
             int pull = _pullNo;
-            double deadline = _clock.Elapsed.TotalSeconds + Math.Max(60, Math.Min(_stretchMinutes * count, _minutes - _clock.Elapsed.TotalMinutes) * 60);
+            // At most half the session's time left: the other parts get their turns.
+            double deadline = _clock.Elapsed.TotalSeconds + Math.Max(60, Math.Min(_stretchMinutes * count, (_minutes - _clock.Elapsed.TotalMinutes) / 2) * 60);
+            if (_stretchMoves != MovesStamp()) _stretchPulled.Clear();
             Log($"auto: pull {pull}: goals, the economy planner on {count} stretches in order, {deadline - _clock.Elapsed.TotalSeconds:0} s shared");
             // The route the next stretch is planned on, its goals and per goal the best's goal (-1: a planned one).
             Route on = best;
@@ -152,9 +164,17 @@ namespace IGTAP.EngineSim.Cli
                         + "before the stretch's start or with no way of the best's on after its target; the stretches after it aren't planned");
                     break;
                 }
+                // Planned before from this route with these moves (an earlier pull or session): it plans the same way again.
+                string key = Hex(SnapshotIndex.Hash(from.Inputs, (int)Math.Min(from.GoalInput[kept - 1], from.Inputs.Count))) + ":" + labels[t];
+                if (!_stretchPulled.Add(key))
+                {
+                    Log($"auto goals: {what}: planned before from this route, the movement table unchanged since");
+                    if (through) continue;
+                    break;
+                }
                 // A plan that buys the target no sooner than the route it replaces (or, where that stops short, the best) isn't realized.
                 long cap = through ? on.GoalPhysics[t] : bestTick < 0 ? best.Last : bestTick;
-                double seconds = Math.Max(30, (deadline - _clock.Elapsed.TotalSeconds) / (count - i));
+                double seconds = Math.Max(30, (deadline - _clock.Elapsed.TotalSeconds) * weight[i] / weight.Skip(i).Sum());
                 PlanResult p;
                 try { p = Replan(from, GoalsOf(labels), kept, new[] { labels[t] }, true, cap, seconds, bonuses); }
                 catch (Exception ex)
@@ -173,7 +193,8 @@ namespace IGTAP.EngineSim.Cli
                 Log($"auto goals: {what}: {plans}, {verdict}");
                 AutoWrite(new { type = "goalEdit", pull, kind = "plan", text = what, first = kept + 1, last = t + 1, goals = p.Goals.Length,
                     plans = p.PlanTicks, built = p.Done ? p.Tick : -1, cap, bestTick, time = whole ? r.LiveSeconds : (double?)null, gain = whole ? best.Last - r.Last : (long?)null, why = p.Why });
-                if (!p.Done || r == null)
+                // Built, but no sooner than the route it would replace: that route stays (realize checks the cap on plans, not builds).
+                if (!p.Done || r == null || through && p.Tick >= cap)
                 {
                     if (through) continue;
                     break;
@@ -183,6 +204,7 @@ namespace IGTAP.EngineSim.Cli
                 labels = p.Goals;
                 on = r;
                 Known(labels);
+                FindCashGoals();
                 if (first == 0) first = kept + 1;
                 planned.Add($"goals {kept + 1}-{t + 1} planned to {p.Target} on tick {p.Tick}");
                 if (whole && (win.route == null || r.Live < win.route.Live)) win = (r, labels, map, "economy planned: " + string.Join("; ", planned), first);
@@ -195,9 +217,11 @@ namespace IGTAP.EngineSim.Cli
                 adopted = AdoptGoals(e, win.route, best);
             }
             string outcome = win.route == null ? "no stretch's plan gave a whole route"
-                : win.route.Live >= best.Live ? $"the fastest whole route planned, {Describe(win.route)}, is no faster than the best" : $"{win.text}: {Describe(win.route)}";
+                : win.route.Live >= best.Live ? $"the fastest whole route planned, {win.route.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s on {win.labels.Length} goals, is no faster than the best" : $"{win.text}: {win.route.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s on {win.labels.Length} goals";
             _goalsAgain = adopted;
             _goalsEnd = _clock.Elapsed;
+            _stretchMoves = MovesStamp();
+            SaveMemory();
             double cpu = CpuSeconds() - c0, wall = (_clock.Elapsed - w0).TotalSeconds;
             long gain = GainTicks(best);
             _order.Add("goals" + (gain > 0 ? $"(-{gain})" : ""));

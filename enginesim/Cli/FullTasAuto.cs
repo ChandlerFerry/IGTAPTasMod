@@ -192,6 +192,8 @@ namespace IGTAP.EngineSim.Cli
             if (Classed && _parts.Remove("goals")) Log($"auto: {Glitches.Key(_class)}: the goals part is off (a class keeps the run's goals)");
             // --parts goals: a run file whose goals an earlier --auto adopted from this trace's goals runs on them.
             if (Part("goals")) ResumeAdoptedGoals();
+            // The cash goals GoalsRefused lets a goal list add, drop or move (a planned list that skips bonus 1, a stray fit).
+            FindCashGoals();
             var refs = new List<(string file, Route route)>();
             foreach (string file in Solve.Args(args, "--ref")) refs.Add((file, Evaluate(global::IGTAP.EngineSim.Cli.Plan.ReadRoute(file))));
             foreach (var (file, r) in refs)

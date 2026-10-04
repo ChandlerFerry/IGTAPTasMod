@@ -33,6 +33,7 @@ namespace IGTAP.EngineSim.Cli
                 studied = _studied.Select(x => new[] { x.goal, x.offset }),
                 wallStudied = _wallStudied.Select(x => new[] { x.goal, x.offset }),
                 planDead = _planDead,
+                stretches = _stretchPulled, stretchMoves = _stretchMoves,
                 grafted = _grafted.Where(g => keyOf.ContainsKey(g.Item1)).Select(g => new { key = Hex(keyOf[g.Item1]), goal = g.Item2 }),
                 arms = _arms.Values.Where(a => a.Pulls > 0).Select(a => new { lever = a.Lever, goal = a.Goal, pulls = a.Pulls, wins = a.Wins, cpu = a.Cpu, gain = a.Gain }),
                 spots = _spots.Select(kv => new { lever = kv.Key.Item1, goal = kv.Key.Item2, kv.Value.pulls, kv.Value.cpu, kv.Value.gain, kv.Value.misses }),
@@ -58,6 +59,12 @@ namespace IGTAP.EngineSim.Cli
                 foreach (JsonElement s in All("studied")) _studied.Add((s[0].GetInt32(), s[1].GetInt32()));
                 if (m.TryGetProperty("wallStudied", out JsonElement wall)) foreach (JsonElement s in wall.EnumerateArray()) _wallStudied.Add((s[0].GetInt32(), s[1].GetInt32()));
                 foreach (JsonElement k in All("planDead")) _planDead.Add(k.GetInt32());
+                // The stretches pulled count only while the movement table is the one they were planned on.
+                if (m.TryGetProperty("stretchMoves", out JsonElement sm) && sm.GetString() == MovesStamp() && m.TryGetProperty("stretches", out JsonElement st))
+                {
+                    _stretchMoves = sm.GetString();
+                    foreach (JsonElement k in st.EnumerateArray()) _stretchPulled.Add(k.GetString());
+                }
                 Dictionary<ulong, string> howOf = _refs.GroupBy(r => r.Key).ToDictionary(g => g.Key, g => g.First().How);
                 foreach (JsonElement g in All("grafted"))
                     if (howOf.TryGetValue(FromHex(g.GetProperty("key").GetString()), out string how)) _grafted.Add((how, g.GetProperty("goal").GetInt32()));

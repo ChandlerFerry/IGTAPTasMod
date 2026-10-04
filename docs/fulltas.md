@@ -1085,7 +1085,7 @@ the run file trails when that record was found and judged elsewhere.
 **Memory.** What the run's sessions tried is kept in `fulltas/<run>.auto-memory.json` (not read with `--fresh`) and read
 back when the goals match, so a restarted Improve goes on where the last one stopped: the combine splices played, the
 known routes revived (at most twice each), the resets studied, the goals whose plan found no finish, the leads
-grafted, and the bandit's arms, lever costs and per-goal pulls (the outlook's "not tried yet on this run"). On the same
+grafted, the goals part's stretches pulled (while the movement table is unchanged), and the bandit's arms, lever costs and per-goal pulls (the outlook's "not tried yet on this run"). On the same
 best it also keeps the finds merged, the goals polished and the leads each window showed. Before it, six restarts of
 `FalseEnding-Any%` at 361.54 s spent 43 of their 79 minutes of pulls replaying the same combine, revive, goals and
 reset-study pulls. A window's finds are merged once per best by the state and tick they arrive in at the window's last
@@ -1256,11 +1256,15 @@ baseline). The default is set by the measurements below, and has every part exce
    `buy:buyds` (bonus 1 offered), `reward:bonus3` to `buy:buystatue`, `buy:buystatue` to `buy:buydj`; Course 1's laps
    before `buy:buywj` have no start (the planner starts after a goal). Each stretch is planned on the route the stretches
    before it left: the best, or a stretch's realized and joined plan once it buys its target sooner than that route did
-   (the cap: a plan no sooner isn't realized). Where that route's old way on stops before the next stretch's target (the
+   (the cap: a plan no sooner isn't realized, and one built no sooner leaves the route as it was). Where that route's old way on stops before the next stretch's target (the
    best's way on after an earlier change: after `buy:buyds` 465 ticks sooner it doesn't play on), the stretch is planned
    from the last goal it reached, the best's own way on after its buy of the target joined after it; a route that stops
-   before a stretch's start ends the pull. A pull has `--stretch-minutes` (60) a stretch, at most the session's time
-   left, shared evenly by the stretches left (one's unused time goes to the next). Each stretch logs its plan's target
+   before a stretch's start ends the pull. A pull has `--stretch-minutes` (60) a stretch, at most half the session's time
+   left (the other parts get their turns), shared by the stretches left by the best's ticks in each (FalseEnding%-280:
+   5371, 3322 and 896; one's unused time goes to the next). A stretch planned before from the same route (its inputs to
+   the stretch's start) and target is skipped while `fulltas/<run>.moves.json` is unchanged since (the memory's
+   `stretches` and `stretchMoves`). The cash goals (`GoalsRefused`) are found at the start and after each stretch, so a
+   planned list may drop or move bonus 1's reward goal (a GLOBAL cashPerLoop box). Each stretch logs its plan's target
    tick per round, the tick it built against the route's and the best's, and the whole route or where it stops (`goalEdit`,
    `kind` `plan`, in `auto.jsonl`). The fastest whole route that beats the best is adopted (below). Measured on
    FalseEnding%-280 (2026-10-04, the 355.07 s best of 272 goals, beam 200), the plan's target tick per round against the
@@ -1271,7 +1275,12 @@ baseline). The default is set by the measurements below, and has every part exce
    time; with 40 minutes a stretch they ran out in their fourth and third search; the third stretch's re-plan came out
    past the best's `buydj` both times (its moves built over their estimates: a Course 2 lap 135 ticks against 87,
    `buyclonemult2` to `buyreward2` 39 against 22; with 6.5 minutes a Course 1 record lap 201 against 145): none built, no
-   whole route. A full pass needs about an hour a stretch, hence the default. Until 2026-10-04 a pull played the edits
+   whole route. With re-plans that can't fit skipped and the pull held to half the session (`--minutes 90`: 45 minutes,
+   25 for the first stretch), the first stretch played its first plan on (the search took 746 s) and built `buy:buyds`
+   on tick 10575, 183 before the best (its plan 10296: without re-plans `buyds` waited 220 ticks for its Cash); its join
+   (85 stray fits, 2 bridges: the best's Course 3 order on the new economy) reached all 308 goals in 424.40 s. The second
+   stretch found no plan in its 11 minutes; the third built `buydj` 352 ticks after that route's and was not kept. A full
+   pass needs about an hour a stretch, hence the default. Until 2026-10-04 a pull played the edits
    below on copies of the best instead (a FalseEnding-Any% pull took about 7 minutes, 2500 CPU s, and rarely gained); it
    no longer plays them:
    - **Drops**: the last lap (start and finish goals, the inputs from the quick restart before the gate to the next step's)
@@ -2177,7 +2186,7 @@ every later `fulltas-plan` reads it.
 After each step the built tick is compared with the plan's. More than 10 ticks off, or a step that doesn't play (a
 strict buy strays into another box, the Cash isn't there on arrival, no way found), and the rest is planned again
 from the build's real state at its place (a `--compare` order's steps not played yet first), on the measured moves.
-At most 3 rounds: after that the plan plays on as it is, and a step that doesn't play stops it, with where and why.
+At most 3 rounds: after that, or when a re-plan finds no plan (its search out of time), the plan plays on as it is, and a step that doesn't play stops it, with where and why.
 The plan's Cash isn't assumed: each round starts from the build's (the walk-at-end bias leaves the plans about 6% low).
 The goals after the target are joined (`Join`): the best's way on from its Quick Restart after the target, after its
 old inputs or 0-24 idle ticks, kept when the whole run then reaches every goal, its waits re-timed from the start
@@ -2196,8 +2205,10 @@ submit it (`/api/fulltas/submit`) and **Capture start** again.
 
 The goals part's pulls (`FullTas.Replan`, one call a stretch) plan the same way: the search (`--mode auto`), then
 realize, joined, within one budget (the stretch's share of the pull, at least 30 s; 10 minutes by default): each search
-gets what is left of it, at most 10 minutes or half the budget, whichever is more (the beam what the exact search left),
-and realize and the join's bridges stop when it runs out (a piece search running then can overrun it by its
+gets what is left of it, at most 10 minutes or half the budget, whichever is more (the beam what the exact search left;
+a re-plan half of what is left, the rest for building, and only when that is at least what the first search took: a
+re-plan takes about as long, 11, 12 and 11 minutes on FalseEnding%-280's first stretch, and one that can't finish
+leaves the plan playing on as it is), and realize and the join's bridges stop when it runs out (a piece search running then can overrun it by its
 `--piece-minutes`, four times over at most). A plan whose target comes after the best's tick there
 (the cap) is not realized: it can't win. Its result maps every goal to the goal list it was given (`OldOf`: -1 for the
 plan's own goals and for any a stray fit put in), so the pull's list maps the joined goals, stray fits included.

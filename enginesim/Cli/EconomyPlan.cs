@@ -1180,7 +1180,7 @@ namespace IGTAP.EngineSim.Cli
         /// lap's or record lap's walk to the gate, a lap's course run, a record lap's new best time. When a step ends more than
         /// OffTicks from the plan's tick for it, or doesn't play (a strict buy strays, the Cash isn't there on arrival, no way), the
         /// rest is planned again from the build's real state on the measured moves (<paramref name="replan"/>: its place, and the
-        /// <paramref name="prefix"/> steps not played yet), at most MaxRounds times; after that the plan plays on as it is, and a step
+        /// <paramref name="prefix"/> steps not played yet), at most MaxRounds times; after that, or when a re-plan finds none, the plan plays on as it is, and a step
         /// that doesn't play stops it. The target short of Cash waits where the step before left the player (the plan's stand),
         /// then takes the builder's way to its box.
         /// </summary>
@@ -1206,7 +1206,8 @@ namespace IGTAP.EngineSim.Cli
                 z.PlanTicks.Add(next.Done ? next.Tick : -1);
                 Log($"realize: round {z.Rounds}, planned again from {from} on tick {z.Tick} ({why}): " + (next.Done ? $"the target on tick {next.Tick}" : "no plan (" + next.Why + ")"));
                 z.Log.Add(new { round = z.Rounds, from, tick = z.Tick, why, plan = next.Done ? next.Tick : -1, estimated = next.Estimated });
-                if (!next.Done) { z.Why = $"round {z.Rounds}: no plan from {from} on tick {z.Tick} ({next.Why})"; return false; }
+                // No plan (a search out of time): the plan plays on as it is, as after MaxRounds; a step that doesn't play stops it.
+                if (!next.Done) return false;
                 if (next.Tick > tickCap) { z.Why = $"round {z.Rounds}: the plan's target on tick {next.Tick} comes after the cap, tick {tickCap}"; return false; }
                 plan = next;
                 i = 0;

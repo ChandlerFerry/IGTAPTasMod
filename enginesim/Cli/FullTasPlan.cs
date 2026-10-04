@@ -92,9 +92,10 @@ namespace IGTAP.EngineSim.Cli
 
         bool PlanOver => TimeUp || _clock.Elapsed.TotalSeconds >= _planDeadline;
 
-        /// <summary>A search's settings with the budget left (at least a second; the settings' own when no Replan budget runs).</summary>
-        PlanSettings Budgeted(PlanSettings ps) => double.IsPositiveInfinity(_planDeadline) ? ps
-            : ps with { Seconds = Math.Max(1, Math.Min(ps.Seconds, _planDeadline - _clock.Elapsed.TotalSeconds)) };
+        /// <summary>A search's settings with the budget left (at least a second; the settings' own when no Replan budget runs);
+        /// <paramref name="share"/> of it for realize's re-plans, which leave the rest to build the plan they replace.</summary>
+        PlanSettings Budgeted(PlanSettings ps, double share = 1) => double.IsPositiveInfinity(_planDeadline) ? ps
+            : ps with { Seconds = Math.Max(1, Math.Min(ps.Seconds, (_planDeadline - _clock.Elapsed.TotalSeconds) * share)) };
 
         PlanResult PlanAndRealize(FullTasGoal[] all, int kept, string[] targets, bool join, long tickCap, string[] bonuses)
         {
@@ -114,8 +115,18 @@ namespace IGTAP.EngineSim.Cli
             // beam's every step kind offered (all:box among them), was at tick 9759 of about 10000 when 10 minutes ran out.
             var settings = new PlanSettings(targets, bonuses, Seconds: Math.Max(ReplanMinutes * 60, (_planDeadline - _clock.Elapsed.TotalSeconds) / 2));
             long start = _best.GoalPhysics[kept - 1];
+            double t0 = _clock.Elapsed.TotalSeconds;
             EconomyPlanResult plan = PlanFrom(at, place, null, moves, Budgeted(settings), GoalOf);
-            Realization z = Realize(plan, at, route, start, place, null, moves, (s, p, prefix) => PlanFrom(s, p, prefix, moves, Budgeted(settings), GoalOf), GoalOf, tickCap);
+            double took = _clock.Elapsed.TotalSeconds - t0;
+            // A re-plan takes about as long as the first search (FalseEnding%-280's buy:buywj to buy:buyds: 11, 12 and 11 minutes):
+            // one that half the time left can't fit isn't tried, and the plan plays on as it is (its building needs the rest).
+            EconomyPlanResult Again(SimSnapshot s, string p, IReadOnlyList<string> prefix)
+            {
+                double left = _planDeadline - _clock.Elapsed.TotalSeconds;
+                return left / 2 < took ? new EconomyPlanResult { Why = $"no time to plan again ({left:0} s left, the first search took {took:0} s)" }
+                    : PlanFrom(s, p, prefix, moves, Budgeted(settings, 0.5), GoalOf);
+            }
+            Realization z = Realize(plan, at, route, start, place, null, moves, Again, GoalOf, tickCap);
             moves.Save(MovesFile);
             long bonus1 = Array.FindIndex(all, g => g.label == "reward:bonus1") is int b && b >= 0 && b < _best.Progress ? _best.GoalPhysics[b] : 0;
             string[] tokens = z.Planned.Select(g => g.label).ToArray();
