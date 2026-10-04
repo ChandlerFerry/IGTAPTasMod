@@ -1122,3 +1122,27 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
   atom grid was filed a tick early, and a grid due on the first tick was filed as none.
 - **Fix:** `SimEconomy.Capture` hands back the snapshot it last restored while no drive tick has played since.
 - **Where:** `SimEconomy` (`enginesim/Cli/EconomyPlan.cs`).
+
+## Zone loads mid-run
+
+- **Symptom:** a Full-TAS run couldn't go past touch grass (the zone 1 → 2 activator): 1x loads zone 2 two frames after
+  `zoneChanger.OnTriggerEnter2D`, turbo only after its run returned (Unity ran `IE_Load` after the run's one frame), and
+  the engine never (`cuts.txt` dropped the trigger). A run that bought an atom without the grid running ended.
+- **Fix:** turbo parks `ZoneLoader.IE_Load` and resumes a `yield return null` once per modelled frame, in a later frame
+  than it yielded in (`_frame`); the engine runs it on its Scheduler (`Scheduler.Frame`, `Continues`), with the woken
+  zip movers' `OnEnable` and the atom collider's grid (`Economy.GridStart`: called in the load's frame, then at k = 0 of
+  every 20th tick, turbo's `_atomNow`); both drop a parked coroutine whose object went off. The trace start carries
+  `activeZone` and the never-started behaviours (`neverStarted`), and refuses a start with a load under way; a woken box
+  whose Start would change what a run reads ends the run (`WokenStarts`). Turbo's restore restores the zip movers after
+  the scene, keeps `activeZone` and stops Unity's own `IE_Load`; its orbs include the ones off at the run's start.
+- **Checked:** a 1x probe, turbo trace and engine replay of the activator crossing from the same new-game savestate start
+  (`Test-Zone12`, `Test-Zone12-Rebase`): the load at tick 70 k = 2, the grid at k = 2 then k = 0 of tick 90, ..., and
+  positions, RNG and the economy equal on every tick. Three differences are older than this and not the load's: a Full-TAS
+  start's first tick reads the stick at rest at 1x (the playback starts inside that FixedUpdate) but the next input's in
+  turbo, so an air start whose first input holds the stick down falls faster in turbo (the check's first input is neutral);
+  each new game has its own Unity grid phase until a load restarts it (it lands nothing without a waiting atom, and none
+  waits before zone 2 first loads); and the unloaded Area 2 door's distance (`econ.doorArea2`) reads 0.01 u apart before
+  the load.
+- **Where:** `TurboRunner` (`BeforeStartCoroutine`, `Resume`, `StartPass`, `Restore`), `EngineSimExport.WriteSnapshot`,
+  `Scheduler`, `Simulation` (`Activated`, `InterpolatedFrames`), `Economy` (`GridStart`, `GridNow`, `StartPass`),
+  `WokenStarts.cs`.

@@ -481,7 +481,7 @@ finish ended.
 ### Course --auto
 
 ```powershell
-& $exe solve $traces\start-c4-wjdsdj.json --auto --threads 4 --minutes 5 --window-minutes 0.25   # --farm, --seed FILE, --parts LIST, --focus a-b, --waypoints-out FILE, --fresh, --log-json FILE
+& $exe solve $traces\start-c4-wjdsdj.json --auto --threads 4 --minutes 5 --window-minutes 0.25   # --farm, --class human-major|human-nmg, --seed FILE, --parts LIST, --focus a-b, --waypoints-out FILE, --fresh, --log-json FILE
 ```
 
 `--auto` (`Cli\CourseAuto.cs`) runs the Full-TAS `--auto` loop ([`docs/fulltas.md`](../docs/fulltas.md#auto), its parts
@@ -491,6 +491,17 @@ start-gate crossing `start:<course>`) and the finish (`finish:<course>`; a bonus
 `start:`). Waypoints are checkpoints, not cut points: every window plays on from the state the route has there, so
 momentum carries through them, and a window is scored on its arrival.
 
+- **Human class** (`--class human-major|human-nmg`, record timing on a gated course only): the loop plays as the class
+  plays (`MacroEngine.HumanClass`: digital stick, two jump buttons) and ranks by the class's score (the Full-TAS
+  classes' `Better`/`Ahead`, [`docs/fulltas.md`](../docs/fulltas.md#classes)); its difficulty is measured on the course's
+  own trace to its finish, as `techs-used` measures it for the gate. The candidates are tried as they are and with their
+  part tilts snapped to full or rest (`Digital`). With none a human class plays to the finish (the solver tunes speed with
+  0.6-0.8 tilts), `HumanReach` places the waypoints on the fastest route that finishes and runs the reach windows
+  (`fulltas --unsolved`, under the class) on its digital version for half the minutes, then improves from what it
+  reached; short of the finish, the next Improve goes on from the run file (`course-auto\fulltas\<run>.<class>.json`).
+  Each kept best, and the route it starts from, is written as `offline-best\<course>_<caps>-<class>-<score>.json`
+  (`course`, `capabilities`, `class`, `score` on the game timer, `time`, `runTicks`, `ticks`), which the plugin judges for
+  the class's record (README `### Rules` 54).
 - **Timing.** Record (the default on a gated course): the game timer, the finish's tick less the start-gate goal's
   (`FullTas.TimerGoal`; `Route.Last` compares that, `Route.End` is the finish's tick from the quick restart). A window is
   scored on its arrival's physics tick, which is the timer's only once the gate crossing is in its prefix, so in record
@@ -787,8 +798,9 @@ frames (rows have `paused`): `timeScale` is 0 and no FixedUpdate runs, but Updat
 A probe's ticks can also carry a route's own pause (`pause`, `pauseTick`, `pauseFrame`: `MacroStep.pauseFrames`), which turbo
 and enginesim model too (`MacroEngine.FrameRepeats`, `Simulation.InterpolatedFrames`); `pauseAt`/`pauseOffset` are 1x only. Offline
 `probe` takes `base` (inputs played once, unlogged, as every branch's start) and `frames: true` (a row per rendered frame:
-`kind` `frame`, its `alpha`, `still` in a freeze or pause); its tick rows carry the course timer (`courseTime`, null while
-no course is timing). Playback runs on a fixed clock at 280 fps with
+`kind` `frame`, its `alpha`, `still` in a freeze or pause, logged after its Updates and before its coroutine resumes); its
+tick rows carry the course timer (`courseTime`, null while no course is timing), and every row the loaded zone (`zone`),
+the RNG's last word (`random`) and the atom grid's calls so far (`gridCalls`). Playback runs on a fixed clock at 280 fps with
 vsync off (`TasPlugin.PacePlayback`); `fps` sets that rate instead (turbo and enginesim model 280). Keep
 it at 50 or more: playback runs at most one physics tick per frame (`Time.maximumDeltaTime`), so below 50 the game slows
 down. `GET /api/probe/status` says whether one is running and the last file written. `fields` (Movement field names)
@@ -815,8 +827,9 @@ steps compare). A probe's tick row also has `econPre`, the economy at that tick'
 NP payout: what the last tick's frames left, the point the trace's and `--ticks-out` rows are taken at, which
 `economy-diff.py` uses. A probe also logs a row of kind `atom` for each grid call Unity runs (frame, physics tick, game time,
 atoms waiting), and a row of kind `zone` for a zone activator's trigger (`what` `enter`: `zoneChanger.OnTriggerEnter2D`,
-the collider that touched it in `by`), the load it starts (`load`: `ZoneLoader._LoadZone`) and the atom collider it wakes
-(`atomEnable`, `atomStart`), each with the frame, physics tick, game time, `activeZone` before it, the loading text and the
+the collider that touched it in `by`), the load it starts (`load`: `ZoneLoader._LoadZone`), the atom collider it wakes
+(`atomEnable`, `atomStart`), an upgrade box's first `Start` (`boxStart`, `by` what it would change: `WokenStarts`) and a zip
+mover's `OnEnable` (`moverEnable`), each with the frame, physics tick, game time, `activeZone` before it, the loading text and the
 RNG state (`tools/probe.py --show` prints them with `k`, the rendered frame within the tick, 0 the tick's own). `replay <trace> --ticks-out FILE` writes the offline rows for a category trace as `fulltas --check
 --ticks-out` does for a Full-TAS one, and `replay` compares a trace tick's `econ` with the engine's field by field.
 `python tools/economy-diff.py <a> <b>` compares two of them (a probe log, `--ticks-out` lines or a trace), each field
@@ -1753,23 +1766,23 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   (an `OnEnable` postfix) and of its last call (a `callAddNewAtom` prefix), and a trace start whose collider
   `IsInvoking` it carries `economy.atomGridDueIn`: seconds to the next call, 0.4 s after the last or at the start before
   any (`TurboRunner.AtomGridDueIn`). The engine queues the invoke there (`floor(dueIn / fixedDeltaTime)` ticks, as the
-  start's other pending Invokes, then every 20 ticks). The engine loads no zone within a run, so a run that drops into
-  zone 2 never starts the grid; a waiting atom without it (that, or a start captured before the field) ends the run
-  (`Unmodeled economy: a waiting atom ...`, `Economy.AtomsLand`). At 1x (a probe from Course 6's start) Unity calls it in
+  start's other pending Invokes, then every 20 ticks). A zone load in a run restarts it (below, *Zone loads*); a waiting
+  atom with no grid running waits, as at 1x. At 1x (a probe from Course 6's start) Unity calls it in
   the first rendered frame after a physics tick (that tick's `fixedTime` + 0.0025 s), after the frame's Updates, every 20
   ticks on the 280 fps clock: an atom it lands is first paid for by the next tick's NP and crafts from the frame after.
   The engine and turbo fire it there (`Economy.GridFrame`): in the first rendered frame of the tick before the one
   `floor(dueIn / fixedDeltaTime)` counts, after the frame's clone and atom steps. (They used to fire it at that tick's
   start, a tick late, so every crafting merge came a tick late and its NP x1000 and the next tick's NP at the new rate
-  were off.) A grid whose phase falls later in a tick's frames isn't modeled; a category start's is at the tick (the probe).
+  were off.) A grid the collider's `OnEnable` starts (a zone load, in the load's frame k = 2) is called in that frame, after
+  the load, and then at k = 0 of every 20th tick after (`Economy.GridStart`/`GridNow`, turbo's `_atomNow`).
   The trace start carries the collider (`economy.atomCollider`: atoms per tier, crafting, waiting atoms, the tier counter)
   and `globalStats`' atom and NP fields (`economy.atomStats`) as the start had them; the world export, written after the
   start's capture run, is some ticks on. The atom count terms (`Mathf.Pow(...) * 0.001f`) are double products, as the
   game's Mono JIT computes them on their way into the double fields. Checked: Course 6's atom box bought 88 times, 40 atom
   landings, crafting up to tier 2, first-merge NP x1000 and NP income equal in 1x, turbo and the engine on every value and tick;
   Course 10's NP box and atom level box (`ClearAtoms`, with 8 atoms and 28 waiting) equal in turbo and the engine on every
-  tick ([`docs/fidelity-log.md`](../docs/fidelity-log.md), *Atom grid a tick late, and the atom start*). Not checked: whether
-  the grid keeps firing after zone 1 loads again. Turbo models the same (`TurboRunner`): it runs
+  tick ([`docs/fidelity-log.md`](../docs/fidelity-log.md), *Atom grid a tick late, and the atom start*). Invokes run on
+  while the collider's zone is off (Unity doesn't stop them; a 1x probe saw the grid fire with zone 2 unloaded). Turbo models the same (`TurboRunner`): it runs
   `AtomColliderSystem.Update` in each modelled frame on that frame's `Time.deltaTime` (the sprites' `HandleMovement`
   skipped), and takes the grid over for a run, since Unity's `InvokeRepeating` runs on `Time.time`, which a run holds
   still: from the grid a restore or the last run left, else from Unity's as above, fired in the first rendered frame of the
@@ -1801,9 +1814,10 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   composite from its paths while its source is on (`PhysicsWorld.PathShapes`): each path a closed chain of two-sided
   edges, not Unity's convex polygons, whose decomposition isn't known here. The surface is the same; inside the outline
   and at Unity's seams it isn't (docs/fidelity-log.md, *Upgrade trees grown by hand*). The ground appears with
-  IE_Grow's collider write, at the end of the ground's fade (above), not during the fade. A dynamic or kinematic body off at the export
-  still isn't built: a step with one of its colliders on ends the run (`PhysicsWorld.Unbodied`). A coroutine on an
-  object off in the hierarchy doesn't start, as in Unity (a tree in an unloaded zone doesn't grow).
+  IE_Grow's collider write, at the end of the ground's fade (above), not during the fade. A dynamic or kinematic body off at
+  the export is built disabled and turns on with its object (`PhysicsWorld.SyncEnabled`, `b2Body.SetEnabled`). A coroutine
+  on an object off in the hierarchy doesn't start, and one parked on an object that goes off never resumes, as in Unity (a
+  tree in an unloaded zone doesn't grow; a zone load stops zone 1's zip movers and growths), in turbo and here alike.
   Turbo parks `IE_Grow` as the engine does and resumes it after each modelled frame (its first step, in the buy's
   physics step, on the fixed step); its snapshot keeps the trees' fields (grown segments, audio cooldown), each
   segment's trunks' and box's local pose and its ground's collider, and a restore stops a growth Unity runs. Checked
@@ -1816,6 +1830,28 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   are made at that frame's Start pass (README ### Rules, exception 12): the engine's `Economy.StartPass`, turbo's
   `TurboRunner.StartPass`, which puts the RNG back around Unity's later real `Start`. The draws per growth event (14, 4, 17
   and 8 on The Tree's first three segments) match 1x's.
+- Zone loads (`zoneChanger.OnTriggerEnter2D` → `ZoneLoader.LoadZone` → `IE_Load`): the activator's trigger starts the
+  coroutine in the physics step of tick T (frame k = 0); it yields null twice and `_LoadZone` runs in frame k = 2, after
+  that frame's Updates (a `yield return null` resumes in a later rendered frame than the one it yielded in, a held frame
+  of a freeze or pause included). `_LoadZone` turns the other zones and their `ZoneDisableLoadList.toLoad` off and the
+  zone's on, and runs `OvergrowthLoadScript.OnLoad` for a zone root that has it. What the activation wakes runs its
+  OnEnable at once: `upgradeBox` and `ObjectBobber` draws (`Economy.Activate`), `PlatformMover.OnEnable`'s `JumpToState`
+  (its pose and its two-`FixedUpdate` reset coroutine) and the atom collider's grid (above). Unity stops the coroutines
+  of what goes off (zone 1's zip movers mid-move, a growing tree); its Invokes run on. Turbo parks `IE_Load` as a frame
+  wait and resumes frame waits once per modelled frame (`TurboRunner.Resume(Wait.Frame)`); the engine runs it on the
+  Scheduler (`Continues`, `Scheduler.Frame`), `cuts.txt` no longer drops the trigger. A woken behaviour whose Start never
+  ran (the trace start's `neverStarted`, `TurboRunner.NeverStarted`: the drawers, the atom collider, upgrade boxes) runs
+  it at the next frame's Start pass: the drawers draw, the collider recomputes NP, and a box whose Start would change
+  what a run reads ends the run (`WokenStarts.Unmodeled`). The trace start also carries `activeZone`, and a start
+  captured with a load under way is refused. Snapshots keep `activeZone` and the zone objects' on/off; a turbo restore
+  stops Unity's own `IE_Load` and restores the zip movers after the scene (whose re-activation ran their `OnEnable`).
+  Checked at 1x, in turbo and here (2026-10-04, the zone 1 → 2 activator falling from savestate `lab/zone12-shaft-top-rebased`
+  in a new game, runs `Test-Zone12` and `Test-Zone12-Rebase`, the latter rebasing two ticks before the crossing): the load
+  at tick 70 k = 2 in all three, 16 zip movers' OnEnable and one box's draws in its frame, no Start woken, the grid's calls
+  at tick 70 k = 2 then k = 0 of ticks 90, 110, ...; positions, RNG words and the economy equal on every tick (609 ticks
+  1x against turbo, 629 turbo against the engine), and the engine's `probe` frame rows show the load and the first grid call
+  in frame k = 2. A recreated body's place at the head of Box2D's body list (Unity remakes a re-activated object's body)
+  changes nothing there: the engine with the woken bodies moved to the head wrote byte-identical `--ticks-out`.
 - Buy-max boxes (`IE_BuyMax`, the statue's boosted Courses 1 and 2): on build 25630570 the coroutine buys a level, then
   waits for the next physics step (`WaitForFixedUpdate`): one level a tick at any frame rate
   ([`docs/fulltas.md`](../docs/fulltas.md#clones-and-buy-max-build-25630570)). Offline `Shop.FixedStep` (`Shop.cs:148`,
@@ -1837,9 +1873,9 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   [`docs/fidelity-log.md`](../docs/fidelity-log.md), *RNG state shifted before the judged run*).
 - When a draw happens: a turbo run is one synchronous batch in one Unity frame. `SetActive(true)` runs the woken
   behaviours' `OnEnable` at once (drawn in turbo); `Start` waits for the next frame's Start pass, `InvokeRepeating`
-  and Unity-run coroutines wait for later frames (turbo parks only `Invoke`, zip movers, `IE_BuyMax` and the origin
-  rebase), so none of those draw inside a turbo run. Real-time playback runs them all, which is why its rolls differ
-  from a turbo run's: the Start draws of objects the run turns on (tree parts, a loaded zone's lights and plants), each
+  and Unity-run coroutines wait for later frames (turbo parks `Invoke`, zip movers, `IE_BuyMax`, `IE_Grow`, a zone load
+  and the origin rebase, and draws the Start of what a run wakes itself, `TurboRunner.StartPass`), so none of Unity's own
+  draw inside a turbo run. Real-time playback runs them all, which is why its rolls differ from a turbo run's: each
   box's `updateMultibuyText` (InvokeRepeating) turning a buy-max box's `NumToBuyText` on (its `ObjectBobber.OnEnable`
   draws), and a tree segment's coroutine turning its box back on. LightFlicker and RandomAnimSpeedComponent draw only
   in `Start`, never per frame. Traces and the judge are turbo; real time is never compared.
@@ -1884,9 +1920,7 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
     JiggleDropScript.cs:41, and the OnEnable of what the world loads with on (the pooled clone prefab is Transform +
     SpriteRenderer + ParticleSystem only: activating one draws nothing).
   - Never stepped in a turbo tick: FloatingNumberScript.cs:89-99 (`ActuallySpawnText` is off). PlatformMover.cs:154,165
-    only run once zip movers are unlocked (`zipMoversUnlocked`), and then in turbo and here alike. Zone loads
-    (`zoneChanger` → `ZoneLoader.LoadZone`) turn a zone on only after two `yield return null`, a Unity-run coroutine, so
-    never inside a turbo run; `cuts.txt` drops them.
+    only run once zip movers are unlocked (`zipMoversUnlocked`), and then in turbo and here alike.
   - Not reproduced: a block swap's re-activated boxes (upgradeBox.cs:804, behind a purchase that ends the run), and the
     `Start` of what a tree segment wakes the first time (its box's `LightFlicker` and `upgradeBox.Start`, its trunks' and
     lights' `RandomAnimSpeedComponent`: one draw, two or three). Start runs before a behaviour's first Update: for an
