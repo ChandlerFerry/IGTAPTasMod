@@ -871,7 +871,9 @@ human classes' score adds 5 s a frame-perfect input and 20 s a back-to-back pair
   differently; the start.key drops them with the archive, and another engine build or world export drops them alone: a
   recapture keeps the start but renumbers the instance ids a state holds). A window starts from the stored state at its prefix's end
   instead of replaying the run up to there, and an archive cell replays its prefix from the later of its worker's own
-  ancestor and a stored goal state on the same inputs. A state is a byte-for-byte snapshot walk (`enginesim/README.md`
+  ancestor and a stored goal state on the same inputs, except in a piece search whose start isn't the replayed prefix's
+  (an extra lap's own goals; the buy table's or the plan's goal list and Cash): a stored state holds the run's goal list
+  and Cash, so there every cell replays from its worker's own states. A state is a byte-for-byte snapshot walk (`enginesim/README.md`
   "Memory"); one whose world this can't write is simply not kept, and the run replays to it as before.
 - A complete, faster run goes to `offline-best\fulltas-<run>-<time>.json` and to the gate (`/api/fulltas/submit`).
 - Reach windows also write `<traces>\fulltas\<run>.closest.json`: this session's attempt furthest toward the goals (most

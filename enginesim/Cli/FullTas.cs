@@ -792,7 +792,7 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         List<List<InputTick>> Explore(int id, string title, string span, Func<Simulation> create, string caps, List<List<InputTick>> seeds,
             string archiveFile, long baseline, double budgetMinutes, double stallMinutes, List<InputTick> closestPrefix, ICollection<string> goals,
-            out List<InputTick> bestInputs, Func<OfflineSolver, List<List<InputTick>>> walks = null, int? penaltyFrom = null)
+            out List<InputTick> bestInputs, Func<OfflineSolver, List<List<InputTick>>> walks = null, int? penaltyFrom = null, bool resume = true)
         {
             var found = new List<List<InputTick>>();
             ReloadAvoids(goals);
@@ -805,7 +805,9 @@ namespace IGTAP.EngineSim.Cli
             if (_mined == null) TuneGrafts(solver, 0, 0, 0);
             bool ownModes = _findModes == null && solver.Mined != null;
             if (ownModes) _findModes = new HashSet<string>();
-            solver.Resume = _states.Index;
+            // The run's stored goal states stand for a cell's prefix only when the window starts from the prefix as replayed
+            // (resume: false when create alters that start).
+            solver.Resume = resume ? _states.Index : null;
             solver.NoResets = _noResets;
             // A class's window ranks its finds by score inside the window (FullTasClasses.cs); the baseline is the best's score there.
             solver.Penalty = WindowPenalty(penaltyFrom);

@@ -402,10 +402,12 @@ namespace IGTAP.EngineSim.Cli
                 int id = ++_windowId;
                 Emit(new { type = "window", id, kind = "piece", first = reached, limit = (then ?? target).Goal + 1, attempt, budget = Math.Round(budget * 60, 1),
                     start = reached == 0 ? 0.0 : Seconds(at.Goal.PhysicsTicks[reached - 1]), target = beat.HasValue ? Seconds(beat.Value) : (double?)null, savedStarts = seeds.Count, piece = span });
+                // A start create alters (an extra lap's own goals, _pieceState's goal list or Cash) isn't the run's: a stored goal state
+                // on a cell's prefix would bring back the run's goal list (progress past the window's goals) and its Cash.
                 // Every route the search improved on, fastest first: one that doesn't reproduce in the run (a replay from a
                 // cached state can differ from one from the start) leaves the others.
                 List<List<InputTick>> routes = Explore(id, title, span, create, caps, seeds, archiveFile, long.MaxValue, budget, stallMinutes, null,
-                    goals.Select(g => g.label).ToList(), out List<InputTick> best);
+                    goals.Select(g => g.label).ToList(), out List<InputTick> best, resume: target.Extra == null && _pieceState == null);
                 if (best != null) routes.Add(best);
                 Step step = null;
                 foreach (List<InputTick> found in Enumerable.Reverse(routes).Distinct(SequenceComparer.Instance).Take(40))
