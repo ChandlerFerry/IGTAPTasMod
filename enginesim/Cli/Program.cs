@@ -42,7 +42,9 @@ namespace IGTAP.EngineSim.Cli
                     case "ultras": return Ultras.Run(args.Skip(1).ToArray());
                     case "fulltas": return FullTas.Run(args.Skip(1).ToArray());
                     case "macros": return FullTasAutoMacros.Command(args.Skip(1).ToArray());
-                    case "fulltas-plan": return FullTas.Plan(args.Skip(1).ToArray());
+                    case "fulltas-plan": return EconomyPlan.Run(args.Skip(1).ToArray());
+                    case "fulltas-plan-greedy": return FullTas.Plan(args.Skip(1).ToArray());
+                    case "plan-selftest": return EconomyPlanCheck.Run();
                     case "fulltas-buytable": return FullTas.BuyTable(args.Skip(1).ToArray());
                     case "zip-plan": return ZipPlan.Run(args.Skip(1).ToArray());
                     case "plan-check": return PlanCheck(args.Skip(1).ToArray());
@@ -222,7 +224,16 @@ namespace IGTAP.EngineSim.Cli
                             + "  macros [--tech-dir D] [--no-default] [--mine route.json]... [--measure route.json]... [--min-uses N] [--dump N]\n"
                             + "         [--samples N] [--out file]    mines --auto's macro seeds from the saved and judged records (--mine: more\n"
                             + "                                         routes) and measures how often one beats a held-out route's own next ticks\n"
-                            + "  fulltas-plan <trace.json> --from <goal> --target <buy:box>[,<buy:box>] [--out file] [--route file] [--piece-minutes p] [--group-buys]\n"
+                            + "  fulltas-plan <trace.json> --from <goal> --target <buy:box>[,<buy:box>] [--bonuses bonus1,...] [--buytable FILE] [--moves FILE]\n"
+                            + "               [--max-states N] [--minutes M] [--dominance key|levels] [--only ids] [--out file]\n"
+                            + "               [--compare \"order\" ...] [--skip-free]\n"
+                            + "                                         the economy planner (docs/fulltas.md \"Economy planner\"): Dijkstra over\n"
+                            + "                                         schedules of laps, record laps, buys, bonuses and quick restarts from the\n"
+                            + "                                         best's state at goal <goal> to the target buy, on the engine's own economy\n"
+                            + "                                         (driven without the player) and the movement table's ticks; --compare plays\n"
+                            + "                                         each order (steps joined by commas) exactly, then searches on\n"
+                            + "  plan-selftest                          the planner on a toy economy against a brute force over every order\n"
+                            + "  fulltas-plan-greedy <trace.json> --from <goal> --target <buy:box>[,<buy:box>] [--out file] [--route file] [--piece-minutes p] [--group-buys]\n"
                             + "                                         plans the buys and laps after goal <goal> (number or label) up to the\n"
                             + "                                         target buy, playing each choice from the saved best (pieces, the game's\n"
                             + "                                         economy; a,b: a first; --group-buys: also two boxes on one walk);\n"

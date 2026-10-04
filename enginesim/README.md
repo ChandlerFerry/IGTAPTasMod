@@ -849,12 +849,18 @@ with atoms landing and crafting; the first atom box's buy) and `t7-c10-afterA` (
 the best's goal-to-goal splits from `reward:bonus1` to the first `buy:buyclone2` after it is a move of source `best`
 with the fewest ticks the best took between those two goals with those unlocks; an economy buy the best waited for in
 its box ends its move at the arrival (shown before and after); a pair nothing measured comes back estimated, the
-straight line at the unlocks' top path speed, and `Targets` offers it; a restart landing nothing showed from a place is
+straight line at the unlocks' top path speed where no chain of measured moves reaches it, and `Targets` offers it; one two
+measured moves chain to is an estimate no longer than the two legs; a restart landing nothing showed from a place is
 neither estimated nor a target, and `Restarts` lists the best's own; a buy table entry and the best's split of the same
 pair give the fewer ticks; the buy table's reward box and lap entries (`fulltas-buytable --targets`) are moves to
 `reward:bonusN` and `lap:N` that `Best` and `Targets` give; a `Measured` move outranks every source, even a slower one; `Save` then `Read` gives the same
 table, and a second `Save` into the file keeps the first's measured moves. Checked: FalseEnding%-280 (its splits, goals
 89-97; goal 134's arrival) with a buy table of goal 1 to `buy:buyds` measured with `--targets reward:bonus1,lap:2`.
+
+`plan-selftest` checks the economy planner's search (`fulltas-plan`, `Cli/EconomyPlan.cs`,
+[docs/fulltas.md](../docs/fulltas.md#economy-planner)) without the game, on a toy economy (`Cli/EconomyPlanCheck.cs`):
+its schedule must reach the target on the tick a brute force over every order of up to 12 steps finds, replay to that
+tick, have dropped a dominated state, and a `--compare` prefix must play first and finish no earlier.
 
 Every position write in `Movement.FixedUpdate` (a jump's `+2`/`+5`, a wall jump's `+1`, the dash's `−20`) starts from
 the transform, which holds the last rendered frame's blend of the body's last two positions, so each one pulls the

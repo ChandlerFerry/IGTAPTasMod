@@ -34,9 +34,9 @@ namespace IGTAP.EngineSim.Cli
     /// (walk, jump-through, dash-through) and the best's own splits (goal to goal and through each quick restart's landing, and a
     /// lap `lap:N` where the best plays a gate then its finish), both engine measurements: the fewer ticks of the two; the saved
     /// course routes (routes.json): a farm route as a lap from the course's finish, a record as `record:N` from its gate. A pair
-    /// none of them has is estimated, and marked so: the straight line at the unlocks' top path speed (FullTasAuto's, the best's
-    /// path and the cached speed probes), a box set as its boxes one after another, a lap or record as the walk to its gate and
-    /// the course's known run. A quick restart is never estimated: where it lands is the checkpoint the run last touched
+    /// none of them has is estimated, and marked so: the stored moves chained through the places they end at, else the straight
+    /// line at the unlocks' top path speed (FullTasAuto's, the best's path and the cached speed probes); a box set as its boxes
+    /// one after another, a lap or record as the walk to its gate and the course's known run. A quick restart is never estimated: where it lands is the checkpoint the run last touched
     /// (README ### Rules 35-36), which the table doesn't follow, so <see cref="Restarts"/> offers only the landings a restart from
     /// that place was seen to reach. The planner expands a place through <see cref="Targets"/> (estimates included) and
     /// <see cref="Restarts"/>. Saved as fulltas/&lt;run&gt;.moves.json; a Save keeps the measured moves the file had, and Load reads
@@ -63,6 +63,9 @@ namespace IGTAP.EngineSim.Cli
         readonly Dictionary<string, double> _speeds = new Dictionary<string, double>();
         /// <summary>Every unlock set the best or the buy table stood anywhere with.</summary>
         readonly HashSet<string> _caps = new HashSet<string>();
+        /// <summary>Per start place and unlock set, the fewest ticks to each place over stored moves chained (<see cref="Chain"/>);
+        /// cleared by every <see cref="Put"/>.</summary>
+        readonly Dictionary<(string from, string caps), Dictionary<string, int>> _chains = new Dictionary<(string, string), Dictionary<string, int>>();
         /// <summary>The best's goal stops (0: the run's start), from the replay Load built the table on.</summary>
         List<FullTas.Stop> _goals;
 
@@ -196,6 +199,7 @@ namespace IGTAP.EngineSim.Cli
                 if (rank > wasRank || rank == wasRank && m.Source != "measured" && m.Ticks >= was.Ticks) return;
             }
             _moves[key] = m;
+            _chains.Clear();
             if (!_targets.TryGetValue((m.From, caps), out List<string> to)) _targets[(m.From, caps)] = to = new List<string>();
             if (!to.Contains(m.To)) to.Add(m.To);
         }
@@ -207,8 +211,9 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>An estimate's ticks, -1 when it can't be made: a stored move as it is; a box set as its boxes in order; a lap or
-        /// record as the walk to its gate and the course's known run; a restart landing never; else the straight line between the
-        /// two places at the unlocks' top path speed.</summary>
+        /// record as the walk to its gate and the course's known run; a restart landing never; else stored moves chained
+        /// (<see cref="Chain"/>), else the straight line between the two places at the unlocks' top path speed (a lower bound
+        /// that walls can make far too short: a chain of played legs is a way the run can go).</summary>
         int Guess(string from, string to, string caps)
         {
             if (_moves.TryGetValue((from, to, caps), out Move m)) return m.Ticks;
@@ -235,8 +240,44 @@ namespace IGTAP.EngineSim.Cli
                 return _moves.TryGetValue((gate, "record:" + n, caps), out Move saved) ? walk + saved.Ticks : -1;
             }
             if (to.StartsWith("restart@", StringComparison.Ordinal)) return -1;
+            int chain = Chain(from, to, caps);
+            if (chain >= 0) return chain;
             if (!_places.TryGetValue(from, out Place a) || !_places.TryGetValue(to, out Place b) || !_speeds.TryGetValue(caps, out double v) || v <= 0) return -1;
             return (int)Math.Ceiling(Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y)) / v);
+        }
+
+        /// <summary>The fewest ticks from one place to another over stored moves, none of them estimated, chained through the places
+        /// they end at (a lap or record lap at its course's finish, a box set at its last box); -1 when no chain reaches it. Each
+        /// leg was played, so the chain is a way the run can go (not one it was seen to go in one piece).</summary>
+        internal int Chain(string from, string to, string caps)
+        {
+            if (!_chains.TryGetValue((from, caps), out Dictionary<string, int> dist))
+            {
+                _chains[(from, caps)] = dist = new Dictionary<string, int> { [from] = 0 };
+                var queue = new PriorityQueue<string, int>();
+                queue.Enqueue(from, 0);
+                while (queue.TryDequeue(out string at, out int d))
+                {
+                    if (d > dist[at] || !_targets.TryGetValue((at, caps), out List<string> tos)) continue;
+                    foreach (string next in tos)
+                    {
+                        Move m = _moves[(at, next, caps)];
+                        string end = EndOf(next);
+                        if (m.Estimated || end == null || dist.TryGetValue(end, out int was) && was <= d + m.Ticks) continue;
+                        dist[end] = d + m.Ticks;
+                        queue.Enqueue(end, d + m.Ticks);
+                    }
+                }
+            }
+            return to != from && dist.TryGetValue(to, out int ticks) ? ticks : -1;
+        }
+
+        /// <summary>The place a move into this To ends at (null: none the table knows).</summary>
+        string EndOf(string to)
+        {
+            if (to.StartsWith("lap:", StringComparison.Ordinal) || to.StartsWith("record:", StringComparison.Ordinal)) to = "finish:" + to.Substring(to.IndexOf(':') + 1);
+            else if (to.Contains(SetJoin, StringComparison.Ordinal)) to = to.Substring(to.LastIndexOf(SetJoin, StringComparison.Ordinal) + SetJoin.Length);
+            return _places.ContainsKey(to) ? to : null;
         }
 
         // ponytail: a place is the goal it stands at, so the best's or the buy table's several spots at one box (a wide box, a gate
@@ -472,7 +513,8 @@ namespace IGTAP.EngineSim.Cli
         /// plan-check --moves &lt;trace&gt; [--buytable FILE]: the movement table (MoveTable) of the trace's run against the best it
         /// is built from. The best's goal-to-goal splits from reward:bonus1 to the first buy:buyclone2 after it are Moves of
         /// source "best" with the fewest ticks the best took between those goals with those unlocks, an economy buy's ending at the
-        /// player's arrival; a pair nothing measured comes back Estimated (the straight line at the unlocks' top path speed) and
+        /// player's arrival; a pair nothing measured comes back Estimated (measured moves chained, no longer than two legs that
+        /// reach it; else the straight line at the unlocks' top path speed) and
         /// Targets offers it; a restart landing nothing showed from a place is neither estimated nor offered, Restarts offers the
         /// best's own; a buy table entry and the best's split of the same pair: the fewer ticks; the buy table's reward box and lap
         /// entries (fulltas-buytable --targets) read as moves to `reward:bonusN` and `lap:N`; a Measured move outranks every
@@ -536,18 +578,30 @@ namespace IGTAP.EngineSim.Cli
                     + $"(the box touched with its cooldown over on tick {Arrive(w)}, bought on {Tick(w)}); the table's {Describe(m)}, the pair's fewest {fewest}");
             }
 
-            // A pair nothing measured: the straight line at the top path speed, and Targets offers it.
+            // A pair nothing measured and no chain of measured moves reaches: the straight line at the top path speed, and Targets
+            // offers it.
             string from = "reward:bonus1", at = table.CapsAtGoal(k1);
             Place here = table.Places[from];
             List<string> targets = table.Targets(from, at).ToList();
-            Place there = table.Places.Values.Where(p => p.Id != from && (p.Kind == "box" || p.Kind == "at") && table.Best(from, p.Id, at)?.Estimated == true)
-                .OrderBy(p => p.Id, StringComparer.Ordinal).First();
+            Place there = table.Places.Values.Where(p => p.Id != from && (p.Kind == "box" || p.Kind == "at") && table.Best(from, p.Id, at)?.Estimated == true
+                && table.Chain(from, p.Id, at) < 0).OrderBy(p => p.Id, StringComparer.Ordinal).First();
             Move guess = table.Best(from, there.Id, at);
             double speed = table.Speed(at);
             int expect = (int)Math.Ceiling(Math.Sqrt((here.X - there.X) * (here.X - there.X) + (here.Y - there.Y) * (here.Y - there.Y)) / speed);
             Check(guess.Source == "estimate" && guess.Ticks == expect,
                 $"{from} -> {there.Id} [{at}] unmeasured: {Describe(guess)}, straight line at {speed:0.00} u/tick {expect}");
             Check(targets.Contains(there.Id), $"Targets({from}) offers it, among {targets.Count} ({targets.Count(t => table.Best(from, t, at).Estimated)} estimated)");
+            // One that two measured moves chain to (a -> b -> c, a -> c unmeasured): an estimate no longer than the two legs.
+            var chained = table.Places.Keys.SelectMany(a => table.Targets(a, at).Where(b => table.Places.ContainsKey(b) && table.Best(a, b, at) is Move ab && !ab.Estimated)
+                .SelectMany(b => table.Targets(b, at).Where(c => c != a && table.Places.ContainsKey(c) && table.Best(b, c, at) is Move bc && !bc.Estimated && table.Best(a, c, at)?.Estimated == true)
+                    .Select(c => (a, b, c)))).FirstOrDefault();
+            if (chained.a == null) Check(false, $"no two measured moves chain to an unmeasured pair [{at}]");
+            else
+            {
+                int legs = table.Best(chained.a, chained.b, at).Ticks + table.Best(chained.b, chained.c, at).Ticks;
+                Move m = table.Best(chained.a, chained.c, at);
+                Check(m.Estimated && m.Ticks <= legs, $"{chained.a} -> {chained.c} [{at}] unmeasured, through {chained.b} in {legs}: {Describe(m)}");
+            }
 
             // A restart is never estimated: a landing the best never reached from this place is neither a move nor a target.
             string landing = table.Places.Values.Where(p => p.Kind == "restart" && !table.Restarts(from, at).Contains(p.Id)).Select(p => p.Id).FirstOrDefault();
