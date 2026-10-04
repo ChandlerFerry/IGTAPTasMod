@@ -447,7 +447,8 @@ namespace IGTAPTasMod
             Next = s.Next;
             _bought = s.Bought;
             _banked = s.Banked;
-            // The engine farm planner's goal list grows as it plans: a snapshot taken with fewer goals leaves the rest unreached.
+            // A goal list can grow after a snapshot (the economy planner's plan, realize, a goals edit): a snapshot taken with fewer
+            // goals leaves the rest unreached.
             int n = Math.Min(s.InputTicks.Length, InputTicks.Length);
             Array.Copy(s.InputTicks, InputTicks, n);
             Array.Copy(s.PhysicsTicks, PhysicsTicks, n);

@@ -623,16 +623,19 @@ namespace IGTAP.EngineSim.Cli
             {
                 X = w.x, Y = w.y, VX = m.Velocity.x, VY = m.Velocity.y, MX = m.momentum.x, MY = m.momentum.y,
                 DashesLeft = m.airDashesLeft, AirJumpsLeft = m.airJumpsLeft, FacingRight = m.facingRight, OnGround = m.onGround,
-                BuysHash = sim.Goals.Hash(), Cash = sim.Shop.CashNow, Income = CloneIncome(sim),
+                BuysHash = sim.Goals.Hash(), Cash = sim.Shop.CashNow, Income = IncomeFeature(sim),
             };
         }
 
+        // The --auto library's ranking feature (LibFeatures.Income), not a Cash model: ClonePay, Rolls and IncomeFeature only rank the
+        // library's states (the cost-to-go's features); the economy planner and the engine never read them, the engine's Cash is
+        // Economy's own (the game's clonesScript played). A hand formula, so it can drift from the game without changing any Cash.
         // The studio's 280 fps clock renders 5.6 frames a physics tick; a clone in flight runs its path and 1.5 frames more on average
         // before its slot refills (clonesScript, builds 25630570 and 25640326: income / ideal = 1 - 1.5 / (T fps), C:\tmp\igtap\clonesim.py).
         const double FramesPerTick = IGTAPTasMod.MacroEngine.PlaybackFrameRate * 0.02, CloneLifeFrames = 1.5;
 
-        /// <summary>A clone's payout on course c: reward x the clone multiplier x the competition boost x (2 bigness + 1), its size
-        /// rolled as SpawnClone rolls it, averaged.</summary>
+        /// <summary>The ranking feature's clone payout on course c (not the engine's Cash): reward x the clone multiplier x the
+        /// competition boost x (2 bigness + 1), its size rolled as SpawnClone rolls it, averaged.</summary>
         static double ClonePay(Simulation sim, courseScript c)
         {
             Economy e = sim.Shop.Economy;
@@ -642,7 +645,7 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// SpawnClone's speed and size rolls averaged: E[2j + 1] (a payout's size) and E[(2j + 1) (1 + 0.35 i) 0.75^j] (payouts a path
+        /// The ranking feature's average of SpawnClone's speed and size rolls (not the engine's): E[2j + 1] (a payout's size) and E[(2j + 1) (1 + 0.35 i) 0.75^j] (payouts a path
         /// time, the speed counted). Each tier i is reached while Random.Range(0, 101) stays under chance / (1 + i) and 50 + 5 cap.
         /// </summary>
         static (double size, double income) Rolls(Economy e, courseScript c)
@@ -676,12 +679,13 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// The clones' Cash per physics tick by formula, every course with clones and a path (build 25640326). On screen a full pool
+        /// The --auto library's income feature (LibFeatures.Income, a ranking feature, not a Cash model): the clones' Cash per
+        /// physics tick by formula, every course with clones and a path (build 25640326). On screen a full pool
         /// banks its spawn timer, so every slot refills the frame after its clone pays, so min(C, path frames) clones fly and each pays once a path: C pay / path, less
         /// 1.5 frames a lap. Off screen a course pays ceil(pay C / path) (the rolls' speed counted) once its timer reaches 1 s:
         /// every 50 ticks.
         /// </summary>
-        internal static double CloneIncome(Simulation sim)
+        internal static double IncomeFeature(Simulation sim)
         {
             Economy e = sim.Shop.Economy;
             if (e == null) return 0;

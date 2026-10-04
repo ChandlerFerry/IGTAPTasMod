@@ -1211,10 +1211,13 @@ baseline). The default is set by the measurements below, and has every part exce
    from the last goal it reached, the best's own way on after its buy of the target joined after it; a route that stops
    before a stretch's start ends the pull. A pull has `--stretch-minutes` (60) a stretch, at most half the session's time
    left (the other parts get their turns), shared by the stretches left by the best's ticks in each (FalseEnding%-280:
-   5371, 3322 and 896; one's unused time goes to the next). A stretch planned before from the same route (its inputs to
-   the stretch's start) and target is skipped while `fulltas/<run>.moves.json` is unchanged since (the memory's
-   `stretches` and `stretchMoves`). The cash goals (`GoalsRefused`) are found at the start and after each stretch, so a
-   planned list may drop or move bonus 1's reward goal (a GLOBAL cashPerLoop box). Each stretch logs its plan's target
+   5371, 3322 and 896; one's unused time goes to the next). A stretch planned to the end before (every search found a
+   plan or ran out of states, none stopped by the clock and no re-plan skipped for time: `PlanResult.Complete`) from the
+   same route (its inputs to the stretch's start), target and `--stretch-minutes` is skipped while
+   `fulltas/<run>.moves.json` is unchanged since (the memory's `stretches` and `stretchMoves`); one that timed out, threw
+   or was cut short is planned again, and a larger `--stretch-minutes` plans every stretch again. The cash goals
+   (`GoalsRefused`) are found at the start and after each stretch, so the engine lets a planned list drop or move bonus
+   1's reward goal (a GLOBAL cashPerLoop box); the game doesn't (below). Each stretch logs its plan's target
    tick per round, the tick it built against the route's and the best's, and the whole route or where it stops (`goalEdit`,
    `kind` `plan`, in `auto.jsonl`). The fastest whole route that beats the best is adopted (below). Measured on
    FalseEnding%-280 (2026-10-04, the 355.07 s best of 272 goals, beam 200), the plan's target tick per round against the
@@ -1241,6 +1244,7 @@ baseline). The default is set by the measurements below, and has every part exce
    The fastest whole route that reaches every goal and beats the best is adopted, never one that drops or reorders the
    end goal, an area or reward goal (but a cash goal's, or a box the planner took that the run didn't have) or an
    unlock buy (`GoalsRefused`).
+
    Adopting: the trace's header with the
    new list makes every simulation from then on, the fresh check keeps the route or the old goals stay, and the loop's
    goal-numbered state (references, arms, library, model, parts) starts again from the new best. The run file, the
@@ -1252,6 +1256,16 @@ baseline). The default is set by the measurements below, and has every part exce
    list's routes retire as after a goals edit in the studio). The studio feed shows the adopted edit as the record's
    title; `fulltas/<run>.auto.jsonl` has every edit tried (`goalEdit`) and every adopted list (`goals`). Off with
    `--course` and `--focus`.
+
+   **A planned list that drops or moves a reward goal (skipping bonus 1, say) is refused by the game.** The game's
+   `FullTasGoal.EditRefused` (`FullTas.cs`, the gate) refuses any list whose area, reward or unlock goals differ from
+   the run's, cash reward goals included, so such a route is never judged and never becomes the record on its own. Put
+   it into `fulltas.json` by hand, as `--insert-goal` lists always were: (1) take the adopted list (`goals` in the run
+   file `fulltas/<run>.json` the pull wrote, or the `goals` event in `fulltas/<run>.auto.jsonl`); (2) edit the run's
+   goals to it (the studio's Full-TAS tab, **Save goals**, or `fulltas.json` edited with the game closed; either marks
+   the run's saved routes stale); (3) put the route in `fulltas/<run>.json` and submit it (`/api/fulltas/submit`);
+   (4) **Capture start** again, so the next `--auto` traces from the new list. A list that keeps every reward goal in
+   place needs none of this: the game adopts it through `goalsFrom` (above).
 
    The edits' own measurements (FE360's 375.52 s to 367.26 s by lap drops, a record lap and a regroup; the Course 3
    and post-statue Course 2 drops of the 358.69 s to 355.67 s runs) belong to the deleted edits; the planner's are above.
@@ -1435,8 +1449,8 @@ baseline). The default is set by the measurements below, and has every part exce
    every on-screen course's chances are 0 (Economy doesn't expose them to the loop yet).
 
 8. **Waste audit** (`waste`; `enginesim\Cli\FullTasAutoWaste.cs`; `fulltas <trace> --waste-audit <route.json> [--expect a-b,..]
-   [--clean kind:a-b,..]`): at the end of every model build (the start, each new best; a model of another route, the goals
-   part's `ModelOf`, audits that route, and the best is audited again when next asked for) the best is replayed tick by
+   [--clean kind:a-b,..]`): at the end of every model build (the start, each new best; the best is audited again when next
+   asked for after it changes) the best is replayed tick by
    tick (place, Velocity, the stick in effect, ground, wall, dash, a ceiling touched: `PhysicsWorld.PlayerTouch.Ceiling`, a
    contact whose normal is within 45° of straight down) and scanned for what a person watching it calls silly. Every
    measure is live time, a dash's freeze frames included. A finding is a span, its raw ticks (the span's live ticks less
@@ -1726,10 +1740,12 @@ the first physics step after the place before at which its touch of each of the 
 trigger stay, `Simulation.BoxTouched`, with the box's 0.2 s cooldown over), so a wait for Cash in the box is the
 economy's, not the walk's. Its sources, by trust (`Best` takes the most trusted a pair has, the fewest ticks within it):
 
-- `measured`: realize's real ticks (`Measured(move, caps)`), the latest measurement of a pair replacing the one before;
-- `buytable` and `best`, equal (both engine measurements: the fewer ticks): the [buy table](#buy-table)'s walk,
-  jump-through and dash-through entries; and the best replayed (`Profile`): each goal-to-goal split, each stretch to and
-  from a quick restart's landing, and a lap from each place the best walks from to a gate and then that course's finish;
+- `measured`, `buytable` and `best`, equal (all engine measurements: the fewest ticks of them; a way that played once
+  can play again, so a slower measurement never replaces a faster one): realize's real ticks (`Measured(move, caps)`;
+  a step whose way waited for its Cash inside it, a piece search after a failed stand, isn't measured); the
+  [buy table](#buy-table)'s walk, jump-through and dash-through entries; and the best replayed (`Profile`): each
+  goal-to-goal split, each stretch to and from a quick restart's landing, and a lap from each place the best walks from
+  to a gate and then that course's finish;
 - `farm`, then `record`: the saved course routes (`routes.json`, the fastest in any category an unlock set the best or the
   buy table stood with covers): a farm route's lap from the course's finish, a record as `record:N` from its gate (its own
   key, so the best's run of the course doesn't hide it; seconds over 0.02); the one derived from the other (0.4 s apart)
@@ -2129,7 +2145,8 @@ Vman start boxes (`Economy.BoughtGlobal`) and a prestige buy while Vman is activ
 grows them, and the zip mover and refill orb boxes write the game's static dictionary (`enginesim/README.md`). A Vman
 course completion pays its `completionReward` once (`Shop`), and a Vman clock that runs out ends the run. Checked against
 1x and turbo on an Area 2 stretch (2026-10-03, `tools/economy-diff.py`: Course 6's start in a new game with currencies set,
-a tree planted, its moss ground stood on, its first box bought three times): every economy field equal, on the same ticks.
+a tree planted, its moss ground stood on, its first box bought three times): every economy field equal, on the same ticks
+in turbo and the engine (`--ticks`) and one probe count later on every change at 1x (where the probe logs its rows).
 Then the atoms (Course 6's atom box: landings, crafting, first-merge NP x1000, NP income) on every value and tick, Course
 10's NP and atom level boxes in turbo and the engine, and a growth's `Start` draws (README ### Rules, exception 12). The comp
 boost and Area 2 clones aren't checked: [`fidelity-log.md`](fidelity-log.md), *Area 2 economy checked against 1x* and
@@ -2212,7 +2229,7 @@ breaker-light box turned it green. It is display only: no payout reads `currentA
 
 Steam's update of 2026-09-30 16:37 (build 25640326) changed one statement: an on-screen `clonesScript.SpawnClone` sets
 `timeSinceLastClone` to 0 when it is at least 4000 (`Start`'s 10000), and takes the interval off otherwise (25630570
-always took it off). A course's first on-screen spawn spends the reserve. The engine plays it (`Economy.cs:318`) and
+always took it off). A course's first on-screen spawn spends the reserve. The engine plays it (`Economy.SpawnClone`) and
 matches the game's turbo tick for tick (RNG, Cash, position) through `FalseEnding-Any%` 346.74's 5,269 ticks on the
 new build, 18 clone buys included. That route then dies at goal 86: `buy:buywj` comes before its Cash, and the climb after it
 needs the wall jump. Float32 simulation (`C:\tmp\igtap\clonesim640.py`, 280 fps clock, no rolls):
@@ -2251,11 +2268,12 @@ went from `timeSinceLastClone = 0f` to `timeSinceLastClone -= nextCloneDue`, and
 `clonesScript.Update`/`SpawnClone` of both builds, which reproduces the measured pre-update table (the old column).
 
 **Engine status.** The engine and turbo play the new build (ed1784b). An on-screen spawn keeps the overshoot
-(`Economy.cs:308`), and the snapshots keep each course's timer as it is. `IE_BuyMax` resumes after every physics step,
+(`Economy.SpawnClone`), and the snapshots keep each course's timer as it is. `IE_BuyMax` resumes after every physics step,
 the touch's included (`Shop.FixedStep`, `Shop.cs:148`, called at `Simulation.cs:1313`; turbo parks it as a
 `WaitForFixedUpdate` routine, `TurboRunner.cs:181`, resumed at 238-239). `--ticks-out` rows carry each course's clones
 (`Economy.CloneStates`: count, path, on screen, in flight, spawn timer). The engine matches the new-build turbo through
-tick 14122 of the 353.32 s route. `FullTasAutoLib.cs`'s `ClonePay` models it too (a slot cycles every lifetime + 1 frame). Buy-max: a 1x probe of the route (inputs to 15200) buys 2 levels on the touch's tick, then 1 a tick,
+tick 14122 of the 353.32 s route. `FullTasAutoLib.cs`'s `ClonePay` assumes it too (a slot cycles every lifetime + 1 frame), as
+the `--auto` library's ranking feature (`IncomeFeature`), not a Cash model. Buy-max: a 1x probe of the route (inputs to 15200) buys 2 levels on the touch's tick, then 1 a tick,
 so L levels take L − 1 ticks; offline Cash is equal level by level from tick 15040. A scene diff of the two builds (4,036 objects each side) finds no collider, `upgradeBox`, `courseScript`,
 `clonesScript`, spring, spike, mover or checkpoint field changed, only presentation and runtime state (the statue's
 `StatuePrestigeText` lost a MeshFilter): no world or trace needs capturing again for the build.

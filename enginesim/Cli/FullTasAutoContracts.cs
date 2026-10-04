@@ -38,7 +38,8 @@ namespace IGTAP.EngineSim.Cli
         public int BuysHash;
         /// <summary>Shop.CashNow: FalseEnding's buys wait on it.</summary>
         public double Cash;
-        /// <summary>The clones' Cash a physics tick (FullTas.CloneIncome): a break's faster path shows here, not in Cash or the buys.</summary>
+        /// <summary>The clones' Cash a physics tick by the --auto library's formula (FullTasAutoLib.cs, IncomeFeature): a ranking
+        /// feature, not the engine's Cash; a break's faster path shows here, not in Cash or the buys.</summary>
         public double Income;
         public float Speed => (float)Math.Sqrt((VX + MX) * (VX + MX) + (VY + MY) * (VY + MY));
     }

@@ -1,7 +1,11 @@
 """Compare the economy of two runs of the same inputs field by field, each field as the sequence of values it takes (1x's
 physics count runs ahead through dash freezes, so ticks don't line up; enginesim/README.md#probe).
 
-  economy-diff.py <a> <b> [--fields cash,gp,np,cd,rp,atoms,waiting,npTick,npCap,npBoost,cdMult,segments]
+  economy-diff.py <a> <b> [--fields cash,gp,np,cd,rp,atoms,waiting,npTick,npCap,npBoost,cdMult,segments] [--ticks]
+
+--ticks also compares the physics tick each value first appears on (each row's `physics`; the first value's is where the
+table starts, not compared): the same values, changing on the same ticks. Only meaningful where both sides count physics ticks alike (no dash freeze in the stretch, or turbo against the
+offline engine).
 
 Each side is a 1x probe log (probes/<name>.json: its `kind: "tick"` rows), enginesim's `fulltas --check --ticks-out` or
 `replay --ticks-out` lines, or a trace (`/api/enginesim/trace`: its ticks, turbo's); every row's economy is its `econ`
@@ -45,16 +49,22 @@ def common(a, b):
     return [r for r in a if r.get("physics", 0) <= last], [r for r in b if r.get("physics", 0) <= last]
 
 
-def seq(table, field):
+def seq(table, field, ticks=False):
+    """The values a field takes, in order; with ticks, each as (value, the physics tick it first appears on; None for the
+    first, the table's start)."""
     out = []
     for r in table:
         econ = r.get("econ") or {}
         if r.get("kind", "tick") != "tick" or field not in econ:
             continue
         v = econ[field]
-        if not out or out[-1] != v:
-            out.append(v)
-    return out
+        if not out or out[-1][0] != v:
+            out.append((v, r.get("physics") if out else None))
+    return out if ticks else [v for v, _ in out]
+
+
+def same(x, y, ticks):
+    return close(x[0], y[0]) and x[1] == y[1] if ticks else close(x, y)
 
 
 def close(a, b):
@@ -68,14 +78,15 @@ def main():
     ap.add_argument("a")
     ap.add_argument("b")
     ap.add_argument("--fields", default=FIELDS)
+    ap.add_argument("--ticks", action="store_true", help="also compare the physics tick each value first appears on")
     args = ap.parse_args()
     a, b = common(rows(args.a), rows(args.b))
     bad = 0
     for f in args.fields.split(","):
-        p, o = seq(a, f), seq(b, f)
-        i = next((k for k, (x, y) in enumerate(zip(p, o)) if not close(x, y)), None)
+        p, o = seq(a, f, args.ticks), seq(b, f, args.ticks)
+        i = next((k for k, (x, y) in enumerate(zip(p, o)) if not same(x, y, args.ticks)), None)
         if i is None and len(p) == len(o):
-            print(f"{f}: {len(p)} values, equal")
+            print(f"{f}: {len(p)} values, equal" + (", on the same ticks" if args.ticks else ""))
             continue
         bad += 1
         i = min(len(p), len(o)) if i is None else i
@@ -87,4 +98,8 @@ def main():
 if __name__ == "__main__":
     assert close(1.0, 1.0 + 1e-13) and not close(1.0, 1.0001) and close([1, 2], [1, 2]) and not close([1], [1, 2])
     assert seq([{"econ": {"np": 1}}, {"econ": {"np": 1}}, {"econ": {"np": 2}}], "np") == [1, 2]
+    t = [{"econ": {"np": 1}, "physics": 1}, {"econ": {"np": 1}, "physics": 2}, {"econ": {"np": 2}, "physics": 3}]
+    u = [{"econ": {"np": 1}, "physics": 1}, {"econ": {"np": 2}, "physics": 2}]
+    assert seq(t, "np", True) == [(1, None), (2, 3)] and seq(u, "np") == seq(t, "np")
+    assert same(seq(t, "np", True)[1], (2, 3), True) and not same(seq(t, "np", True)[1], seq(u, "np", True)[1], True)
     main()

@@ -147,7 +147,8 @@
    (such as (0.35, 1): the game snaps the vertical to full tilt). It is legal.
 2. Relaxes rule 39. The interpolation/fixed-clock patch (rules 7–9), the Vman credits' crash (below) and playback's
    wall-clock reads (the dash freeze, the camera's easing and `ObjectBobber` count the fixed clock's frame instead of
-   the wall clock, [`enginesim/README.md`](enginesim/README.md#probe)) are the only places a patch changes game logic.
+   the wall clock, [`enginesim/README.md`](enginesim/README.md#probe)) change game logic; the other places a patch does are
+   the exceptions below that relax rule 39 (3, 4, 5, 10, 11 and 12), each named there.
 3. Relaxes rule 39. The one other patch: a Vman speedrun's credits (`FakeCreditsControlScript.IE_DoVmanCredits`, the
    `VMAN` run's last goal) crash the game on purpose (`Utils.ForceCrash`) after writing PlayerPrefs
    `VmanCoursesCompleteTemp`; the plugin drops both calls. Both come after the goal, so no route sees them.
@@ -211,7 +212,7 @@ Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run wit
 | `ProbeRunner.cs` | 1x probes: exact inputs at normal speed from a category start or savestate, logged every tick and rendered frame (`enginesim/README.md#probe`). |
 | `TasPlugin.Editor.cs`, `TasPlugin.Share.cs`, `TasMarkup.cs` | The TAS editor (studio **TAS** tab, `/api/tas/*`): frame advance, rewind and tick editing on the live game, re-recording, suggestions, sharing, and routes as text ([`docs/tas-markup.md`](docs/tas-markup.md)). |
 | `web/` | Next.js studio, served by the plugin. |
-| `tools/` | Capture, redeploy, `validate.py`, `audit-traces.py`, `enginesim-rays.py` (Unity vs offline raycasts), `upgrade-boxes.py` (every one-off box; adds free ones to `courses.json` as bonuses), `probe.py` (a 1x probe and its per-frame log), `economy-diff.py` (two legs' economy, field by field as value sequences), `tech-check.py` (every tech demo, turbo against the offline engine), `tas-check.py` (the TAS editor's seek, rewind, text and share against 1x). |
+| `tools/` | Capture, redeploy, `validate.py`, `audit-traces.py`, `enginesim-rays.py` (Unity vs offline raycasts), `upgrade-boxes.py` (every one-off box; adds free ones to `courses.json` as bonuses), `probe.py` (a 1x probe and its per-frame log), `economy-diff.py` (two legs' economy, field by field as value sequences; `--ticks` on the same ticks), `tech-check.py` (every tech demo, turbo against the offline engine), `tas-check.py` (the TAS editor's seek, rewind, text and share against 1x). |
 
 ## Build
 

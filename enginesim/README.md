@@ -816,7 +816,8 @@ NP payout: what the last tick's frames left, the point the trace's and `--ticks-
 atoms waiting). `replay <trace> --ticks-out FILE` writes the offline rows for a category trace as `fulltas --check
 --ticks-out` does for a Full-TAS one, and `replay` compares a trace tick's `econ` with the engine's field by field.
 `python tools/economy-diff.py <a> <b>` compares two of them (a probe log, `--ticks-out` lines or a trace), each field
-as the sequence of values it takes, and names the first value where they part.
+as the sequence of values it takes, and names the first value where they part; `--ticks` also compares the physics tick
+each value after the first appears on (the rows' `physics`), for legs that count ticks alike (turbo and the engine).
 
 The economy runs without the player too (`Runtime/EconomyDrive.cs`, the economy planner's Cash model):
 `Simulation.EconomyIdle(ticks, at)` plays physics ticks with the player standing at `at` (scene frame), `EconomyBuy(box,
@@ -860,7 +861,9 @@ estimate with those unlocks and with more only a chain (no walk); a walk is neve
 move to there from a spot of the same place (a made-up table when the real one has none); a restart landing nothing showed from a place is
 neither estimated nor a target, and `Restarts` lists the best's own; a buy table entry and the best's split of the same
 pair give the fewer ticks; the buy table's reward box and lap entries (`fulltas-buytable --targets`) are moves to
-`reward:bonusN` and `lap:N` that `Best` and `Targets` give; a `Measured` move outranks every source, even a slower one; `Save` then `Read` gives the same
+`reward:bonusN` and `lap:N` that `Best` and `Targets` give; a `Measured` move, an engine measurement as the best's and the
+buy table's are, replaces an estimate (even a slower one) or a slower measurement, never a faster one, and one of -1 ticks
+(a wait inside its way) isn't recorded; `Save` then `Read` gives the same
 table, and a second `Save` into the file keeps the first's measured moves. Checked: FalseEnding%-280 (its splits, goals
 89-97; goal 134's arrival) with a buy table of goal 1 to `buy:buyds` measured with `--targets reward:bonus1,lap:2`.
 
@@ -1620,7 +1623,7 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
   the pre-2026-09-30 build a spawn reset `timeSinceLastClone` to 0 and dropped the overshoot, so a per-tick step
   (Δt 0.02) spawned less often than 1x and its Cash came in later ([`docs/fidelity-log.md`](../docs/fidelity-log.md),
   *Clones stepped once a tick*). Build 25640326 takes the rolled interval off instead, except that a timer still at
-  `Start`'s 10000 (>= 4000) goes to 0 (`Economy.cs:318`): a full pool banks the timer and refills a freed slot the next
+  `Start`'s 10000 (>= 4000) goes to 0 (`Economy.SpawnClone`): a full pool banks the timer and refills a freed slot the next
   frame, an emptied one fills one an interval ([`docs/fulltas.md`](../docs/fulltas.md#clones-on-build-25640326)). `--ticks-out` rows carry each
   course's clones (`Economy.CloneStates`: count, path, on screen, in flight, spawn timer).
 - `replay` names the first tick Cash, the RNG and Cash by 1 W or more split (`first split`), past the 60 differences
@@ -1762,8 +1765,9 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   the grid keeps firing after zone 1 loads again. Turbo models the same (`TurboRunner`): it runs
   `AtomColliderSystem.Update` in each modelled frame on that frame's `Time.deltaTime` (the sprites' `HandleMovement`
   skipped), and takes the grid over for a run, since Unity's `InvokeRepeating` runs on `Time.time`, which a run holds
-  still: from the grid a restore or the last run left, else from Unity's as above, fired at a tick's start every 20
-  ticks (an `OnEnable` in the run intercepted), and handed back to Unity at the run's end. It pays NP
+  still: from the grid a restore or the last run left, else from Unity's as above, fired in the first rendered frame of the
+  tick before its due one (`k == 0`, after the frame's Updates, as the engine's `Economy.GridFrame`) every 20 ticks (an
+  `OnEnable` in the run intercepted), and handed back to Unity at the run's end. It pays NP
   (`globalStats.FixedUpdate`) at each tick before Movement's, and its snapshot keeps the collider's state, `globalStats`'
   atom counts and NP rates (`EffectOfNpCompBoost` too) and the grid. A 1x capture's start also carries the game times
   `atomGridDueIn` came from (`atomEnabledAt`, `atomLastCall`, `atomTimeNow`); a turbo capture's `atomGridDueIn` is a
@@ -1790,14 +1794,15 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   composite from its paths while its source is on (`PhysicsWorld.PathShapes`): each path a closed chain of two-sided
   edges, not Unity's convex polygons, whose decomposition isn't known here. The surface is the same; inside the outline
   and at Unity's seams it isn't (docs/fidelity-log.md, *Upgrade trees grown by hand*). The ground appears with
-  IE_Grow's collider write (frame 600 above) and not during the fade. A dynamic or kinematic body off at the export
+  IE_Grow's collider write, at the end of the ground's fade (above), not during the fade. A dynamic or kinematic body off at the export
   still isn't built: a step with one of its colliders on ends the run (`PhysicsWorld.Unbodied`). A coroutine on an
   object off in the hierarchy doesn't start, as in Unity (a tree in an unloaded zone doesn't grow).
   Turbo parks `IE_Grow` as the engine does and resumes it after each modelled frame (its first step, in the buy's
   physics step, on the fixed step); its snapshot keeps the trees' fields (grown segments, audio cooldown), each
   segment's trunks' and box's local pose and its ground's collider, and a restore stops a growth Unity runs. Checked
   against 1x (Course 6's start, The Tree's PlantTreeBox and its first segment's GreenCloneChanceBox, which grows two
-  more): the segments grow, the box can be hit and NP is spent on the same physics ticks in 1x, turbo and the engine,
+  more): the segments grow, the box can be hit and NP is spent on the same physics ticks in turbo and the engine (the 1x
+  probe logs each one count later, the same offset on every change),
   and the player stands on the grown Moss ground at the same height (`docs/fidelity-log.md`, *Area 2 economy checked
   against 1x*). The `Start` draws of what a segment wakes (`RandomAnimSpeedComponent`, 2 a trunk light, 3 when broken, in
   the buy's frame; the box's `LightFlicker`, 1, the frame after `IE_Grow` turns it on; a refill orb's `JiggleDropScript`, 1)

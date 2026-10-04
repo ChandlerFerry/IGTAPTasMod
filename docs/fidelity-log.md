@@ -743,11 +743,13 @@ ordered as the sections they came from.
   first spawn spends `Start`'s 10000 and bought clones fill one an interval
   ([`docs/fulltas.md`](fulltas.md#clones-on-build-25640326)). The scenes gained `Moss` tilemaps (no other collider
   changed).
-- **Fix:** the engine's spawn does the same (`Economy.cs:318`); turbo runs the game's own. The engine matches the game's
-  turbo trace (`fe-b640-34674`) in RNG, Cash and position on every tick to the death at 5270. The planners fill
-  bought clones and a break's refill one an interval (`plan_fulltas.py`, deleted 2026-10-04: now the engine's own economy,
-  `FullTasAutoLib.cs` `ClonePay`).
-- **Where:** `Economy.cs:318`, `FullTasAutoLib.cs`.
+- **Fix:** the engine's spawn does the same (`Economy.SpawnClone`); turbo runs the game's own. The engine matches the
+  game's turbo trace (`fe-b640-34674`) in RNG, Cash and position on every tick to the death at 5270. The planners filled
+  bought clones and a break's refill one an interval too (`plan_fulltas.py`, deleted 2026-10-04: the economy planner
+  plays the engine's own economy, `Economy.SpawnClone`). `FullTasAutoLib.cs`'s `ClonePay`/`IncomeFeature` assume the
+  same, but they are the `--auto` library's ranking feature (`LibFeatures.Income`), not a Cash model: nothing's Cash
+  comes from them.
+- **Where:** `Economy.SpawnClone`, `FullTasAutoLib.cs`.
 
 ## Game build 25630570: clones and buy-max
 
@@ -758,12 +760,13 @@ ordered as the sections they came from.
   one clone a rendered frame while a slot is free (drawing the RNG every frame); `upgradeBox.IE_BuyMax` waits `WaitForFixedUpdate` instead of
   `WaitForEndOfFrame`, one level a physics step instead of one a rendered frame. The model:
   [`docs/fulltas.md`](fulltas.md#clones-and-buy-max-build-25630570).
-- **Fix:** ed1784b: the engine's spawn keeps the overshoot, and the engine and turbo resume `IE_BuyMax` after every
+- **Fix:** ed1784b: the engine's spawn keeps the overshoot (`Economy.SpawnClone`), and the engine and turbo resume `IE_BuyMax` after every
   physics step, the touch's included. The engine then matches the new-build turbo through tick 14122 of the 353.32 s
   route. A scene diff of the builds (4,036 objects each side) changes no gameplay field, so nothing was captured again.
-  `ClonePay` (then in `ZipPlan.cs`, since 2026-10-04 in `FullTasAutoLib.cs`) and `plan_fulltas.py` were ported too. Buy-max: a 1x probe of the route (inputs to 15200) buys 2 levels on the touch's tick, then 1 a tick
+  `ClonePay` (then in `ZipPlan.cs`, since 2026-10-04 in `FullTasAutoLib.cs` as the `--auto` library's ranking feature, not a
+  Cash model) and `plan_fulltas.py` (deleted 2026-10-04) were ported too. Buy-max: a 1x probe of the route (inputs to 15200) buys 2 levels on the touch's tick, then 1 a tick
   (offline Cash equal level by level from tick 15040). Routes judged before the build are judged again.
-- **Where:** `Economy.cs:308`, `Economy.CloneStates`, `Shop.FixedStep` (`Shop.cs:148`, `Simulation.cs:1313`),
+- **Where:** `Economy.SpawnClone`, `Economy.CloneStates`, `Shop.FixedStep` (`Shop.cs:148`, `Simulation.cs:1313`),
   `TurboRunner.cs:181` and 238-239.
 
 The RNG runs of *Buy-max levels bought once a tick* (~1,100 ticks, runs of 1-6) aren't a divergence: over the 358.69 s
@@ -990,7 +993,10 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
     GreenCloneChanceBox three times from below (1, 5 and 17 NP; it grows TreeParts 1 and 2). Then wait.
   - Legs: a 1x probe from one fresh new game, a turbo trace from another, and `replay --ticks-out` on the trace,
     compared with `tools/economy-diff.py`.
-- **Result:** every `econ` field is equal in all three legs, and changes on the same physics tick.
+- **Result:** every `econ` field takes the same values in all three legs (`economy-diff.py`, each field as the sequence of
+  values it takes). Turbo and the engine also change each on the same physics tick (`economy-diff.py --ticks`, checked
+  again 2026-10-04). The 1x probe shows every change one physics count later (417, 704, 749 and 794 against 416, 703,
+  748 and 793), the same offset on each: its rows predate `econPre`, which `economy-diff.py` files under the tick before.
   - NP is spent at ticks 416, 703, 748 and 793. Segments go 0, 1, 3 at 416 and 703.
   - The player stands on the box and on the grown ground at the same height in all three (y 67.515 and 244.015).
   - `determinism` on the stretch is DETERMINISTIC. Two of its ten snapshots can't be stored (a collider's shapes can't be

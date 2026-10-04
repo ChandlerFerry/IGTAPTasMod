@@ -448,8 +448,8 @@ namespace IGTAP.EngineSim.Cli
             return missed == 0 ? 0 : 1;
         }
 
-        /// <summary>The route <see cref="_wasteFound"/> audits: a model built on another route (the goals part's ModelOf) audits
-        /// that one, and the best's audit is made again when next asked for.</summary>
+        /// <summary>The route <see cref="_wasteFound"/> audits (the best when <see cref="AuditWaste"/> ran): once the best changes,
+        /// its audit is made again when next asked for.</summary>
         Route _wasteRoute;
 
         /// <summary>The best's findings (audited again when the best changed since).</summary>
