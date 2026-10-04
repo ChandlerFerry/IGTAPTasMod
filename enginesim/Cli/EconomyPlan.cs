@@ -20,8 +20,10 @@ namespace IGTAP.EngineSim.Cli
 
     /// <summary>What <see cref="EconomyPlan.Search(Simulation, SimSnapshot, MoveTable, string, string[], string[], int, Func{string, FullTasGoal}, double, IReadOnlyList{string}, Action{string})"/>
     /// planned. Tick: the target's physics tick; Goals: the Full-TAS goals the steps make (a lap's gate and finish, each buy and
-    /// reward); Estimated: each move the plan takes that nothing measured. Proven: the queue reached the target before a cap
-    /// (else the schedule, if any, is the best a capped search completed by standing at the target).</summary>
+    /// reward); Estimated: each move the plan takes that nothing measured. Proven: the queue reached the target before a cap,
+    /// so no schedule reaches it sooner under the planner's state key (hidden economy state such as clones in flight, box
+    /// cooldowns or the reward refresh's phase isn't compared); else the schedule, if any, is the best a capped search
+    /// completed by standing at the target.</summary>
     sealed class PlanResult
     {
         public bool Done, Proven;
@@ -32,6 +34,8 @@ namespace IGTAP.EngineSim.Cli
         public long[] Ends = Array.Empty<long>();
         public double[] Cash = Array.Empty<double>();
         public int States, Dropped;
+        /// <summary>A capped search's states finished by standing at the target.</summary>
+        public int Completed;
         /// <summary>Per step kind: steps played, those that didn't play (a buy short of Cash), dominated, and seconds playing them.</summary>
         public SortedDictionary<string, (int played, int failed, int dominated, double seconds)> Profile = new SortedDictionary<string, (int, int, int, double)>();
         public double Seconds;
@@ -65,7 +69,10 @@ namespace IGTAP.EngineSim.Cli
     /// place and the economy (the engine's own, driven without the player: Simulation.EconomyIdle/Buy/Finish), a step's ticks
     /// the movement table's (MoveTable). Steps are pushed unplayed at their end tick (known from the table) and played when
     /// they come off the queue, so nothing past the target's tick is ever simulated. A state is dropped when one kept at the
-    /// same place, unlocks, box levels and course records is no later and holds at least as much of every currency. No lower
+    /// same place, unlocks, box levels, course records and running buy-max routines is no later and holds at least as much of
+    /// every currency; the rest of the economy (clones in flight and their path progress, spawn timers, box cooldowns, the
+    /// reward refresh's phase, scheduled Invokes, the frame grid's phase) isn't compared, so a plan is optimal under that
+    /// key, not over every state the game can be in (realize measures the real one). No lower
     /// bound (plain Dijkstra): an income bound that is admissible needs the most any state can earn, which isn't known.
     /// </summary>
     static class EconomyPlan
@@ -220,9 +227,14 @@ namespace IGTAP.EngineSim.Cli
                 Node<TSnap> n = e.node;
                 if (n == null)
                 {
-                    if (e.parent.Dead) continue;
+                    bool last = --e.parent.Pending == 0 && e.parent.Parent != null;
+                    if (e.parent.Dead)
+                    {
+                        if (last) e.parent.Snap = default;
+                        continue;
+                    }
                     long? end = Played(e.parent, e.via, out _);
-                    if (--e.parent.Pending == 0 && e.parent.Parent != null) e.parent.Snap = default;
+                    if (last) e.parent.Snap = default;
                     if (end == null) continue;
                     n = Made(e.parent, e.via, end.Value, e.via.End);
                     // A stand ends later than its walk: back in the queue at its real tick.
@@ -246,10 +258,12 @@ namespace IGTAP.EngineSim.Cli
             Node<TSnap> best = null;
             foreach (Node<TSnap> k in kept.Values.SelectMany(l => l).Where(k => !k.Dead && !k.Done && k.Pending > 0).OrderByDescending(k => k.Holds[0]).Take(Completions))
             {
+                economy.Restore(k.Snap);
                 PlanOption o = stand(k.Place);
                 long? end = o == null ? null : Played(k, o, out _);
                 if (end == null) continue;
                 Node<TSnap> done = Made(k, o, end.Value, o.End);
+                result.Completed++;
                 if (best == null || done.Tick < best.Tick) best = done;
             }
             return Finish(best ?? at, false, capped + (best == null ? "; no state completes by standing at the target" : $"; completed by standing at the target from the {Completions} richest states"));
@@ -397,7 +411,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>Writes a plan as text: its tick, then each step's end tick, ticks and Cash.</summary>
         internal static void Print(string title, PlanResult r)
         {
-            Console.WriteLine($"{title}: " + (r.Done ? $"target on tick {r.Tick}" + (r.Proven ? "" : " (not proven)") : "not done")
+            Console.WriteLine($"{title}: " + (r.Done ? $"target on tick {r.Tick}" + (r.Proven ? " (proven under the planner's state key)" : " (not proven)") : "not done")
                 + $"; {r.States} states played, {r.Dropped} dominated, {r.Seconds:0} s" + (r.Why == null ? "" : "; " + r.Why));
             for (int i = 0; i < r.Steps.Length; i++)
                 Console.WriteLine($"  {r.Ends[i],6} +{r.Steps[i].Ticks,-4} {r.Cash[i],12:0.##} Cash  {r.Steps[i].Kind,-7} {r.Steps[i].Arg}");
@@ -460,8 +474,10 @@ namespace IGTAP.EngineSim.Cli
 
         public string Key()
         {
-            if (_levels) return PlayerCaps.Of(_sim).Id;
-            return PlayerCaps.Of(_sim).Id + "|" + string.Join(",", _all.Select(b => b.TimesUsed))
+            // A running buy-max routine goes on spending and raising its box's level: which boxes have one is part of the key.
+            string buying = string.Join(",", Enumerable.Range(0, _all.Length).Where(i => _sim.Shop.Buying(new[] { _sim.Shop.Id(_all[i]) })));
+            if (_levels) return PlayerCaps.Of(_sim).Id + "|" + buying;
+            return PlayerCaps.Of(_sim).Id + "|" + buying + "|" + string.Join(",", _all.Select(b => b.TimesUsed))
                 + "|" + string.Join(",", _sim.Courses.Select(c => ((float)BestPathTime.GetValue(c)).ToString("R", CultureInfo.InvariantCulture)));
         }
 
@@ -548,11 +564,13 @@ namespace IGTAP.EngineSim.Cli
                 rows.Add((prefix, r));
             }
             Console.WriteLine();
-            Console.WriteLine($"{"order (then searched on)",-48} {"target tick",11} {"vs free",8}  proven");
+            Console.WriteLine($"{"order (then searched on)",-48} {"target tick",11} {"vs free",8}  proven*");
             Console.WriteLine($"{"the best's own",-48} {bestTick,11}");
             foreach (var (name, r) in rows)
                 Console.WriteLine($"{name,-48} {(r.Done ? r.Tick.ToString(CultureInfo.InvariantCulture) : "-"),11} {(r.Done && free.Done ? (r.Tick - free.Tick).ToString("+0;-0;0", CultureInfo.InvariantCulture) : ""),8}  {(r.Proven ? "yes" : "no")}"
                     + (r.Why == null ? "" : "  (" + r.Why + ")"));
+            Console.WriteLine("* proven: no schedule reaches the target sooner under the planner's state key (place, unlocks, box levels, records,"
+                + " running buy-max routines); hidden economy state such as clones in flight isn't compared");
             if (outFile != null)
             {
                 object Json(string name, EconomyPlanResult r) => new

@@ -860,7 +860,8 @@ table, and a second `Save` into the file keeps the first's measured moves. Check
 `plan-selftest` checks the economy planner's search (`fulltas-plan`, `Cli/EconomyPlan.cs`,
 [docs/fulltas.md](../docs/fulltas.md#economy-planner)) without the game, on a toy economy (`Cli/EconomyPlanCheck.cs`):
 its schedule must reach the target on the tick a brute force over every order of up to 12 steps finds, replay to that
-tick, have dropped a dominated state, and a `--compare` prefix must play first and finish no earlier.
+tick, have dropped a dominated state, and a `--compare` prefix must play first and finish no earlier; capped at 60
+states, it must finish more than one of its richest states by standing at the target, each asked from its own state.
 
 Every position write in `Movement.FixedUpdate` (a jump's `+2`/`+5`, a wall jump's `+1`, the dash's `−20`) starts from
 the transform, which holds the last rendered frame's blend of the body's last two positions, so each one pulls the

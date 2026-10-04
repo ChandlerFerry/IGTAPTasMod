@@ -117,6 +117,23 @@ namespace IGTAP.EngineSim.Cli
             PlanResult forced = EconomyPlan.Search(toy, 0, "c1", p => Options(toy, p), 1000000, 60, new[] { "reward:bonus", "lap:1" });
             Check(forced.Done && forced.Steps.Take(2).Select(s => s.Arg).SequenceEqual(new[] { "reward:bonus", "lap:1" }) && forced.Tick >= plan.Tick,
                 $"--compare reward:bonus,lap:1: tick {forced.Tick} ({string.Join(", ", forced.Steps.Select(s => s.Arg))}), the free plan's {plan.Tick}");
+            // A capped search finishes its richest states by standing at the target, each asked from its own state: the stand is
+            // offered only while the target isn't bought, so one asked from the last completion's state (bought) is never offered.
+            toy.Restore(new Toy().Capture());
+            PlanOption Stand(string p) => toy.Capture().Targets > 0 ? null
+                : new PlanOption(new Step("target", "buy:target", Ticks(p, "target")), "target", new[] { "target" }, null, true, new[] { "buy:target" }, Stand: true);
+            PlanResult capped = EconomyPlan.Search(toy, 0, "c1", p => Options(toy, p), 60, 60, stand: Stand);
+            toy.Restore(new Toy().Capture());
+            (t, at, plays) = (0, "c1", true);
+            foreach (Step s in capped.Steps)
+            {
+                PlanOption o = Options(toy, at).FirstOrDefault(x => x.Step.Arg == s.Arg && !x.Target) ?? Stand(at);
+                long? end = o == null ? null : EconomyPlan.Play(toy, t, o);
+                if (end == null) { plays = false; break; }
+                (t, at) = (end.Value, o.End);
+            }
+            Check(capped.Done && !capped.Proven && capped.Completed > 1 && plays && t == capped.Tick,
+                $"capped at 60 states: {capped.Completed} states finished by standing at the target, the best on tick {capped.Tick} (played again: {t}), not proven");
             Console.WriteLine(fails == 0 ? "plan-selftest: PASS" : $"plan-selftest: {fails} FAIL");
             return fails == 0 ? 0 : 1;
         }

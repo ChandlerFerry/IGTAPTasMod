@@ -2039,7 +2039,7 @@ routes. `plan-check --moves <trace> [--buytable FILE]` checks a table against th
 ### Economy planner
 
 ```powershell
-& $exe fulltas-plan $tracesulltas-FalseEnding%-280.json --from 86 --target buy:buyds --bonuses bonus1,bonus2,bonus3,bonus5 --buytable plan.buytable.json --out plan.json --compare "lap:2,reward:bonus1" "reward:bonus1,lap:2"
+& $exe fulltas-plan $traces\fulltas-FalseEnding%-280.json --from 86 --target buy:buyds --bonuses bonus1,bonus2,bonus3,bonus5 --buytable plan.buytable.json --out plan.json --compare "lap:2,reward:bonus1" "reward:bonus1,lap:2"
 & $exe plan-selftest
 ```
 
@@ -2061,25 +2061,32 @@ Ticks come from the [movement table](#movement-table) (`--buytable`, `--moves`);
 `estimated`, and one toward a place the run first stood at with more unlocks than it holds (after the place's own buy) is
 not offered. The Cash is the engine's own economy driven without the player (`Simulation.EconomyIdle/Buy/Finish`): a
 step stands its ticks at its end place (which courses' clones are on screen), then touches each box for a tick (a buy
-must have its Cash on arrival: the plan never waits at a box) or finishes the course for a tick. Only the target has a
+must have its Cash on arrival: the plan never waits at a box) or finishes the course for a tick. Standing at the end place is not the walk: the walk's
+own crossings of the courses' clone screens (clonesLoD) are missed, so the Cash is off by what those crossings change. It
+was about 6% low on FalseEnding%-280's walk from Course 1's `buy:buywj` to Course 2 (530 Cash after the first Course 2
+lap against the best's 566, 666 after bonus 1 against 694); a walk that leaves a course's clones on screen longer than
+its end place does would come out high instead. Only the target has a
 last resort, where no lap is offered from a place: stand at its box until it can pay. Ladders of record laps are not
 steps (a break only brings payouts forward on build 25640326).
 
 The search is Dijkstra on ticks, with no lower bound (an admissible one needs the most any later state can earn). Steps
 go into the queue unplayed, at their end tick (the table's), and are played when they come off it, so nothing after the
 target's tick is simulated; a target that stands for its Cash goes back in at its real tick. A state is dropped when one
-kept at the same place, unlocks, box levels and course records is no later and holds at least as much of every currency
-(`--dominance levels`: also when the kept one has at least every box level and no slower record; a heuristic, since a
-higher level's next buy costs more). `--max-states` (200000) and `--minutes` (30) cap a search; a capped one finishes its
+kept at the same place, unlocks, box levels, course records and running buy-max routines is no later and holds at least
+as much of every currency (`--dominance levels`: also when the kept one has at least every box level and no slower record; a heuristic, since a
+higher level's next buy costs more). The rest of the economy is not compared: clones in flight and their path
+progress, spawn timers, box cooldowns, the 250-tick reward refresh's phase, scheduled Invokes and routines, the frame
+grid's phase. So "proven" means proven under the planner's state key: no schedule reaches the target sooner among the
+states it tells apart, not over every state the game can be in; realize measures the real plan. `--max-states` (200000) and `--minutes` (30) cap a search; a capped one finishes its
 16 richest states by standing at the target and says it isn't proven. `--compare` plays each order (step ids joined by
 commas) exactly, then searches on, and prints its target tick beside the free search's and the best's.
 
 On FalseEnding%-280 from goal 86 (`buy:buywj`, tick 5387), with a buy table measured to `buy:buyds` with `--targets
-reward:bonus1,lap:2`, the exact search plays about 4,000 states a second, but the states multiply with the buys: every
+reward:bonus1,lap:2`, the search plays about 4,000 states a second, but the states multiply with the buys: every
 mix of a stretch's ~80 economy buys is a key of its own. To `buy:buyds` (the best: tick 10758, 3 million Cash) 3 million
 states reach only tick 6573 (12 minutes); with `--only` Course 2's laps and boxes, 10 million reach tick 8610 (35
 minutes, 47 GB; finished by standing at the target from there: 14118, not proven). `--dominance levels` is little faster
-(2 minutes: tick 8275 against 7895). A nearer target is proven in minutes: to the first `buy:buyglobalreward2` (the
+(2 minutes: tick 8275 against 7895). A nearer target is proven (under the state key) in minutes: to the first `buy:buyglobalreward2` (the
 best: tick 9533) the free plan is tick 8103 and skips bonus 1; Course 2 lap then bonus 1 gives 8985, two laps and a clone
 then bonus 1 9068, bonus 1 first 9102 (its move from `buy:buywj` is the best's own way, through Course 2's gate and
 finish, a lap the plan doesn't credit). Most of the gain is laps on the saved record's path after a quick restart: the
@@ -2087,7 +2094,8 @@ table estimates those moves; realize measures them.
 
 `plan-selftest` runs the same search on a toy economy (one course, a clone box, a free bonus doubling the lap, a target
 of 2000): the plan's tick must be a brute force's over every order of up to 12 steps, played again it must reach the
-target on that tick, and dominance must have dropped a state.
+target on that tick, dominance must have dropped a state, and a search capped at 60 states must finish more than one
+of its richest states by standing at the target, each from its own state.
 
 ### Buy planner
 
