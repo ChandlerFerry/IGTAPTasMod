@@ -1059,7 +1059,7 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// fulltas-plan --replan [--replan-seconds S] [--replan-cap T]: the goals part's call (FullTas.Replan, as Reroute makes it: the
+        /// fulltas-plan --replan [--replan-seconds S] [--replan-cap T]: the goals part's call (FullTas.Replan, as a goals pull makes it: the
         /// run's goals, joined, the best's tick at the target as the cap unless --replan-cap) once, on the run's best. Checks that it
         /// returns within its budget (plus a piece search's --piece-minutes) and that its goal map is the labels it names: each goal
         /// it maps to the run's goal of that index has that label. Exits 1 on a FAIL.

@@ -13,14 +13,14 @@ using Caps = IGTAPTasMod.Caps;
 
 namespace IGTAP.EngineSim.Cli
 {
-    // --parts goals (docs/fulltas.md, "Parts"): the run's economy goals edited when the whole run gets faster. Every stretch of a
-    // Full-TAS economy is Cash-bound at its target buy, so a lap or walk made faster only turns into a wait there; what pays is a
-    // goal list that needs fewer laps (the clones pay more after a record lap, or the laps before a buy earn more than it needs)
-    // or one that laps where the route stands and waits. Each edit is played on a copy: the best's inputs spliced, then idle ticks
-    // before the quick restart ahead of each goal it misses (the Cash comes later), and it's adopted only when the whole run is
-    // strictly faster and reaches every goal. The run's end goal, its area and reward goals and every unlock buy stay
-    // (FullTasGoal.EditRefused), but for the cash goals (GLOBAL cashPerLoop boxes: CashEdits, GoalsRefused); an adopted list goes with the route (the run file's goals, the offline best's and the gate's), and
-    // the game updates fulltas.json when it judges that route a record.
+    // --parts goals (docs/fulltas.md, "Parts"): the run's economy goals planned again when the whole run gets faster. Every stretch
+    // of a Full-TAS economy is Cash-bound at its target buy, so a lap or walk made faster only turns into a wait there; what pays
+    // is a goal list that needs fewer laps. A pull plans each economy stretch (an unlock buy or reward goal to the next unlock buy)
+    // with the economy planner (FullTasPlan.cs, Replan: search, realize, join), and adopts the planned list only when the whole
+    // run is strictly faster and reaches every goal. The run's end goal, its area and reward goals and every unlock buy stay
+    // (FullTasGoal.EditRefused), but for the cash goals (GLOBAL cashPerLoop boxes, GoalsRefused); an adopted list goes with the
+    // route (the run file's goals, the offline best's and the gate's), and the game updates fulltas.json when it judges that route
+    // a record. The edits a pull played before the planner (drops, adds, record laps, ...) are no longer played.
     sealed partial class FullTas
     {
         /// <summary>A proposed goal list with the best's inputs spliced for it.</summary>
@@ -71,14 +71,12 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>The last goals pull adopted an edit: the next one runs at once on the new goals.</summary>
         bool _goalsAgain;
         List<(int course, Caps caps, string name, List<InputTick> inputs)> _courseRoutes;
-        /// <summary>A goals pull tries its edits again only after a new best and this long since the last pull (it replays every
-        /// lap edit of the run: about a CPU minute a pull on FalseEnding-Any%), or at once after it adopted one.</summary>
+        /// <summary>A goals pull plans again only after a new best and this long since the last pull, or at once after it adopted
+        /// a list.</summary>
         const double GoalsEveryMinutes = 5;
         /// <summary>The adds that play through but aren't faster whose later waits a goals pull re-times (Retune: a play per idle tick of each).</summary>
         const int AddRetunes = 2;
         const int MaxPadFixes = 6, RecordRoutes = 12, RecordReached = 4, InvestTries = 2;
-        /// <summary>A record lap's repair budget: CPU seconds per goal it re-finds (its lead where it stops is a few ticks).</summary>
-        const double RecordRepairCpuPerGoal = 20;
         /// <summary>A walk-in lap's quick restart goes 0..WalkInRestarts-1 inputs after the walk touches the gate.</summary>
         const int WalkInRestarts = 4;
         /// <summary>The best's own laps of a course a record lap tries (the shortest, one per distinct input list).</summary>
@@ -86,12 +84,15 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>--record-search-minutes: the wall minutes (every thread) a goals pull searches a lap from the quick restart for a
         /// course and unlock set with no saved -restart lap (once per run; 0: never).</summary>
         double _recordSearchMinutes = 2;
-        /// <summary>The (course, unlock set) keys a goals pull already searched a restart lap for (kept in the memory).</summary>
+        /// <summary>The (course, unlock set) keys a goals pull already searched a restart lap for.</summary>
         readonly HashSet<string> _lapSearched = new HashSet<string>();
 
-        /// <summary>When the last goals pull ended: the other parts get as long after it as it took (a pull can take 7 minutes,
-        /// 2500 CPU s on FalseEnding-Any%, and a new best found in it made the next due at once), so a short run's windows, idle,
-        /// waste and grafts get turns between them.</summary>
+        /// <summary>--stretch-minutes: a goals pull's time a stretch (Replan's four searches, realize between them, the join).
+        /// FalseEnding%-280 (2026-10-04, beam 200): buy:buywj to buy:buyds searches about 11 minutes a round, reward:bonus3 to
+        /// buy:buystatue 19.</summary>
+        double _stretchMinutes = 60;
+        /// <summary>When the last goals pull ended: the other parts get as long after it as it took (a pull plans for up to
+        /// --stretch-minutes a stretch), so a short run's windows, idle, waste and grafts get turns between them.</summary>
         TimeSpan _goalsEnd;
 
         /// <summary>A goals pull is due (anyTime: whatever the waits, when nothing else is left to pull).</summary>
@@ -103,8 +104,13 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// One goals pull: every edit of the best's economy goals played on a copy (in parallel), and the fastest that beats the
-        /// best adopted. Returns whether the run's goals changed.
+        /// One goals pull: the economy planner (<see cref="Replan"/>: search, realize, join) on each economy stretch of the best in
+        /// order (<see cref="Stretches"/>), each from the route the stretches before it left: the best, or a stretch's realized and
+        /// joined plan once it buys its target sooner (the best's old way on after an earlier change can stop short: the next
+        /// stretch is then planned from where it stops, on the best's own way on after that stretch's target, <see cref="Onto"/>).
+        /// The pull's time (--stretch-minutes a stretch, at most what the session has left) is shared by the stretches left. The
+        /// fastest whole route planned that beats the best is adopted (<see cref="AdoptGoals"/>). Returns whether the run's goals
+        /// changed.
         /// </summary>
         bool GoalsPull()
         {
@@ -113,133 +119,152 @@ namespace IGTAP.EngineSim.Cli
             _goalsAt = _clock.Elapsed;
             double c0 = CpuSeconds();
             var w0 = _clock.Elapsed;
-            List<RunLap> laps = Laps(best);
-            var edits = new List<GoalEdit>(RewardInsertEdits());
-            if (edits.Count == 0)
+            int count = Stretches(_labels).Count;
+            if (count == 0)
             {
-                edits.AddRange(DropEdits(best, laps));
-                edits.AddRange(AddEdits(best, _model?.Count == _goals ? _model : null));
-                edits.AddRange(RegroupEdits(best));
-                List<GoalEdit> records = RecordEdits(best, laps);
-                edits.AddRange(records);
-                List<GoalEdit> inserts = InsertEdits(best, laps);
-                edits.AddRange(inserts);
-                edits.AddRange(PayoutEdits(best, laps));
-                edits.AddRange(LadderEdits(best, laps));
-                edits.AddRange(CashEdits(best));
-            }
-            edits.RemoveAll(e => GoalsRefused(_labels, e.Labels) != null);
-            // An edit is its whole spliced route: one played before (this session or an earlier one) plays the same way again.
-            int played = edits.RemoveAll(e => _editsTried.Contains(EditKey(e)));
-            if (edits.Count == 0)
-            {
-                Log($"auto: goals: all {played} edits of this best were played before");
+                Log("auto: goals: the run has no economy stretch (from an unlock buy or reward goal to the next unlock buy)");
                 return false;
             }
             _pullNo++;
             int pull = _pullNo;
-            Log($"auto: pull {pull}: goals, {edits.Count} goal-list edits of {laps.Count} laps ({edits.Count(e => e.Kind == "drop")} drops, {edits.Count(e => e.Kind == "add")} adds, "
-                + $"{edits.Count(e => e.Kind == "regroup")} regroups, {edits.Count(e => e.Kind == "record")} record laps, {edits.Count(e => e.Kind == "insert")} inserted record laps, {edits.Count(e => e.Kind == "payout")} payout breaks, {edits.Count(e => e.Kind == "ladder")} ladders, {edits.Count(e => e.Kind == "cash")} cash goals), "
-                + "each played on a copy with waits before the quick restarts it needs");
-            var results = new (Route route, Route partial, string why)[edits.Count];
-            RunOnThreads(edits.Count, (sim, origin, tracker, i) =>
+            double deadline = _clock.Elapsed.TotalSeconds + Math.Max(60, Math.Min(_stretchMinutes * count, _minutes - _clock.Elapsed.TotalMinutes) * 60);
+            Log($"auto: pull {pull}: goals, the economy planner on {count} stretches in order, {deadline - _clock.Elapsed.TotalSeconds:0} s shared");
+            // The route the next stretch is planned on, its goals and per goal the best's goal (-1: a planned one).
+            Route on = best;
+            string[] labels = _labels;
+            int[] map = Enumerable.Range(0, _goals).ToArray();
+            var planned = new List<string>();
+            (Route route, string[] labels, int[] map, string text, int first) win = default;
+            int first = 0;
+            for (int i = 0; i < count && ReferenceEquals(_best, best) && !TimeUp; i++)
             {
-                GoalEdit e = edits[i];
-                if (e.RefindFrom > 0) { results[i] = (null, BestUpTo(best, e.RefindFrom, e.Labels.Length), $"re-found from goal {e.RefindFrom}"); return; }
-                sim.UseGoals(tracker.For(GoalsOf(e.Labels)));
-                results[i] = PlayedRetuned(sim, origin, e, best);
-            });
-            // An add that plays through keeps the best's later waits for Cash, so its laps' extra Cash buys nothing sooner: the
-            // AddRetunes fastest of them get every wait after their laps re-timed to their Cash (Retune, as a ladder's) and play again.
-            // So does a moved cash goal (taken earlier, its income comes sooner).
-            List<int> slow = Enumerable.Range(0, edits.Count).Where(i => (edits[i].Kind == "add" && edits[i].Refind == 0 || edits[i].Kind == "cash" && edits[i].OldOf.Contains(-1))
-                    && results[i].route != null && results[i].route.Live >= best.Live)
-                .OrderBy(i => results[i].route.Live).Take(AddRetunes).ToList();
-            RunOnThreads(slow.Count, (sim, origin, tracker, j) =>
-            {
-                GoalEdit e = edits[slow[j]];
-                e.Retune = Array.LastIndexOf(e.OldOf, -1) + 1;
-                sim.UseGoals(tracker.For(GoalsOf(e.Labels)));
-                results[slow[j]] = PlayedRetuned(sim, origin, e, best);
-            });
-            (GoalEdit edit, Route route) win = default;
-            for (int i = 0; i < edits.Count; i++)
-            {
-                (Route r, _, string why) = results[i];
-                GoalEdit e = edits[i];
-                string verdict = r == null ? why ?? "not played" : $"{r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s ({r.Last - best.Last:+0;-0} ticks, {r.LiveSeconds - best.LiveSeconds:+0.00;-0.00} s live){(why == null ? "" : ", " + why)}";
-                Log($"auto goals: {e.Text}: {verdict}");
-                AutoWrite(new { type = "goalEdit", pull, kind = e.Kind, text = e.Text, first = e.First, last = e.Last, goals = e.Labels.Length,
-                    time = r == null ? (double?)null : r.LiveSeconds, gain = r == null ? (long?)null : best.Last - r.Last, why });
-                if (r != null && r.Live < best.Live && (win.route == null || r.Live < win.route.Live)) win = (e, r);
+                List<(int kept, int target, string[] bonuses)> stretches = Stretches(labels);
+                if (i >= stretches.Count) break;
+                var (kept, t, bonuses) = stretches[i];
+                string what = $"stretch {i + 1}/{count}, goals {kept + 1}-{t + 1} ({labels[kept - 1]} to {labels[t]}{(bonuses.Length > 0 ? ", " + string.Join(" ", bonuses) + " offered" : "")})";
+                int ot = map[t];
+                long bestTick = ot >= 0 && ot < best.Progress ? best.GoalPhysics[ot] : -1;
+                bool through = on.Progress > t;
+                Route from = through ? on : Onto(on, labels, map, kept, t, best);
+                if (from == null)
+                {
+                    Log($"auto goals: {what}: the route planned so far stops at goal {on.Progress + 1} ({(on.Progress < labels.Length ? labels[on.Progress] : "")}: {on.EndReason}), "
+                        + "before the stretch's start or with no way of the best's on after its target; the stretches after it aren't planned");
+                    break;
+                }
+                // A plan that buys the target no sooner than the route it replaces (or, where that stops short, the best) isn't realized.
+                long cap = through ? on.GoalPhysics[t] : bestTick < 0 ? best.Last : bestTick;
+                double seconds = Math.Max(30, (deadline - _clock.Elapsed.TotalSeconds) / (count - i));
+                PlanResult p;
+                try { p = Replan(from, GoalsOf(labels), kept, new[] { labels[t] }, true, cap, seconds, bonuses); }
+                catch (Exception ex)
+                {
+                    Log($"auto goals: {what}: {ex.GetBaseException().Message}");
+                    if (through) continue;
+                    break;
+                }
+                Route r = p.Run;
+                bool whole = r != null && r.Progress == p.Goals.Length;
+                string plans = p.PlanTicks == null || p.PlanTicks.Length == 0 ? "no plan" : "planned " + string.Join(" > ", p.PlanTicks.Select(x => x < 0 ? "-" : x.ToString(CultureInfo.InvariantCulture)));
+                string verdict = !p.Done ? $"not built ({p.Why})"
+                    : $"built tick {p.Tick} ({p.Tick - cap:+0;-0} against {(through ? "the route's" : "the best's")} {cap}{(through && bestTick >= 0 && bestTick != cap ? $", {p.Tick - bestTick:+0;-0} against the best's {bestTick}" : "")}); "
+                    + (r == null ? "not joined" : whole ? $"whole route {r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s ({r.Last - best.Last:+0;-0} ticks against the best)"
+                        : $"the route on stops at goal {r.Progress + 1} of {p.Goals.Length} ({(r.Progress < p.Goals.Length ? p.Goals[r.Progress] : "")}: {r.EndReason})");
+                Log($"auto goals: {what}: {plans}, {verdict}");
+                AutoWrite(new { type = "goalEdit", pull, kind = "plan", text = what, first = kept + 1, last = t + 1, goals = p.Goals.Length,
+                    plans = p.PlanTicks, built = p.Done ? p.Tick : -1, cap, bestTick, time = whole ? r.LiveSeconds : (double?)null, gain = whole ? best.Last - r.Last : (long?)null, why = p.Why });
+                if (!p.Done || r == null)
+                {
+                    if (through) continue;
+                    break;
+                }
+                int[] prev = map;
+                map = p.OldOf.Select(j => j < 0 ? -1 : prev[j]).ToArray();
+                labels = p.Goals;
+                on = r;
+                Known(labels);
+                if (first == 0) first = kept + 1;
+                planned.Add($"goals {kept + 1}-{t + 1} planned to {p.Target} on tick {p.Tick}");
+                if (whole && (win.route == null || r.Live < win.route.Live)) win = (r, labels, map, "economy planned: " + string.Join("; ", planned), first);
             }
             bool adopted = false;
-            if (win.route != null) adopted = AdoptGoals(win.edit, win.route, best);
-            // A record lap keeps the goals: an edit of one that the old way on can't carry to the end (the faster lap's cash buys a
-            // box the old inputs only brushed: FalseEnding-Any%'s Course 2 clone box at goal 265) has the goals after its last goal
-            // level with the best or ahead re-found, as a faster window's does; the fewest goals to re-find first.
-            else
+            if (win.route != null && win.route.Live < best.Live && ReferenceEquals(_best, best))
             {
-                // Each cut at the last goal before it first falls behind the best (the lap's cash can make the old way on lose ticks
-                // well before it stops: FalseEnding-Any%'s Course 1 lap is 2 ticks ahead through goal 200, 23 behind by goal 250).
-                Route Cut(Route p)
-                {
-                    int k = 0;
-                    while (k < p.Progress && p.GoalPhysics[k] <= best.GoalPhysics[k]) k++;
-                    return k == 0 ? null : new Route { Inputs = p.Inputs.Take((int)Math.Min(p.GoalInput[k - 1], p.Inputs.Count)).ToList(), Progress = k,
-                        GoalInput = p.GoalInput, GoalPhysics = p.GoalPhysics, GoalHeld = p.GoalHeld, EndReason = p.EndReason };
-                }
-                var ahead = Enumerable.Range(0, edits.Count).Where(i => (edits[i].Kind == "record" || edits[i].Kind == "payout" || edits[i].Kind == "ladder") && results[i].partial != null)
-                    .Select(i => (i, p: Cut(results[i].partial))).Where(c => c.p != null && c.p.Progress < best.Progress && c.p.Progress >= edits[c.i].Last)
-                    .OrderByDescending(c => c.p.Progress).ToList();
-                foreach (var (i, p) in ahead)
-                {
-                    if (!ReferenceEquals(_best, best) || TimeUp) break;
-                    Log($"auto goals: {edits[i].Text} is {best.GoalPhysics[p.Progress - 1] - p.GoalPhysics[p.Progress - 1]} ticks ahead at goal {p.Progress}, where its old way on stops; re-finding goals {p.Progress + 1}-{best.Progress}");
-                    _repairFloorCpu = RecordRepairCpuPerGoal * (best.Progress - p.Progress);
-                    try { Repair("goals: " + edits[i].Text, best, p); }
-                    finally { _repairFloorCpu = 0; }
-                }
+                var e = new GoalEdit { Kind = "plan", Text = win.text, Key = "plan", Labels = win.labels, OldOf = win.map, Inputs = win.route.Inputs,
+                    First = win.first, Last = win.labels.Length };
+                adopted = AdoptGoals(e, win.route, best);
             }
-            // Inserted record laps are investments: the lap costs ticks and the way on starts elsewhere, so none plays through as
-            // spliced. The two of each kind that get furthest (then soonest) are re-found under their goals, held to a CPU budget, not
-            // to the best. So is an add that stops ahead of the best (its extra Cash buys a box early on the way on), and one in place
-            // of a walk, from its laps' finish.
-            if (!adopted && ReferenceEquals(_best, best) && !TimeUp) adopted = Reroute(edits, results, best);
-            GoalEdit invested = null;
-            var investments = Investments(edits, results, best);
-            var waiting = new HashSet<GoalEdit>(investments.Select(x => x.e));
-            if (!adopted && ReferenceEquals(_best, best))
-                foreach (var (e, p, _) in investments.Where(x => x.rank < InvestTries))
-                {
-                    if (!ReferenceEquals(_best, best) || TimeUp) break;
-                    waiting.Remove(e);
-                    if (adopted = InvestRepair(e, p, best)) { invested = e; break; }
-                }
-            // An edit waiting for its investment isn't played out: the next pull offers it again (a drop adopted first makes the
-            // same splice again: FalseEnding-Any%'s insert that drops the post-statue Course 2 laps was never re-found).
-            for (int i = 0; i < edits.Count; i++) if (results[i] != default && !waiting.Contains(edits[i])) _editsTried.Add(EditKey(edits[i]));
-            SaveMemory();
-            GoalEdit made = invested ?? win.edit;
-            string outcome = invested != null ? $"{invested.Text}, re-found: {Describe(_best)}"
-                : win.route == null ? $"no edit of {edits.Count} beats the best" : $"{win.edit.Text}: {Describe(win.route)}";
+            string outcome = win.route == null ? "no stretch's plan gave a whole route"
+                : win.route.Live >= best.Live ? $"the fastest whole route planned, {Describe(win.route)}, is no faster than the best" : $"{win.text}: {Describe(win.route)}";
             _goalsAgain = adopted;
             _goalsEnd = _clock.Elapsed;
             double cpu = CpuSeconds() - c0, wall = (_clock.Elapsed - w0).TotalSeconds;
             long gain = GainTicks(best);
             _order.Add("goals" + (gain > 0 ? $"(-{gain})" : ""));
             Log($"auto: pull {pull} goals: {outcome}; {(gain > 0 ? $"GAINED {gain} ticks" : "no gain")} in {cpu:0} CPU s, {wall:0} s; best {Describe(_best)}");
-            AutoWrite(new { type = "pull", pull, lever = "goals", goal = made?.First ?? 0, label = "goals", budget = 0, outcome, gain, cpu = Math.Round(cpu, 1),
+            AutoWrite(new { type = "pull", pull, lever = "goals", goal = win.first, label = "goals", budget = 0, outcome, gain, cpu = Math.Round(cpu, 1),
                 wall = Math.Round((_clock.Elapsed - _autoWall0).TotalSeconds, 1), best = _best.LiveSeconds, score = double.NaN });
             if (gain > 0)
             {
-                _curve.Add(((_clock.Elapsed - _autoWall0).TotalSeconds, CpuSeconds() - _autoCpu0, _best.Last, "goals", made?.First ?? 0));
-                AutoWrite(new { type = "record", lever = "goals", goal = made?.First ?? 0, gain, time = _best.LiveSeconds, ticks = _best.Last,
+                _curve.Add(((_clock.Elapsed - _autoWall0).TotalSeconds, CpuSeconds() - _autoCpu0, _best.Last, "goals", win.first));
+                AutoWrite(new { type = "record", lever = "goals", goal = win.first, gain, time = _best.LiveSeconds, ticks = _best.Last,
                     wall = Math.Round((_clock.Elapsed - _autoWall0).TotalSeconds, 1), cpu = Math.Round(CpuSeconds() - _autoCpu0, 1),
                     splits = Enumerable.Range(1, _goals).Select(k => Split(_best.GoalPhysics, k)).ToArray(), goals = _labels });
             }
             Outlook();
             return adopted;
+        }
+
+        /// <summary>
+        /// The economy stretches of a goal list, in order: per unlock buy (a buy of anything but economy boxes), the goals before it
+        /// back to the last that is neither an economy goal nor a reward goal, from the first unlock buy or reward goal there on. Each
+        /// is its start (the goals kept before the plan: the start goal's 1-based number), its target (0-based) and the reward goals
+        /// in it, which the planner may take or skip. FalseEnding%-280's 272 goals: buy:buywj to buy:buyds (reward:bonus1 offered),
+        /// reward:bonus3 to buy:buystatue, buy:buystatue to buy:buydj; Course 1's laps before buy:buywj have no start.
+        /// </summary>
+        internal static List<(int kept, int target, string[] bonuses)> Stretches(string[] labels)
+        {
+            static bool Unlock(string l) => l.StartsWith("buy:", StringComparison.Ordinal) && !FullTasGoal.IsEconomy(l);
+            static bool Reward(string l) => l.StartsWith("reward:", StringComparison.Ordinal);
+            var list = new List<(int, int, string[])>();
+            for (int t = 0; t < labels.Length; t++)
+            {
+                if (!Unlock(labels[t])) continue;
+                int s = t - 1;
+                while (s >= 0 && (FullTasGoal.IsEconomy(labels[s]) || Reward(labels[s]))) s--;
+                int start = Enumerable.Range(Math.Max(s, 0), t - Math.Max(s, 0)).FirstOrDefault(k => Unlock(labels[k]) || Reward(labels[k]), -1);
+                if (start >= 0) list.Add((start + 1, t, labels.Skip(start + 1).Take(t - start - 1).Where(Reward).ToArray()));
+            }
+            return list;
+        }
+
+        /// <summary>
+        /// A route planned so far (<paramref name="on"/>, under <paramref name="labels"/>, <paramref name="map"/> its goals' goals in
+        /// <paramref name="best"/>) that stops before the stretch's target (goal <paramref name="target"/>, 0-based), carried on with
+        /// the best's own way on after its buy of the target: its inputs up to the goal it last reached, then the best's from that
+        /// buy's input tick (the join plays the best's way on from its first quick restart after it, Replan's Join), the goal input
+        /// ticks after the target the best's shifted there. Null when it stops before the stretch's start or the best has no such buy.
+        /// </summary>
+        static Route Onto(Route on, string[] labels, int[] map, int kept, int target, Route best)
+        {
+            int ot = map[target];
+            if (on.Progress < kept || ot < 0 || ot >= best.Progress) return null;
+            int cut = (int)Math.Min(on.GoalInput[on.Progress - 1], on.Inputs.Count);
+            long from = Math.Min(best.GoalInput[ot], best.Inputs.Count);
+            long[] input = new long[labels.Length];
+            Array.Copy(on.GoalInput, input, on.Progress);
+            for (int j = on.Progress; j < labels.Length; j++) input[j] = map[j] >= ot ? best.GoalInput[map[j]] - from + cut : cut;
+            return new Route { Inputs = on.Inputs.Take(cut).Concat(best.Inputs.Skip((int)from)).ToList(), Progress = on.Progress,
+                GoalInput = input, GoalPhysics = on.GoalPhysics, GoalHeld = on.GoalHeld, EndReason = on.EndReason };
+        }
+
+        /// <summary>A planned list's goals the run's header doesn't have (a box the planner buys that the best never does): their
+        /// entries made as an --insert-goal's are (<see cref="NewGoal"/>), so GoalsOf and an adopted header have them.</summary>
+        void Known(string[] labels)
+        {
+            foreach (string l in labels.Distinct())
+                if (!l.Contains('+') && !_insertedGoals.ContainsKey(l) && !_runGoals.Goals.Any(g => g.label == l) && NewGoal(l) is { } n)
+                    _insertedGoals[l] = (0, n.header, n.goal);
         }
 
         /// <summary>Runs work(i) for i in 0..count-1 on up to --threads threads, each with a simulation of its own (and its start
@@ -826,7 +851,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>The edits that change the best's goals or inputs, one of each (a buy moved next to a buy of its own box is the best).</summary>
         List<GoalEdit> Changed(Route best, List<GoalEdit> edits)
         {
-            return edits.Where(e => !ReferenceEquals(e.Inputs, best.Inputs) || !e.Labels.SequenceEqual(_labels)).GroupBy(EditKey).Select(g => g.First()).ToList();
+            return edits.Where(e => !ReferenceEquals(e.Inputs, best.Inputs) || !e.Labels.SequenceEqual(_labels)).GroupBy(e => (SnapshotIndex.Hash(e.Inputs, e.Inputs.Count), string.Join("|", e.Labels))).Select(g => g.First()).ToList();
         }
 
         /// <summary>
@@ -1432,66 +1457,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>Ladders a pull reroutes (each a planner run, --piece-minutes a piece).</summary>
-        const int Reroutes = 1;
-
-        /// <summary>
-        /// Economy change, then reroute: the fastest ladders that played through (their goals fitted to their strays) but don't beat
-        /// the best get the goals from the ladder up to the next unlock buy planned again on their route by the economy planner
-        /// (<see cref="Replan"/>, joined: the plan, the old way on after the target, the waits re-timed from the start). A planned run
-        /// that beats the best is adopted as a goals edit. So are the furthest ladders whose old way on dies or stalls at an unlock
-        /// buy past the ladder (FalseEnding-Any%'s walk to buy:buystatue, "Player death at action N", after its levels were fitted):
-        /// the goals from the unlock buy before it (or the ladder's end) to that buy planned again on the run that got there.
-        /// </summary>
-        bool Reroute(List<GoalEdit> edits, (Route route, Route partial, string why)[] results, Route best)
-        {
-            static bool Unlock(string l) => l.StartsWith("buy:", StringComparison.Ordinal) && !FullTasGoal.IsEconomy(l);
-            var through = Enumerable.Range(0, edits.Count).Where(i => edits[i].Kind == "ladder" && results[i].route != null)
-                .OrderBy(i => results[i].route.Live).Take(Reroutes);
-            var stopped = Enumerable.Range(0, edits.Count).Where(i => edits[i].Kind == "ladder" && results[i].route == null && results[i].partial is Route d
-                    && d.Progress > edits[i].Retune && d.Progress < edits[i].Labels.Length && Unlock(edits[i].Labels[d.Progress]))
-                .OrderByDescending(i => results[i].partial.Progress).ThenBy(i => results[i].partial.GoalPhysics[results[i].partial.Progress - 1]).Take(Reroutes);
-            foreach (int i in through.Concat(stopped))
-            {
-                GoalEdit e = edits[i];
-                Route on = results[i].route ?? results[i].partial;
-                int kept = e.Retune;
-                string target = e.Labels.Skip(kept).FirstOrDefault(Unlock);
-                if (results[i].route == null)
-                {
-                    target = e.Labels[on.Progress];
-                    kept = Math.Max(kept, Array.FindLastIndex(e.Labels, on.Progress - 1, on.Progress, Unlock) + 1);
-                    // The join plays the old way on from the target's input tick, which a run that never reached it doesn't have (0:
-                    // the whole route again after the plan): the best's way on after its own buy of the target, from where the run stopped.
-                    int ot = e.OldOf[on.Progress];
-                    if (ot < 0 || ot >= best.Progress) continue;
-                    int cut = (int)Math.Min(on.GoalInput[on.Progress - 1], on.Inputs.Count);
-                    long[] at = (long[])on.GoalInput.Clone();
-                    at[on.Progress] = cut;
-                    on = new Route { Inputs = on.Inputs.Take(cut).Concat(best.Inputs.Skip((int)Math.Min(best.GoalInput[ot], best.Inputs.Count))).ToList(), Progress = on.Progress,
-                        GoalInput = at, GoalPhysics = on.GoalPhysics, GoalHeld = on.GoalHeld, EndReason = on.EndReason };
-                }
-                if (target == null || TimeUp) continue;
-                PlanResult p;
-                // A plan that buys the target after the best did can't win: not realized. The budget is what the part has left.
-                int te0 = Array.IndexOf(e.Labels, target, kept), ob = te0 < 0 ? -1 : e.OldOf[te0];
-                long cap = ob >= 0 && ob < best.Progress ? best.GoalPhysics[ob] : best.Last;
-                try { p = Replan(on, GoalsOf(e.Labels), kept, new[] { target }, true, cap, Math.Max(60, (_minutes - _clock.Elapsed.TotalMinutes) * 60)); }
-                catch (Exception ex) { Log($"auto goals: reroute of {e.Text}: {ex.GetBaseException().Message}"); continue; }
-                Route r = p.Run;
-                bool complete = r != null && r.Progress == p.Goals.Length;
-                Log($"auto goals: reroute of {e.Text}: goals {kept + 1}.. to {target} planned again ({p.Planned?.Length ?? 0} goals): "
-                    + (complete ? $"{r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s, {r.Last - best.Last:+0;-0} ticks against the best" : "doesn't play through"));
-                if (!complete || r.Live >= best.Live) continue;
-                // The planned goals (and any a stray fit put in) map to no old goal; the rest through the edit's (Join's map, fits included).
-                int[] oldOf = p.OldOf.Select(j => j < 0 ? -1 : e.OldOf[j]).ToArray();
-                var planned = new GoalEdit { Kind = "reroute", Text = $"{e.Text}, rerouted to {target}", Key = e.Key + ":reroute", Labels = p.Goals, OldOf = oldOf,
-                    Inputs = r.Inputs, First = e.First, Last = e.Last };
-                if (AdoptGoals(planned, r, best)) return true;
-            }
-            return false;
-        }
-
         /// <summary>A play fits its goals to its strays at most this often; a move looks this many goals ahead for the stray box's buy.</summary>
         const int MaxStrayFits = 40, StrayFitWindow = 16;
         static readonly object StrayLog = new object();
@@ -1617,141 +1582,6 @@ namespace IGTAP.EngineSim.Cli
             if (held != null) held[held.Length - 1] = bar.GoalHeld[bar.Progress - 1];
             long[] input = mapInputs ? Map(old.GoalInput) : Enumerable.Repeat((long)old.Inputs.Count, e.Labels.Length).ToArray();
             return new Route { Inputs = old.Inputs, Progress = e.Labels.Length, GoalInput = input, GoalPhysics = physics, GoalHeld = held, EndReason = old.EndReason };
-        }
-
-        /// <summary>A goals edit being re-found (<see cref="InvestRepair"/>): the repair's hopeless test keeps only its CPU budget.</summary>
-        bool _investing;
-        /// <summary>An investment's repair budget: CPU seconds per goal it re-finds. At 60, FalseEnding-Any%'s Course 2 lap after
-        /// buy:buyds (110 goals to re-find) ran out at goal 250 of 284, each repair window running its whole half minute.</summary>
-        const double InvestCpuPerGoal = 150;
-
-        /// <summary>
-        /// An investment: an edit that costs ticks where it changes the goals and pays later through Cash (a record lap inserted
-        /// right after an unlock buy: its clones run the faster path through everything after), whose old way on no longer plays
-        /// from where the change leaves the player. Its goals become the run's for the repair: the goals after where its partial
-        /// run stops are re-found as a window's repair does (the old best's inputs as seeds), except that falling behind the best
-        /// at a goal doesn't end it: an investment is behind until its income pays. It ends when its CPU budget is spent
-        /// (InvestCpuPerGoal a goal left) or it has every goal; kept only when the whole run then beats the best (the fresh
-        /// check, as every best). One re-found to the end but no faster has the goals after its change planned again on it
-        /// (<see cref="Replan"/>). The goals change back when it isn't kept. <paramref name="bar"/>: the time to beat when
-        /// <paramref name="old"/> (the seeds) isn't the best (a replan's investments).
-        /// </summary>
-        bool InvestRepair(GoalEdit e, Route partial, Route old, Route bar = null)
-        {
-            _refound = null;
-            if (partial == null || partial.Progress < e.Last || TimeUp) return false;
-            bar ??= old;
-            var saved = (header: AutoHeader(), create: _create, eval: _eval, origin: _origin, tracker: _runGoals, labels: _labels, goals: _goals, best: _best);
-            var hooks = (collect: _collect, hopeless: _hopeless);
-            string[] from = _labels;
-            SwitchGoals(e.Labels);
-            Route standIn = StandIn(e, old, true, bar);
-            _best = standIn;
-            _goalLineage.Add(from);
-            var run = new Route { Inputs = partial.Inputs.Take((int)Math.Min(partial.GoalInput[partial.Progress - 1], partial.Inputs.Count)).ToList(), Progress = partial.Progress,
-                GoalInput = partial.GoalInput, GoalPhysics = partial.GoalPhysics, GoalHeld = partial.GoalHeld, EndReason = partial.EndReason };
-            Log($"auto goals: {e.Text}: {partial.GoalPhysics[partial.Progress - 1] - standIn.GoalPhysics[partial.Progress - 1]:+0;-0} ticks against the best at goal {partial.Progress}, "
-                + $"where its old way on stops; re-finding goals {partial.Progress + 1}-{_goals} as an investment ({InvestCpuPerGoal * (_goals - partial.Progress):0} CPU s)");
-            _investing = true;
-            // Its references are numbered by these goals, not the loop's: the repair's runs only keep the fastest complete one.
-            Route full = null;
-            _collect = (r, _) => { if (r.Progress == _goals && (full == null || r.Live < full.Live)) full = r; };
-            _repairFloorCpu = InvestCpuPerGoal * (_goals - partial.Progress);
-            _goalsEdit = e.Text;
-            try { Repair("goals: " + e.Text, standIn, run); }
-            finally { _investing = false; _repairFloorCpu = 0; _goalsEdit = null; (_collect, _hopeless) = hooks; }
-            if (ReferenceEquals(_best, standIn))
-            {
-                if (full != null && !_replanning)
-                {
-                    Log($"auto goals: {e.Text}: re-found to the end at {Describe(full)}, {full.Last - bar.Last:+0;-0} ticks against the best; planning the goals after it again");
-                    _replanning = true;
-                    try { if (Replan(e, full, bar)) return true; }
-                    finally { _replanning = false; }
-                }
-                _goalLineage.RemoveAt(_goalLineage.Count - 1);
-                (_autoHeader, _create, _eval, _origin, _runGoals, _labels, _goals, _best) = saved;
-                RebindEval();
-                _refound = full;
-                Log($"auto goals: {e.Text}: re-found, no faster than the best; the goals stay");
-                return false;
-            }
-            string words = $"{e.Text}: -{(bar.LiveSeconds - _best.LiveSeconds).ToString("0.00", CultureInfo.InvariantCulture)} s";
-            Log($"auto goals: ADOPTED {words}: {from.Length} -> {_goals} goals, {bar.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s -> {Describe(_best)}");
-            AutoWrite(new { type = "goals", text = words, from = from.Length, to = _goals, goals = _labels, time = _best.LiveSeconds, gain = bar.Last - _best.Last });
-            RestartOnGoals();
-            return true;
-        }
-
-        /// <summary>A replan runs (<see cref="Replan"/>): its own investments don't plan again.</summary>
-        bool _replanning;
-        /// <summary>The last investment that wasn't kept: its run re-found to the end (null: none).</summary>
-        Route _refound;
-
-        /// <summary>
-        /// An investment re-found to the end, no faster than the best (<paramref name="bar"/>): the goals after its change planned
-        /// again on its route, as a goals pull plans the best's (<see cref="DropEdits"/>, <see cref="AddEdits"/> with its own
-        /// model: the laps its income makes unneeded, laps in place of a wait). The fastest edit that beats the investment
-        /// becomes it, and is planned again, until one beats the best (adopted) or none beats the investment. With none played
-        /// through faster, its adds and the drops that stop ahead of it (the extra Cash strays into a box the old buy walk only
-        /// brushed) are re-found as investments (<see cref="Investments"/>): one that beats the best is adopted, the fastest
-        /// that beats the investment becomes it. FalseEnding-Any%'s Course 2 lap after buy:buyds: Course 3's laps and buys, and
-        /// Course 3 laps at the top in place of the climb to buy:buydj.
-        /// </summary>
-        bool Replan(GoalEdit e, Route inv, Route bar)
-        {
-            while (!TimeUp)
-            {
-                Route standIn = _best;
-                List<GoalRow> rows = ModelOf(inv);
-                var edits = DropEdits(inv, Laps(inv)).Concat(AddEdits(inv, rows)).Where(x => x.First > e.Last && GoalsRefused(_labels, x.Labels) == null).ToList();
-                if (edits.Count == 0) return false;
-                double c0 = CpuSeconds();
-                var results = new (Route route, Route partial, string why)[edits.Count];
-                RunOnThreads(edits.Count, (sim, origin, tracker, i) =>
-                {
-                    sim.UseGoals(tracker.For(GoalsOf(edits[i].Labels)));
-                    results[i] = Played(sim, origin, edits[i], inv);
-                });
-                int win = -1;
-                for (int i = 0; i < edits.Count; i++)
-                {
-                    Route r = results[i].route;
-                    Log($"auto goals: replan of {e.Text}: {edits[i].Text}: " + (r == null ? results[i].why ?? "not played"
-                        : $"{r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s ({r.Last - inv.Last:+0;-0} ticks against the investment, {r.Last - bar.Last:+0;-0} against the best)"));
-                    if (r != null && r.Live < inv.Live && (win < 0 || r.Live < results[win].route.Live)) win = i;
-                }
-                Log($"auto goals: replan of {e.Text}: {edits.Count} edits in {CpuSeconds() - c0:0} CPU s" + (win < 0 ? ", none faster" : $", fastest {edits[win].Text}"));
-                (GoalEdit edit, Route route) next = win < 0 ? default : (edits[win], results[win].route);
-                if (next.route == null)
-                    foreach (var (x, p, _) in Investments(edits, results, inv, true).Where(x => x.rank < InvestTries))
-                    {
-                        if (TimeUp) break;
-                        if (InvestRepair(x, p, inv, bar)) return true;
-                        if (_refound != null && _refound.Live < (next.route ?? inv).Live) next = (x, _refound);
-                    }
-                if (next.route == null) return false;
-                GoalEdit w = next.edit;
-                inv = next.route;
-                SwitchGoals(w.Labels);
-                if (inv.Live >= bar.Live)
-                {
-                    _best = StandIn(w, standIn, true, bar);
-                    continue;
-                }
-                Route stand = StandIn(w, standIn, false, bar);
-                _best = stand;
-                string words = $"{e.Text}; {w.Text}: -{(bar.LiveSeconds - inv.LiveSeconds).ToString("0.00", CultureInfo.InvariantCulture)} s";
-                _goalsEdit = words;
-                try { Commit(inv, "goals: " + words); }
-                finally { _goalsEdit = null; }
-                if (ReferenceEquals(_best, stand)) return false;
-                Log($"auto goals: ADOPTED {words}: {_goalLineage[_goalLineage.Count - 1].Length} -> {_goals} goals, {bar.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s -> {Describe(_best)}");
-                AutoWrite(new { type = "goals", text = words, from = _goalLineage[_goalLineage.Count - 1].Length, to = _goals, goals = _labels, time = _best.LiveSeconds, gain = bar.Last - _best.Last });
-                RestartOnGoals();
-                return true;
-            }
-            return false;
         }
 
         /// <summary>The gap model's rows of a route under the current goals (<see cref="BuildModel"/> on it; the loop's model stays).</summary>

@@ -10,19 +10,15 @@ namespace IGTAP.EngineSim.Cli
     // --auto's memory (docs/fulltas.md, "Memory"): what this run's --auto sessions tried, in <run>.auto-memory.json for the same
     // goals, so a restarted Improve goes on where the last one stopped instead of replaying it (FalseEnding-Any%: 43 of 79 minutes
     // over six restarts were the same combine, revive, goals and reset-study pulls again). What holds for any best (splices
-    // played, revived routes, studied resets, dead plans, followed leads, goal edits played, the bandit's arms) comes back
+    // played, revived routes, studied resets, dead plans, followed leads, the bandit's arms) comes back
     // whenever the goals match; what holds for one best (merged finds, polished goals, window leads shown) only on that best.
     sealed partial class FullTas
     {
         string _memoryFile;
-        /// <summary>Goal edits played (EditKey): each is its whole spliced route, so playing it again gives the same run.</summary>
-        readonly HashSet<ulong> _editsTried = new HashSet<ulong>();
 
         static string Hex(ulong v) { return v.ToString("x16", CultureInfo.InvariantCulture); }
         static ulong FromHex(string s) { return ulong.Parse(s, NumberStyles.HexNumber, CultureInfo.InvariantCulture); }
         ulong BestKey() { return SnapshotIndex.Hash(_best.Inputs, _best.Inputs.Count); }
-        // An add's key is new since adds re-time their later waits (AddRetunes): ones played before without it play again once.
-        static ulong EditKey(GoalEdit e) { ulong h = Mix(SnapshotIndex.Hash(e.Inputs, e.Inputs.Count), ValueHash(string.Join("|", e.Labels))); return e.Kind == "add" ? Mix(h, 0xADD) : h; }
 
         void SaveMemory()
         {
@@ -34,8 +30,6 @@ namespace IGTAP.EngineSim.Cli
                 combine = _combineTried.Select(Hex),
                 revive = _reviveTried.Select(kv => new { key = Hex(kv.Key), n = kv.Value }),
                 revivedOn = _revivedOn.Select(Hex),
-                edits = _editsTried.Select(Hex),
-                lapSearched = _lapSearched,
                 studied = _studied.Select(x => new[] { x.goal, x.offset }),
                 wallStudied = _wallStudied.Select(x => new[] { x.goal, x.offset }),
                 planDead = _planDead,
@@ -60,8 +54,6 @@ namespace IGTAP.EngineSim.Cli
                 IEnumerable<JsonElement> All(string name) => m.GetProperty(name).EnumerateArray();
                 foreach (JsonElement h in All("combine")) _combineTried.Add(FromHex(h.GetString()));
                 foreach (JsonElement r in All("revive")) _reviveTried[FromHex(r.GetProperty("key").GetString())] = r.GetProperty("n").GetInt32();
-                foreach (JsonElement h in All("edits")) _editsTried.Add(FromHex(h.GetString()));
-                if (m.TryGetProperty("lapSearched", out JsonElement searched)) foreach (JsonElement s in searched.EnumerateArray()) _lapSearched.Add(s.GetString());
                 if (m.TryGetProperty("revivedOn", out JsonElement on)) foreach (JsonElement h in on.EnumerateArray()) _revivedOn.Add(FromHex(h.GetString()));
                 foreach (JsonElement s in All("studied")) _studied.Add((s[0].GetInt32(), s[1].GetInt32()));
                 if (m.TryGetProperty("wallStudied", out JsonElement wall)) foreach (JsonElement s in wall.EnumerateArray()) _wallStudied.Add((s[0].GetInt32(), s[1].GetInt32()));
@@ -90,7 +82,7 @@ namespace IGTAP.EngineSim.Cli
                     _leadFor = _best;
                     foreach (JsonElement l in All("leads")) _leadSeen[((int)l[0].GetInt64(), (int)l[1].GetInt64())] = l[2].GetInt64();
                 }
-                Log($"auto: memory from {Path.GetFileName(_memoryFile)}: {_combineTried.Count} splices, {_reviveTried.Count} revived routes, {_editsTried.Count} goal edits, "
+                Log($"auto: memory from {Path.GetFileName(_memoryFile)}: {_combineTried.Count} splices, {_reviveTried.Count} revived routes, "
                     + $"{_studied.Count} resets studied, {_arms.Count} arms ({_arms.Values.Sum(a => a.Pulls)} pulls){(same ? ", and this best's merged finds, polished goals and window leads" : "")}");
             }
             // A file a killed session left half written, or one from before a field was added: start without it.

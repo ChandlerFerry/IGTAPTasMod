@@ -258,6 +258,12 @@ namespace IGTAP.EngineSim.Cli
             played = EconomyPlan.Play(toy, 0, stand);
             Check(played == 800, $"a patient stand on a clone paying 800 every 800 ticks: {(played == null ? "gave up after " + toy.Played + " ticks" : "bought on " + played)} (800)");
             (toy.Lump, toy.Cost) = (0, 2000);
+            // The goals part's stretches on FalseEnding%-280's skeleton: Course 1's laps have no start, the area goals end a stretch's
+            // reach back, a reward inside one is offered.
+            string stretches = string.Join("; ", FullTas.Stretches(new[] { "start:1", "finish:1", "buy:buyreward", "buy:buywj", "start:2", "reward:bonus1", "finish:2",
+                "buy:buyds", "at:1", "reward:bonus2", "at:2", "reward:bonus3", "start:3", "buy:buyreward3", "buy:buystatue", "buy:buyclone2", "buy:buydj", "at:3" })
+                .Select(s => $"{s.kept}-{s.target}" + string.Concat(s.bonuses.Select(b => " " + b))));
+            Check(stretches == "4-7 reward:bonus1; 12-14; 15-16", $"goals stretches: {stretches} (4-7 reward:bonus1; 12-14; 15-16)");
             Console.WriteLine(fails == 0 ? "plan-selftest: PASS" : $"plan-selftest: {fails} FAIL");
             return fails == 0 ? 0 : 1;
         }

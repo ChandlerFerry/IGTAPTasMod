@@ -216,6 +216,7 @@ namespace IGTAP.EngineSim.Cli
             _combineRepairMinutes = Solve.Option(args, "--combine-repair-minutes", _tailMinutes / 3);
             // The goals part's record laps: a lap searched from the quick restart for each course and unlock set with none saved.
             _recordSearchMinutes = Solve.Option(args, "--record-search-minutes", _recordSearchMinutes);
+            _stretchMinutes = Solve.Option(args, "--stretch-minutes", _stretchMinutes);
             foreach (string s in Solve.Args(args, "--insert-goal")) InsertGoalOption(s);
             // A focus is goals picked by number: the goals part, which renumbers them, stays off.
             bool focused = ReadFocus(args);
@@ -656,9 +657,6 @@ namespace IGTAP.EngineSim.Cli
         (int fast, float median) _chain0;
         List<InputTick> _chainStart;
         double _repairCpuPerTick, _repairMax, _autoCpu0;
-        /// <summary>A repair's least CPU budget (0: by its lead alone): a record lap's lead is small where its old way on stops, and
-        /// its gain comes later, in the clones' income.</summary>
-        double _repairFloorCpu;
         TimeSpan _autoWall0;
         readonly List<(double wall, double cpu, long ticks, string lever, int goal)> _curve = new List<(double, double, long, string, int)>();
         readonly List<string> _order = new List<string>();
@@ -1145,18 +1143,17 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>
         /// A repaired run can't win any more: even at every later goal's lower bound it ends no sooner than the best, or it is more
         /// than --repair-slack ticks behind the best at its last goal (the window's gain is gone and more), or its CPU budget is
-        /// spent. An investment (<see cref="InvestRepair"/>) is held to its budget alone. A human class compares scores in ticks
-        /// (<see cref="ScoreAt"/>: the run's ticks and its penalty so far, the bounds' ticks with no penalty after) with the best's.
+        /// spent. A human class compares scores in ticks (<see cref="ScoreAt"/>: the run's ticks and its penalty so far, the bounds'
+        /// ticks with no penalty after) with the best's.
         /// </summary>
         string Hopeless(Route run)
         {
             int p = run.Progress;
             if (p == 0 || p > _best.Progress) return null;
             long at = run.Clock(p);
-            // An investment (a goals edit being re-found) is behind until its income pays, and the model's bounds and cost-to-go are
-            // the old goals': only its budget ends it. An nmg class's best with a major span ranks behind any cleaner run: no bound.
+            // An nmg class's best with a major span ranks behind any cleaner run: no bound.
             long bar = EndBar(_best);
-            if (!_investing && bar != long.MaxValue)
+            if (bar != long.MaxValue)
             {
                 long score = ScoreAt(run, p);
                 if (_bounds != null)
@@ -1171,7 +1168,7 @@ namespace IGTAP.EngineSim.Cli
             }
             if (_repairAt is (double cpu, long lead))
             {
-                double spent = CpuSeconds() - cpu, budget = Math.Max(_repairCpuPerTick * lead, _repairFloorCpu);
+                double spent = CpuSeconds() - cpu, budget = _repairCpuPerTick * lead;
                 if (spent >= budget)
                     return $"its budget is spent ({spent:0} CPU s for a {lead}-tick lead, --repair-cpu-per-tick {_repairCpuPerTick}) at goal {p}, {at - _best.Clock(p):+0;-0} ticks against the best there";
                 // The next window gets what's left of it, on every thread.

@@ -1640,10 +1640,9 @@ namespace IGTAP.EngineSim.Cli
                 {
                     if (Better(run, _best)) { Commit(run, where + ", then re-found the later goals"); return; }
                     // Complete but slower: it gets ahead and the old inputs after that lose it again, played from a state they weren't
-                    // made for. Search on from the goal where it first falls behind the best, while that moves forward. An investment
-                    // is behind from its change on: its goals are planned again instead (FullTasAutoGoals.cs, Replan).
+                    // made for. Search on from the goal where it first falls behind the best, while that moves forward.
                     int behind = Enumerable.Range(0, Math.Min(run.Progress, _best.Progress)).FirstOrDefault(g => ScoreAt(run, g + 1) > ScoreAt(_best, g + 1), -1);
-                    if (behind > resynced && !_investing)
+                    if (behind > resynced)
                     {
                         Log($"repaired run {Describe(run)} is no better: it falls behind the best at goal {behind + 1}; re-finding from there");
                         resynced = behind;
