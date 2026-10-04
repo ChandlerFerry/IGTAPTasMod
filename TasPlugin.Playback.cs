@@ -46,6 +46,13 @@ namespace IGTAPTasMod
 
         internal static long GridTicks { get { return Instance != null ? Instance._engine.GridTicks : 0; } }
 
+        /// <summary>Ends the route a turbo run plays (TurboRunner: what it can't model), logged.</summary>
+        internal static void AbortRun(string reason)
+        {
+            Log?.LogWarning("Turbo: " + reason);
+            if (Instance != null && Instance._engine.IsRunning) Instance._engine.Abort(reason);
+        }
+
         /// <summary>Turbo's frames the run stood still in (TurboRunner's frame loop), onto the engine's count.</summary>
         internal static void CountHeldFrames(int frames)
         {

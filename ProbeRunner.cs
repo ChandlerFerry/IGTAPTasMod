@@ -274,6 +274,8 @@ namespace IGTAPTasMod
             PatchOptional(typeof(ZoneLoader), "_LoadZone", nameof(BeforeProbeZoneLoad), null);
             PatchOptional(typeof(AtomColliderSystem), "OnEnable", nameof(BeforeProbeAtomEnable), null);
             PatchOptional(typeof(AtomColliderSystem), "Start", nameof(BeforeProbeAtomStart), null);
+            PatchOptional(typeof(upgradeBox), "Start", nameof(BeforeProbeBoxStart), null);
+            PatchOptional(typeof(PlatformMover), "OnEnable", nameof(BeforeProbeMoverEnable), null);
         }
 
         // A probe's zone log (rows of kind "zone"): a zone activator's trigger (zoneChanger.OnTriggerEnter2D, which starts
@@ -291,6 +293,9 @@ namespace IGTAPTasMod
         private static void BeforeProbeZoneLoad(ZoneLoader __instance, int zoneToLoad) { ProbeZoneRow("load", __instance, zoneToLoad, null); }
         private static void BeforeProbeAtomEnable(AtomColliderSystem __instance) { ProbeZoneRow("atomEnable", __instance, 0, null); }
         private static void BeforeProbeAtomStart(AtomColliderSystem __instance) { ProbeZoneRow("atomStart", __instance, 0, null); }
+        // An upgrade box's first Start (by: what it would change, WokenStarts) and a zip mover's OnEnable (JumpToState).
+        private static void BeforeProbeBoxStart(upgradeBox __instance) { ProbeZoneRow("boxStart", __instance, 0, WokenStarts.Unmodeled(__instance, PlayerPrefs.HasKey("OpenA2Door"))); }
+        private static void BeforeProbeMoverEnable(PlatformMover __instance) { ProbeZoneRow("moverEnable", __instance, 0, null); }
 
         static void ProbeZoneRow(string what, Component at, int zone, string by)
         {

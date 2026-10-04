@@ -869,6 +869,9 @@ namespace IGTAPTasMod
         public static void WriteSnapshot(EngineSimJson json, TurboRunner.Snapshot s, Movement player, bool live)
         {
             JsonTextWriter w = json.W;
+            // A trace start can't carry Unity's half-run ZoneLoader.IE_Load: the engine would never load that zone.
+            if (!live && s.zoneLoadPending)
+                throw new InvalidOperationException("A zone load (ZoneLoader.IE_Load) is under way at the start: capture it again once the zone has loaded.");
             w.WriteStartObject();
             w.WritePropertyName("tick"); w.WriteValue(s.tick);
             w.WritePropertyName("random"); WriteRandom(json, s.random);
@@ -944,6 +947,14 @@ namespace IGTAPTasMod
                 if (s.economy.atomTimeNow is float timeNow) { w.WritePropertyName("atomTimeNow"); json.Float(timeNow); }
                 w.WritePropertyName("openA2Door"); w.WriteValue(s.economy.openA2Door);
                 WriteAtomStart(json, s.economy);
+                // The zone loaded, and what has never started (TurboRunner.NeverStarted): a run that wakes one of them runs its Start.
+                if (s.economy.scene != null) { w.WritePropertyName("activeZone"); w.WriteValue(s.economy.scene.activeZone); }
+                if (s.neverStarted != null)
+                {
+                    w.WritePropertyName("neverStarted"); w.WriteStartArray();
+                    foreach (Behaviour b in s.neverStarted) if (b != null) w.WriteValue(b.GetInstanceID());
+                    w.WriteEndArray();
+                }
                 globalStats stats = Singleton<globalStats>.Instance;
                 if (stats != null)
                 {

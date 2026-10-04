@@ -85,6 +85,9 @@ namespace IGTAPTasMod
         // FloatingOrigin.MoveOrigin, started by its LateUpdate and waiting for the next physics step (WaitForFixedUpdate).
         static IEnumerator _rebase;
         static int _tick;
+        /// <summary>The run's rendered frames so far, a held frame (a freeze's, a pause's) included: the tick's physics step is in
+        /// its first frame. A <c>yield return null</c> resumes in a later frame than the one it yielded in.</summary>
+        static int _frame;
         // Interpolation (MacroEngine.FrameGrid, as enginesim's Simulation): the body's position at the start and end of the
         // last physics step, the shortest TimeStop the tick asked for (its freeze's Update frames), and the pause menu's
         // frames a route step opens after the tick (MacroStep.pauseFrames, MacroEngine.TakePause).
@@ -121,6 +124,10 @@ namespace IGTAPTasMod
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeInvokeRepeating))));
             harmony.Patch(AccessTools.Method(typeof(MonoBehaviour), "StartCoroutine", new[] { typeof(IEnumerator) }),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeStartCoroutine))));
+            harmony.Patch(AccessTools.Method(typeof(ZoneLoader), "LoadZone"),
+                prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeLoadZone))));
+            harmony.Patch(AccessTools.Method(typeof(ZoneLoader), "_LoadZone"),
+                prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeZoneLoaded))));
             harmony.Patch(AccessTools.Method(typeof(Movement), "TimeStop"),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeTimeStop))));
             var modelDeltaTime = new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(UseModelDeltaTime)));
@@ -136,7 +143,7 @@ namespace IGTAPTasMod
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeHandleAfterimages))));
             harmony.Patch(AccessTools.Method(typeof(Movement), "HandleAfterimages"),
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeHandleAfterimages))));
-            foreach (Type drawer in StartDrawers)
+            foreach (Type drawer in StartWatched)
                 harmony.Patch(AccessTools.Method(drawer, "Start"), prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeDrawingStart))),
                     postfix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(AfterDrawingStart))));
         }
@@ -147,6 +154,16 @@ namespace IGTAPTasMod
         // RNG's sequence than 1x's. Turbo draws them at the modelled frame (StartPass) and puts UnityEngine.Random's state
         // back around Unity's later real Start (as TasPlugin.PresentationDraw does for exception 11).
         static readonly Type[] StartDrawers = { typeof(LightFlicker), typeof(RandomAnimSpeedComponent), typeof(JiggleDropScript) };
+        /// <summary>The drawers, the atom collider (its Start recomputes NP) and the upgrade boxes (WokenStarts): whose Start a woken one waits for.</summary>
+        static readonly Type[] StartWatched = StartDrawers.Concat(new[] { typeof(AtomColliderSystem), typeof(upgradeBox) }).ToArray();
+
+        /// <summary>Every watched behaviour whose Start Unity hasn't run nor a run modelled (the trace start's <c>neverStarted</c>).</summary>
+        internal static IEnumerable<Behaviour> NeverStarted()
+        {
+            foreach (Type type in StartWatched)
+                foreach (UnityEngine.Object o in UnityEngine.Object.FindObjectsByType(type, FindObjectsInactive.Include, FindObjectsSortMode.None))
+                    if (o is Behaviour b && !StartsRun.Contains(b) && !_startsModelled.Contains(b)) yield return b;
+        }
         static readonly AccessTools.FieldRef<RandomAnimSpeedComponent, bool> AnimIsBroken = AccessTools.FieldRefAccess<RandomAnimSpeedComponent, bool>("isBroken");
         /// <summary>Behaviours whose Start a run drew and Unity hasn't run yet (in snapshots: a restore before the wake undoes it).</summary>
         static HashSet<Behaviour> _startsModelled = new HashSet<Behaviour>();
@@ -169,9 +186,7 @@ namespace IGTAPTasMod
         static void CollectStartWaiting()
         {
             StartWaiting.Clear();
-            foreach (Type drawer in StartDrawers)
-                foreach (UnityEngine.Object o in UnityEngine.Object.FindObjectsByType(drawer, FindObjectsInactive.Include, FindObjectsSortMode.None))
-                    if (o is Behaviour b && !b.isActiveAndEnabled && !StartsRun.Contains(b) && !_startsModelled.Contains(b)) StartWaiting.Add(b);
+            foreach (Behaviour b in NeverStarted()) if (!b.isActiveAndEnabled) StartWaiting.Add(b);
         }
 
         /// <summary>A modelled frame's Start pass, before its Updates: each waiting behaviour now on draws what its Start draws
@@ -183,10 +198,21 @@ namespace IGTAPTasMod
                 Behaviour b = StartWaiting[i];
                 if (b == null) { StartWaiting.RemoveAt(i); continue; }
                 if (!b.isActiveAndEnabled) continue;
-                int draws = b is RandomAnimSpeedComponent anim ? (AnimIsBroken(anim) ? 3 : 2) : 1;
-                for (int d = 0; d < draws; d++) _ = UnityEngine.Random.value;
-                _startsModelled.Add(b);
                 StartWaiting.RemoveAt(i);
+                if (b is upgradeBox box)
+                {
+                    // Its real Start comes after the run: one that changes nothing a run reads is left to it.
+                    if (WokenStarts.Unmodeled(box, PlayerPrefs.HasKey("OpenA2Door")) is string why) TasPlugin.AbortRun(why);
+                    continue;
+                }
+                // AtomColliderSystem.Start (AtomColliderSystem.cs:106-109) recomputes NP; Unity's own after the run does again.
+                if (b is AtomColliderSystem) Singleton<globalStats>.Instance?.RecalcNpRewardPerTick();
+                else
+                {
+                    int draws = b is RandomAnimSpeedComponent anim ? (AnimIsBroken(anim) ? 3 : 2) : 1;
+                    for (int d = 0; d < draws; d++) _ = UnityEngine.Random.value;
+                }
+                _startsModelled.Add(b);
             }
         }
 
@@ -207,6 +233,17 @@ namespace IGTAPTasMod
         {
             if (Active && (_freezeFor < 0f || duration < _freezeFor)) _freezeFor = duration;
         }
+
+        /// <summary>A zone activator started ZoneLoader.IE_Load and its _LoadZone hasn't run yet (Unity's or a run's): a trace start
+        /// can't carry it (EngineSimExport.WriteSnapshot refuses one).</summary>
+        static bool _zoneLoadPending;
+
+        static void BeforeLoadZone(ZoneLoader __instance, int zoneToLoad, bool force)
+        {
+            if (__instance.activeZone != zoneToLoad || force) _zoneLoadPending = true;
+        }
+
+        static void BeforeZoneLoaded() { _zoneLoadPending = false; }
 
         static bool BeforeInvoke(MonoBehaviour __instance, string methodName, float time)
         {
@@ -260,6 +297,9 @@ namespace IGTAPTasMod
         /// and hands it back to Unity at the end (<see cref="HandAtomGrid"/>).
         /// </summary>
         static int _atomDue = -1;
+        /// <summary>The grid's first call is due in this frame's coroutine pass (<see cref="BeforeInvokeRepeating"/>).</summary>
+        static bool _atomNow;
+        static int AtomRepeatTicks { get { return Math.Max(1, Mathf.FloorToInt(AtomRepeat / Time.fixedDeltaTime)); } }
         /// <summary>The run started on a grid Unity ran but whose start wasn't seen (<see cref="AtomGridTicks"/> null) and nothing
         /// in it has set or cancelled the grid since: a capture or the run's end leaves it Unity's (null), not cancelled (-1).</summary>
         static bool _atomUnseen;
@@ -306,7 +346,10 @@ namespace IGTAPTasMod
         {
             if (!Active || !(__instance is AtomColliderSystem collider) || methodName != AtomCall) return true;
             _atomCollider = collider;
-            _atomDue = _tick + Mathf.FloorToInt(time / Time.fixedDeltaTime);
+            // Its 0 delay calls it in the frame's own pass (a zone load's frame, k = 2), then in the first frame of every 20th
+            // tick after (k = 0): a 1x probe of the zone 1 → 2 crossing.
+            _atomNow = time <= 0f;
+            _atomDue = _tick + Mathf.FloorToInt(time / Time.fixedDeltaTime) + (_atomNow ? AtomRepeatTicks : 0);
             _atomUnseen = false;
             return false;
         }
@@ -314,7 +357,7 @@ namespace IGTAPTasMod
         static bool BeforeCancelInvoke(MonoBehaviour __instance, string methodName)
         {
             if (!Active) return true;
-            if (__instance is AtomColliderSystem && methodName == AtomCall) { _atomDue = -1; _atomUnseen = false; }
+            if (__instance is AtomColliderSystem && methodName == AtomCall) { _atomDue = -1; _atomNow = false; _atomUnseen = false; }
             Pending.RemoveAll(p => p.target == __instance && p.method == methodName);
             return false;
         }
@@ -349,10 +392,16 @@ namespace IGTAPTasMod
             }
             // IE_BuyMax yields WaitForFixedUpdate (build 25630570): one level per physics step, from the touch's step on. A tree
             // segment's IE_Grow (its ground off while its trunks grow, its box falling in) yields WaitForEndOfFrame: once a
-            // modelled frame. One on an object off in the hierarchy is Unity's to refuse.
+            // modelled frame. A zone activator's ZoneLoader.IE_Load yields null twice, then loads the zone (_LoadZone).
             if (__instance is PlatformMover || __instance is upgradeBox && routine.GetType().Name.Contains("IE_BuyMax")
-                || __instance is TreeSegmentActivationComponent && __instance.gameObject.activeInHierarchy)
+                || __instance is TreeSegmentActivationComponent || __instance is ZoneLoader)
             {
+                // Unity refuses a coroutine on an object off in the hierarchy (it logs an error and runs none of it).
+                if (!__instance.gameObject.activeInHierarchy)
+                {
+                    __result = null;
+                    return false;
+                }
                 // A zip mover's coroutines are gameplay (MakeIntangible's 0.15 s off the Ground layer, PlayerExit's contact
                 // clear, the move itself once unlocked): they step on the run's ticks, as enginesim's Scheduler does.
                 __result = null;
@@ -391,7 +440,12 @@ namespace IGTAPTasMod
                     break;
                 case WaitForFixedUpdate _: r.wait = Wait.FixedUpdate; break;
                 case WaitForEndOfFrame _: r.wait = Wait.EndOfFrame; break;
-                case null: r.wait = Wait.Frame; break;
+                case null:
+                    // After the Updates of a later rendered frame than this one (_frame), never this one's: a load started in a
+                    // tick's physics step loads in its third frame (k = 2, a 1x probe).
+                    r.wait = Wait.Frame;
+                    r.due = _frame;
+                    break;
                 default:
                     TasPlugin.Log?.LogWarning("Turbo: " + r.target.GetType().Name + " coroutine yields " + yielded.GetType().Name + "; Unity resumes it.");
                     r.target.StartCoroutine(Continue(r.body, yielded));
@@ -404,6 +458,9 @@ namespace IGTAPTasMod
         static void Resume(Wait wait, float? frameDeltaTime = null)
         {
             if (Routines.Count == 0) return;
+            // Unity stops a coroutine when its object goes off (a buy-max box deactivated, a zone unloaded: its zip movers mid-move,
+            // a tree growing): one parked on an object off in the hierarchy never resumes.
+            Routines.RemoveAll(r => r.target == null || !r.target.gameObject.activeInHierarchy);
             Routine[] parked = Routines.ToArray();
             // As the game's player loop: a WaitForFixedUpdate resumes in the physics step (deltaTime the fixed step), the
             // others in the rendered frame that crosses the tick (a zip mover's first tween step after its WaitForSeconds).
@@ -414,10 +471,10 @@ namespace IGTAPTasMod
             {
                 foreach (Routine r in parked)
                 {
-                    if (r.wait != wait || wait == Wait.Seconds && r.due > _tick) continue;
+                    if (r.wait != wait || wait == Wait.Seconds && r.due > _tick || wait == Wait.Frame && r.due >= _frame) continue;
                     Routines.Remove(r);
-                    // Unity stops a buy-max box's coroutine when its GameObject goes off (Shop.FixedStep's check).
-                    if (r.target == null || r.target is upgradeBox && !r.target.gameObject.activeInHierarchy) continue;
+                    // One an earlier routine's step switched off (a zone load's) is stopped.
+                    if (r.target == null || !r.target.gameObject.activeInHierarchy) continue;
                     if (r.body.MoveNext()) Park(r, r.body.Current);
                 }
             }
@@ -451,7 +508,7 @@ namespace IGTAPTasMod
 
         static (MonoBehaviour target, IEnumerator body, object yielded, Wait wait, int due)[] CaptureRoutines(int next)
         {
-            return Routines.ConvertAll(r => (r.target, (IEnumerator)CloneObject(r.body), r.yielded, r.wait, r.due - next)).ToArray();
+            return Routines.ConvertAll(r => (r.target, (IEnumerator)CloneObject(r.body), r.yielded, r.wait, r.wait == Wait.Frame ? r.due - _frame : r.due - next)).ToArray();
         }
 
         static void RestoreRoutines((MonoBehaviour target, IEnumerator body, object yielded, Wait wait, int due)[] saved)
@@ -549,6 +606,10 @@ namespace IGTAPTasMod
             public Vector3? canonical;
             /// <summary>The body's position at the start and end of the last physics step (its interpolation's ends).</summary>
             public Vector2 stepFrom, stepTo;
+            /// <summary>A zone load was under way (<see cref="_zoneLoadPending"/>).</summary>
+            public bool zoneLoadPending;
+            /// <summary>For the trace start: the watched behaviours whose Start hasn't run (<see cref="NeverStarted"/>).</summary>
+            public Behaviour[] neverStarted;
         }
 
         internal sealed class Vman
@@ -625,6 +686,8 @@ namespace IGTAPTasMod
             public (TreeController tree, object[] fields)[] trees;
             public (Transform part, Vector3 local, Vector3 scale)[] treeParts;
             public (Collider2D ground, bool enabled)[] treeGrounds;
+            /// <summary>ZoneLoader.activeZone (the zone roots' on/off is in <see cref="objects"/>).</summary>
+            public int activeZone;
         }
 
         static readonly FieldInfo BreakerPlayerLight = AccessTools.Field(typeof(tripBreakerScript), "playerLight");
@@ -664,7 +727,8 @@ namespace IGTAPTasMod
                 treeParts = treeParts.ToArray(), treeGrounds = treeGrounds.ToArray(),
                 boxes = Array.ConvertAll(boxes, b => (b, b.gameObject.activeSelf, b.enabled)),
                 a1State = Singleton<globalStats>.Instance.currentA1State,
-                breakers = breakers.ToArray(), blocks = blocks.ToArray(), blueActive = swapper != null && swapper.isBlueActive };
+                breakers = breakers.ToArray(), blocks = blocks.ToArray(), blueActive = swapper != null && swapper.isBlueActive,
+                activeZone = ZoneLoaderNow()?.activeZone ?? 0 };
         }
 
         static float LightRadius(Behaviour light, string property)
@@ -672,8 +736,17 @@ namespace IGTAPTasMod
             return light == null ? 0f : (float)light.GetType().GetProperty(property).GetValue(light);
         }
 
+        static ZoneLoader ZoneLoaderNow() { return UnityEngine.Object.FindAnyObjectByType<ZoneLoader>(FindObjectsInactive.Include); }
+
         static void RestoreScene(Scene s)
         {
+            // A load Unity runs would turn zones on and off after the snapshot's are put back; a run's own is a parked routine.
+            ZoneLoader loader = ZoneLoaderNow();
+            if (loader != null)
+            {
+                loader.StopAllCoroutines();
+                loader.activeZone = s.activeZone;
+            }
             if (s.objects != null)
                 foreach (var (obj, active) in s.objects) if (obj != null && obj.activeSelf != active) obj.SetActive(active);
             foreach (var (box, active, enabled) in s.boxes)
@@ -931,7 +1004,7 @@ namespace IGTAPTasMod
                     o => (o, FieldState.Capture(o))),
                 spikes = Array.ConvertAll(UnityEngine.Object.FindObjectsByType<spikeScript>(FindObjectsInactive.Include, FindObjectsSortMode.None),
                     k => (k, SpikeCounter(k), SpikeKilled(k))),
-                routines = CaptureRoutines(next) };
+                routines = CaptureRoutines(next), zoneLoadPending = _zoneLoadPending, neverStarted = economy ? NeverStarted().ToArray() : null };
         }
 
         static readonly AccessTools.FieldRef<spikeScript, int> SpikeCounter = AccessTools.FieldRefAccess<spikeScript, int>("counter");
@@ -978,7 +1051,6 @@ namespace IGTAPTasMod
             movement.CancelInvoke();
             _startsModelled = s.startsModelled == null ? new HashSet<Behaviour>() : new HashSet<Behaviour>(s.startsModelled);
             if (s.canonical is Vector3 reference) PutCanonicalOrigin(reference); else PutOrigin(s.origin);
-            RestoreMovers(s);
             Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
             var own = new List<Collider2D>();
             body.GetAttachedColliders(own);
@@ -999,6 +1071,9 @@ namespace IGTAPTasMod
             // colliders, not the live game's: a block the last run swapped on under the player would otherwise make a fresh
             // contact (and its enter callbacks) on the first judged tick. Blocks it turns off were muted above.
             if (s.economy != null) RestoreEconomy(s.economy);
+            // After the economy: a zip mover it turns back on ran PlatformMover.OnEnable (JumpToState and its coroutine).
+            RestoreMovers(s);
+            _zoneLoadPending = s.zoneLoadPending && Routines.Any(r => r.target is ZoneLoader && r.wait == Wait.Frame);
             Physics2D.SyncTransforms();
             MuteAround(own, muted);
             SettleContacts(body, muted);
@@ -1192,7 +1267,8 @@ namespace IGTAPTasMod
             courseScript[] courses = UnityEngine.Object.FindObjectsByType<courseScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             upgradeBox[] boxes = UnityEngine.Object.FindObjectsByType<upgradeBox>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             clonesScript[] clones = UnityEngine.Object.FindObjectsByType<clonesScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            JiggleDropScript[] orbs = UnityEngine.Object.FindObjectsByType<JiggleDropScript>(FindObjectsSortMode.None);
+            // Off ones too: a zone the run loads turns its orbs on.
+            JiggleDropScript[] orbs = UnityEngine.Object.FindObjectsByType<JiggleDropScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             // Steps in 1x's Update order (instance id, lowest first; a probe: Course 2's clones before Course 3's in one frame), as
             // the engine does: two courses spawning in one frame take their fast/big rolls in that order.
             Array.Sort(clones, (a, b) => a.GetInstanceID().CompareTo(b.GetInstanceID()));
@@ -1200,6 +1276,8 @@ namespace IGTAPTasMod
             FloatingNumberScript numbers = Singleton<FloatingNumberScript>.Instance;
             bool spawnNumbers = numbers != null && numbers.ActuallySpawnText;
             Pending.Clear();
+            _frame = 0;
+            _atomNow = false;
             if (resume != null) Pending.AddRange(resume.pending);
             if (resume != null) RestoreRoutines(resume.routines);
             Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
@@ -1227,6 +1305,7 @@ namespace IGTAPTasMod
                 for (_tick = 0; _tick < maxTicks && keepRunning(); _tick++)
                 {
                     KeepWindowAlive(clock, ref keepAliveAt);
+                    _frame++;
                     for (int i = 0; i < Pending.Count; i++)
                     {
                         if (Pending[i].due > _tick) continue;
@@ -1295,6 +1374,7 @@ namespace IGTAPTasMod
                         TasPlugin.CountHeldFrames(repeats);
                         for (int repeat = repeats; repeat >= 0; repeat--)
                         {
+                            if (k > 0 || repeat < repeats) _frame++;
                             // Every frame's Start pass, before its Updates, as the engine's (README ### Rules, exception 12).
                             if (StartWaiting.Count > 0) StartPass();
                             Vector3 at = Place(player, Vector2.Lerp(_stepFrom, _stepTo, alphas[k]));
@@ -1322,11 +1402,18 @@ namespace IGTAPTasMod
                                 _atomDue += atomRepeat;
                                 if (_atomCollider != null) CallInvoked(_atomCollider, AtomCall);
                             }
+                            // The frame's yield-null resumes after its Updates (a zone load, ZoneLoader.IE_Load), then the grid's
+                            // first call when the load's OnEnable started it: InvokeRepeating's 0 delay runs in that same pass.
+                            Resume(Wait.Frame, frameDt);
+                            if (_atomNow)
+                            {
+                                _atomNow = false;
+                                if (_atomCollider != null) CallInvoked(_atomCollider, AtomCall);
+                            }
                             Resume(Wait.EndOfFrame, frameDt);
                         }
                     }
                     Place(player, _stepTo);
-                    Resume(Wait.Frame);
                     OriginFrame();
                     afterTick?.Invoke();
                 }
