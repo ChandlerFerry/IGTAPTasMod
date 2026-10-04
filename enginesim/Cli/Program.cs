@@ -169,7 +169,7 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         the tech itself seen in it), each direction with its inputs and path,\n"
                             + "                                         a line each as found: <route>-techs.jsonl\n"
                             + "  techs --demos [tech ...] [--dump dir]   each tech's check on its demos and its labs' ghosts\n"
-                            + "  techs-used <trace.json> <route.json> [--json] [--no-difficulty] [--threads T] [--tech-weight <tech>=<s>] | techs-used --demos [tech ...] [--tech-dir D]\n"
+                            + "  techs-used <trace.json> <route.json> [--json [--out F]] [--no-difficulty] [--threads T] [--tech-weight <tech>=<s>] | techs-used --demos [tech ...] [--tech-dir D]\n"
                             + "                                         the nmg and major techs a route uses (every occurrence), its spike-grace\n"
                             + "                                         ticks, difficulty (a finished route's, unless --no-difficulty) and human\n"
                             + "                                         scores (course or Full-TAS trace; a route's \"goals\" are judged instead\n"

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { runTime } from "./fulltas-solve";
+import { request } from "./studio-socket";
 
 /** A Full-TAS run class: the techs its routes may use and how its best is ranked (enginesim Glitches.RunClass). */
 export type FullTasClass = "major" | "nmg" | "human-major" | "human-nmg";
@@ -230,5 +231,68 @@ export function FullTasClasses({ run, queue, difficulty, busy, complete, onComma
         })}
       </div>
       : <p className="hint">No candidates yet: Improve with a human class keeps every complete route it judges here.</p>}
+  </div>;
+}
+
+/** A course route's classes as the engine's `techs-used --json` judges it on the course's start trace (POST
+ *  /enginesim/classes): its time (the game timer), spans, spike grace, difficulty, `humanBlock` (what ends its replay as a
+ *  human class plays it: a part tilt, a third jump press; null: human inputs) and the human scores (null: not that class). */
+type RouteClassesReply = Glitches & { finished: boolean; live: number; humanBlock: string | null; undetected: string[];
+  difficulty: DifficultyCounts | null; weights: HumanWeights; score: Record<"human-major" | "human-nmg", number | null> };
+
+/**
+ * The Optimize tab's selected course route in each class (major, nmg, human-major, human-nmg): whether it qualifies (and what
+ * keeps it out), its time or score, and its frame-perfect inputs, back-to-back pairs and spike-grace ticks. Measured offline
+ * when the route is selected, kept while its inputs and trace stand.
+ */
+export function RouteClasses({ route }: { route: { id: string; name: string; actionCount: number } | null }) {
+  const [reply, setReply] = useState<{ key: string; data?: RouteClassesReply; error?: string } | null>(null);
+  const key = route ? `${route.id}|${route.name}|${route.actionCount}` : "";
+  useEffect(() => {
+    if (!route) return;
+    let alive = true;
+    request("/enginesim/classes", { routeId: route.id })
+      .then((data: RouteClassesReply) => { if (alive) setReply({ key, data }); })
+      .catch((e: Error) => { if (alive) setReply({ key, error: e.message }); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  const r = reply?.key === key ? reply : null, d = r?.data;
+  const firstMajor = d?.spans?.find(s => s.category === "major");
+  const why = (cls: FullTasClass): string | null => {
+    if (!d) return null;
+    if (!d.finished) return "doesn't finish";
+    const human = cls.startsWith("human"), noMajor = cls.endsWith("nmg");
+    if (human && d.humanBlock) return d.humanBlock;
+    if (noMajor && d.major) return firstMajor ? `${firstMajor.tech} (major) at tick ${firstMajor.tick}${d.major > 1 ? ` · ${d.major} major spans` : ""}` : plural(d.major ?? 0, "major span");
+    return null;
+  };
+  const dc = d?.difficulty ?? null;
+  return <div className="panel ftClasses routeClasses">
+    <div className="panelTitle"><div><p className="eyebrow">CLASSES</p><h2>Selected route by class</h2></div><span className="hint">{route?.name ?? "No route selected"}</span></div>
+    {!route ? <p className="hint">Select a route above.</p>
+      : r?.error ? <p className="hint">{r.error}</p>
+      : !d ? <p className="hint">Measuring {route.name} offline: its techs, spike grace, human inputs and difficulty…</p>
+      : <>
+        <p className="hint">Score = time + {d.weights.grace} × spike-grace ticks + {d.weights.framePerfect} × frame-perfect inputs + {d.weights.backToBack} × back-to-back pairs (humanize&apos;s version of the route). Human classes: digital stick, two jump buttons.</p>
+        <div className="resultTable rcTable">
+          <div className="tableHead"><span>Class</span><span>Qualifies</span><span>Time</span><span>Score</span><span title="Inputs that work on one tick only.">Frame-perfect</span><span title="Actions fewer than 3 ticks apart however the inputs are timed inside their windows.">Back-to-back</span><span>Major</span><span>NMG</span><span>Grace</span></div>
+          {CLASSES.map(c => {
+            const no = why(c.key), human = c.key.startsWith("human"), score = human && d.finished ? d.score[c.key as "human-major" | "human-nmg"] : null;
+            return <div key={c.key} className={`tableRow ${no ? "pending" : ""} ${human ? "human" : ""}`} title={`${c.rule}
+${spansText(d)}`}>
+              <span>{c.label}</span>
+              <span className={no ? "bad" : "good"} title={no ?? undefined}>{no ? `✗ ${no}` : "✓"}</span>
+              <span>{d.live.toFixed(2)}</span>
+              <span title={human && score != null ? scoreText(d.live, d.graceTicks, dc, d.weights) : undefined}>{score == null ? "—" : score2(score)}</span>
+              <span title={dc ? `${dc.framePerfect} frame-perfect of ${plural(dc.inputs, "input")}` : undefined}>{dc ? dc.framePerfect : "—"}</span>
+              <span>{dc ? dc.backToBack : "—"}</span>
+              <span>{d.major ?? "—"}</span><span>{d.nmg ?? "—"}</span><span>{d.graceTicks ?? "—"}</span>
+            </div>;
+          })}
+        </div>
+        {!!d.spans?.length && <p className="hint">Spans: {d.spans.map(s => `${s.tech} (${s.category}) @${s.tick}`).join(" · ")}</p>}
+        {!!d.undetected?.length && <p className="hint">Not detected by any check (not counted): {d.undetected.join(", ")}</p>}
+      </>}
   </div>;
 }

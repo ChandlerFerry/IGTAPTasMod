@@ -9,13 +9,14 @@ using IGTAPTasMod;
 namespace IGTAP.EngineSim.Cli
 {
     /// <summary>
-    /// <c>techs-used &lt;trace.json&gt; &lt;route.json&gt; [--json] [--no-difficulty] [--threads T] [--tech-weight &lt;tech&gt;=&lt;s&gt;]</c>: the nmg and major techs a route uses
+    /// <c>techs-used &lt;trace.json&gt; &lt;route.json&gt; [--json [--out F]] [--no-difficulty] [--threads T] [--tech-weight &lt;tech&gt;=&lt;s&gt;]</c>: the nmg and major techs a route uses
     /// (<see cref="Glitches"/>), every occurrence, its spike-grace ticks, its difficulty (<see cref="Difficulty.Meter"/>, a finished
     /// route's, unless <c>--no-difficulty</c>) and its human scores (docs/fulltas.md "Classes"). The route replays from the
     /// trace's start as the searches play it: a course trace's to its finish, a Full-TAS trace's under its goals with strict buys
     /// (as <c>fulltas --check</c>), or under the route's own "goals" when it carries them (an adopted goal list); a Full-TAS
     /// route's spans count up to its last goal. The route file's "inputs" (a run file) or "ticks" (an offline best, a submit
-    /// body). <c>--json</c>: one line, what the plugin's gate reads.
+    /// body). A finished course route is replayed again as a human class plays it (<c>humanBlock</c>: what ends that replay, its
+    /// human scores none then). <c>--json</c>: one line, what the plugin's gate reads (<c>--out F</c>: to F instead).
     /// <c>techs-used --demos [tech ...] [--tech-dir D]</c>: the same on every tech's demos (<c>techs --demos</c>' runs): an nmg or
     /// major tech's demo must show its own tech, a glitchless tech's no nmg or major span.
     /// </summary>
@@ -25,7 +26,7 @@ namespace IGTAP.EngineSim.Cli
         {
             if (args.FirstOrDefault() == "--demos") return Demos(args.Skip(1).ToArray());
             if (args.Length < 2 || args[0].StartsWith("--", StringComparison.Ordinal) || args[1].StartsWith("--", StringComparison.Ordinal))
-                throw new ArgumentException("usage: techs-used <trace.json> <route.json> [--json] [--no-difficulty] [--threads T] [--tech-weight <tech>=<s>] | techs-used --demos [tech ...] [--tech-dir D]");
+                throw new ArgumentException("usage: techs-used <trace.json> <route.json> [--json [--out F]] [--no-difficulty] [--threads T] [--tech-weight <tech>=<s>] | techs-used --demos [tech ...] [--tech-dir D]");
             string tracePath = args[0], routePath = args[1];
             var (header, labels, inputs) = Load(tracePath, routePath, "techs-used");
             bool fullTas = labels != null;
@@ -53,20 +54,33 @@ namespace IGTAP.EngineSim.Cli
                 using (var meter = new Difficulty.Meter(tracePath, header, labels, Solve.Option(args, "--threads", Environment.ProcessorCount)))
                     tally = meter.Measure(Path.GetFileName(routePath), inputs);
             float difficultySeconds = tally is Difficulty.Tally t ? weights.DifficultySeconds(t.FramePerfect, t.BackToBack) : 0f;
-            float humanMajor = live + report.Penalty(weights) + difficultySeconds;
+            // A course route's human inputs (a Full-TAS run's gate replays under them already): replayed again as a human class
+            // plays it, digital stick and two jump buttons (MacroEngine.HumanClass); what ends that replay, null when it finishes.
+            string humanBlock = null;
+            if (!fullTas && finished)
+            {
+                sim.Engine.HumanClass = true;
+                RunResult human = sim.Run(inputs, null, null, 400);
+                sim.Engine.HumanClass = false;
+                if (!human.Finished) humanBlock = human.EndReason ?? "the human replay doesn't finish";
+            }
+            float? humanMajor = humanBlock != null ? (float?)null : live + report.Penalty(weights) + difficultySeconds;
             float? humanNmg = report.Major > 0 ? (float?)null : humanMajor;
 
             if (args.Contains("--json"))
             {
-                Console.WriteLine(JsonSerializer.Serialize(new
+                string json = JsonSerializer.Serialize(new
                 {
-                    finished, progress, goals = goalCount, live,
+                    finished, progress, goals = goalCount, live, humanBlock,
                     spans = report.Spans.Select(s => new { tech = s.Tech, category = s.Category, tick = s.Tick, physics = s.Physics }),
                     major = report.Major, nmg = report.Nmg, graceTicks = report.GraceTicks, undetected = report.Undetected,
                     difficulty = tally?.Json,
                     weights = new { grace = weights.Grace, framePerfect = weights.FramePerfect, backToBack = weights.BackToBack, techs = weights.Techs },
                     score = new Dictionary<string, float?> { ["human-major"] = humanMajor, ["human-nmg"] = humanNmg },
-                }));
+                });
+                string outPath = Solve.Option(args, "--out", (string)null);
+                if (outPath != null) File.WriteAllText(outPath, json);
+                else Console.WriteLine(json);
                 return 0;
             }
             string S(float v) => v.ToString("0.0000", CultureInfo.InvariantCulture);
@@ -79,9 +93,11 @@ namespace IGTAP.EngineSim.Cli
             Console.WriteLine("undetected nmg/major techs: " + (report.Undetected.Count == 0 ? "none" : string.Join(", ", report.Undetected)));
             Console.WriteLine("difficulty: " + (tally is Difficulty.Tally d ? $"{d}, {S(difficultySeconds)} s"
                 : finished ? "not measured (--no-difficulty)" : "none (not finished)"));
+            if (!fullTas && finished) Console.WriteLine("human inputs: " + (humanBlock ?? "ok (digital stick, two jump buttons)"));
             Console.WriteLine($"score (weights grace {weights.Grace}, frame-perfect {weights.FramePerfect}, back-to-back {weights.BackToBack}"
-                + (weights.Techs.Count > 0 ? ", " + weights.TechsText : "") + $"): human-major {S(humanMajor)} s, human-nmg "
-                + (humanNmg == null ? "- (a major span)" : S(humanNmg.Value) + " s"));
+                + (weights.Techs.Count > 0 ? ", " + weights.TechsText : "") + "): human-major "
+                + (humanMajor == null ? "- (not human inputs)" : S(humanMajor.Value) + " s") + ", human-nmg "
+                + (humanNmg == null ? humanMajor == null ? "-" : "- (a major span)" : S(humanNmg.Value) + " s"));
             return 0;
         }
 

@@ -1542,7 +1542,10 @@ pillar and rising, none (the KB wall clip window the session had taken there, in
 `techs-used <trace.json> <route.json> [--json] [--no-difficulty] [--tech-weight <tech>=<s>]` lists every occurrence of an nmg or major tech in a route
 (`Glitches.Classify` over its recorded steps: a tech's own check asked again after each hit, else every span of its
 detector), its spike-grace ticks, its difficulty (a finished route's, `Difficulty.Meter`) and its human scores, for a course
-or a Full-TAS trace; `--json` is the one line the plugin's gate reads for the Full-TAS classes. `--tech-weight <tech>=<s>`
+or a Full-TAS trace; `--json` is the one line the plugin's gate reads for the Full-TAS classes (`--out F` writes it to F).
+A finished course route is replayed again under the human classes' inputs (`MacroEngine.HumanClass`: digital stick, two
+jump buttons): `humanBlock` says what ends that replay, and its human scores are null then. The Optimize tab's class card
+(`/api/enginesim/classes {routeId}`) runs it on the selected course route. `--tech-weight <tech>=<s>`
 prices a tech's spans at its own seconds, a glitchless tech's included, as `fulltas --tech-weight` does
 ([docs/fulltas.md](../docs/fulltas.md#classes)). `techs-used --demos [tech ...]` checks the demos: an nmg or major tech's demo shows its own
 tech, a glitchless tech's no nmg or major span ([docs/fulltas.md](../docs/fulltas.md#classes)).

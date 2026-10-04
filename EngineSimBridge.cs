@@ -34,6 +34,8 @@ namespace IGTAPTasMod
                 return EngineSimGhost(request, body);
             if (request.Path == "/api/enginesim/slack")
                 return EngineSimSlack(request, body);
+            if (request.Path == "/api/enginesim/classes")
+                return EngineSimClasses(request, body);
             if (request.Path == "/api/enginesim/ultras")
                 return EngineSimUltras(request, body);
             if (request.Path == "/api/enginesim/play")
@@ -264,6 +266,47 @@ namespace IGTAPTasMod
             }
             request.StatusCode = 404;
             return new { ok = false, error = "No slack report for " + name + " yet: humanize writes one next to every best." };
+        }
+
+        // The Optimize tab's class card: a course route's `techs-used --json` on its course trace (README ### Rules 54's classes:
+        // its nmg and major spans, spike grace, difficulty, human inputs and scores). Read-only; kept per route while its
+        // inputs and the trace stand.
+        object EngineSimClasses(WebStudioRequest request, JObject body)
+        {
+            MacroDefinition route = _library.macros.Find(m => m.id == Text(body, "routeId"));
+            Match category = route == null ? Match.Empty : MatchRoutePrefix(route.name);
+            CourseDef course = route == null ? null : CourseOfRoute(route.name);
+            if (!category.Success || course == null || !string.IsNullOrEmpty(route.savestateId) || !route.steps.All(s => s.type == MacroStepType.RawInput))
+            {
+                request.StatusCode = 404;
+                return new { ok = false, error = "Classes need a course route (<course>_<CAT>, raw input, no savestate)." };
+            }
+            string caps = CapsOf(category.Groups["label"].Value).Id;
+            string trace = CourseTrace(course, caps);
+            if (trace == null)
+            {
+                request.StatusCode = 404;
+                return new { ok = false, error = "No start trace for " + course.Token + "_" + CapsOf(caps).Label + " yet: run Improve once." };
+            }
+            if (string.IsNullOrEmpty(EngineSimExe) || !File.Exists(EngineSimExe))
+            {
+                request.StatusCode = 409;
+                return new { ok = false, error = "The offline engine isn't built." };
+            }
+            string stem = Path.Combine(EngineSimDir, "classes-" + SafeId(route.id)), input = stem + "-in.json", output = stem + ".json";
+            if (MapInFlight(output)) return RunEngineSimMap(request, null, output);
+            string ticks = JsonConvert.SerializeObject(new { name = route.name, ticks = ToTicks(route.steps) });
+            if (File.Exists(output) && File.Exists(input) && File.ReadAllText(input) == ticks && File.GetLastWriteTimeUtc(output) >= File.GetLastWriteTimeUtc(trace))
+            {
+                request.AsyncHandling = true;
+                request.Response = File.ReadAllText(output);
+                request.Completed.Set();
+                return null;
+            }
+            File.Delete(output);
+            File.WriteAllText(input, ticks);
+            int threads = Math.Max(1, Environment.ProcessorCount - 4);
+            return RunEngineSimMap(request, "techs-used " + Quote(trace) + " " + Quote(input) + " --json --out " + Quote(output) + " --threads " + threads, output);
         }
 
         IEnumerable<(string path, Match match)> OfflineBestFiles(int course, string caps, Regex pattern)

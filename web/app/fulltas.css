@@ -36,6 +36,11 @@
 .ftClassTable .tableRow { padding-top: 7px; padding-bottom: 7px; }
 .ftClassTable .tableRow.pending { color: var(--muted); }
 .ftClassTable .tableRow.human > span:first-child { color: var(--human); font-weight: 700; }
+.rcTable .tableHead, .rcTable .tableRow { grid-template-columns: minmax(0,1fr) minmax(0,2fr) 70px 70px 100px 100px 52px 52px 52px; align-items: center; }
+.rcTable .tableRow > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rcTable .good { color: var(--green); }
+.rcTable .bad { color: var(--red); }
+.rcTable .tableRow.human > span:first-child { color: var(--human); font-weight: 700; }
 .ftRowButtons { display: flex; gap: 6px; justify-content: flex-end; }
 .ftRowButtons button { padding: 5px 10px; }
 .ftQueue { display: flex; gap: 12px; align-items: center; margin-top: 14px; padding: 12px 14px; border-radius: 8px; background: #1d1430; box-shadow: inset 3px 0 0 var(--human); }
