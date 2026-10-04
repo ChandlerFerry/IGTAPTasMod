@@ -10,6 +10,7 @@ using UnityEngine;
 using Caps = IGTAPTasMod.Caps;
 using FullTasGoal = IGTAPTasMod.FullTasGoal;
 using EconomyPlanResult = IGTAP.EngineSim.Cli.PlanResult;
+using PlanStep = IGTAP.EngineSim.Cli.Step;
 
 namespace IGTAP.EngineSim.Cli
 {
@@ -75,6 +76,11 @@ namespace IGTAP.EngineSim.Cli
     /// (every one must buy: a strict buy has its Cash on arrival), then Finish a tick. Target: the plan's last buy. Stand: the
     /// target's last resort (no lap from the place to earn on): its buy retried a tick at a time until the Cash is there.</summary>
     sealed record PlanOption(Step Step, string End, string[] Buys, string Finish, bool Target, string[] Goals, string[] Estimated = null, bool Stand = false);
+
+    /// <summary>fulltas-plan's search: its targets (the last the plan's end, the ones before bought first), the bonus reward boxes
+    /// a plan may take, and --mode, --beam, --max-states, --minutes (as seconds), --dominance levels, --only and --stand.</summary>
+    sealed record PlanSettings(string[] Targets, string[] Bonuses, string Mode = "auto", int Width = EconomyPlan.DefaultWidth, int MaxStates = 200000,
+        double Seconds = 1800, bool Levels = false, ISet<string> Only = null, string Stand = null);
 
     /// <summary>
     /// fulltas-plan (docs/fulltas.md, "Economy planner"): the fastest schedule of laps, record laps, buys, bonuses and quick
@@ -751,7 +757,12 @@ namespace IGTAP.EngineSim.Cli
             for (int i = c + 1; c >= 0 && i < args.Length && !args[i].StartsWith("--", StringComparison.Ordinal); i++) compares.Add(args[i]);
             // --skip-free: only the --compare orders (one process per order runs them side by side).
             bool skipFree = args.Contains("--skip-free");
-            FullTasGoal GoalOf(string label) => _runGoals.Goals.FirstOrDefault(g => g.label == label) ?? NewGoal(label)?.goal;
+            // The trace's goals, not the tracker's (realize tracks the goals it played), each label resolved once: NewGoal restores
+            // the start to find a reward box, which mid-search would leave the economy at the start.
+            FullTasGoal[] traceGoals = _runGoals.Goals;
+            var resolved = new Dictionary<string, FullTasGoal>();
+            FullTasGoal GoalOf(string label) => resolved.TryGetValue(label, out FullTasGoal g) ? g
+                : resolved[label] = traceGoals.FirstOrDefault(x => x.label == label) ?? NewGoal(label)?.goal;
             foreach (string b in bonuses.Concat(targets))
                 if (GoalOf(b) == null) throw new ArgumentException($"{b}: no such goal (a box token of FullTasGoal.Boxes, or a bonus of courses.json)");
 
@@ -770,37 +781,16 @@ namespace IGTAP.EngineSim.Cli
             Log($"plan from goal {kept} {place} (tick {_best.GoalPhysics[kept - 1]}) to {string.Join(", then ", targets)} (the best's: tick {bestTick}); bonuses {string.Join(" ", bonuses)}; "
                 + $"{moves.Count} moves");
 
-            double seconds = Solve.Option(args, "--minutes", 30.0) * 60;
             // --mode exact: Dijkstra (proven under the state key); beam: the beam of --beam W; auto: exact, then the beam where
             // the exact search is capped. --stand on|off: the target stands at its box for its last Cash (default: the beam's on).
             string mode = Solve.Option(args, "--mode", "auto");
             if (mode != "exact" && mode != "beam" && mode != "auto") throw new ArgumentException("--mode wants exact, beam or auto");
-            int width = Solve.Option(args, "--beam", EconomyPlan.DefaultWidth);
-            string standArg = Solve.Option<string>(args, "--stand", null);
-            EconomyPlanResult Plan(IReadOnlyList<string> prefix)
-            {
-                if (mode != "beam")
-                {
-                    EconomyPlanResult exact = EconomyPlan.Search(_eval, at, moves, place, targets, bonuses, maxStates, GoalOf, seconds, prefix, Log, levels, only,
-                        standAtTarget: standArg == "on");
-                    // A --compare step that doesn't play stops the beam too.
-                    if (mode == "exact" || exact.Proven || exact.PrefixFailed) return exact;
-                    string exactWhy = exact.Why;
-                    Log($"plan: the exact search isn't proven ({exactWhy}); the beam of {width}");
-                    EconomyPlanResult then = EconomyPlan.Search(_eval, at, moves, place, targets, bonuses, maxStates, GoalOf, seconds, prefix, Log, levels, only,
-                        width, standArg != "off");
-                    // The better of the two: the capped search's completion stands when the beam is no sooner.
-                    if (exact.Done && (!then.Done || exact.Tick <= then.Tick))
-                    {
-                        exact.Why += $"; the beam of {width}: " + (then.Done ? $"tick {then.Tick}" : then.Why);
-                        return exact;
-                    }
-                    then.Why = "exact " + exactWhy + "; " + then.Why;
-                    return then;
-                }
-                return EconomyPlan.Search(_eval, at, moves, place, targets, bonuses, maxStates, GoalOf, seconds, prefix, Log, levels, only,
-                    width, standArg != "off");
-            }
+            var settings = new PlanSettings(targets, bonuses, mode, Solve.Option(args, "--beam", EconomyPlan.DefaultWidth), maxStates,
+                Solve.Option(args, "--minutes", 30.0) * 60, levels, only, Solve.Option<string>(args, "--stand", null));
+            EconomyPlanResult Plan(IReadOnlyList<string> prefix) => PlanFrom(at, place, prefix, moves, settings, GoalOf);
+            // --join FILE: no search; a route --realize wrote (its goals and inputs through the target) joined to the best's way on again.
+            string joinFile = Solve.Option<string>(args, "--join", null);
+            if (joinFile != null) return JoinAgain(args, joinFile, kept, targetGoal - 1, outFile);
             EconomyPlanResult free = skipFree ? new EconomyPlanResult { Why = "--skip-free" } : Plan(null);
             if (!skipFree) EconomyPlan.Print("free search", free);
             var rows = new List<(string name, EconomyPlanResult plan)>();
@@ -834,7 +824,338 @@ namespace IGTAP.EngineSim.Cli
                 }, new JsonSerializerOptions { WriteIndented = true }));
                 Log("plan -> " + outFile);
             }
-            return rows.All(r => r.plan.Done) ? 0 : 3;
+            if (!args.Contains("--realize")) return rows.All(r => r.plan.Done) ? 0 : 3;
+            return RealizeRows(args, rows, kept, targetGoal - 1, place, moves, movesFile, settings, GoalOf, outFile);
+        }
+
+        /// <summary>
+        /// fulltas-plan --realize: each plan printed above played with the loop builder from the best's real state at its start
+        /// (<see cref="Realize"/>; a --compare order's steps kept first through every re-plan), the best's way on after the target
+        /// joined (<see cref="Join"/>); the moves it measured saved (fulltas/&lt;run&gt;.moves.json or --moves), a table of what
+        /// each plan said and what its build did, the fastest whole route's goal list in --out (`goals`, with every realization's
+        /// steps under `realized`) and its route in --route (as the solver saves a run's best, fulltas/&lt;run&gt;.json).
+        /// </summary>
+        int RealizeRows(string[] args, List<(string name, EconomyPlanResult plan)> rows, int kept, int targetIndex, string place, MoveTable moves, string movesFile,
+            PlanSettings settings, Func<string, FullTasGoal> goalOf, string outFile)
+        {
+            if (targetIndex < 0) throw new ArgumentException("the target is no goal of the run after --from: realize joins the best's way on after it");
+            foreach (string path in _seedFiles) _seeds.Add(ReadSeed(path));
+            _planBase = _runGoals;
+            FullTasGoal[] all = _runGoals.Goals;
+            var (start, route) = BuildFrom(all, kept, targetIndex);
+            long startTick = _best.GoalPhysics[kept - 1];
+            var realized = new List<(string name, Realization z, Route run, string[] goals)>();
+            foreach (var (name, plan) in rows)
+            {
+                IReadOnlyList<string> prefix = name == "free search" ? null : EconomyPlan.StepIds(name);
+                Log($"realize {name}: from goal {kept} {place} on tick {startTick}");
+                Realization z = Realize(plan, start, route, startTick, place, prefix, moves, (s, p, pre) => PlanFrom(s, p, pre, moves, settings, goalOf), goalOf);
+                moves.Save(movesFile);
+                var (run, goals) = z.Done ? Join(z.Planned, z.Inputs, all, kept, targetIndex) : (null, null);
+                realized.Add((name, z, run, goals ?? all.Take(kept).Concat(z.Planned).Select(g => g.label).ToArray()));
+            }
+            string best = targetIndex < _best.Progress ? _best.GoalPhysics[targetIndex].ToString(CultureInfo.InvariantCulture) : "-";
+            Console.WriteLine();
+            Console.WriteLine($"{"order (then searched on)",-48} {"plan per round",-28} {"built",6} {"whole route",12}");
+            Console.WriteLine($"{"the best's own",-48} {"",-28} {best,6} {_best.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture) + " s",12}");
+            foreach (var (name, z, run, _) in realized)
+                Console.WriteLine($"{name,-48} {string.Join(" > ", z.PlanTicks),-28} {(z.Done ? z.Tick.ToString(CultureInfo.InvariantCulture) : "-"),6} "
+                    + $"{(run != null && run.Progress == run.GoalInput.Length ? run.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture) + " s" : run == null ? "-" : $"goal {run.Progress}"),12}"
+                    + (z.Why == null ? "" : "  (" + z.Why + ")"));
+            var whole = realized.Where(r => r.run != null && r.run.Progress == r.run.GoalInput.Length).OrderBy(r => r.run.Live).FirstOrDefault();
+            if (outFile != null)
+            {
+                var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(outFile)).AsObject();
+                json["goals"] = whole.z == null ? null : System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(whole.goals));
+                json["realized"] = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(realized.Select(r => new
+                {
+                    r.name, done = r.z.Done, why = r.z.Why, rounds = r.z.Rounds, planTicks = r.z.PlanTicks, tick = r.z.Done ? r.z.Tick : -1,
+                    live = r.run != null && r.run.Progress == r.run.GoalInput.Length ? Math.Round(r.run.LiveSeconds, 2) : (double?)null,
+                    r.goals, steps = r.z.Log,
+                })));
+                File.WriteAllText(outFile, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+                Log("realize -> " + outFile);
+            }
+            // With no whole route, the one that gets furthest (its goals so far, total -1): the next stretch is planned or solved from it.
+            string routeFile = Solve.Option<string>(args, "--route", null);
+            var written = whole.run != null ? whole : realized.Where(r => r.run != null).OrderByDescending(r => r.run.Progress).ThenBy(r => r.z.Tick).FirstOrDefault();
+            if (routeFile != null && written.run != null)
+            {
+                Route r = written.run;
+                string[] goals = written.goals;
+                File.WriteAllText(routeFile, JsonSerializer.Serialize(new { name = _name, goals, inputs = r.Inputs.Select(t => t.ToJson()),
+                    goalInputTicks = r.GoalInput, goalPhysicsTicks = r.GoalPhysics, total = r.Progress == goals.Length ? r.GoalPhysics[goals.Length - 1] : -1 }));
+                Log($"realize: {written.name}'s route " + (r.Progress == goals.Length ? $"({r.LiveSeconds:0.00} s live)" : $"(to goal {r.Progress} of {goals.Length})") + " -> " + routeFile);
+            }
+            return realized.All(r => r.z.Done) ? 0 : 3;
+        }
+
+        /// <summary>
+        /// fulltas-plan --join FILE: the realized stretch of a route file --realize wrote (its goals after --from through the target,
+        /// and its inputs to the target) joined to the best's way on after the target again (<see cref="Join"/>), written as --route
+        /// writes; for a join that changed (bridges, stray fits) without realizing the plan again.
+        /// </summary>
+        int JoinAgain(string[] args, string file, int kept, int targetIndex, string outFile)
+        {
+            if (targetIndex < 0) throw new ArgumentException("the target is no goal of the run after --from");
+            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(file));
+            string[] labels = doc.RootElement.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
+            long[] goalInput = doc.RootElement.GetProperty("goalInputTicks").EnumerateArray().Select(t => t.GetInt64()).ToArray();
+            List<InputTick> inputs = Solve.ReadInputs(doc.RootElement);
+            string target = _labels[targetIndex];
+            int end = Array.IndexOf(labels, target, kept);
+            if (end < 0 || end >= goalInput.Length || goalInput[end] < 0) throw new ArgumentException($"{file} doesn't reach {target} after goal {kept}");
+            foreach (string path in _seedFiles) _seeds.Add(ReadSeed(path));
+            _planBase = _runGoals;
+            FullTasGoal[] all = _runGoals.Goals;
+            BuildFrom(all, kept, targetIndex);
+            FullTasGoal GoalOf(string label) => all.FirstOrDefault(g => g.label == label) ?? NewGoal(label)?.goal ?? throw new ArgumentException($"{file}: no goal {label}");
+            List<FullTasGoal> planned = labels.Skip(kept).Take(end + 1 - kept).Select(GoalOf).ToList();
+            var (run, goals) = Join(planned, inputs.Take((int)Math.Min(inputs.Count, goalInput[end] + 2)).ToList(), all, kept, targetIndex);
+            Console.WriteLine($"joined: {run.Progress} of {goals.Length} goals" + (run.Progress == goals.Length ? $", {run.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)} s live ({run.Last} ticks)" : $": {run.EndReason}"));
+            string routeFile = Solve.Option<string>(args, "--route", null);
+            if (routeFile != null)
+                File.WriteAllText(routeFile, JsonSerializer.Serialize(new { name = _name, goals, inputs = run.Inputs.Select(t => t.ToJson()),
+                    goalInputTicks = run.GoalInput, goalPhysicsTicks = run.GoalPhysics, total = run.Progress == goals.Length ? run.GoalPhysics[goals.Length - 1] : -1 }));
+            if (outFile != null) File.WriteAllText(outFile, JsonSerializer.Serialize(new { run = _name, goals, live = run.Progress == goals.Length ? Math.Round(run.LiveSeconds, 2) : (double?)null },
+                new JsonSerializerOptions { WriteIndented = true }));
+            return run.Progress == goals.Length ? 0 : 3;
+        }
+
+        /// <summary>The search from a state (<paramref name="start"/>, at <paramref name="place"/>), per the settings' mode: exact
+        /// (Dijkstra), beam, or auto (exact, then the beam when it is capped, the sooner plan kept).</summary>
+        EconomyPlanResult PlanFrom(SimSnapshot start, string place, IReadOnlyList<string> prefix, MoveTable moves, PlanSettings ps, Func<string, FullTasGoal> goalOf)
+        {
+            EconomyPlanResult Search(int width, bool stand) => EconomyPlan.Search(_eval, start, moves, place, ps.Targets, ps.Bonuses, ps.MaxStates, goalOf, ps.Seconds,
+                prefix, Log, ps.Levels, ps.Only, width, stand);
+            if (ps.Mode == "beam") return Search(ps.Width, ps.Stand != "off");
+            EconomyPlanResult exact = Search(0, ps.Stand == "on");
+            // A --compare step that doesn't play stops the beam too.
+            if (ps.Mode == "exact" || exact.Proven || exact.PrefixFailed) return exact;
+            string exactWhy = exact.Why;
+            Log($"plan: the exact search isn't proven ({exactWhy}); the beam of {ps.Width}");
+            EconomyPlanResult then = Search(ps.Width, ps.Stand != "off");
+            // The better of the two: the capped search's completion stands when the beam is no sooner.
+            if (exact.Done && (!then.Done || exact.Tick <= then.Tick))
+            {
+                exact.Why += $"; the beam of {ps.Width}: " + (then.Done ? $"tick {then.Tick}" : then.Why);
+                return exact;
+            }
+            then.Why = "exact " + exactWhy + "; " + then.Why;
+            return then;
+        }
+
+        /// <summary>What <see cref="Realize"/> built: the goals played after the plan's start, the route and state after them and the
+        /// physics tick there (the target's when done), else where and why it stopped; the re-plans made and each round's plan's
+        /// target tick; per step played, what the plan said and what the build did.</summary>
+        sealed class Realization
+        {
+            public bool Done;
+            public string Why;
+            public readonly List<FullTasGoal> Planned = new List<FullTasGoal>();
+            public List<InputTick> Inputs;
+            public SimSnapshot State;
+            public long Tick;
+            public int Rounds;
+            public readonly List<long> PlanTicks = new List<long>();
+            public readonly List<object> Log = new List<object>();
+        }
+
+        /// <summary>Realize plans again at most this many times; a step built more than OffTicks from its plan's tick is planned again from.</summary>
+        const int MaxRounds = 3, OffTicks = 10;
+        /// <summary>The target's wait for its last Cash (the plan's stand) is at most this many ticks.</summary>
+        const int TargetWait = 3000;
+
+        /// <summary>
+        /// Plays an economy plan with the loop builder from a real state (<paramref name="at"/>, after <paramref name="route"/>, on
+        /// physics tick <paramref name="tick"/> at <paramref name="place"/>), never a drive's. Each step is played the builder's way:
+        /// a lap with Lap, a record lap with RecordLap (a lap on the record's path once it is set; Lap where none plays), a buy, a
+        /// reward and the target with Play (the library's pieces, the best's own ways, a piece search when the Cash is there). A
+        /// quick restart step is played with the step after it: where a restart lands is the checkpoint's, and the builder's pieces
+        /// take their own restarts (after a pad, onto a lap, before a record lap). Every step played is measured into
+        /// <paramref name="moves"/> with the unlocks it started with: its place before (before any restart it took in) to its end, a
+        /// lap's or record lap's walk to the gate, a lap's course run, a record lap's new best time. When a step ends more than
+        /// OffTicks from the plan's tick for it, or doesn't play (a strict buy strays, the Cash isn't there on arrival, no way), the
+        /// rest is planned again from the build's real state on the measured moves (<paramref name="replan"/>: its place, and the
+        /// <paramref name="prefix"/> steps not played yet), at most MaxRounds times; after that the plan plays on as it is, and a step
+        /// that doesn't play stops it. The target short of Cash waits where the step before left the player (the plan's stand),
+        /// then takes the builder's way to its box.
+        /// </summary>
+        Realization Realize(EconomyPlanResult plan, SimSnapshot at, List<InputTick> route, long tick, string place, IReadOnlyList<string> prefix, MoveTable moves,
+            Func<SimSnapshot, string, IReadOnlyList<string>, EconomyPlanResult> replan, Func<string, FullTasGoal> goalOf)
+        {
+            var z = new Realization { Inputs = route.ToList(), State = at, Tick = tick };
+            var pending = (prefix ?? Array.Empty<string>()).ToList();
+            var restarts = new List<PlanStep>();
+            string from = place;
+            int i = 0;
+            z.PlanTicks.Add(plan.Done ? plan.Tick : -1);
+            if (!plan.Done) { z.Why = "the plan isn't done: " + plan.Why; return z; }
+            Log($"realize: round 0, the plan's target on tick {plan.Tick}");
+            bool Again(string why)
+            {
+                if (z.Rounds == MaxRounds) return false;
+                z.Rounds++;
+                var list = _kept.Concat(z.Planned).ToList();
+                Track(list);
+                EconomyPlanResult next = replan(z.State.WithGoal(Fresh(list.Count, list.Count)), from, pending);
+                z.PlanTicks.Add(next.Done ? next.Tick : -1);
+                Log($"realize: round {z.Rounds}, planned again from {from} on tick {z.Tick} ({why}): " + (next.Done ? $"the target on tick {next.Tick}" : "no plan (" + next.Why + ")"));
+                z.Log.Add(new { round = z.Rounds, from, tick = z.Tick, why, plan = next.Done ? next.Tick : -1, estimated = next.Estimated });
+                if (!next.Done) { z.Why = $"round {z.Rounds}: no plan from {from} on tick {z.Tick} ({next.Why})"; return false; }
+                plan = next;
+                i = 0;
+                restarts.Clear();
+                return true;
+            }
+            while (z.Why == null)
+            {
+                if (i >= plan.Steps.Length) { z.Why = "the plan's steps ran out before its target"; break; }
+                PlanStep s = plan.Steps[i];
+                if (s.Kind == "restart")
+                {
+                    // A quick restart lands at the checkpoint the run last touched: one that lands at the plan's landing is played
+                    // (the steps after it measured from there), else the builder takes its own with the step after it.
+                    PlanStep then = plan.Steps.Skip(i + 1).FirstOrDefault(x => x.Kind != "restart");
+                    string first = then == null ? null : then.Kind == "lap" || then.Kind == "record" ? "start:" + then.Arg.Substring(then.Arg.IndexOf(':') + 1)
+                        : then.Arg.Split(MoveTable.SetJoin)[0];
+                    Read(z.State);
+                    string restartCaps = PlayerCaps.Of(_eval).Id;
+                    if (first != null && Restarted(z, s.Arg, goalOf(first), moves) is { } r)
+                    {
+                        int pad = r.pre.Count - 1;
+                        moves.Measured(new Move(from, s.Arg, pad, "measured", false), restartCaps);
+                        Log($"realize: restart {s.Arg} from {from}: planned {s.Ticks} ticks to {plan.Ends[i]}, lands there after {pad} idle ticks, on tick {z.Tick + pad}");
+                        z.Log.Add(new { round = z.Rounds, kind = s.Kind, step = s.Arg, from, planTicks = s.Ticks, plan = plan.Ends[i], ticks = pad, built = z.Tick + pad });
+                        z.Inputs = z.Inputs.Concat(r.pre).ToList();
+                        z.State = r.state;
+                        z.Tick += pad;
+                        from = s.Arg;
+                        restarts.Clear();
+                    }
+                    else restarts.Add(s);
+                    if (pending.Count > 0 && pending[0] == s.Arg) pending.RemoveAt(0);
+                    i++;
+                    continue;
+                }
+                Read(z.State);
+                string caps = PlayerCaps.Of(_eval).Id;
+                int course = s.Kind == "lap" || s.Kind == "record" ? int.Parse(s.Arg.Substring(s.Arg.IndexOf(':') + 1), CultureInfo.InvariantCulture) : 0;
+                float record = course > 0 ? BestPath(z.State, course) : 0f;
+                _playedTicks = null;
+                var played = PlayStep(s, z, goalOf, out FullTasGoal[] goals);
+                long planEnd = plan.Ends[i];
+                int planTicks = s.Ticks + restarts.Sum(r => r.Ticks);
+                string[] froms = restarts.Select(r => r.Arg).Prepend(from).ToArray();
+                string[] estimated = plan.Estimated.Where(e => froms.Any(f => e.StartsWith(f + " -> " + s.Arg + " [", StringComparison.Ordinal))
+                    || e.StartsWith(s.Arg + "'s course timer", StringComparison.Ordinal)).ToArray();
+                if (played == null)
+                {
+                    string why = $"{s.Kind} {s.Arg} from {from} on tick {z.Tick} doesn't play ({_whyNot})";
+                    Log("realize: " + why);
+                    z.Log.Add(new { round = z.Rounds, kind = s.Kind, step = s.Arg, from, planTicks, plan = planEnd, built = -1L, why, estimated });
+                    if (!Again(why)) z.Why ??= why;
+                    continue;
+                }
+                var (inputs, state, end) = played.Value;
+                int ticks = (int)(end - z.Tick);
+                moves.Measured(new Move(from, s.Arg, ticks, "measured", false), caps);
+                if (course > 0 && _playedTicks?.Length > 0 && _playedTicks[0] > z.Tick)
+                {
+                    moves.Measured(new Move(from, "start:" + course, (int)(_playedTicks[0] - z.Tick), "measured", false), caps);
+                    if (s.Kind == "lap" && _playedTicks.Length == 2) moves.Measured(new Move("start:" + course, "finish:" + course, (int)(_playedTicks[1] - _playedTicks[0]), "measured", false), caps);
+                }
+                float after = course > 0 ? BestPath(state, course) : 0f;
+                if (s.Kind == "record" && after < record) moves.Measured(new Move("start:" + course, "record:" + course, (int)Math.Round(after / _dt), "measured", false), caps);
+                z.Inputs = inputs;
+                z.State = state;
+                z.Planned.AddRange(goals);
+                double cash = Cash(state);
+                long off = end - planEnd;
+                Log($"realize: {s.Kind} {s.Arg} from {from}: planned {planTicks} ticks to {planEnd} ({plan.Cash[i]:0} Cash), built {ticks} to {end} ({cash:0} Cash), {off:+0;-0}"
+                    + (s.Kind == "record" ? $"; best time {record:0.00}s -> {after:0.00}s" : "") + (estimated.Length > 0 ? "; estimated: " + string.Join("; ", estimated) : ""));
+                z.Log.Add(new { round = z.Rounds, kind = s.Kind, step = s.Arg, from, planTicks, plan = planEnd, planCash = plan.Cash[i], ticks, built = end, cash, off, estimated });
+                if (pending.Count > 0 && pending[0] == s.Arg) pending.RemoveAt(0);
+                z.Tick = end;
+                from = course > 0 ? "finish:" + course : s.Arg.Split(MoveTable.SetJoin)[^1];
+                restarts.Clear();
+                i++;
+                if (s.Kind == "target") { z.Done = true; break; }
+                if (Math.Abs(off) > OffTicks) Again($"built {off:+0;-0} ticks off the plan");
+            }
+            return z;
+        }
+
+        /// <summary>A quick restart from the realization's state (the shortest pad the builder allows, Restarts; <paramref name="next"/>
+        /// the goal the step after it heads for) when it lands at <paramref name="landing"/> (a movement table place, within its
+        /// reach); null when it lands elsewhere.</summary>
+        (List<InputTick> pre, SimSnapshot state)? Restarted(Realization z, string landing, FullTasGoal next, MoveTable moves)
+        {
+            if (next == null || !moves.Places.TryGetValue(landing, out Place p)) return null;
+            var list = _kept.Concat(z.Planned).Append(next).ToList();
+            Track(list);
+            foreach (var (pre, state) in Restarts(z.State.WithGoal(Fresh(list.Count, list.Count - 1)), z.Inputs, list.Count - 1).Take(1))
+            {
+                var (at, _) = Where(state);
+                return Math.Abs(at.x - p.X) <= MoveTable.PlaceReach && Math.Abs(at.y - p.Y) <= MoveTable.PlaceReach ? (pre, state) : null;
+            }
+            return null;
+        }
+
+        /// <summary>One plan step played with the builder from the realization's state (<see cref="Realize"/>); null when no way
+        /// plays (_whyNot says where).</summary>
+        (List<InputTick> inputs, SimSnapshot state, long tick)? PlayStep(PlanStep s, Realization z, Func<string, FullTasGoal> goalOf, out FullTasGoal[] goals)
+        {
+            _whyNot = null;
+            if (s.Kind == "lap" || s.Kind == "record")
+            {
+                int n = int.Parse(s.Arg.Substring(s.Arg.IndexOf(':') + 1), CultureInfo.InvariantCulture);
+                goals = new[] { goalOf("start:" + n), goalOf("finish:" + n) };
+                // A record lap's way may skip the gate's own piece (a restart onto the course): no walk to the gate to measure.
+                if (s.Kind == "record" && RecordLap(z.State, z.Inputs, z.Planned, goals, n, improve: false) is var (ri, rs, rt)) { _playedTicks = null; return (ri, rs, rt); }
+                if (s.Kind == "record") Log($"realize: {s.Arg}: no record lap plays from here (the saved course routes, --seed); a lap instead");
+                return Lap(z.State, z.Inputs, z.Planned, goals);
+            }
+            goals = s.Arg.Split(MoveTable.SetJoin).Select(goalOf).ToArray();
+            string[] boxes = goals.SelectMany(g => g.boxes ?? Array.Empty<string>()).ToArray();
+            bool? affordable = boxes.Length == 0 ? true : Affordable(z.State, boxes);
+            var played = Play(z.State, z.Inputs, z.Planned, goals, affordable == true);
+            if (played != null || affordable != false) return played;
+            if (s.Kind != "target") { _whyNot += ", short of Cash"; return null; }
+            return Waited(z, goals, s.Ticks);
+        }
+
+        /// <summary>The target short of Cash on arrival (the plan's stand): the fewest idle ticks where the step before left the
+        /// player (5 at a time from the first standing pays for it less the walk, <paramref name="walk"/>), after which the builder's
+        /// way buys it.</summary>
+        (List<InputTick> inputs, SimSnapshot state, long tick)? Waited(Realization z, FullTasGoal[] goals, int walk)
+        {
+            var list = _kept.Concat(z.Planned).ToList();
+            Track(list.Concat(goals).ToList());
+            SimSnapshot here = z.State.WithGoal(Fresh(_goals, list.Count));
+            string[] boxes = goals.SelectMany(g => g.boxes ?? Array.Empty<string>()).ToArray();
+            List<InputTick> Idle(int n) => Enumerable.Repeat(new InputTick(), n).ToList();
+            int paid = -1;
+            for (int w = 25; w <= TargetWait && paid < 0; w += 25)
+            {
+                Track(list.Concat(goals).ToList());
+                SimSnapshot s = AdvanceFrom(here, z.Inputs.Count, Idle(w));
+                if (s == null) break;
+                if (Affordable(s, boxes) == true) paid = w;
+            }
+            if (paid < 0) { _whyNot = $"{goals[^1].label}: short of Cash after {TargetWait} ticks standing"; return null; }
+            for (int w = Math.Max(0, paid - walk); w <= paid; w += 5)
+            {
+                Track(list.Concat(goals).ToList());
+                SimSnapshot s = w == 0 ? here : AdvanceFrom(here, z.Inputs.Count, Idle(w));
+                if (s == null) continue;
+                var played = Play(s, z.Inputs.Concat(Idle(w)).ToList(), z.Planned, goals, w == paid);
+                if (played == null) continue;
+                Log($"realize: {goals[^1].label} waited {w} ticks for its Cash");
+                return played;
+            }
+            _whyNot = $"{goals[^1].label}: no way buys it after waiting {Math.Max(0, paid - walk)}-{paid} ticks";
+            return null;
         }
     }
 }

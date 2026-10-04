@@ -43,7 +43,6 @@ namespace IGTAP.EngineSim.Cli
                     case "fulltas": return FullTas.Run(args.Skip(1).ToArray());
                     case "macros": return FullTasAutoMacros.Command(args.Skip(1).ToArray());
                     case "fulltas-plan": return EconomyPlan.Run(args.Skip(1).ToArray());
-                    case "fulltas-plan-greedy": return FullTas.Plan(args.Skip(1).ToArray());
                     case "plan-selftest": return EconomyPlanCheck.Run();
                     case "fulltas-buytable": return FullTas.BuyTable(args.Skip(1).ToArray());
                     case "zip-plan": return ZipPlan.Run(args.Skip(1).ToArray());
@@ -197,7 +196,7 @@ namespace IGTAP.EngineSim.Cli
                             + "          [--piece-minutes p] [--seed <file>]... [--seed-list <file>] [--no-submit] [--fresh] [--unsolved] [--goal N]\n"
                             + "          [--reset-study] [--lookahead N] [--rng N] [--log-json file] [--no-tech-grafts] [--graft-rate r]\n"
                             + "          [--class major|nmg|human-major|human-nmg] [--tag T] [--tech-weight <tech>=<s>]\n"
-                            + "          | --check <route.json> [--chain-vs <old route.json>] | --waste-audit <route.json> [--expect a-b,..] [--clean kind:a-b,..]\n"
+                            + "          | --check <route.json> [--goals FILE] [--chain-vs <old route.json>] | --waste-audit <route.json> [--expect a-b,..] [--clean kind:a-b,..]\n"
                             + "          | --auto [--parallel K] [--probe-minutes p] [--repair-minutes r] [--repair-cpu-per-tick c] [--repair-slack T] [--ref <route.json>]...\n"
                             + "                   [--parts LIST] [--library-runs R] [--focus a-b] [--tail-minutes t]\n"
                             + "                   [--combine-repair-minutes m]\n"
@@ -227,19 +226,19 @@ namespace IGTAP.EngineSim.Cli
                             + "  fulltas-plan <trace.json> --from <goal> --target <buy:box>[,<buy:box>] [--bonuses bonus1,...] [--buytable FILE] [--moves FILE]\n"
                             + "               [--max-states N] [--minutes M] [--dominance key|levels] [--only ids] [--out file]\n"
                             + "               [--mode exact|beam|auto] [--beam W] [--stand on|off] [--compare \"order\" ...] [--skip-free]\n"
+                            + "               [--realize [--route file] [--seed-list file] [--piece-minutes p]]\n"
                             + "                                         the economy planner (docs/fulltas.md \"Economy planner\"): Dijkstra over\n"
                             + "                                         schedules of laps, record laps, buys, bonuses and quick restarts from the\n"
                             + "                                         best's state at goal <goal> to the target buy, on the engine's own economy\n"
                             + "                                         (driven without the player) and the movement table's ticks; --compare plays\n"
                             + "                                         each order (steps joined by commas) exactly, then searches on; --mode beam:\n"
                             + "                                         at most W states (200) per 10 ticks of plan, ranked by tick and income, for\n"
-                            + "                                         far targets (not proven optimal); auto (default): exact, the beam if capped\n"
+                            + "                                         far targets (not proven optimal); auto (default): exact, the beam if capped;\n"
+                            + "                                         --realize plays each plan with the loop builder from the best's real state,\n"
+                            + "                                         measures every move (fulltas/<run>.moves.json), re-plans when the build is\n"
+                            + "                                         over 10 ticks off (3 rounds), joins the best's way on; --out the goals, --route\n"
+                            + "                                         the fastest whole route\n"
                             + "  plan-selftest                          the planner on a toy economy against a brute force over every order\n"
-                            + "  fulltas-plan-greedy <trace.json> --from <goal> --target <buy:box>[,<buy:box>] [--out file] [--route file] [--piece-minutes p] [--group-buys]\n"
-                            + "                                         plans the buys and laps after goal <goal> (number or label) up to the\n"
-                            + "                                         target buy, playing each choice from the saved best (pieces, the game's\n"
-                            + "                                         economy; a,b: a first; --group-buys: also two boxes on one walk);\n"
-                            + "                                         prints the goals, --out writes the whole goal list, --route the route (fulltas/<run>.json)\n"
                             + "  fulltas-buytable <trace.json> --from <goal> [--until <goal>] [--out file] [--max-set N] [--entry-minutes m] [--techniques walk,jump,dash] [--targets ids]\n"
                             + "                                         the measured time-to-buy table: per place the run stands at in the goal span\n"
                             + "                                         (its start, the course's start/restart/finish spots, each box), the ticks to buy\n"

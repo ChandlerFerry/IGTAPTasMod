@@ -1437,7 +1437,7 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// Economy change, then reroute: the fastest ladders that played through (their goals fitted to their strays) but don't beat
-        /// the best get the goals from the ladder up to the next unlock buy planned again on their route by the engine farm planner
+        /// the best get the goals from the ladder up to the next unlock buy planned again on their route by the economy planner
         /// (<see cref="Replan"/>, joined: the plan, the old way on after the target, the waits re-timed from the start). A planned run
         /// that beats the best is adopted as a goals edit. So are the furthest ladders whose old way on dies or stalls at an unlock
         /// buy past the ladder (FalseEnding-Any%'s walk to buy:buystatue, "Player death at action N", after its levels were fitted):
@@ -1473,10 +1473,8 @@ namespace IGTAP.EngineSim.Cli
                 }
                 if (target == null || TimeUp) continue;
                 PlanResult p;
-                _planTickCap = best.Last;
                 try { p = Replan(on, GoalsOf(e.Labels), kept, new[] { target }, true); }
                 catch (Exception ex) { Log($"auto goals: reroute of {e.Text}: {ex.GetBaseException().Message}"); continue; }
-                finally { _planTickCap = long.MaxValue; }
                 Route r = p.Run;
                 bool complete = r != null && r.Progress == p.Goals.Length;
                 Log($"auto goals: reroute of {e.Text}: goals {kept + 1}.. to {target} planned again ({p.Planned?.Length ?? 0} goals): "

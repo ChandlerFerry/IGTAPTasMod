@@ -75,7 +75,7 @@ namespace IGTAP.EngineSim.Cli
         readonly double _minutes, _windowMinutes, _stallMinutes;
         /// <summary>--piece-minutes: a piece search's budget (the buy table's runs set it to their --entry-minutes).</summary>
         double _pieceMinutes;
-        readonly bool _submit, _fresh, _groupBuys, _resetStudy;
+        readonly bool _submit, _fresh, _resetStudy;
         /// <summary>--lookahead N: a polish or repair window searches on N goals past its own and is scored there (arrival at the
         /// goal after next), so a way that reaches its own goal later but faster, and gains after it, is found and kept.</summary>
         readonly int _lookahead;
@@ -153,7 +153,6 @@ namespace IGTAP.EngineSim.Cli
             _fresh = args.Contains("--fresh");
             _unsolved = args.Contains("--unsolved");
             _onlyGoal = Solve.Option(args, "--goal", 0);
-            _groupBuys = args.Contains("--group-buys");
             _resetStudy = args.Contains("--reset-study");
             _lookahead = Math.Max(0, Solve.Option(args, "--lookahead", 0));
             _rng = Solve.Option(args, "--rng", 0);
@@ -202,8 +201,8 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// --check &lt;route.json&gt;: replays a route (a run file's "inputs" or an offline best's "ticks") from the trace's start under
-        /// the trace's goals and prints each goal's input and physics tick, where the replay ended and why. Searches and writes
+        /// --check &lt;route.json&gt; [--goals FILE]: replays a route (a run file's "inputs" or an offline best's "ticks") from the trace's
+        /// start under the trace's goals (or FILE's "goals") and prints each goal's input and physics tick, where the replay ended and why. Searches and writes
         /// nothing: a quick look at an old or foreign route before seeding a solve with it.
         /// </summary>
         int Check(string file)
@@ -221,6 +220,19 @@ namespace IGTAP.EngineSim.Cli
             _eval.Purchased = path => bought.Add($"{path} (tick {_eval.Engine.PhysicsTicks}, input {_eval.Engine.RunTicks})");
             _origin = _eval.Start;
             _dt = _eval.World.FixedDeltaTime;
+            // --goals FILE: under the goal list a JSON file's "goals" holds (fulltas-plan --out, a route file), not the trace's.
+            string goalsFile = Solve.Option<string>(_args, "--goals", null);
+            if (goalsFile != null)
+            {
+                string[] labels = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(goalsFile))["goals"].AsArray().Select(g => g.GetValue<string>()).ToArray();
+                FullTasTracker trace = _eval.Goals;
+                _goals = labels.Length;
+                _origin = _origin.WithGoal(Fresh(_goals, 0));
+                FullTasGoal[] list = labels.Select(l => trace.Goals.FirstOrDefault(g => g.label == l) ?? NewGoal(l)?.goal
+                    ?? throw new ArgumentException($"--goals {goalsFile}: no goal {l}")).ToArray();
+                _eval.UseGoals(trace.For(list));
+                _labels = labels;
+            }
             List<InputTick> inputs = global::IGTAP.EngineSim.Cli.Plan.ReadRoute(file);
             Route r = Evaluate(inputs);
             long last = 0;

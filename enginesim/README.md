@@ -58,8 +58,9 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
 - Full-TAS (`docs/fulltas.md`): `POST /api/enginesim/trace {fulltas: <run>}` writes `fulltas-<run>.json` from the fresh
   new game (a `"start": "vman"` run: the Vman speedrun's world) with the run's goals in the header (`fulltas.goals`);
   `IGTAP.EngineSim fulltas <trace>` searches the whole run in windows of goals and sends complete, faster runs to
-  `POST /api/fulltas/submit`. `fulltas <trace> --check <route.json>` only replays a route (a run file's `inputs` or an
-  offline best's `ticks`) and prints each goal's physics and input tick, its live time and held frames (dash freezes,
+  `POST /api/fulltas/submit`. `fulltas <trace> --check <route.json> [--goals FILE]` only replays a route (a run file's
+  `inputs` or an offline best's `ticks`; under the goal list FILE's `goals` holds, a `fulltas-plan --out` or a route
+  file, instead of the trace's) and prints each goal's physics and input tick, its live time and held frames (dash freezes,
   pauses; a Full-TAS run's time is live time, README `### Rules` 31), and how it ended. `fulltas <trace> --class
   nmg|human-major|human-nmg [--tag T]` solves one of the run's other bests, ranked by what it uses (its own run file
   `fulltas/<run>.<class>[.<T>].json` and human candidates: [docs/fulltas.md](../docs/fulltas.md#classes)).
@@ -849,9 +850,11 @@ with atoms landing and crafting; the first atom box's buy) and `t7-c10-afterA` (
 the best's goal-to-goal splits from `reward:bonus1` to the first `buy:buyclone2` after it is a move of source `best`
 with the fewest ticks the best took between those two goals with those unlocks; an economy buy the best waited for in
 its box ends its move at the arrival (shown before and after); a pair nothing measured comes back estimated, the
-straight line at the unlocks' top path speed where no chain of measured moves reaches it, and `Targets` offers it; one two
+walkable distance (`DistanceField`, never under the straight line) at the unlocks' top path speed where no chain of
+measured moves reaches it, and `Targets` offers it; Course 1's finish to Course 2's gate with the wall jump is such a
+pair, its estimate longer than the straight line's; one two
 measured moves chain to is an estimate no longer than the two legs; a pair the buy table's search missed has no
-estimate with those unlocks and with more only a chain (no straight line); a straight line is never under a measured
+estimate with those unlocks and with more only a chain (no walk); a walk is never under a measured
 move to there from a spot of the same place (a made-up table when the real one has none); a restart landing nothing showed from a place is
 neither estimated nor a target, and `Restarts` lists the best's own; a buy table entry and the best's split of the same
 pair give the fewer ticks; the buy table's reward box and lap entries (`fulltas-buytable --targets`) are moves to

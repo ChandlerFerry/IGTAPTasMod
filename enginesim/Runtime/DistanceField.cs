@@ -263,9 +263,37 @@ namespace IGTAP.EngineSim
             _region++;
         }
 
-        Field Build(int version, int key, List<Rect> boxes)
+        /// <summary>
+        /// The walkable distance to <paramref name="to"/> from each of <paramref name="from"/> (capture frame): one field flooded
+        /// from a point at <paramref name="to"/> over a region of its own covering them all (the guide's region and cached fields
+        /// are left as they are), the avoid boxes as walls; infinite where the field never reached. The economy planner's movement
+        /// table estimates a move nothing measured with it (MoveTable's walk).
+        /// </summary>
+        public float[] To(CapturePos to, IReadOnlyList<CapturePos> from)
         {
-            float x0 = _x0 - Margin, y0 = _y0 - Margin, x1 = _x1 + Margin, y1 = _y1 + Margin;
+            var boxes = new List<Rect> { new Rect(to.x - 1f, to.y - 1f, 2f, 2f) };
+            float x0 = to.x, y0 = to.y, x1 = to.x, y1 = to.y;
+            foreach (CapturePos f in from)
+            {
+                x0 = Math.Min(x0, f.x); y0 = Math.Min(y0, f.y);
+                x1 = Math.Max(x1, f.x); y1 = Math.Max(y1, f.y);
+            }
+            int version = Version();
+            lock (_gate)
+            {
+                Field field = Build(version, int.MinValue, boxes, (x0, y0, x1, y1));
+                LastCell = field.Cell;
+                return from.Select(f => At(field, f.AsVector2())).ToArray();
+            }
+        }
+
+        /// <summary>The cell <see cref="To"/>'s last field was built with (a region past MaxCells coarsens it).</summary>
+        public float LastCell { get; private set; }
+
+        Field Build(int version, int key, List<Rect> boxes, (float x0, float y0, float x1, float y1)? region = null)
+        {
+            var (rx0, ry0, rx1, ry1) = region ?? (_x0, _y0, _x1, _y1);
+            float x0 = rx0 - Margin, y0 = ry0 - Margin, x1 = rx1 + Margin, y1 = ry1 + Margin;
             float cell = CellSize;
             int w = Math.Max(1, Mathf.CeilToInt((x1 - x0) / cell)), h = Math.Max(1, Mathf.CeilToInt((y1 - y0) / cell));
             if ((long)w * h > MaxCells)

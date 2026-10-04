@@ -627,6 +627,78 @@ namespace IGTAP.EngineSim.Cli
             };
         }
 
+        // The studio's 280 fps clock renders 5.6 frames a physics tick; a clone in flight runs its path and 1.5 frames more on average
+        // before its slot refills (clonesScript, builds 25630570 and 25640326: income / ideal = 1 - 1.5 / (T fps), C:\tmp\igtap\clonesim.py).
+        const double FramesPerTick = IGTAPTasMod.MacroEngine.PlaybackFrameRate * 0.02, CloneLifeFrames = 1.5;
+
+        /// <summary>A clone's payout on course c: reward x the clone multiplier x the competition boost x (2 bigness + 1), its size
+        /// rolled as SpawnClone rolls it, averaged.</summary>
+        static double ClonePay(Simulation sim, courseScript c)
+        {
+            Economy e = sim.Shop.Economy;
+            if (e == null) return 0;
+            double mult = 0.1 + e.GlobalOf(globalStats.globalUpgradeSet.cloneMult) * 0.2 + e.LocalOf(c.localUpgradesScript, localUpgrades.localUpgradeSet.cloneMult) * 0.1;
+            return c.reward * mult * (c.compBoostTimeLeft > 0.0 ? c.compBoostBonus : 1.0) * Rolls(e, c).size;
+        }
+
+        /// <summary>
+        /// SpawnClone's speed and size rolls averaged: E[2j + 1] (a payout's size) and E[(2j + 1) (1 + 0.35 i) 0.75^j] (payouts a path
+        /// time, the speed counted). Each tier i is reached while Random.Range(0, 101) stays under chance / (1 + i) and 50 + 5 cap.
+        /// </summary>
+        static (double size, double income) Rolls(Economy e, courseScript c)
+        {
+            double[] Tiers(double chance, double cap)
+            {
+                var p = new List<double>();
+                double reach = 1.0;
+                for (int i = 0; i < 1.0 + cap; i++)
+                {
+                    double under = Math.Min(chance / (1.0 + i), 50.0 + cap * 5.0), pass = Enumerable.Range(0, 101).Count(k => k < under) / 101.0;
+                    p.Add(reach * (1 - pass));
+                    reach *= pass;
+                }
+                p.Add(reach);
+                return p.ToArray();
+            }
+            localUpgrades l = c.localUpgradesScript;
+            double[] fast = Tiers(e.LocalOf(l, localUpgrades.localUpgradeSet.fastCloneChance) * 5.0 + e.GlobalOf(globalStats.globalUpgradeSet.fastCloneChance) * 8.0,
+                e.GlobalOf(globalStats.globalUpgradeSet.maxCloneFastness));
+            double[] big = Tiers(e.LocalOf(l, localUpgrades.localUpgradeSet.bigCloneChance) * 5.0 + e.GlobalOf(globalStats.globalUpgradeSet.bigCloneChance) * 8.0,
+                e.GlobalOf(globalStats.globalUpgradeSet.maxCloneBigness));
+            double size = 0, income = 0;
+            for (int i = 0; i < fast.Length; i++)
+                for (int j = 0; j < big.Length; j++)
+                {
+                    size += fast[i] * big[j] * (2 * j + 1);
+                    income += fast[i] * big[j] * (2 * j + 1) * (1 + 0.35 * i) * Math.Pow(0.75, j);
+                }
+            return (size, income);
+        }
+
+        /// <summary>
+        /// The clones' Cash per physics tick by formula, every course with clones and a path (build 25640326). On screen a full pool
+        /// banks its spawn timer, so every slot refills the frame after its clone pays, so min(C, path frames) clones fly and each pays once a path: C pay / path, less
+        /// 1.5 frames a lap. Off screen a course pays ceil(pay C / path) (the rolls' speed counted) once its timer reaches 1 s:
+        /// every 50 ticks.
+        /// </summary>
+        internal static double CloneIncome(Simulation sim)
+        {
+            Economy e = sim.Shop.Economy;
+            if (e == null) return 0;
+            double dt = sim.World.FixedDeltaTime, w = 0;
+            foreach (object[] row in e.CloneStates())
+            {
+                int number = (int)row[0], count = (int)row[1];
+                float path = (float)row[2];
+                courseScript c = sim.Courses.FirstOrDefault(x => x.courseNumber == number);
+                if (c == null || path <= 0.1f) continue;
+                double pay = ClonePay(sim, c) / Rolls(e, c).size * Rolls(e, c).income, ticks = path / dt;
+                w += (bool)row[3] ? Math.Min(count, ticks * FramesPerTick) * pay / ticks * (1 - CloneLifeFrames / (ticks * FramesPerTick))
+                    : Math.Ceiling(pay * count / path) * dt;
+            }
+            return w;
+        }
+
         /// <summary>
         /// Replays inputs from the start on the loop's simulation, filing every goal touch and chain point, and adds the run to the
         /// library (once per input list). Returns the replay as a Route. Without the library (`--parts` without `lib`): the plain replay.

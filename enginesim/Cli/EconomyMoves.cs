@@ -70,13 +70,19 @@ namespace IGTAP.EngineSim.Cli
         readonly HashSet<(string from, string to, string caps)> _misses = new HashSet<(string, string, string)>();
         /// <summary>The best's goal stops (0: the run's start), from the replay Load built the table on.</summary>
         List<FullTas.Stop> _goals;
+        /// <summary>The walkable distance (world units) to a place from each of these places (FullTas.WalkField: the engine's
+        /// DistanceField, the run's avoid boxes as walls; infinite: no way); null for a table not built on a run (the straight
+        /// line then).</summary>
+        internal Func<Place, IReadOnlyList<Place>, double[]> Walk;
+        /// <summary>Per target place, the walkable distance from each place (<see cref="Walk"/>, asked once per target).</summary>
+        readonly Dictionary<string, Dictionary<string, double>> _walks = new Dictionary<string, Dictionary<string, double>>();
 
         public IReadOnlyDictionary<string, Place> Places => _places;
         public int Count => _moves.Count;
 
         public static MoveTable Load(FullTas run, string buyTableFile, string routesFile, FullTas.Route best, string movesFile = null)
         {
-            var table = new MoveTable();
+            var table = new MoveTable { Walk = run.WalkField() };
             var (stops, speeds) = run.BestStops(best);
             foreach (var v in speeds) table._speeds[v.Key] = v.Value;
             table.AddBest(stops);
@@ -214,10 +220,12 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>An estimate's ticks, -1 when it can't be made: a stored move as it is; a box set as its boxes in order; a lap or
         /// record as the walk to its gate and the course's known run; a restart landing never; else stored moves chained
-        /// (<see cref="Chain"/>), else the straight line between the two places at the unlocks' top path speed (a lower bound
-        /// that walls can make far too short: a chain of played legs is a way the run can go), never under the fewest measured
-        /// ticks to there from a spot of the same place (<see cref="Floor"/>). A pair the buy table's search found no way for
-        /// (<see cref="Missed"/>) has no estimate with those unlocks, and no straight line with more (only a chain).</summary>
+        /// (<see cref="Chain"/>), else the walkable distance between the two places (<see cref="Walk"/>: through the level's free
+        /// space, the run's avoid boxes as walls; the straight line on a table with no run, never less than it) at the unlocks'
+        /// top path speed (a lower bound: air counts as walkable, so a climb is its height; a chain of played legs is a way the
+        /// run can go), none where the walk finds no way, never under the fewest measured ticks to there from a spot of the same
+        /// place (<see cref="Floor"/>). A pair the buy table's search found no way for (<see cref="Missed"/>) has no estimate with
+        /// those unlocks, and no walk with more (only a chain).</summary>
         int Guess(string from, string to, string caps)
         {
             if (_moves.TryGetValue((from, to, caps), out Move m)) return m.Ticks;
@@ -250,7 +258,26 @@ namespace IGTAP.EngineSim.Cli
             if (chain >= 0) return chain;
             if (missed == false) return -1;
             if (!_places.TryGetValue(from, out Place a) || !_places.TryGetValue(to, out Place b) || !_speeds.TryGetValue(caps, out double v) || v <= 0) return -1;
-            return Math.Max((int)Math.Ceiling(Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y)) / v), Floor(from, to, caps));
+            double walked = Walked(a, b);
+            if (double.IsPositiveInfinity(walked)) return -1;
+            return Math.Max((int)Math.Ceiling(walked / v), Floor(from, to, caps));
+        }
+
+        /// <summary>The walkable distance from a to b (<see cref="Walk"/>), never under the straight line; the straight line on a
+        /// table with no run; infinite where the walk finds no way.</summary>
+        internal double Walked(Place a, Place b)
+        {
+            double line = Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y));
+            if (Walk == null) return line;
+            if (!_walks.TryGetValue(b.Id, out Dictionary<string, double> to) || !to.ContainsKey(a.Id))
+            {
+                List<Place> all = _places.Values.ToList();
+                double[] d = Walk(b, all);
+                _walks[b.Id] = to = new Dictionary<string, double>();
+                for (int i = 0; i < all.Count; i++) to[all[i].Id] = d[i];
+            }
+            double walk = to[a.Id];
+            return double.IsNaN(walk) ? line : Math.Max(line, walk);
         }
 
         /// <summary>The buy table searched from here to there and found no way (technique `miss`): true with these very unlocks,
@@ -476,6 +503,23 @@ namespace IGTAP.EngineSim.Cli
         internal string BuyTableFile => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(_trace)), "fulltas", _name + ".buytable.json");
         internal string MovesFile => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(_trace)), "fulltas", _name + ".moves.json");
 
+        /// <summary>The movement table's walk (MoveTable.Walk): the engine's DistanceField of this run's simulation (the geometry
+        /// as it stands when asked), the run's avoid boxes for the target place's goal as walls (forced-paths.json, as `--auto`'s
+        /// lower bound sets them), from each place to the target, in world units.</summary>
+        internal Func<Place, IReadOnlyList<Place>, double[]> WalkField()
+        {
+            bool logged = false;
+            return (to, from) =>
+            {
+                DistanceField field = DistanceField.For(_eval);
+                field.SetAvoid(Solve.FullTasPaths(_name, new[] { to.Id }, _labels).Avoid);
+                CapturePos At(Place p) => _eval.ToCapture(new WorldPos((float)p.X, (float)p.Y));
+                float[] d = field.To(At(to), from.Select(At).ToList());
+                if (!logged) { logged = true; Log($"moves: walkable distances on a {field.LastCell:0.#} u grid ({from.Count} places)"); }
+                return d.Select(x => (double)x).ToArray();
+            };
+        }
+
         /// <summary>Where the best stood: the run's start, each goal it reached and each quick restart's landing, with the unlocks it
         /// held there. Tick: where the next move starts, the goal's physics tick, or a landing's: the count when the reset input is
         /// played (it takes no physics tick: the buy table's press and land are one tick), X, Y one tick later. Arrive: where a move
@@ -613,19 +657,34 @@ namespace IGTAP.EngineSim.Cli
                     + $"(the box touched with its cooldown over on tick {Arrive(w)}, bought on {Tick(w)}); the table's {Describe(m)}, the pair's fewest {fewest}");
             }
 
-            // A pair nothing measured and no chain of measured moves reaches: the straight line at the top path speed, and Targets
-            // offers it.
+            // A pair nothing measured and no chain of measured moves reaches: the walkable distance at the top path speed, and
+            // Targets offers it.
             string from = "reward:bonus1", at = table.CapsAtGoal(k1);
+            double Line(Place a, Place b) => Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y));
             Place here = table.Places[from];
             List<string> targets = table.Targets(from, at).ToList();
             Place there = table.Places.Values.Where(p => p.Id != from && (p.Kind == "box" || p.Kind == "at") && table.Best(from, p.Id, at)?.Estimated == true
                 && table.Chain(from, p.Id, at) < 0).OrderBy(p => p.Id, StringComparer.Ordinal).First();
             Move guess = table.Best(from, there.Id, at);
             double speed = table.Speed(at);
-            int expect = (int)Math.Ceiling(Math.Sqrt((here.X - there.X) * (here.X - there.X) + (here.Y - there.Y) * (here.Y - there.Y)) / speed);
-            Check(guess.Source == "estimate" && guess.Ticks == expect,
-                $"{from} -> {there.Id} [{at}] unmeasured: {Describe(guess)}, straight line at {speed:0.00} u/tick {expect}");
+            double walked = table.Walked(here, there);
+            int expect = Math.Max((int)Math.Ceiling(walked / speed), table.Floor(from, there.Id, at));
+            Check(guess.Source == "estimate" && guess.Ticks == expect && walked >= Line(here, there),
+                $"{from} -> {there.Id} [{at}] unmeasured: {Describe(guess)}, walkable {walked:0} u (straight line {Line(here, there):0}) at {speed:0.00} u/tick {expect}");
             Check(targets.Contains(there.Id), $"Targets({from}) offers it, among {targets.Count} ({targets.Count(t => table.Best(from, t, at).Estimated)} estimated)");
+            // Ruling W: Course 1's finish to Course 2's gate with the wall jump has no measured way or chain; its estimate is the walk
+            // around the walls between them, longer than the straight line the planner took before (114 ticks).
+            string c1 = "finish:1", c2 = "start:2", wj = table.Places.Values.Select(p => p.Caps).FirstOrDefault(c => c == "wj") ?? at;
+            if (!table.Places.ContainsKey(c1) || !table.Places.ContainsKey(c2)) Console.WriteLine($"SKIP no {c1} or {c2} place");
+            else
+            {
+                Move m = table.Best(c1, c2, wj);
+                Place a = table.Places[c1], b = table.Places[c2];
+                double around = table.Walked(a, b);
+                int line = (int)Math.Ceiling(Line(a, b) / table.Speed(wj));
+                Check(m != null && m.Estimated && table.Chain(c1, c2, wj) < 0 && m.Ticks == Math.Max((int)Math.Ceiling(around / table.Speed(wj)), table.Floor(c1, c2, wj)) && m.Ticks > line,
+                    $"{c1} -> {c2} [{wj}] unmeasured: {Describe(m)}, walkable {around:0} u against the straight line's {Line(a, b):0} u ({line} ticks)");
+            }
             // One that two measured moves chain to (a -> b -> c, a -> c unmeasured): an estimate no longer than the two legs.
             var chained = table.Places.Keys.SelectMany(a => table.Targets(a, at).Where(b => table.Places.ContainsKey(b) && table.Best(a, b, at) is Move ab && !ab.Estimated)
                 .SelectMany(b => table.Targets(b, at).Where(c => c != a && table.Places.ContainsKey(c) && table.Best(b, c, at) is Move bc && !bc.Estimated && table.Best(a, c, at)?.Estimated == true)
