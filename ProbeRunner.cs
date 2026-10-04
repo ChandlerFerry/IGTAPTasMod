@@ -26,6 +26,8 @@ namespace IGTAPTasMod
         {
             public string name, route, savestateId, file;
             public long captureAt = -1;
+            /// <summary>The first physics tick logged (a long run's last stretch).</summary>
+            public long logFrom;
             public string capturedSavestateId;
             /// <summary>The playback's frame rate (<see cref="PacePlayback"/>; unset: MacroEngine.PlaybackFrameRate, the rate turbo and enginesim model).</summary>
             public int fps;
@@ -81,7 +83,7 @@ namespace IGTAPTasMod
                     FieldInfo[] fields = body["fields"] is JArray names ? names.Select(n => AccessTools.Field(typeof(Movement), (string)n)
                         ?? throw new InvalidOperationException("Movement has no field " + n + ".")).ToArray() : new FieldInfo[0];
                     _probe = new ProbeRun { name = name, route = route, savestateId = savestateId, ticks = ticks, fields = fields, tech = tech,
-                        captureAt = body["captureAt"] == null ? -1 : (long)body["captureAt"],
+                        captureAt = body["captureAt"] == null ? -1 : (long)body["captureAt"], logFrom = Number(body, "logFrom", 0),
                         pauseAt = body["pauseAt"] == null ? -1 : (long)body["pauseAt"], pauseOffset = Number(body, "pauseOffset", 0),
                         pauseFrames = Number(body, "pauseFrames", 0),
                         fps = Number(body, "fps", 0), omniDash = Truthy(body, "omniDash") };
@@ -90,7 +92,8 @@ namespace IGTAPTasMod
                     if (fullTas.Success && savestateId.Length == 0)
                     {
                         // A Full-TAS run's probe starts from that run's new game (its unlocks come from what the ticks buy).
-                        StartFullTasPlayback(FindFullTasRun(fullTas.Groups[1].Value), macro);
+                        // fromTick: its physics ticks before that in turbo (the studio's play from a tick), the probe at 1x after.
+                        StartFullTasPlayback(FindFullTasRun(fullTas.Groups[1].Value), macro, null, Number(body, "fromTick", 0));
                         return new { ok = true };
                     }
                     EnsureGameUnpaused();
@@ -107,7 +110,7 @@ namespace IGTAPTasMod
         bool ProbeActive(Movement movement)
         {
             return _probe != null && movement != null && !IsMenuPlayer(movement) && _engine.IsRunning && _engine.ActiveMacro != null
-                && _engine.ActiveMacro.id == ProbeRouteId;
+                && _engine.ActiveMacro.id == ProbeRouteId && !TurboRunner.Active && _engine.PhysicsTicks >= _probe.logFrom;
         }
 
         void ProbeRow(Movement movement, string kind)
@@ -223,7 +226,8 @@ namespace IGTAPTasMod
         static int[] _spawnRandom;
         static float _spawnDivisor;
 
-        bool ProbeLogsClones { get { return _probe != null && _probe.started && _engine.IsRunning && _engine.ActiveMacro != null && _engine.ActiveMacro.id == ProbeRouteId; } }
+        bool ProbeLogsClones { get { return _probe != null && _probe.started && _engine.IsRunning && _engine.ActiveMacro != null && _engine.ActiveMacro.id == ProbeRouteId && !TurboRunner.Active
+            && _engine.PhysicsTicks >= _probe.logFrom; } }
 
         private static void BeforeProbeCloneUpdate(clonesScript __instance)
         {
@@ -266,6 +270,39 @@ namespace IGTAPTasMod
         void PatchProbeRng()
         {
             foreach (var (type, method) in ProbeRngCallers) PatchOptional(type, method, nameof(BeforeProbeRng), nameof(AfterProbeRng));
+            PatchOptional(typeof(zoneChanger), "OnTriggerEnter2D", nameof(BeforeProbeZoneEnter), null);
+            PatchOptional(typeof(ZoneLoader), "_LoadZone", nameof(BeforeProbeZoneLoad), null);
+            PatchOptional(typeof(AtomColliderSystem), "OnEnable", nameof(BeforeProbeAtomEnable), null);
+            PatchOptional(typeof(AtomColliderSystem), "Start", nameof(BeforeProbeAtomStart), null);
+        }
+
+        // A probe's zone log (rows of kind "zone"): a zone activator's trigger (zoneChanger.OnTriggerEnter2D, which starts
+        // ZoneLoader.IE_Load), the load it makes two yields later (ZoneLoader._LoadZone) and the atom collider the load wakes
+        // (AtomColliderSystem.OnEnable, Start), each with its frame, physics tick, game time and the loader's activeZone then,
+        // so turbo and the engine can load a zone in the frame 1x does. Reads only.
+        static readonly AccessTools.FieldRef<zoneChanger, int> ZoneToLoad = AccessTools.FieldRefAccess<zoneChanger, int>("zoneToLoad");
+        static readonly AccessTools.FieldRef<ZoneLoader, GameObject> ZoneLoadingText = AccessTools.FieldRefAccess<ZoneLoader, GameObject>("loadingText");
+
+        private static void BeforeProbeZoneEnter(zoneChanger __instance, Collider2D collision)
+        {
+            ProbeZoneRow("enter", __instance, ZoneToLoad(__instance), collision == null ? null : collision.name);
+        }
+
+        private static void BeforeProbeZoneLoad(ZoneLoader __instance, int zoneToLoad) { ProbeZoneRow("load", __instance, zoneToLoad, null); }
+        private static void BeforeProbeAtomEnable(AtomColliderSystem __instance) { ProbeZoneRow("atomEnable", __instance, 0, null); }
+        private static void BeforeProbeAtomStart(AtomColliderSystem __instance) { ProbeZoneRow("atomStart", __instance, 0, null); }
+
+        static void ProbeZoneRow(string what, Component at, int zone, string by)
+        {
+            if (Instance == null || !Instance.ProbeLogsClones) return;
+            ZoneLoader loader = at as ZoneLoader ?? FindAnyObjectByType<ZoneLoader>();
+            GameObject loading = loader == null ? null : ZoneLoadingText(loader);
+            Instance._probe.rows.Add(new
+            {
+                kind = "zone", what, frame = Time.frameCount, physics = Instance._engine.PhysicsTicks, input = Instance._engine.RunTicks,
+                time = Time.timeAsDouble, fixedTime = Time.fixedTimeAsDouble, inFixedStep = Time.inFixedTimeStep, obj = at.gameObject.name, zone, by,
+                activeZone = loader == null ? -1 : loader.activeZone, loadingText = loading != null && loading.activeSelf, random = CourseStart.Words(UnityEngine.Random.state),
+            });
         }
 
         private static void BeforeProbeRng(out UnityEngine.Random.State __state)
@@ -299,19 +336,20 @@ namespace IGTAPTasMod
 
         void ProbeAfterTick(Movement movement)
         {
+            if (_probe != null && _probe.captureAt >= 0 && _probe.capturedSavestateId == null && _engine.IsRunning && _engine.ActiveMacro?.id == ProbeRouteId
+                && !TurboRunner.Active && _engine.RunTicks >= _probe.captureAt)
+            {
+                Savestate savestate = SavestateService.Capture(movement, "probe/" + _probe.name + " @" + _engine.RunTicks);
+                _savestates.Insert(0, savestate);
+                WriteJsonAtomic(Path.Combine(_savestatesPath, SafeId(savestate.id) + ".json"), savestate, false);
+                _probe.capturedSavestateId = savestate.id;
+            }
             if (!ProbeActive(movement)) return;
             ProbeRow(movement, "tick");
             if (_probe.pauseAt >= 0 && !_probe.pauseTaken && _engine.PhysicsTicks == _probe.pauseAt)
             {
                 _probe.pauseTaken = true;
                 OpenPlaybackPause(movement, _probe.pauseFrames, _probe.pauseOffset);
-            }
-            if (_probe.captureAt >= 0 && _probe.capturedSavestateId == null && _engine.RunTicks >= _probe.captureAt)
-            {
-                Savestate savestate = SavestateService.Capture(movement, "probe/" + _probe.name + " @" + _engine.RunTicks);
-                _savestates.Insert(0, savestate);
-                WriteJsonAtomic(Path.Combine(_savestatesPath, SafeId(savestate.id) + ".json"), savestate, false);
-                _probe.capturedSavestateId = savestate.id;
             }
         }
 

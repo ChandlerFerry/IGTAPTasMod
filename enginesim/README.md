@@ -771,7 +771,8 @@ route at 240 fps (a dash freeze of 12 frames and a step-up, tick for tick).
 
 The in-game counterpart is the plugin's 1x probe (`ProbeRunner.cs`): `POST /api/probe/run {name, route: "1_WJ_DS",
 savestateId?, ticks, captureAt?, fps?, omniDash?, pauseAt?, pauseOffset?, pauseFrames?}` plays the ticks at normal speed from the category's quick restart
-(a Full-TAS run's `route: "fulltas/VMAN_NONE"`: from a new game of that run; or the savestate); `tech: <id>` plays that
+(a Full-TAS run's `route: "fulltas/VMAN_NONE"`: from a new game of that run, its first `fromTick` physics ticks in turbo and
+unlogged, as the studio's play from a tick; or the savestate; `logFrom` logs from that physics tick on); `tech: <id>` plays that
 tech's demo as its playback does (its start, inputs, savestate or lab map, unless `route`/`ticks`/`savestateId` are given;
 `tools/probe.py <name> --tech <id>`), and writes
 `BepInEx/config/IGTAPTasMod/probes/<name>.json`: one row per physics tick (`kind: "tick"`) and one per rendered frame
@@ -813,7 +814,10 @@ box, to 0.01 u; -1 without one) and `gridCalls` (the atom grid's `callAddNewAtom
 steps compare). A probe's tick row also has `econPre`, the economy at that tick's `globalStats.FixedUpdate` before its
 NP payout: what the last tick's frames left, the point the trace's and `--ticks-out` rows are taken at, which
 `economy-diff.py` uses. A probe also logs a row of kind `atom` for each grid call Unity runs (frame, physics tick, game time,
-atoms waiting). `replay <trace> --ticks-out FILE` writes the offline rows for a category trace as `fulltas --check
+atoms waiting), and a row of kind `zone` for a zone activator's trigger (`what` `enter`: `zoneChanger.OnTriggerEnter2D`,
+the collider that touched it in `by`), the load it starts (`load`: `ZoneLoader._LoadZone`) and the atom collider it wakes
+(`atomEnable`, `atomStart`), each with the frame, physics tick, game time, `activeZone` before it, the loading text and the
+RNG state (`tools/probe.py --show` prints them with `k`, the rendered frame within the tick, 0 the tick's own). `replay <trace> --ticks-out FILE` writes the offline rows for a category trace as `fulltas --check
 --ticks-out` does for a Full-TAS one, and `replay` compares a trace tick's `econ` with the engine's field by field.
 `python tools/economy-diff.py <a> <b>` compares two of them (a probe log, `--ticks-out` lines or a trace), each field
 as the sequence of values it takes, and names the first value where they part; `--ticks` also compares the physics tick
