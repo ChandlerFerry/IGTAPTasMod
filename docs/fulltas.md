@@ -2040,6 +2040,7 @@ routes. `plan-check --moves <trace> [--buytable FILE]` checks a table against th
 
 ```powershell
 & $exe fulltas-plan $traces\fulltas-FalseEnding%-280.json --from 86 --target buy:buyds --bonuses bonus1,bonus2,bonus3,bonus5 --buytable plan.buytable.json --out plan.json --compare "lap:2,reward:bonus1" "reward:bonus1,lap:2"
+& $exe fulltas-plan $traces\fulltas-FalseEnding%-280.json --from 86 --target buy:buyds --bonuses bonus1 --buytable plan.buytable.json --mode beam --beam 200 --only lap:2,record:2,buy:buyreward2,buy:buyclone2,buy:buyclonemult2,buy:buyglobalreward2
 & $exe plan-selftest
 ```
 
@@ -2065,9 +2066,10 @@ must have its Cash on arrival: the plan never waits at a box) or finishes the co
 own crossings of the courses' clone screens (clonesLoD) are missed, so the Cash is off by what those crossings change. It
 was about 6% low on FalseEnding%-280's walk from Course 1's `buy:buywj` to Course 2 (530 Cash after the first Course 2
 lap against the best's 566, 666 after bonus 1 against 694); a walk that leaves a course's clones on screen longer than
-its end place does would come out high instead. Only the target has a
-last resort, where no lap is offered from a place: stand at its box until it can pay. Ladders of record laps are not
-steps (a break only brings payouts forward on build 25640326).
+its end place does would come out high instead. Only the target ever stands at its box until it can pay (its last
+Cash): in the exact search only where no lap is offered from a place, in the beam (and with `--stand on`) everywhere, at
+most 2000 ticks past its walk (`BeamStand`; a longer wait is a later state's). Ladders of record laps are not steps (a
+break only brings payouts forward on build 25640326).
 
 The search is Dijkstra on ticks, with no lower bound (an admissible one needs the most any later state can earn). Steps
 go into the queue unplayed, at their end tick (the table's), and are played when they come off it, so nothing after the
@@ -2079,7 +2081,42 @@ progress, spawn timers, box cooldowns, the 250-tick reward refresh's phase, sche
 grid's phase. So "proven" means proven under the planner's state key: no schedule reaches the target sooner among the
 states it tells apart, not over every state the game can be in; realize measures the real plan. `--max-states` (200000) and `--minutes` (30) cap a search; a capped one finishes its
 16 richest states by standing at the target and says it isn't proven. `--compare` plays each order (step ids joined by
-commas) exactly, then searches on, and prints its target tick beside the free search's and the best's.
+commas) exactly, then searches on, and prints its target tick beside the free search's and the best's. `--mode exact`
+is this search; `--mode beam` the beam below; `--mode auto` (the default) the exact search, then the beam when it is
+capped.
+
+The beam (`--mode beam`, `--beam W`, 200 by default) is the same search (tick order, steps played as they come off the
+queue, the same dominance and state key) with at most W states let in per 10 ticks of plan (`BeamBucket`): a state past
+that is let in only if its tick + h beats the bucket's worst, which is dropped and its queued steps skipped. h is the
+ticks the state's income needs for what the targets still cost (every currency they cost, the slowest) plus the
+table's ticks to the next target. The income is measured, not probed: what the state gained (`Shop.Gained`, spending
+left out) over its last steps back to the first that covers 300 ticks (`IncomeWindow`), per tick; a state whose income
+of a currency still missing is 0 over such a window is dropped (unreachable without a buy), and one with no window yet
+(only zero-tick restarts since the start) is ranked by the table's ticks alone. Before a buy is queued the pre-check
+drops it when its price is more than the state holds plus twice its income over the walk (`PrecheckMargin`; a buy right
+after a buy is always queued, since a clone it bought can pay before the window shows it; the target's stand is always
+checked, over its walk and 2000 ticks). The first plan off the queue is the beam's, reported "not proven optimal".
+Each bucket compares states at about the same tick, so h ranks them by how soon their income pays the rest; ranked per
+step depth instead (states at one depth can be thousands of ticks apart), no h tried came near on `buy:buyds`: each
+state's own income cut the restarts toward Course 2 and the buys whose clones pay later (21704 to 39466 in 10 minutes
+at width 200), and the depth's best income kept the states that hoard Cash (no plan by tick 36000). Width, measured
+from goal 86 with `--only`
+Course 2's laps and boxes and the target's stand off (as the exact search):
+
+| width | first `buy:buyclonemult2` (exact 6875) | first `buy:buyglobalreward2` (exact 8103) | `buy:buyds` (the best 10758) |
+|---|---|---|---|
+| 50 | 6875, 1 s | 8187, 12 s | 9796, 109 s |
+| 100 | | 8113, 21 s | 9847, 191 s |
+| 200 | 6875, 1 s | 8113, 34 s | 9053, 257 s |
+| 500 | | 8108, 66 s | 9014, 505 s |
+
+(`buy:buyds`: every economy box and lap offered, the stand on, the exact search capped.) The exact search takes 226 s
+and 6.5 GB to prove 8103; with the stand the beam of 200 gives 8105 in 101 s. Memory: a state's snapshot is 21 KB; the
+exact search holds one per state with steps queued (6.5 GB at 1.4 million states played), the beam per state it let in
+and still has steps queued (on `buy:buyds` 1.4-3.2 GB at width 200, up to 4.8 at 500: `GC.GetTotalMemory`, sampled,
+garbage included). A state's key is an id into the search's key table (its string,
+900 bytes on this stretch, kept once per key), and its step is the option that made it, shared: the steps out of a
+place are built once per place and unlocks (`Built`), then filtered by the state (active boxes, earlier targets bought).
 
 On FalseEnding%-280 from goal 86 (`buy:buywj`, tick 5387), with a buy table measured to `buy:buyds` with `--targets
 reward:bonus1,lap:2`, the search plays about 4,000 states a second, but the states multiply with the buys: every
@@ -2092,10 +2129,25 @@ then bonus 1 9068, bonus 1 first 9102 (its move from `buy:buywj` is the best's o
 finish, a lap the plan doesn't credit). Most of the gain is laps on the saved record's path after a quick restart: the
 table estimates those moves; realize measures them.
 
+To `buy:buyds` the beam answers the bonus question (`--bonuses bonus1`, `--only
+lap:2,record:2,buy:buyreward2,buy:buyclone2,buy:buyclonemult2,buy:buyglobalreward2`, the laps and boxes the best uses in
+the stretch; width 200, then 500): the free plan is tick 9873 (9763) and still skips bonus 1; Course 2 lap then bonus 1
+gives 10392 (10355), two laps and a clone then bonus 1 10522 (10455), bonus 1 first 10568 (10517); the best 10758. Bonus
+1's walk (845 ticks from Course 2's finish, an estimated 436 back to its boxes) takes the run off the Course 2 farm for 1,300 ticks
+while the farm's income compounds; one more reward level doesn't pay that back by `buy:buyds`. To `buy:buyds` then the
+first `buy:buyglobalreward3` (Course 3's laps and boxes too, `--bonuses bonus1,bonus2,bonus3,bonus5`, width 200) the
+orders close up (lap then bonus 11878, two laps and a clone then bonus 11879, bonus first 11929) and the free plan
+(11268) takes bonus 1 right after `buy:buyds`, on a dash-era move to it the table estimates in a straight line (36
+ticks). Without `--only` the free search to `buy:buyds` (9053) takes bonus 1 first from Course 1's finish on a
+straight-line estimate of 110 ticks where the buy table's 12-minute search from there found no way: estimates across
+walls are the table's, and plans that lean on them are only as good as realize finds them.
+
 `plan-selftest` runs the same search on a toy economy (one course, a clone box, a free bonus doubling the lap, a target
 of 2000): the plan's tick must be a brute force's over every order of up to 12 steps, played again it must reach the
 target on that tick, dominance must have dropped a state, and a search capped at 60 states must finish more than one
-of its richest states by standing at the target, each from its own state.
+of its richest states by standing at the target, each from its own state. The beam must find the brute force's tick at
+width 1000, on the same steps and with the target's stand (827: the brute force over those steps), and at width 1 still a
+plan that replays to its tick.
 
 ### Buy planner
 

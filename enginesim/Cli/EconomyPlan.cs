@@ -41,12 +41,21 @@ namespace IGTAP.EngineSim.Cli
         public double Seconds;
         /// <summary>Why it isn't done or proven (null: it is).</summary>
         public string Why;
+        /// <summary>Distinct keys (place and economy key) the search saw.</summary>
+        public int Keys;
+        /// <summary>Beam (Width above 0): states let in, states cut by the width (turned away or dropped for a better one), buys
+        /// the pre-check didn't queue, states dropped for no income toward the target, and the most memory seen in use
+        /// (GC.GetTotalMemory, sampled).</summary>
+        public int Width, Nodes, Pruned, Prechecked, Unreachable;
+        public long PeakBytes;
     }
 
     /// <summary>The economy the search plays steps on (a seam: <see cref="SimEconomy"/> is the game's, plan-selftest's toy a
     /// test's). Idle: ticks standing at a place; Buy: one tick touching a box (false: it didn't buy); Finish: one tick finishing a
     /// course (its argument the economy's own: `N@ticks` for the game); Holds: every currency; Key: what besides the place two
-    /// states must share for the richer earlier one to stand for the other (unlocks, box levels, records).</summary>
+    /// states must share for the richer earlier one to stand for the other (unlocks, box levels, records). Earned: every
+    /// currency gained so far, spending left out; Price: what a box costs now, per currency as Holds counts them (null: it
+    /// can't be bought now). The beam's estimate and buy pre-check read those two.</summary>
     interface IEconomy<TSnap>
     {
         TSnap Capture();
@@ -56,6 +65,8 @@ namespace IGTAP.EngineSim.Cli
         void Finish(string course);
         double[] Holds();
         string Key();
+        double[] Earned();
+        double[] Price(string box);
     }
 
     /// <summary>A step out of a place as the search plays it: Ticks less its events standing at End, then each Buys box a tick
@@ -73,33 +84,55 @@ namespace IGTAP.EngineSim.Cli
     /// every currency; the rest of the economy (clones in flight and their path progress, spawn timers, box cooldowns, the
     /// reward refresh's phase, scheduled Invokes, the frame grid's phase) isn't compared, so a plan is optimal under that
     /// key, not over every state the game can be in (realize measures the real one). No lower
-    /// bound (plain Dijkstra): an income bound that is admissible needs the most any state can earn, which isn't known.
+    /// bound (plain Dijkstra): an income bound that is admissible needs the most any state can earn, which isn't known. For
+    /// targets that search can't finish, --mode beam keeps at most a width of states per BeamBucket ticks, ranked by tick and
+    /// income (Search's Beam): a plan, not proven optimal.
     /// </summary>
     static class EconomyPlan
     {
+        /// <summary>fulltas-plan --beam's default width (docs/fulltas.md, "Economy planner": chosen by measurement).</summary>
+        internal const int DefaultWidth = 200;
         /// <summary>Most ticks the target's last resort stands at its box.</summary>
         const int StandCap = 50000;
+        /// <summary>Beam: most ticks the target's stand waits past its walk (a longer wait is a later state's: the beam goes on
+        /// lapping and buying, and a stand from there is shorter).</summary>
+        const int BeamStand = 2000;
+        /// <summary>Beam: the width is per this many ticks of plan (fulltas-plan --beam; docs/fulltas.md "Economy planner").</summary>
+        const int BeamBucket = 10;
         /// <summary>A capped search completes this many of its richest states by standing at the target.</summary>
         const int Completions = 16;
 
         public static int Run(string[] args) => FullTas.EconomyPlanCommand(args);
 
+        /// <summary>Beam: a node's income is what it gained over its last steps back to the first that covers this many ticks
+        /// (Earned's change over the ticks: laps' rewards and the clones' payouts, spending left out).</summary>
+        const int IncomeWindow = 300;
+        /// <summary>Beam: a buy (or the target's stand) is played only if its Cash can be there in time at this many times the
+        /// node's income (the buy pre-check).</summary>
+        const double PrecheckMargin = 2;
+
         sealed class Node<TSnap>
         {
             public long Tick;
-            public string Place, Key;
+            public string Place;
+            /// <summary>Its place and economy key, as the search's id for it: the key's string is kept once, not per node.</summary>
+            public int Key;
             public TSnap Snap;
             public Node<TSnap> Parent;
+            /// <summary>The option that made it, shared with every node it made (the step's ticks are Tick less the parent's).</summary>
             public PlanOption Via;
-            public double[] Holds;
+            /// <summary>Every currency held, and (beam) gained so far, spending left out.</summary>
+            public double[] Holds, Earned;
             public bool Done, Dead;
             /// <summary>Its steps still in the queue: at 0 its snapshot is let go (the search's memory is the queue's front).</summary>
             public int Pending;
+            /// <summary>Beam: its tick plus the estimate of the ticks to the target.</summary>
+            public double F;
         }
 
         /// <summary>Plays one option from the economy's state at <paramref name="tick"/>; the tick it ends on, null when a buy
-        /// didn't buy.</summary>
-        internal static long? Play<TSnap>(IEconomy<TSnap> economy, long tick, PlanOption o)
+        /// didn't buy (or a stand would end on <paramref name="limit"/> or later).</summary>
+        internal static long? Play<TSnap>(IEconomy<TSnap> economy, long tick, PlanOption o, long limit = long.MaxValue)
         {
             int events = o.Buys.Length + (o.Finish != null ? 1 : 0);
             int walk = Math.Max(0, o.Step.Ticks - events);
@@ -112,7 +145,7 @@ namespace IGTAP.EngineSim.Cli
                 if (!o.Stand || i < o.Buys.Length - 1) return null;
                 for (int w = 0; ; w++)
                 {
-                    if (w == StandCap) return null;
+                    if (w == StandCap || tick >= limit) return null;
                     tick++;
                     if (economy.Buy(o.Buys[i])) break;
                 }
@@ -130,25 +163,36 @@ namespace IGTAP.EngineSim.Cli
         /// <paramref name="startPlace"/>). <paramref name="options"/>: the steps out of a place, asked with the economy at that
         /// state. <paramref name="prefix"/>: step ids played first, exactly (`--compare`), the search finishing from there.
         /// <paramref name="stand"/>: the target's stand-until-affordable option from a place, for completing a capped search.
+        /// <paramref name="width"/> above 0: the beam (fulltas-plan --mode beam) instead of Dijkstra, <paramref name="remaining"/>
+        /// the targets' price still to pay and the table's ticks to the next one from a place, asked with the economy at that state.
         /// </summary>
         internal static PlanResult Search<TSnap>(IEconomy<TSnap> economy, long startTick, string startPlace, Func<string, IEnumerable<PlanOption>> options,
-            int maxStates, double maxSeconds, IReadOnlyList<string> prefix = null, Action<string> log = null, Func<string, PlanOption> stand = null)
+            int maxStates, double maxSeconds, IReadOnlyList<string> prefix = null, Action<string> log = null, Func<string, PlanOption> stand = null,
+            int width = 0, Func<string, (double[] price, int ticks)> remaining = null)
         {
             var clock = Stopwatch.StartNew();
-            var result = new PlanResult();
+            var result = new PlanResult { Width = width };
             var queue = new PriorityQueue<(Node<TSnap> parent, PlanOption via, Node<TSnap> node), (long tick, long seq)>();
-            var kept = new Dictionary<string, List<Node<TSnap>>>();
+            var kept = new Dictionary<int, List<Node<TSnap>>>();
+            var keys = new Dictionary<string, int>();
             long seq = 0;
 
-            Node<TSnap> Made(Node<TSnap> parent, PlanOption via, long tick, string place) => new Node<TSnap>
+            Node<TSnap> Made(Node<TSnap> parent, PlanOption via, long tick, string place)
             {
-                Tick = tick, Place = place, Snap = economy.Capture(), Parent = parent, Holds = economy.Holds(), Key = place + "|" + economy.Key(),
-                Via = via == null ? null : via with { Step = via.Step with { Ticks = (int)(tick - parent.Tick) } }, Done = via?.Target == true,
-            };
-            void Expand(Node<TSnap> n)
+                string key = place + "|" + economy.Key();
+                if (!keys.TryGetValue(key, out int id)) keys[key] = id = keys.Count;
+                return new Node<TSnap>
+                {
+                    Tick = tick, Place = place, Snap = economy.Capture(), Parent = parent, Holds = economy.Holds(), Earned = width > 0 ? economy.Earned() : null,
+                    Key = id, Via = via, Done = via?.Target == true,
+                };
+            }
+            // beam: the pre-check's buys left out (the economy is at n's state here).
+            void Expand(Node<TSnap> n, bool beam = false)
             {
                 foreach (PlanOption o in options(n.Place).ToList())
                 {
+                    if (beam && Short(n, o)) { result.Prechecked++; continue; }
                     n.Pending++;
                     queue.Enqueue((n, o, null), (n.Tick + o.Step.Ticks, seq++));
                 }
@@ -158,14 +202,14 @@ namespace IGTAP.EngineSim.Cli
                 result.Profile.TryGetValue(kind, out var p);
                 result.Profile[kind] = (p.played + played, p.failed + failed, p.dominated + dominated, p.seconds + seconds);
             }
-            long? Played(Node<TSnap> from, PlanOption o, out string why)
+            long? Played(Node<TSnap> from, PlanOption o, out string why, long limit = long.MaxValue)
             {
                 why = null;
                 double t0 = clock.Elapsed.TotalSeconds;
                 long? end = null;
                 economy.Restore(from.Snap);
                 result.States++;
-                try { end = Play(economy, from.Tick, o); }
+                try { end = Play(economy, from.Tick, o, limit); }
                 catch (InvalidOperationException e) { why = e.Message; }
                 Count(o.Step.Kind, 1, end == null ? 1 : 0, 0, clock.Elapsed.TotalSeconds - t0);
                 return end;
@@ -176,7 +220,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 if (!kept.TryGetValue(n.Key, out List<Node<TSnap>> list)) kept[n.Key] = list = new List<Node<TSnap>>();
                 foreach (Node<TSnap> k in list)
-                    if (k.Tick <= n.Tick && AtLeast(k.Holds, n.Holds)) return true;
+                    if (!k.Dead && k.Tick <= n.Tick && AtLeast(k.Holds, n.Holds)) return true;
                 foreach (Node<TSnap> k in list)
                     if (k.Tick == n.Tick && AtLeast(n.Holds, k.Holds)) k.Dead = true;
                 list.RemoveAll(k => k.Dead);
@@ -191,13 +235,14 @@ namespace IGTAP.EngineSim.Cli
                 result.Done = done?.Done == true;
                 result.Tick = result.Done ? done.Tick : -1;
                 result.Proven = proven && result.Done;
-                result.Steps = path.Select(n => n.Via.Step).ToArray();
+                result.Steps = path.Select(n => n.Via.Step with { Ticks = (int)(n.Tick - n.Parent.Tick) }).ToArray();
                 result.Goals = path.SelectMany(n => n.Via.Goals).ToArray();
                 result.Estimated = path.SelectMany(n => n.Via.Estimated ?? Array.Empty<string>()).Distinct().ToArray();
                 result.Ends = path.Select(n => n.Tick).ToArray();
                 result.Cash = path.Select(n => n.Holds[0]).ToArray();
                 result.Why = why;
                 result.Seconds = clock.Elapsed.TotalSeconds;
+                result.Keys = keys.Count;
                 return result;
             }
 
@@ -212,6 +257,7 @@ namespace IGTAP.EngineSim.Cli
                 at = Made(at, o, end.Value, o.End);
                 if (at.Done) return Finish(at, true, null);
             }
+            if (width > 0) return Beam(at);
             Dominated(at);
             Expand(at);
             double lastLog = 0;
@@ -267,6 +313,123 @@ namespace IGTAP.EngineSim.Cli
                 if (best == null || done.Tick < best.Tick) best = done;
             }
             return Finish(best ?? at, false, capped + (best == null ? "; no state completes by standing at the target" : $"; completed by standing at the target from the {Completions} richest states"));
+
+            // Where n's income is measured from: its last steps back to the first that covers IncomeWindow ticks (n itself at the
+            // start, before any step).
+            Node<TSnap> Window(Node<TSnap> n)
+            {
+                Node<TSnap> a = n;
+                while (a.Parent != null && n.Tick - a.Tick < IncomeWindow) a = a.Parent;
+                return a;
+            }
+            // n's income of a currency per tick over its window (0 with no window yet: only zero-tick steps since the start).
+            double Rate(Node<TSnap> n, Node<TSnap> a, int c) => n.Tick == a.Tick ? 0 : (n.Earned[c] - a.Earned[c]) / (n.Tick - a.Tick);
+            // The beam's h: the slowest currency's missing price (every target not bought yet) over n's income, plus the table's
+            // ticks to the next target. Null when a currency still missing came in at 0 over a window of ticks (unreachable
+            // without a buy). No window yet: the ticks alone.
+            double? Estimate(Node<TSnap> n)
+            {
+                var (price, ticks) = remaining(n.Place);
+                Node<TSnap> a = Window(n);
+                double wait = 0;
+                for (int c = 0; c < price.Length; c++)
+                {
+                    double missing = price[c] - n.Holds[c];
+                    if (missing <= 0 || n.Tick == a.Tick) continue;
+                    double rate = Rate(n, a, c);
+                    if (rate <= 0) return null;
+                    wait = Math.Max(wait, missing / rate);
+                }
+                return wait + ticks;
+            }
+            // The buy pre-check, with the economy at n: the option's boxes cost more than n holds plus PrecheckMargin times n's
+            // income over the step's ticks (the target's stand: and BeamStand more). A buy right after a buy is always played
+            // (what it bought, a clone, may pay before the window shows it); a stand always checked.
+            bool Short(Node<TSnap> n, PlanOption o)
+            {
+                if (o.Buys.Length == 0) return false;
+                Node<TSnap> a = Window(n);
+                if (n.Tick == a.Tick || !o.Stand && n.Via?.Buys.Length > 0) return false;
+                double[] need = null;
+                foreach (string b in o.Buys)
+                {
+                    double[] p = economy.Price(b);
+                    if (p == null) return false;
+                    need ??= new double[p.Length];
+                    for (int c = 0; c < p.Length; c++) need[c] += p[c];
+                }
+                double ticks = o.Step.Ticks + (o.Stand ? BeamStand : 0);
+                for (int c = 0; c < need.Length; c++)
+                {
+                    double missing = need[c] - n.Holds[c];
+                    if (missing > 0 && missing > PrecheckMargin * Rate(n, a, c) * ticks) return true;
+                }
+                return false;
+            }
+
+            // fulltas-plan --mode beam: the search above (Dijkstra's tick order, the steps played as they come off the queue, the
+            // same dominance), with at most `width` states let in per BeamBucket ticks of plan: a state past that is let in only
+            // if its tick + Estimate beats the bucket's worst, which is dropped (marked dead: its queued steps are skipped). The
+            // states a bucket compares are at about the same tick, so h ranks them by how soon their income pays the rest. A step
+            // the pre-check says can't pay isn't queued; the target stands at most BeamStand ticks for its Cash. The first plan
+            // off the queue is the beam's. Not proven optimal: the width, h and the pre-check drop states Dijkstra would play.
+            // Memory: a state's snapshot is held while it has steps queued, so at most the buckets the longest step spans.
+            PlanResult Beam(Node<TSnap> start)
+            {
+                var buckets = new Dictionary<long, List<Node<TSnap>>>();
+                string why = null;
+                double lastBeamLog = 0;
+                Dominated(start);
+                Expand(start, true);
+                while (queue.TryDequeue(out var e, out var priority))
+                {
+                    if (clock.Elapsed.TotalSeconds >= maxSeconds) { why = $"stopped after {clock.Elapsed.TotalSeconds:0} s at tick {priority.tick}"; break; }
+                    Node<TSnap> n = e.node;
+                    if (n == null)
+                    {
+                        bool last = --e.parent.Pending == 0 && e.parent.Parent != null;
+                        if (e.parent.Dead)
+                        {
+                            if (last) e.parent.Snap = default;
+                            continue;
+                        }
+                        long? end = Played(e.parent, e.via, out _, e.via.Stand ? e.parent.Tick + e.via.Step.Ticks + BeamStand : long.MaxValue);
+                        if (last) e.parent.Snap = default;
+                        if (end == null) continue;
+                        n = Made(e.parent, e.via, end.Value, e.via.End);
+                        if (n.Tick > priority.tick) { queue.Enqueue((null, null, n), (n.Tick, seq++)); continue; }
+                    }
+                    else if (!n.Done) economy.Restore(n.Snap);
+                    if (Dominated(n)) { result.Dropped++; Count(n.Via.Step.Kind, 0, 0, 1, 0); n.Snap = default; continue; }
+                    if (n.Done) return Finish(n, false, $"beam {width}: not proven optimal");
+                    double? h = Estimate(n);
+                    if (h == null) { result.Unreachable++; n.Dead = true; n.Snap = default; continue; }
+                    n.F = n.Tick + h.Value;
+                    if (!buckets.TryGetValue(n.Tick / BeamBucket, out List<Node<TSnap>> bucket)) buckets[n.Tick / BeamBucket] = bucket = new List<Node<TSnap>>();
+                    if (bucket.Count >= width)
+                    {
+                        Node<TSnap> worst = bucket[0];
+                        foreach (Node<TSnap> k in bucket)
+                            if (k.F > worst.F) worst = k;
+                        result.Pruned++;
+                        if (worst.F <= n.F) { n.Dead = true; n.Snap = default; continue; }
+                        worst.Dead = true;
+                        if (worst.Pending == 0) worst.Snap = default;
+                        bucket.Remove(worst);
+                    }
+                    bucket.Add(n);
+                    if ((++result.Nodes & 255) == 0) result.PeakBytes = Math.Max(result.PeakBytes, GC.GetTotalMemory(false));
+                    Expand(n, true);
+                    if (clock.Elapsed.TotalSeconds - lastBeamLog >= 15)
+                    {
+                        lastBeamLog = clock.Elapsed.TotalSeconds;
+                        log?.Invoke($"beam: tick {n.Tick}, Cash {n.Holds[0]:0}, {result.States} states played, {result.Nodes} let in, {result.Pruned} cut, {result.Dropped} dominated, "
+                            + $"{result.Prechecked} pre-checked out, {queue.Count} queued, {GC.GetTotalMemory(false) / 1e9:0.00} GB; "
+                            + string.Join(", ", result.Profile.Select(p => $"{p.Key} {p.Value.played}/{p.Value.failed}/{p.Value.dominated}")));
+                    }
+                }
+                return Finish(start, false, $"beam {width}: " + (why ?? "the queue ran out") + "; no plan reached the target");
+            }
         }
 
         static bool AtLeast(double[] a, double[] b)
@@ -284,10 +447,14 @@ namespace IGTAP.EngineSim.Cli
         /// (a capped or locked box is never offered); each <paramref name="bonuses"/> reward box not yet bought; each quick
         /// restart landing the table saw from there; the target. A move nothing measured is an estimate, kept only toward a
         /// place the run first stood at with no more unlocks than these, and listed in the plan. <paramref name="goalOf"/>:
-        /// a label's goal (its boxes).
+        /// a label's goal (its boxes). <paramref name="width"/> above 0: the beam of that width. <paramref name="standAtTarget"/>:
+        /// the target's buy stands at its box until the Cash is there (else only where no lap is offered); the one place a plan
+        /// waits for Cash. The steps out of a place are built once per place and unlocks (the table's moves), then filtered by
+        /// the state (active boxes, earlier targets bought), so every node shares them.
         /// </summary>
         internal static PlanResult Search(Simulation sim, SimSnapshot start, MoveTable moves, string startPlace, string[] targets, string[] bonuses, int maxStates,
-            Func<string, FullTasGoal> goalOf, double maxSeconds = double.PositiveInfinity, IReadOnlyList<string> prefix = null, Action<string> log = null, bool levels = false, ISet<string> only = null)
+            Func<string, FullTasGoal> goalOf, double maxSeconds = double.PositiveInfinity, IReadOnlyList<string> prefix = null, Action<string> log = null, bool levels = false,
+            ISet<string> only = null, int width = 0, bool standAtTarget = false)
         {
             var economy = new SimEconomy(sim, moves, label => goalOf(label)?.boxes, levels);
             sim.RestoreForDrive(start);
@@ -296,13 +463,14 @@ namespace IGTAP.EngineSim.Cli
             var before = targets.Take(targets.Length - 1).ToHashSet();
             var bought = targets.ToDictionary(t => t, t => economy.Level(t));
             var rewards = bonuses.ToHashSet();
+            var built = new Dictionary<(string place, string caps), List<(PlanOption option, string[] boxes)>>();
 
             string Estimate(string from, Move m, string caps) => $"{from} -> {m.To} [{caps}] {m.Ticks} ticks";
-            List<PlanOption> Options(string place, bool standOnly)
+            List<(PlanOption option, string[] boxes)> Built(string place, string caps)
             {
-                string caps = PlayerCaps.Of(sim).Id;
+                if (built.TryGetValue((place, caps), out var list)) return list;
                 Caps.TryParse(caps, out Caps have);
-                var list = new List<PlanOption>();
+                list = new List<(PlanOption, string[])>();
                 bool laps = false;
                 bool Reachable(Move m, string to)
                 {
@@ -326,39 +494,59 @@ namespace IGTAP.EngineSim.Cli
                         int course = lap ? LapCourseTicks(moves, place, n, m, caps, estimated) : RecordTicks(moves, n, caps, estimated);
                         if (course <= 0) continue;
                         laps = true;
-                        if (!standOnly)
-                            list.Add(new PlanOption(new Step(lap ? "lap" : "record", to, m.Ticks), "finish:" + n, Array.Empty<string>(), n + "@" + course, false,
-                                new[] { "start:" + n, "finish:" + n }, estimated.ToArray()));
+                        list.Add((new PlanOption(new Step(lap ? "lap" : "record", to, m.Ticks), "finish:" + n, Array.Empty<string>(), n + "@" + course, false,
+                            new[] { "start:" + n, "finish:" + n }, estimated.ToArray()), null));
                         continue;
                     }
                     if (to.StartsWith("restart@", StringComparison.Ordinal))
                     {
-                        if (!standOnly) list.Add(new PlanOption(new Step("restart", to, m.Ticks), to, Array.Empty<string>(), null, false, Array.Empty<string>(), estimated.ToArray()));
+                        list.Add((new PlanOption(new Step("restart", to, m.Ticks), to, Array.Empty<string>(), null, false, Array.Empty<string>(), estimated.ToArray()), null));
                         continue;
                     }
                     string[] boxes = to.Split(MoveTable.SetJoin);
                     // A goal buying several boxes at once (`buy:a+b`) is a place of the best's; the planner buys them as a set.
-                    if (boxes.Any(b => b.Contains('+')) || !economy.Active(boxes)) continue;
-                    bool isTarget = boxes.Length == 1 && to == target;
-                    if (isTarget)
-                    {
-                        if (before.Any(t => economy.Level(t) == bought[t])) continue;
-                        list.Add(new PlanOption(new Step("target", to, m.Ticks), to, boxes, null, true, boxes, estimated.ToArray()));
-                    }
+                    if (boxes.Any(b => b.Contains('+'))) continue;
+                    if (boxes.Length == 1 && to == target)
+                        list.Add((new PlanOption(new Step("target", to, m.Ticks), to, boxes, null, true, boxes, estimated.ToArray()), boxes));
                     else if (boxes.Length == 1 && rewards.Contains(to))
-                    {
-                        if (!standOnly) list.Add(new PlanOption(new Step("reward", to, m.Ticks), to, boxes, null, false, boxes, estimated.ToArray()));
-                    }
-                    else if (!standOnly && boxes.All(b => b.StartsWith("buy:", StringComparison.Ordinal) && (FullTasGoal.IsEconomy(b) && (only == null || only.Contains(b)) || before.Contains(b))))
-                        list.Add(new PlanOption(new Step("buy", to, m.Ticks), boxes[boxes.Length - 1], boxes, null, false, boxes, estimated.ToArray()));
+                        list.Add((new PlanOption(new Step("reward", to, m.Ticks), to, boxes, null, false, boxes, estimated.ToArray()), boxes));
+                    else if (boxes.All(b => b.StartsWith("buy:", StringComparison.Ordinal) && (FullTasGoal.IsEconomy(b) && (only == null || only.Contains(b)) || before.Contains(b))))
+                        list.Add((new PlanOption(new Step("buy", to, m.Ticks), boxes[boxes.Length - 1], boxes, null, false, boxes, estimated.ToArray()), boxes));
                 }
-                // The target's last resort: nowhere to lap from here, so stand at its box until the Cash is there.
-                if (!laps || standOnly)
+                // The target stands at its box until the Cash is there: everywhere with --stand, else only as the last resort where
+                // there's nowhere to lap from.
+                if (!laps || standAtTarget)
                     for (int i = 0; i < list.Count; i++)
-                        if (list[i].Target) list[i] = list[i] with { Stand = true };
-                return standOnly ? list.Where(o => o.Target).ToList() : list;
+                        if (list[i].option.Target) list[i] = (list[i].option with { Stand = true }, list[i].boxes);
+                return built[(place, caps)] = list;
             }
-            PlanResult r = Search(economy, startTick, startPlace, p => Options(p, false), maxStates, maxSeconds, prefix, log, p => Options(p, true).FirstOrDefault());
+            List<PlanOption> Options(string place, bool standOnly)
+            {
+                var list = new List<PlanOption>();
+                foreach (var (o, boxes) in Built(place, PlayerCaps.Of(sim).Id))
+                {
+                    if (standOnly && !o.Target || boxes != null && !economy.Active(boxes)) continue;
+                    if (o.Target && before.Any(t => economy.Level(t) == bought[t])) continue;
+                    list.Add(standOnly && !o.Stand ? o with { Stand = true } : o);
+                }
+                return list;
+            }
+            // The beam's estimate: every target not bought yet, at its price now, and the table's ticks to the next one.
+            (double[] price, int ticks) Remaining(string place)
+            {
+                var price = new double[7];
+                string next = null;
+                foreach (string t in targets)
+                {
+                    if (t != target && economy.Level(t) != bought[t]) continue;
+                    double[] p = economy.Price(t);
+                    for (int c = 0; p != null && c < p.Length; c++) price[c] += p[c];
+                    next ??= t;
+                }
+                return (price, next == null ? 0 : moves.Best(place, next, PlayerCaps.Of(sim).Id)?.Ticks ?? 0);
+            }
+            PlanResult r = Search(economy, startTick, startPlace, p => Options(p, false), maxStates, maxSeconds, prefix, log, p => Options(p, true).FirstOrDefault(),
+                width, Remaining);
             sim.RestoreForDrive(start);
             return r;
         }
@@ -413,6 +601,9 @@ namespace IGTAP.EngineSim.Cli
         {
             Console.WriteLine($"{title}: " + (r.Done ? $"target on tick {r.Tick}" + (r.Proven ? " (proven under the planner's state key)" : " (not proven)") : "not done")
                 + $"; {r.States} states played, {r.Dropped} dominated, {r.Seconds:0} s" + (r.Why == null ? "" : "; " + r.Why));
+            if (r.Width > 0)
+                Console.WriteLine($"  beam {r.Width}: {r.Nodes} states let in, {r.Keys} keys, {r.Pruned} cut by the width, {r.Prechecked} buys pre-checked out, "
+                    + $"{r.Unreachable} without income, peak {r.PeakBytes / 1e9:0.00} GB");
             for (int i = 0; i < r.Steps.Length; i++)
                 Console.WriteLine($"  {r.Ends[i],6} +{r.Steps[i].Ticks,-4} {r.Cash[i],12:0.##} Cash  {r.Steps[i].Kind,-7} {r.Steps[i].Arg}");
             if (r.Estimated.Length > 0) Console.WriteLine("  estimated: " + string.Join("; ", r.Estimated));
@@ -480,6 +671,16 @@ namespace IGTAP.EngineSim.Cli
             return PlayerCaps.Of(_sim).Id + "|" + buying + "|" + string.Join(",", _all.Select(b => b.TimesUsed))
                 + "|" + string.Join(",", _sim.Courses.Select(c => ((float)BestPathTime.GetValue(c)).ToString("R", CultureInfo.InvariantCulture)));
         }
+
+        public double[] Earned()
+        {
+            var earned = new double[7];
+            for (int c = 0; c < 7; c++) earned[c] = _sim.Shop.Gained((globalStats.Currencies)c);
+            return earned;
+        }
+
+        /// <summary>A label's boxes' price now, per currency (Shop.Need); null when one can't be bought.</summary>
+        public double[] Price(string label) => _sim.Shop.Need(Ids(label));
 
         /// <summary>Every box of these labels can be bought once Cash allows (Shop.Affordable: not capped, unlocked, shown).</summary>
         public bool Active(string[] labels) => labels.All(l => Ids(l).Length > 0 && _sim.Shop.Affordable(Ids(l)) != null);
@@ -551,8 +752,29 @@ namespace IGTAP.EngineSim.Cli
                 + $"{moves.Count} moves");
 
             double seconds = Solve.Option(args, "--minutes", 30.0) * 60;
-            EconomyPlanResult Plan(IReadOnlyList<string> prefix) =>
-                EconomyPlan.Search(_eval, at, moves, place, targets, bonuses, maxStates, GoalOf, seconds, prefix, Log, levels, only);
+            // --mode exact: Dijkstra (proven under the state key); beam: the beam of --beam W; auto: exact, then the beam where
+            // the exact search is capped. --stand on|off: the target stands at its box for its last Cash (default: the beam's on).
+            string mode = Solve.Option(args, "--mode", "auto");
+            if (mode != "exact" && mode != "beam" && mode != "auto") throw new ArgumentException("--mode wants exact, beam or auto");
+            int width = Solve.Option(args, "--beam", EconomyPlan.DefaultWidth);
+            string standArg = Solve.Option<string>(args, "--stand", null);
+            EconomyPlanResult Plan(IReadOnlyList<string> prefix)
+            {
+                string exactWhy = null;
+                if (mode != "beam")
+                {
+                    EconomyPlanResult exact = EconomyPlan.Search(_eval, at, moves, place, targets, bonuses, maxStates, GoalOf, seconds, prefix, Log, levels, only,
+                        standAtTarget: standArg == "on");
+                    // A --compare step that doesn't play stops the beam too.
+                    if (mode == "exact" || exact.Proven || exact.Why?.StartsWith("step ", StringComparison.Ordinal) == true) return exact;
+                    exactWhy = exact.Why;
+                    Log($"plan: the exact search isn't proven ({exactWhy}); the beam of {width}");
+                }
+                EconomyPlanResult beam = EconomyPlan.Search(_eval, at, moves, place, targets, bonuses, maxStates, GoalOf, seconds, prefix, Log, levels, only,
+                    width, standArg != "off");
+                if (exactWhy != null) beam.Why = "exact " + exactWhy + "; " + beam.Why;
+                return beam;
+            }
             EconomyPlanResult free = skipFree ? new EconomyPlanResult { Why = "--skip-free" } : Plan(null);
             if (!skipFree) EconomyPlan.Print("free search", free);
             var rows = new List<(string name, EconomyPlanResult plan)>();
@@ -576,6 +798,7 @@ namespace IGTAP.EngineSim.Cli
                 object Json(string name, EconomyPlanResult r) => new
                 {
                     name, done = r.Done, proven = r.Proven, tick = r.Tick, why = r.Why, states = r.States, dropped = r.Dropped, seconds = r.Seconds,
+                    beam = r.Width == 0 ? null : new { width = r.Width, letIn = r.Nodes, keys = r.Keys, cut = r.Pruned, prechecked = r.Prechecked, unreachable = r.Unreachable, peakBytes = r.PeakBytes },
                     steps = r.Steps.Select((s, i) => new { kind = s.Kind, arg = s.Arg, ticks = s.Ticks, end = r.Ends[i], cash = r.Cash[i] }), goals = r.Goals, estimated = r.Estimated,
                 };
                 File.WriteAllText(outFile, JsonSerializer.Serialize(new

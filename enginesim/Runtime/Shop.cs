@@ -112,6 +112,17 @@ namespace IGTAP.EngineSim
         /// </summary>
         internal bool? Affordable(string[] boxes)
         {
+            double[] need = Need(boxes);
+            if (need == null) return null;
+            for (int c = 0; c < CurrencyCount; c++)
+                if (need[c] > 0.0 && Available(c) < need[c]) return false;
+            return true;
+        }
+
+        /// <summary>What buying each of these boxes once costs now, per currency (their costs added); null when one of them
+        /// can't be bought (<see cref="Affordable"/>).</summary>
+        internal double[] Need(string[] boxes)
+        {
             var need = new double[CurrencyCount];
             foreach (upgradeBox b in _boxes)
             {
@@ -120,10 +131,11 @@ namespace IGTAP.EngineSim
                 int currency = (int)Currency(b);
                 if (currency >= 0 && currency < CurrencyCount) need[currency] += b.upgradeCost;
             }
-            for (int c = 0; c < CurrencyCount; c++)
-                if (need[c] > 0.0 && Available(c) < need[c]) return false;
-            return true;
+            return need;
         }
+
+        /// <summary>What the run has gained of a currency so far, its spending left out (<see cref="Holds"/> plus what it spent).</summary>
+        internal double Gained(globalStats.Currencies currency) { return Available((int)currency) + _spent[(int)currency]; }
 
         /// <summary>Whether a buy-max touch of one of these boxes is still buying (it goes on without another touch).</summary>
         internal bool Buying(string[] boxes)
