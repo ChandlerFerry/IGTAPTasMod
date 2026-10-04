@@ -174,7 +174,8 @@ namespace IGTAPTasMod
         /// The economy as a probe row and a trace tick carry it (<c>econ</c>), under the names enginesim's <c>--ticks-out</c> rows
         /// use (FullTas.EconomyRow), for tools/economy-diff.py and <c>replay</c>: each currency held, the atom collider's atoms per
         /// tier (<c>contents[i].Count</c>) and waiting atoms, globalStats' NP per tick, its cap, the comp boost's NP factor and the
-        /// clone dust multiplier, and the upgrade trees' grown segments. Reads only.
+        /// clone dust multiplier, the upgrade trees' grown segments, and how far each door box's door is from its box (the atom
+        /// box's, the Area 2 door box's; -1 without one). Reads only.
         /// </summary>
         internal static Dictionary<string, object> EconomyNow()
         {
@@ -192,7 +193,23 @@ namespace IGTAPTasMod
                 ["npTick"] = stats == null ? 0.0 : stats.NPrewardPerTick, ["npCap"] = stats == null ? 0.0 : stats.NPrewardCap,
                 ["npBoost"] = stats == null ? 1.0 : stats.EffectOfNpCompBoost, ["cdMult"] = stats == null ? 1.0 : stats.CloneDustGpCdMult,
                 ["gridCalls"] = _gridCalls, ["segments"] = _econTrees.Sum(t => t.GrownSegments.Count),
+                ["doorAtom"] = EconDoor(globalStats.globalUpgradeSet.spawnNewAtom), ["doorArea2"] = EconDoor(globalStats.globalUpgradeSet.area2DoorOpen),
             };
+        }
+
+        static readonly AccessTools.FieldRef<upgradeBox, PlatformMover> EconDoorToOpen = AccessTools.FieldRefAccess<upgradeBox, PlatformMover>("doorToOpen");
+        static upgradeBox[] _econDoorBoxes;
+
+        /// <summary>The distance from the global box of this kind that has a door to its door (rounded to 0.01 u, as FullTas.EconomyRow
+        /// has it); -1: none.</summary>
+        static double EconDoor(globalStats.globalUpgradeSet kind)
+        {
+            if (_econDoorBoxes == null || Array.Exists(_econDoorBoxes, b => b == null))
+                _econDoorBoxes = FindObjectsByType<upgradeBox>(FindObjectsInactive.Include, FindObjectsSortMode.None).Where(b => EconDoorToOpen(b) != null).ToArray();
+            foreach (upgradeBox b in _econDoorBoxes)
+                if (b.upgrade == localUpgrades.localUpgradeSet.GLOBAL && b.globalUpgrade == kind)
+                    return Math.Round(Vector2.Distance(EconDoorToOpen(b).transform.position, b.transform.position), 2);
+            return -1;
         }
 
         // A probe's clone log (rows of kind "clone"): every clonesScript.SpawnClone with the clonesScripts whose Update ran

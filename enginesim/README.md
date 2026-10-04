@@ -807,8 +807,9 @@ sequence of values each side takes, not tick by tick: 1x's physics count runs ah
 The economy has one shape in all three legs, `econ` (`TasPlugin.EconomyNow` on every probe row and every trace tick,
 `FullTas.EconomyRow` on every `--ticks-out` line): `cash`, `gp`, `np`, `cd`, `rp` (held), `atoms` (the atom collider's
 atoms per tier), `waiting` (atoms bought, not landed), `npTick`, `npCap`, `npBoost` (`globalStats`' NP per tick, its cap,
-the comp boost's NP factor), `cdMult` (`CloneDustGpCdMult`), `segments` (the upgrade trees' grown segments) and
-`gridCalls` (the atom grid's `callAddNewAtom` calls so far: the session's in the plugin, the run's offline, so only its
+the comp boost's NP factor), `cdMult` (`CloneDustGpCdMult`), `segments` (the upgrade trees' grown segments),
+`doorAtom` and `doorArea2` (how far the atom box's and the Area 2 door box's door, `upgradeBox.doorToOpen`, is from its
+box, to 0.01 u; -1 without one) and `gridCalls` (the atom grid's `callAddNewAtom` calls so far: the session's in the plugin, the run's offline, so only its
 steps compare). A probe's tick row also has `econPre`, the economy at that tick's `globalStats.FixedUpdate` before its
 NP payout: what the last tick's frames left, the point the trace's and `--ticks-out` rows are taken at, which
 `economy-diff.py` uses. A probe also logs a row of kind `atom` for each grid call Unity runs (frame, physics tick, game time,
@@ -873,7 +874,13 @@ stand (the brute force over those steps too); at width 1, where the width cuts, 
 tick; and on a toy with only lap income the brute force's plan, which walks to the bonus first earning nothing.
 Area 2's steps (`EconomyPlan.Play`): `all:clone` from 100 Cash buys 3 levels, one a tick; `atoms:3` at 2 Cash a tick stands
 until the 3 levels' 90 is saved (tick 46), then touches; a patient stand with no income gives up after 500 ticks
-(`StandStall`), not 50000.
+(`StandStall`), not 50000, and one on a clone paying 800 every 800 ticks (`IEconomy.Quiet`) waits for it and buys on
+tick 800.
+
+`plan-check --tree-drop <trace>` checks the economy drive's touch of a tree box that just grew: from an Area 2 start with
+the plant box not bought (`t7-c6-area2`), the drive buys the plant box, then touches TreePart0's box every tick from
+where the player touches it (`Simulation.TouchSpot`): it must not buy it while `IE_Grow`'s drop still has it above its
+spot, only once it is within 20 u (`t7-c6-area2`: on 98 ticks later, within 5 u and bought on tick 197).
 
 Every position write in `Movement.FixedUpdate` (a jump's `+2`/`+5`, a wall jump's `+1`, the dash's `−20`) starts from
 the transform, which holds the last rendered frame's blend of the body's last two positions, so each one pulls the

@@ -75,13 +75,17 @@ namespace IGTAP.EngineSim.Cli
         string Key();
         double[] Earned();
         double[] Price(string box, int levels = 1);
+        /// <summary>The most ticks the economy can go paying nothing while it still earns (a clone's lap: its payouts come once a
+        /// lap), 0 where income comes every tick or not at all.</summary>
+        int Quiet();
     }
 
     /// <summary>A step out of a place as the search plays it: Ticks less its events standing at End, then each Buys box a tick
     /// (every one must buy: a strict buy has its Cash on arrival), then Finish a tick. Target: the plan's last buy. Stand: the
     /// target's last resort (no lap from the place to earn on), and every buy from a place no lap is offered from (Area 2's): its
     /// buy retried a tick at a time until the Cash is there. Patient: the stand isn't cut at the beam's BeamStand (no lap earns
-    /// meanwhile, so a later state's stand isn't shorter), but stops when nothing the box costs has risen over StandStall ticks.
+    /// meanwhile, so a later state's stand isn't shorter), but stops when nothing the box costs has risen over StandStall ticks
+    /// more than the economy's longest quiet stretch (IEconomy.Quiet: the clones' payouts come once a lap).
     /// Levels (`atoms:N`): before the touch it stands until the next Levels levels' price is held (a buy-max touch then buys
     /// all it can pay for). All (`all:box`): after the buy it stays in the box, touching it a tick at a time while its next level
     /// is paid for now (upgradeBox.OnTriggerStay2D: a buy each 0.2 s cooldown), a goal per level bought.</summary>
@@ -121,7 +125,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>A capped search completes this many of its richest states by standing at the target.</summary>
         const int Completions = 16;
         /// <summary>A patient stand (and atoms:N's saving) gives up when no currency the box still lacks rose over this many ticks
-        /// (the NP cap reached; no clones to pay GP).</summary>
+        /// more than IEconomy.Quiet (the NP cap reached; no clones to pay GP).</summary>
         const int StandStall = 500;
         /// <summary>all:box stops after this many touches in a row that don't buy (twice the box's 0.2 s cooldown).</summary>
         const int AllMisses = 20;
@@ -211,10 +215,11 @@ namespace IGTAP.EngineSim.Cli
                 string box = o.Buys[i];
                 bool last = i == o.Buys.Length - 1;
                 double[] was = null;
+                int look = StandStall + economy.Quiet();
                 // atoms:N: the next N levels' price saved before the touch.
                 for (int w = 0; last && o.Levels > 1 && !Covered(economy.Price(box, o.Levels), economy.Holds()); w++)
                 {
-                    if (economy.Price(box, o.Levels) == null || w == StandCap || tick >= limit || w % StandStall == 0 && Stalled(economy, box, o.Levels, ref was)) return null;
+                    if (economy.Price(box, o.Levels) == null || w == StandCap || tick >= limit || w % look == 0 && Stalled(economy, box, o.Levels, ref was)) return null;
                     economy.Idle(1, o.End);
                     tick++;
                 }
@@ -224,7 +229,7 @@ namespace IGTAP.EngineSim.Cli
                 was = null;
                 for (int w = 0; ; w++)
                 {
-                    if (w == StandCap || tick >= limit || o.Patient && w % StandStall == 0 && Stalled(economy, box, 1, ref was)) return null;
+                    if (w == StandCap || tick >= limit || o.Patient && w % look == 0 && Stalled(economy, box, 1, ref was)) return null;
                     tick++;
                     if (economy.Buy(box)) break;
                 }
@@ -565,7 +570,7 @@ namespace IGTAP.EngineSim.Cli
             ISet<string> only = null, int width = 0, bool standAtTarget = false)
         {
             var economy = new SimEconomy(sim, moves, label => goalOf(label)?.boxes, levels);
-            sim.RestoreForDrive(start);
+            economy.Restore(start);
             long startTick = sim.Engine.PhysicsTicks;
             targets = TreeTargets(sim, targets, goalOf);
             string target = targets[targets.Length - 1];
@@ -785,12 +790,18 @@ namespace IGTAP.EngineSim.Cli
             _all = sim.World.All<upgradeBox>();
         }
 
-        public SimSnapshot Capture() => _sim.Capture((int)_sim.Engine.RunTicks);
-        public void Restore(SimSnapshot s) => _sim.RestoreForDrive(s);
-        public void Idle(int ticks, string place) => _sim.EconomyIdle(ticks, At(place));
+        /// <summary>The snapshot last restored while no drive tick has played since: Simulation.Capture counts what is due from the
+        /// tick after Scheduler.Tick, the drive's last tick, so a capture right after a restore (Tick 0, nothing played) would count
+        /// every pending Invoke, routine and the atom grid a tick early (and lose a grid due on the first tick).</summary>
+        SimSnapshot _restored;
+
+        public SimSnapshot Capture() => _restored ?? _sim.Capture((int)_sim.Engine.RunTicks);
+        public void Restore(SimSnapshot s) { _sim.RestoreForDrive(s); _restored = s; }
+        public void Idle(int ticks, string place) { _restored = null; _sim.EconomyIdle(ticks, At(place)); }
 
         public bool Buy(string label)
         {
+            _restored = null;
             string[] ids = Ids(label);
             if (ids.Length != 1) throw new InvalidOperationException($"{label}: {ids.Length} boxes, the planner buys one a tick");
             return _sim.EconomyBuy(ids[0], At(label));
@@ -798,6 +809,7 @@ namespace IGTAP.EngineSim.Cli
 
         public void Finish(string course)
         {
+            _restored = null;
             int at = course.IndexOf('@');
             _sim.EconomyFinish(int.Parse(course.Substring(0, at), CultureInfo.InvariantCulture), EconomyPlan.CourseTime(int.Parse(course.Substring(at + 1), CultureInfo.InvariantCulture)));
         }
@@ -831,6 +843,16 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>A label's boxes' price now (their next <paramref name="levels"/> levels), per currency (Shop.Need); null when one
         /// can't be bought.</summary>
         public double[] Price(string label, int levels = 1) => _sim.Shop.Need(Ids(label), levels);
+
+        /// <summary>Twice the longest clone path of a course with clones (a clone pays at its path's end, the next one spawns an
+        /// interval later, at most a path), in ticks.</summary>
+        public int Quiet()
+        {
+            double longest = 0;
+            foreach (clonesScript c in _sim.World.All<clonesScript>())
+                if (_sim.Shop.Economy?.ClonesOf(c) is var (count, path) && count > 0) longest = Math.Max(longest, path);
+            return (int)Math.Ceiling(2 * longest / 0.02);
+        }
 
         /// <summary>The label's box buys all it can pay for on a touch (upgradeBox.buyMax, not neverBuyMax: Shop.Stay's routine).</summary>
         public bool BuyMax(string label) => Ids(label).Select(_sim.Shop.Box).Any(b => b != null && b.buyMax && !b.neverBuyMax);
@@ -915,7 +937,9 @@ namespace IGTAP.EngineSim.Cli
             foreach (string label in tree.Concat(only ?? (IEnumerable<string>)Array.Empty<string>()).Append(EconomyPlan.AtomBox).Distinct())
                 if (label.StartsWith("buy:", StringComparison.Ordinal) && !moves.Places.ContainsKey(label) && GoalOf(label)?.boxes is [string id] && _eval.Shop.Box(id) is upgradeBox box)
                 {
-                    WorldPos w = _eval.ToWorld(new ScenePos(box.transform.position.x, box.transform.position.y));
+                    // Where the player touches it (just under its trigger), else the box itself.
+                    Vector2 spot = _eval.TouchSpot(box) ?? new Vector2(box.transform.position.x, box.transform.position.y);
+                    WorldPos w = _eval.ToWorld(new ScenePos(spot.x, spot.y));
                     moves.AddBoxPlace(label, w.x, w.y);
                 }
             int targetGoal = Array.IndexOf(_labels, targets[targets.Length - 1], kept) + 1;

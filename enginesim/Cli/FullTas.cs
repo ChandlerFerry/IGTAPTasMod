@@ -183,7 +183,8 @@ namespace IGTAP.EngineSim.Cli
         /// The economy as a `--ticks-out` row (and `replay --ticks-out`) carries it, under the names the plugin's 1x probe rows and
         /// trace ticks use (TasPlugin.EconomyNow), for tools/economy-diff.py: each currency held, the atom collider's atoms per tier
         /// and waiting atoms, globalStats' NP per tick, its cap, the comp boost's NP factor and the clone dust multiplier, and the
-        /// upgrade trees' grown segments.
+        /// upgrade trees' grown segments, and how far each door box's door is from its box (the atom box's, the Area 2 door box's:
+        /// upgradeBox.doorToOpen, a PlatformMover; -1 without one).
         /// </summary>
         internal static Dictionary<string, object> EconomyRow(Simulation sim)
         {
@@ -197,7 +198,19 @@ namespace IGTAP.EngineSim.Cli
                 ["waiting"] = sim.Shop.Economy?.WaitingAtoms ?? 0, ["npTick"] = stats?.NPrewardPerTick ?? 0.0, ["npCap"] = stats?.NPrewardCap ?? 0.0,
                 ["npBoost"] = stats?.EffectOfNpCompBoost ?? 1.0, ["cdMult"] = sim.Shop.Economy?.CdMult ?? 1.0,
                 ["gridCalls"] = sim.Shop.Economy?.GridCalls ?? 0, ["segments"] = sim.World.All<TreeController>().Sum(t => t.GrownSegments.Count),
+                ["doorAtom"] = Door(sim, globalStats.globalUpgradeSet.spawnNewAtom), ["doorArea2"] = Door(sim, globalStats.globalUpgradeSet.area2DoorOpen),
             };
+        }
+
+        static readonly System.Reflection.FieldInfo DoorToOpen = typeof(upgradeBox).GetField("doorToOpen", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+
+        /// <summary>The distance from the global box of this kind that has a door to its door (rounded to 0.01 u); -1: none.</summary>
+        static double Door(Simulation sim, globalStats.globalUpgradeSet kind)
+        {
+            foreach (upgradeBox b in sim.World.All<upgradeBox>())
+                if (b.upgrade == localUpgrades.localUpgradeSet.GLOBAL && b.globalUpgrade == kind && DoorToOpen.GetValue(b) is PlatformMover door && (object)door != null)
+                    return Math.Round(UnityEngine.Vector2.Distance(door.transform.position, b.transform.position), 2);
+            return -1;
         }
 
         /// <summary>

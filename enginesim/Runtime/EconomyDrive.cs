@@ -65,7 +65,9 @@ namespace IGTAP.EngineSim
         /// <summary>
         /// One physics tick in which the player at <paramref name="at"/> touches the box (an id or hierarchy path): its
         /// OnTriggerStay2D, as the physics step calls it (the cooldown, the affordability and the box's state as the hook checks
-        /// them; a buy-max box's routine started, the next ticks' drive going on with it). False when it didn't buy.
+        /// them; a buy-max box's routine started, the next ticks' drive going on with it), where one of its triggers overlaps the
+        /// player's boxes standing there (<see cref="Reaches"/>: a tree box still dropping onto its spot after IE_Grow turns it
+        /// on, 2000 u above, doesn't). False when it didn't buy.
         /// </summary>
         public bool EconomyBuy(string boxId, Vector2 at)
         {
@@ -74,10 +76,41 @@ namespace IGTAP.EngineSim
             EconomyTick(() =>
             {
                 Arrive(at);
+                if (!Reaches(box, at)) return;
                 Touch(box);
                 BoxStay.Invoke(box, new object[] { _playerColliders[0] });
             });
             return box.TimesUsed != used;
+        }
+
+        /// <summary>Where the player stands to touch the box once it's where its transform is now (a tree box not grown yet: its
+        /// spot): just under its first trigger (a buy box's thin trigger under its body, hit from below), the player's boxes 4 u
+        /// into it; null for a box with no box trigger.</summary>
+        internal Vector2? TouchSpot(upgradeBox box)
+        {
+            foreach (Collider2D c in box.GetComponents<Collider2D>())
+            {
+                if (!c.isTrigger || c is not BoxCollider2D trigger) continue;
+                Vector3 scale = box.transform.lossyScale, p = box.transform.position;
+                float bottom = p.y + (trigger.offset.y - trigger.size.y / 2f) * scale.y;
+                BoxCollider2D body = _playerColliders[0];
+                Vector3 own = Player.transform.lossyScale;
+                float top = (body.offset.y + body.size.y / 2f) * own.y;
+                return new Vector2(p.x + trigger.offset.x * scale.x - body.offset.x * own.x, bottom + 4f - top);
+            }
+            return null;
+        }
+
+        /// <summary>One of the box's own trigger colliders, on and where it is now, overlaps the player's boxes, its body standing at
+        /// <paramref name="at"/> (PhysicsWorld.PlayerOverlaps, as the clonesLoD triggers are tested).</summary>
+        internal bool Reaches(upgradeBox box, Vector2 at)
+        {
+            if (!box.gameObject.activeInHierarchy) return false;
+            // The transforms scripts moved since the last step (IE_Grow's drop), as the physics step syncs them first.
+            Physics.SyncTransforms();
+            foreach (Collider2D c in box.GetComponents<Collider2D>())
+                if (c.m_IsTrigger && c.m_Enabled && Physics.PlayerOverlaps(c, at)) return true;
+            return false;
         }
 
         /// <summary>One physics tick in which the course numbered <paramref name="course"/> finishes in <paramref name="time"/>

@@ -262,6 +262,7 @@ namespace IGTAP.EngineSim.Cli
                             + "  plan-check --moves <trace.json> [--buytable FILE]\n"
                             + "                                         the movement table (EconomyMoves.cs) against the best it is built\n"
                             + "                                         from: its splits, an estimate, the buy table, Measured, Save/Read\n"
+                            + "  plan-check --tree-drop <trace.json>      the drive buys a tree box only once IE_Grow has dropped it onto its spot\n"
                             + "  rays <trace.json> <rays.json>          offline raycasts in the /api/enginesim/raycast format\n"
                             + "  probe <trace.json> <probe.json> [--out file]\n"
                             + "                                         one start state (the trace's, moved, or a studio savestate), branches of\n"
@@ -590,6 +591,7 @@ namespace IGTAP.EngineSim.Cli
         static int PlanCheck(string[] args)
         {
             if (args.Contains("--moves")) return FullTas.MovesCheck(args.Where(a => a != "--moves").ToArray());
+            if (args.Contains("--tree-drop")) return EconomyPlanCheck.TreeDrop(args.First(a => a != "--tree-drop"));
             string tracePath = args[0];
             List<InputTick> route = Plan.ReadRoute(args[1]);
             int at = Solve.Option(args, "--at", -1), idle = Solve.Option(args, "--ticks", 2000);

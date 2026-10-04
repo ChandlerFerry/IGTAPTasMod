@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using UnityEngine;
+using FullTasGoal = IGTAPTasMod.FullTasGoal;
 
 namespace IGTAP.EngineSim.Cli
 {
@@ -13,6 +15,36 @@ namespace IGTAP.EngineSim.Cli
     /// </summary>
     static class EconomyPlanCheck
     {
+        /// <summary>
+        /// plan-check --tree-drop &lt;trace&gt;: the economy drive's touch of a tree box that just grew. From an Area 2 start with the
+        /// tree's plant box not bought (t7-c6-area2), the drive buys the plant box, then touches TreePart0's box every tick from
+        /// where the player touches it (Simulation.TouchSpot). IE_Grow turns the box on 2000 u above its spot and drops it there
+        /// (about 2 s to within 5 u): the drive must not buy it while it is still up there, only once it is down (within 20 u).
+        /// Prints PASS or FAIL; exits 1 on a FAIL.
+        /// </summary>
+        internal static int TreeDrop(string trace)
+        {
+            Simulation sim = Solve.Creator(trace, Solve.ReadHeader(trace))();
+            sim.RestoreForDrive(sim.Start);
+            string Id(string token) => FullTasGoal.Boxes.Where(b => b.token == token).Select(b => FullTasGoal.BoxId(b.path, b.sibling)).First();
+            upgradeBox plant = sim.Shop.Box(Id("buyplant")), box = sim.Shop.Box(Id("buytree0"));
+            Vector2 rest = box.transform.position, spot = sim.TouchSpot(box).Value;
+            bool planted = sim.EconomyBuy(Id("buyplant"), sim.TouchSpot(plant).Value);
+            int on = -1, down = -1, bought = -1;
+            float away = float.NaN;
+            for (int t = 1; t <= 1500 && bought < 0; t++)
+            {
+                float d = Vector2.Distance(box.transform.position, rest);
+                if (on < 0 && box.gameObject.activeInHierarchy) on = t;
+                if (on > 0 && down < 0 && d <= 5f) down = t;
+                if (sim.EconomyBuy(Id("buytree0"), spot)) (bought, away) = (t, d);
+            }
+            bool ok = planted && on > 0 && bought > on && away <= 20f;
+            Console.WriteLine((ok ? "PASS" : "FAIL") + $" tree drop: the plant box {(planted ? "bought" : "not bought")}; TreePart0's box on {on} ticks later, within 5 u of its spot "
+                + $"on {down}, bought on {bought} ({away:0.#} u from its spot)");
+            return ok ? 0 : 1;
+        }
+
         sealed record ToySnap(double Cash, int Clones, int Mult, int Targets, double Earned);
 
         sealed class Toy : IEconomy<ToySnap>
@@ -22,11 +54,17 @@ namespace IGTAP.EngineSim.Cli
             /// <summary>The target's price, and whether the clone box is offered (a toy whose only income is laps).</summary>
             public double Cost = 2000;
             public bool Clones = true;
-            /// <summary>Ticks played (Idle's and Buy's), for the stand checks.</summary>
-            public int Played;
+            /// <summary>Ticks played (Idle's and Buy's), for the stand checks; Lump: the clones pay only every Lump ticks (a clone lap's
+            /// payout), 0 every tick.</summary>
+            public int Played, Lump;
             public ToySnap Capture() => new ToySnap(_cash, _clones, _mult, _targets, _earned);
             public void Restore(ToySnap s) => (_cash, _clones, _mult, _targets, _earned) = (s.Cash, s.Clones, s.Mult, s.Targets, s.Earned);
-            public void Idle(int ticks, string place) { Played += ticks; if (place != "c1") Gain(_clones * ticks); }
+            public void Idle(int ticks, string place)
+            {
+                for (int i = 0; i < ticks; i++)
+                    if (++Played > 0 && place != "c1" && (Lump == 0 || Played % Lump == 0)) Gain(_clones * Math.Max(1, Lump));
+            }
+            public int Quiet() => Lump;
             void Gain(double cash) { _cash += cash; _earned += cash; }
             public bool Buy(string box)
             {
@@ -214,6 +252,12 @@ namespace IGTAP.EngineSim.Cli
             var stand = new PlanOption(new Step("target", "buy:target", 0), "target", new[] { "target" }, null, true, new[] { "buy:target" }, Stand: true, Patient: true);
             played = EconomyPlan.Play(toy, 0, stand);
             Check(played == null && toy.Played <= 1000, $"a patient stand with no income: {(played == null ? "gave up" : "bought on " + played)} after {toy.Played} ticks (at most 1000)");
+            // Lumpy income (a clone lap's payout every 800 ticks): the stand waits it out instead of giving up at the first quiet look.
+            toy.Restore(new ToySnap(0, 1, 1, 0, 0));
+            (toy.Played, toy.Lump, toy.Cost) = (0, 800, 700);
+            played = EconomyPlan.Play(toy, 0, stand);
+            Check(played == 800, $"a patient stand on a clone paying 800 every 800 ticks: {(played == null ? "gave up after " + toy.Played + " ticks" : "bought on " + played)} (800)");
+            (toy.Lump, toy.Cost) = (0, 2000);
             Console.WriteLine(fails == 0 ? "plan-selftest: PASS" : $"plan-selftest: {fails} FAIL");
             return fails == 0 ? 0 : 1;
         }

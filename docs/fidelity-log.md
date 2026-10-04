@@ -1079,3 +1079,39 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
   modelled. Whether the grid keeps firing after zone 1 loads again is unchecked.
 - **Where:** `Economy` (`GridFrame`, `AtomPrestige`, constructor), `Simulation.InterpolatedFrames`, `TurboRunner` (`Run`,
   `AtomGridTicks`, `HandAtomGrid`, `Economy.openA2Door`), `EngineSimBridge.WriteAtomStart`, `entries.txt`.
+
+## The economy drive touched boxes in mid-air
+
+- **Symptom:** `fulltas-plan`'s drive bought a tree box the tick `TreeSegmentActivationComponent.IE_Grow` turned it on,
+  while it was still 2000 u above its spot and dropping (about 2 s, 99 ticks, to within 5 u); every tree box on the way
+  to the zip movers came up to 2 s early in a plan.
+- **Cause:** `Simulation.EconomyBuy` called `upgradeBox.OnTriggerStay2D` whatever the box's place; a real touch needs its
+  trigger to overlap the player.
+- **Fix:** the drive touches a box only where one of its own triggers, synced to where its transform is now
+  (`PhysicsWorld.SyncTransforms`, as a physics step syncs them first), overlaps the player's boxes at the step's place
+  (`PhysicsWorld.PlayerOverlaps`, the clonesLoD triggers' test); a box place the table makes is where the player touches
+  it, 4 u into its trigger from below (`TouchSpot`). `plan-check --tree-drop`: TreePart0's box comes on 98 ticks after
+  the plant box's buy, is within 5 u of its spot on tick 197 and is bought on 197 (before: on tick 108, 1026 u up).
+- **Where:** `Simulation.EconomyBuy`, `Reaches`, `TouchSpot` (`Runtime/EconomyDrive.cs`).
+
+## The Area 2 door box was refused
+
+- **Symptom:** the engine refused `buy:buytree7` (TreePart7, `area2DoorOpen`), on every way to the zip movers.
+- **Fix:** `Economy.BoughtGlobal` runs DoBuyUpgrade's own `doorToOpen.ForceNextPhase` (upgradeBox.cs:755-757), the door
+  touched so a restore puts it back, as the atom box's door. Checked at 1x (`t13-door-q`: a Course 6 start on a fresh
+  new game with Task 7's currencies, the tree climbed to `buytree7`): the door (`econ.doorArea2`, its distance from the
+  box, in the probe, trace and `--ticks-out` rows) starts moving on the same physics tick in 1x, turbo and offline and
+  passes the same 505 positions, 1x within 0.03 u of offline, turbo within 0.01 (rounding); Cash, GP, CD, RP, atoms and
+  grown segments equal in all three. NP, NP per tick and waiting atoms differ at 1x from the first atom landings: the 1x
+  run's atom grid phase is its own (a category start doesn't pin it), turbo and offline equal.
+- **Where:** `Economy.BoughtGlobal`; `FullTas.EconomyRow`, `TasPlugin.EconomyNow` (`doorAtom`, `doorArea2`).
+
+## The planner's root counted the schedule a tick early
+
+- **Symptom:** a re-plan from a realize state found no plan: every step ended "a waiting atom with AtomColliderSystem's
+  0.4 s grid not running".
+- **Cause:** `Simulation.Capture` counts what is due from the tick after `Scheduler.Tick`, the drive's last tick; the
+  planner captured its root right after a restore (Tick 0, nothing played), so every pending Invoke, routine and the
+  atom grid was filed a tick early, and a grid due on the first tick was filed as none.
+- **Fix:** `SimEconomy.Capture` hands back the snapshot it last restored while no drive tick has played since.
+- **Where:** `SimEconomy` (`enginesim/Cli/EconomyPlan.cs`).

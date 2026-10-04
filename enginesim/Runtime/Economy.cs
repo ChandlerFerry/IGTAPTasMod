@@ -794,7 +794,16 @@ namespace IGTAP.EngineSim
             {
                 case G.startVmanSpeedrun: return Unmodeled("a Vman speedrun's start (VmanScript.SetupVmanSpeedrun, upgradeBox.cs:710)");
                 case G.openGate: return Unmodeled("the gate box (gateAnim's \"open\" trigger and deactivate, upgradeBox.cs:731-732: the gate's collider)");
-                case G.area2DoorOpen: return Unmodeled("the Area 2 door box (doorToOpen.ForceNextPhase, upgradeBox.cs:756: the door's collider)");
+                case G.area2DoorOpen:
+                    // DoBuyUpgrade's area2DoorOpen (upgradeBox.cs:755-757): the game's own doorToOpen.ForceNextPhase, its mover's
+                    // IE_AdvanceToNextState run on by the Scheduler (Simulation's Continues), the door tracked so a restore puts it
+                    // back, as the atom box's door (AtomPrestige). The box's cap is 1: a load's upgradeBox.Start JumpToNextState
+                    // (upgradeBox.cs:260-263) is a later session's.
+                    if (BoxDoorToOpenField.GetValue(box) is not PlatformMover door || (object)door == null)
+                        return Unmodeled("an Area 2 door box without its doorToOpen mover (the game throws)");
+                    _sim.Touch(door);
+                    door.ForceNextPhase();
+                    return true;
                 case G.unlockTeleporters: return Unmodeled("teleporters (TeleporterScript.updateVisuals, upgradeBox.cs:767-769: TeleporterScript reads the static dictionary)");
             }
             _global = (double[])_global.Clone();
