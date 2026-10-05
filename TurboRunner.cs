@@ -172,15 +172,25 @@ namespace IGTAPTasMod
         /// <summary>This run's candidates: drawing behaviours off at its start whose Start hasn't run or been drawn.</summary>
         static readonly List<Behaviour> StartWaiting = new List<Behaviour>();
 
-        static void BeforeDrawingStart(Behaviour __instance, out UnityEngine.Random.State? __state)
+        /// <summary>StartPass is running a woken box's Start itself: not Unity's real one.</summary>
+        static bool _modellingStart;
+
+        /// <summary>Unity's real Start of a behaviour a run modelled: the RNG and an upgrade box's fields (cap, base cap, costs) as the
+        /// modelled Start left them, put back after it (README ### Rules, exception 12), so it doesn't apply twice.</summary>
+        static void BeforeDrawingStart(Behaviour __instance, out (UnityEngine.Random.State rng, object[] box)? __state)
         {
+            __state = null;
+            if (_modellingStart) return;
             StartsRun.Add(__instance);
-            __state = _startsModelled.Remove(__instance) ? UnityEngine.Random.state : (UnityEngine.Random.State?)null;
+            if (_startsModelled.Remove(__instance)) __state = (UnityEngine.Random.state, __instance is upgradeBox box ? CaptureFields(box) : null);
         }
 
-        static void AfterDrawingStart(UnityEngine.Random.State? __state)
+        static void AfterDrawingStart(Behaviour __instance, (UnityEngine.Random.State rng, object[] box)? __state)
         {
-            if (__state is UnityEngine.Random.State drawn) UnityEngine.Random.state = drawn;
+            if (__state == null) return;
+            var (drawn, box) = __state.Value;
+            if (box != null) RestoreFields(__instance, box);
+            UnityEngine.Random.state = drawn;
         }
 
         static void CollectStartWaiting()
@@ -190,7 +200,8 @@ namespace IGTAPTasMod
         }
 
         /// <summary>A modelled frame's Start pass, before its Updates: each waiting behaviour now on draws what its Start draws
-        /// (LightFlicker.cs:26: 1; RandomAnimSpeedComponent.cs:16-21: 2, 3 when broken; JiggleDropScript.cs:41: 1).</summary>
+        /// (LightFlicker.cs:26: 1; RandomAnimSpeedComponent.cs:16-21: 2, 3 when broken; JiggleDropScript.cs:41: 1), the atom
+        /// collider recomputes NP and an upgrade box runs the game's own Start (WokenStarts).</summary>
         static void StartPass()
         {
             for (int i = StartWaiting.Count - 1; i >= 0; i--)
@@ -201,12 +212,14 @@ namespace IGTAPTasMod
                 StartWaiting.RemoveAt(i);
                 if (b is upgradeBox box)
                 {
-                    // Its real Start comes after the run: one that changes nothing a run reads is left to it.
-                    if (WokenStarts.Unmodeled(box, PlayerPrefs.HasKey("OpenA2Door")) is string why) TasPlugin.AbortRun(why);
-                    continue;
+                    // The game's own Start (upgradeBox.cs:199-298) at the modelled frame; Unity's after the run gets the box's fields put back.
+                    if (WokenStarts.Unmodeled(box) is string why) { TasPlugin.AbortRun(why); continue; }
+                    _modellingStart = true;
+                    try { WokenStarts.Start.Invoke(box, null); }
+                    finally { _modellingStart = false; }
                 }
                 // AtomColliderSystem.Start (AtomColliderSystem.cs:106-109) recomputes NP; Unity's own after the run does again.
-                if (b is AtomColliderSystem) Singleton<globalStats>.Instance?.RecalcNpRewardPerTick();
+                else if (b is AtomColliderSystem) Singleton<globalStats>.Instance?.RecalcNpRewardPerTick();
                 else
                 {
                     int draws = b is RandomAnimSpeedComponent anim ? (AnimIsBroken(anim) ? 3 : 2) : 1;
@@ -1306,6 +1319,9 @@ namespace IGTAPTasMod
                 {
                     KeepWindowAlive(clock, ref keepAliveAt);
                     _frame++;
+                    // The tick's frame starts with the Start of what the last frame's end woke (IE_Grow's box), before its
+                    // FixedUpdates, as Unity runs it (README ### Rules, exception 12); what the step wakes starts at the frame's pass.
+                    if (StartWaiting.Count > 0) StartPass();
                     for (int i = 0; i < Pending.Count; i++)
                     {
                         if (Pending[i].due > _tick) continue;

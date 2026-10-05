@@ -392,7 +392,8 @@ namespace IGTAP.EngineSim.Cli
 
         static bool Compare(List<string> diffs, string name, string offline, JsonElement turbo)
         {
-            string expected = Numbers(_normalize(turbo.GetRawText()));
+            // A string compares by its value: the trace's escapes are Newtonsoft's ("+" raw), this side's System.Text.Json's.
+            string expected = Numbers(_normalize(turbo.ValueKind == JsonValueKind.String ? Json(turbo.GetString()) : turbo.GetRawText()));
             string actual = Numbers(offline);
             if (actual == expected) return false;
             diffs.Add(name + " " + Short(offline) + " != " + Short(turbo.GetRawText()));

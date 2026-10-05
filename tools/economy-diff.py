@@ -1,7 +1,7 @@
 """Compare the economy of two runs of the same inputs field by field, each field as the sequence of values it takes (1x's
 physics count runs ahead through dash freezes, so ticks don't line up; enginesim/README.md#probe).
 
-  economy-diff.py <a> <b> [--fields cash,gp,np,cd,rp,atoms,waiting,npTick,npCap,npBoost,cdMult,segments] [--ticks]
+  economy-diff.py <a> <b> [--fields cash,gp,np,cd,rp,atoms,waiting,npTick,npCap,npBoost,cdMult,segments,treeBoxes] [--ticks]
 
 --ticks also compares the physics tick each value first appears on (each row's `physics`; the first value's is where the
 table starts, not compared): the same values, changing on the same ticks. Only meaningful where both sides count physics ticks alike (no dash freeze in the stretch, or turbo against the
@@ -18,7 +18,7 @@ import argparse
 import json
 import sys
 
-FIELDS = "cash,gp,np,cd,rp,atoms,waiting,npTick,npCap,npBoost,cdMult,segments"
+FIELDS = "cash,gp,np,cd,rp,atoms,waiting,npTick,npCap,npBoost,cdMult,segments,treeBoxes"
 
 
 def rows(path):
@@ -70,6 +70,8 @@ def same(x, y, ticks):
 def close(a, b):
     if isinstance(a, list) or isinstance(b, list):
         return isinstance(a, list) and isinstance(b, list) and len(a) == len(b) and all(close(x, y) for x, y in zip(a, b))
+    if isinstance(a, str) or isinstance(b, str):
+        return a == b
     return a == b or abs(a - b) <= 1e-12 * max(abs(a), abs(b))
 
 
@@ -96,7 +98,7 @@ def main():
 
 
 if __name__ == "__main__":
-    assert close(1.0, 1.0 + 1e-13) and not close(1.0, 1.0001) and close([1, 2], [1, 2]) and not close([1], [1, 2])
+    assert close(1.0, 1.0 + 1e-13) and not close(1.0, 1.0001) and close([1, 2], [1, 2]) and not close([1], [1, 2]) and close("a", "a") and not close("a", "b")
     assert seq([{"econ": {"np": 1}}, {"econ": {"np": 1}}, {"econ": {"np": 2}}], "np") == [1, 2]
     t = [{"econ": {"np": 1}, "physics": 1}, {"econ": {"np": 1}, "physics": 2}, {"econ": {"np": 2}, "physics": 3}]
     u = [{"econ": {"np": 1}, "physics": 1}, {"econ": {"np": 2}, "physics": 2}]

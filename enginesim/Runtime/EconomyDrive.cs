@@ -121,11 +121,14 @@ namespace IGTAP.EngineSim
             EconomyTick(() => Shop.CourseFinished(c, time));
         }
 
-        /// <summary>Before the tick's other FixedUpdates: the due Invokes, then the Seconds waits, in the frame that will cross the tick.</summary>
+        /// <summary>Before the tick's other FixedUpdates, in the frame that will cross the tick: the Start of what the last frame's end
+        /// woke (IE_Grow's box: Unity runs it before the frame's FixedUpdates, README ### Rules, exception 12), the due Invokes,
+        /// then the Seconds waits.</summary>
         void EconomyTickStart()
         {
             // The tick's physics step is in its first rendered frame (InterpolatedFrames counts the others).
             Scheduler.Frame++;
+            Shop.Economy?.StartPass();
             Scheduler.FireDue();
             Scheduler.FrameDeltaTime = Frames.Step(MacroEngine.FrameGrid.NextTicks(Engine.GridTicks), 0);
             Scheduler.Resume(Scheduler.Wait.Seconds);

@@ -144,6 +144,7 @@ namespace IGTAP.EngineSim
         Behaviour[] _woken = Array.Empty<Behaviour>();
         readonly List<Behaviour> _starting = new List<Behaviour>();
         static readonly FieldInfo AnimIsBroken = typeof(RandomAnimSpeedComponent).GetField("isBroken", Fields);
+        static readonly FieldInfo BoxTree = typeof(upgradeBox).GetField("upgradeTree", Fields);
 
         internal readonly double[] Income = new double[7];   // per globalStats.Currencies, what the economy paid since the start
         public double Earned => Income[(int)globalStats.Currencies.Cash];
@@ -1495,8 +1496,11 @@ namespace IGTAP.EngineSim
         /// <summary>
         /// A rendered frame's Start pass, before its Updates: the draws of each woken behaviour still on (LightFlicker.Start's
         /// Random.Range(0, 100), LightFlicker.cs:26; RandomAnimSpeedComponent.Start's speed and normalized time, and a broken
-        /// one's state, RandomAnimSpeedComponent.cs:16-21; JiggleDropScript.Start's normalized time, JiggleDropScript.cs:41).
-        /// What they set is presentation. One switched off again first keeps waiting, as Unity's Start does.
+        /// one's state, RandomAnimSpeedComponent.cs:16-21; JiggleDropScript.Start's normalized time, JiggleDropScript.cs:41),
+        /// what they set being presentation; the atom collider's NP; an upgrade box's own Start (upgradeBox.cs:199-298: its cap,
+        /// cost, deactivate, visibility, statue text, Vman omnidash box, key prompt, local upgrades and, bought already, its tree),
+        /// the box and its tree touched first so a restore puts them back. One switched off again first keeps waiting, as
+        /// Unity's Start does.
         /// </summary>
         internal void StartPass()
         {
@@ -1506,8 +1510,13 @@ namespace IGTAP.EngineSim
             {
                 Behaviour b = _starting[i];
                 if (!b.isActiveAndEnabled) continue;
-                // An upgrade box's Start is run by neither turbo nor the engine: only one that changes nothing a run reads.
-                if (b is upgradeBox box && IGTAPTasMod.WokenStarts.Unmodeled(box, _openA2Door == true) is string why) { if (_sim.Engine.IsRunning) _sim.Engine.Abort(why); return; }
+                if (b is upgradeBox box)
+                {
+                    if (IGTAPTasMod.WokenStarts.Unmodeled(box) is string why) { if (_sim.Engine.IsRunning) _sim.Engine.Abort(why); return; }
+                    _sim.Touch(box);
+                    if (BoxTree.GetValue(box) is TreeController tree && (object)tree != null) _sim.Touch(tree);
+                    IGTAPTasMod.WokenStarts.Start.Invoke(box, null);
+                }
                 // AtomColliderSystem.Start (AtomColliderSystem.cs:106-109) recomputes NP.
                 if (b is AtomColliderSystem) RecalcNp();
                 int draws = b is RandomAnimSpeedComponent anim ? ((bool)AnimIsBroken.GetValue(anim) ? 3 : 2) : b is LightFlicker || b is JiggleDropScript ? 1 : 0;

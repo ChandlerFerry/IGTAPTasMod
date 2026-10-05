@@ -177,8 +177,8 @@ namespace IGTAPTasMod
         /// The economy as a probe row and a trace tick carry it (<c>econ</c>), under the names enginesim's <c>--ticks-out</c> rows
         /// use (FullTas.EconomyRow), for tools/economy-diff.py and <c>replay</c>: each currency held, the atom collider's atoms per
         /// tier (<c>contents[i].Count</c>) and waiting atoms, globalStats' NP per tick, its cap, the comp boost's NP factor and the
-        /// clone dust multiplier, the upgrade trees' grown segments, and how far each door box's door is from its box (the atom
-        /// box's, the Area 2 door box's; -1 without one). Reads only.
+        /// clone dust multiplier, the upgrade trees' grown segments, how far each door box's door is from its box (the atom
+        /// box's, the Area 2 door box's; -1 without one) and the tree boxes on (<c>treeBoxes</c>). Reads only.
         /// </summary>
         internal static Dictionary<string, object> EconomyNow()
         {
@@ -197,7 +197,20 @@ namespace IGTAPTasMod
                 ["npBoost"] = stats == null ? 1.0 : stats.EffectOfNpCompBoost, ["cdMult"] = stats == null ? 1.0 : stats.CloneDustGpCdMult,
                 ["gridCalls"] = _gridCalls, ["segments"] = _econTrees.Sum(t => t.GrownSegments.Count),
                 ["doorAtom"] = EconDoor(globalStats.globalUpgradeSet.spawnNewAtom), ["doorArea2"] = EconDoor(globalStats.globalUpgradeSet.area2DoorOpen),
+                ["treeBoxes"] = EconTreeBoxes(),
             };
+        }
+
+        static readonly AccessTools.FieldRef<upgradeBox, TreeController> EconBoxTree = AccessTools.FieldRefAccess<upgradeBox, TreeController>("upgradeTree");
+        static upgradeBox[] _econTreeBoxes;
+
+        /// <summary>Each tree box on (a grown segment's), by its segment and name: buys, cap, base cap, cost, base cost, active, as
+        /// FullTas.EconomyRow writes it.</summary>
+        static string EconTreeBoxes()
+        {
+            if (_econTreeBoxes == null || Array.Exists(_econTreeBoxes, b => b == null))
+                _econTreeBoxes = FindObjectsByType<upgradeBox>(FindObjectsInactive.Include, FindObjectsSortMode.None).Where(b => EconBoxTree(b) != null).ToArray();
+            return _econTreeBoxes.Where(b => b.gameObject.activeInHierarchy).Select(b => WokenStarts.Describe(b)).OrderBy(d => d, StringComparer.Ordinal).Aggregate("", WokenStarts.Join);
         }
 
         static readonly AccessTools.FieldRef<upgradeBox, PlatformMover> EconDoorToOpen = AccessTools.FieldRefAccess<upgradeBox, PlatformMover>("doorToOpen");
@@ -293,8 +306,8 @@ namespace IGTAPTasMod
         private static void BeforeProbeZoneLoad(ZoneLoader __instance, int zoneToLoad) { ProbeZoneRow("load", __instance, zoneToLoad, null); }
         private static void BeforeProbeAtomEnable(AtomColliderSystem __instance) { ProbeZoneRow("atomEnable", __instance, 0, null); }
         private static void BeforeProbeAtomStart(AtomColliderSystem __instance) { ProbeZoneRow("atomStart", __instance, 0, null); }
-        // An upgrade box's first Start (by: what it would change, WokenStarts) and a zip mover's OnEnable (JumpToState).
-        private static void BeforeProbeBoxStart(upgradeBox __instance) { ProbeZoneRow("boxStart", __instance, 0, WokenStarts.Unmodeled(__instance, PlayerPrefs.HasKey("OpenA2Door"))); }
+        // An upgrade box's first Start (by: why turbo and the engine can't run it, WokenStarts) and a zip mover's OnEnable (JumpToState).
+        private static void BeforeProbeBoxStart(upgradeBox __instance) { ProbeZoneRow("boxStart", __instance, 0, WokenStarts.Unmodeled(__instance)); }
         private static void BeforeProbeMoverEnable(PlatformMover __instance) { ProbeZoneRow("moverEnable", __instance, 0, null); }
 
         static void ProbeZoneRow(string what, Component at, int zone, string by)

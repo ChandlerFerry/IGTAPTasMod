@@ -24,6 +24,14 @@ namespace UnityEngine
         public static float timeScale { get { return _timeScale; } set { _timeScale = value; } }
     }
 
+    /// <summary>The engine holds no machine's prefs: upgradeBox.Start reads them only on branches the engine doesn't run (its
+    /// Steam branch, SteamManager.Initialized cut; the atom box's door, WokenStarts.Unmodeled).</summary>
+    public static class PlayerPrefs
+    {
+        public static bool HasKey(string key) { throw new System.NotSupportedException("PlayerPrefs.HasKey(\"" + key + "\") offline"); }
+        public static void SetInt(string key, int value) { throw new System.NotSupportedException("PlayerPrefs.SetInt(\"" + key + "\") offline"); }
+    }
+
     public static class Debug
     {
         public static void Log(object message) { }
