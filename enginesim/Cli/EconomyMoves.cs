@@ -88,6 +88,7 @@ namespace IGTAP.EngineSim.Cli
             foreach (var v in speeds) table._speeds[v.Key] = v.Value;
             table.AddBest(stops);
             if (buyTableFile != null) table.AddBuyTable(buyTableFile);
+            foreach (var (id, at) in run.CourseGates()) table.AddPlace(id, at.x, at.y, null);
             if (routesFile != null) table.AddSavedLaps(routesFile);
             movesFile ??= run.MovesFile;
             if (File.Exists(movesFile))
@@ -254,7 +255,10 @@ namespace IGTAP.EngineSim.Cli
                 int walk = from == gate ? 0 : Guess(from, gate, caps);
                 if (walk < 0) return -1;
                 if (lap && _moves.TryGetValue((gate, "finish:" + n, caps), out Move course)) return walk + course.Ticks;
-                return _moves.TryGetValue((gate, "record:" + n, caps), out Move saved) ? walk + saved.Ticks : -1;
+                if (_moves.TryGetValue((gate, "record:" + n, caps), out Move saved)) return walk + saved.Ticks;
+                // A course nothing ran (no saved route with these unlocks): its gate to its finish as any other pair.
+                int run = lap ? Guess(gate, "finish:" + n, caps) : -1;
+                return run < 0 ? -1 : walk + run;
             }
             if (to.StartsWith("restart@", StringComparison.Ordinal)) return -1;
             bool? missed = Missed(from, to, caps);
@@ -456,19 +460,24 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>Saved course laps (<see cref="SavedLaps"/>) for every unlock set the best or the buy table stood with: a farm
         /// route's lap as `finish:N` to `lap:N`, a record as `start:N` to `record:N` (its own key: the best's run of the course doesn't
         /// hide it, the planner's record laps take its time); the one SavedLaps derives from the other (±0.4 s) is marked
-        /// Estimated.</summary>
+        /// Estimated. A course with no saved route these unlocks cover gets the fastest record of any category as its gate to
+        /// finish run, estimated: more unlocks only make a course faster, so it is a lower bound, as a walk is.</summary>
         void AddSavedLaps(string routesFile)
         {
+            var anyCategory = SavedLaps(routesFile, Categories.All.Select(d => d.Label).ToArray());
             foreach (string id in _caps.OrderBy(c => c, StringComparer.Ordinal).ToList())
             {
                 if (!Caps.TryParse(id, out Caps have)) continue;
                 string[] cats = Categories.All.Where(d => d.Caps.IsSubsetOf(have)).Select(d => d.Label).ToArray();
-                foreach (var (course, (game, farm, source)) in SavedLaps(routesFile, cats))
+                var covered = SavedLaps(routesFile, cats);
+                foreach (var (course, (game, farm, source)) in covered)
                 {
                     bool[] farms = source.Split(", ").Select(n => RouteName.Match(n).Groups[3].Success).ToArray();
                     Put(new Move("finish:" + course, "lap:" + course, (int)Math.Round(farm / TickSeconds), "farm", !farms.Contains(true)), id);
                     Put(new Move("start:" + course, "record:" + course, (int)Math.Round(game / TickSeconds), "record", !farms.Contains(false)), id);
                 }
+                foreach (var (course, (game, _, _)) in anyCategory)
+                    if (!covered.ContainsKey(course)) Put(new Move("start:" + course, "finish:" + course, (int)Math.Round(game / TickSeconds), "record", true), id);
             }
         }
 
@@ -594,6 +603,27 @@ namespace IGTAP.EngineSim.Cli
             return (stops.OrderBy(t => t.Tick).ThenBy(t => t.Goal ? 0 : 1).ToList(), _vtop.ToDictionary(v => v.Key, v => (double)v.Value.speed));
         }
 
+        /// <summary>Every course's start gate (`start:N`) and end gate (`finish:N`, one that finishes the course) in the world: its box's
+        /// centre, world frame. The movement table's places for the courses the best never ran, so laps there are offered (Area 2's
+        /// Courses 6-10 after an arrival).</summary>
+        internal List<(string id, WorldPos at)> CourseGates()
+        {
+            var gates = new List<(string, WorldPos)>();
+            void Add(UnityEngine.MonoBehaviour gate, string kind)
+            {
+                courseScript course = gate.GetComponentInParent<courseScript>();
+                UnityEngine.BoxCollider2D box = gate.GetComponent<UnityEngine.BoxCollider2D>();
+                if (course == null || course.courseNumber <= 0 || box == null) return;
+                UnityEngine.Vector3 p = gate.transform.position;
+                UnityEngine.Rect r = DistanceField.GateRect(box, p.x, p.y, gate.transform.lossyScale);
+                gates.Add((kind + course.courseNumber, _eval.ToWorld(new ScenePos(r.x + r.width / 2f, r.y + r.height / 2f))));
+            }
+            foreach (startGate g in _eval.World.All<startGate>()) Add(g, "start:");
+            foreach (endGate g in _eval.World.All<endGate>())
+                if ((bool)DistanceField.EndOfCourse.GetValue(g)) Add(g, "finish:");
+            return gates;
+        }
+
         /// <summary>A goal whose move ends at the player's arrival (Stop.Arrive): an economy buy.</summary>
         static bool IsArrivalGoal(string label) => label.StartsWith("buy:", StringComparison.Ordinal) && FullTasGoal.IsEconomy(label);
 
@@ -608,7 +638,9 @@ namespace IGTAP.EngineSim.Cli
         /// entries (fulltas-buytable --targets) read as moves to `reward:bonusN` and `lap:N`; a Measured move, an engine
         /// measurement as the best's and the buy table's are, replaces an estimate (even when slower) or a slower measurement,
         /// never a faster one, and one of -1 ticks (a wait inside its way) isn't recorded; Save then Read gives the same table,
-        /// and Save keeps an older file's measured moves.
+        /// and Save keeps an older file's measured moves; every course's gates are places, a course the best never ran has an
+        /// estimated lap from its gate; the planner's start (GoalState) stands on its goal's tick, a goal reached in no-input
+        /// ticks and the last goal included.
         /// Prints each PASS or FAIL; exits 1 on a FAIL.
         /// </summary>
         internal static int MovesCheck(string[] args)
@@ -792,7 +824,7 @@ namespace IGTAP.EngineSim.Cli
             else Console.WriteLine($"SKIP no buy table at {buyTable}");
 
             // Saved course laps (routes.json).
-            foreach (string caps in table.Places.Values.Select(p => p.Caps).Distinct().OrderBy(c => c, StringComparer.Ordinal))
+            foreach (string caps in table.Places.Values.Select(p => p.Caps).Where(c => c != null).Distinct().OrderBy(c => c, StringComparer.Ordinal))
                 foreach (string to in table.Targets("finish:1", caps).Concat(table.Targets("finish:2", caps)).Concat(table.Targets("start:1", caps)).Concat(table.Targets("start:2", caps)).Distinct())
                 {
                     if (!to.StartsWith("lap:", StringComparison.Ordinal) && !to.StartsWith("finish:", StringComparison.Ordinal) && !to.StartsWith("record:", StringComparison.Ordinal)) continue;
@@ -800,6 +832,29 @@ namespace IGTAP.EngineSim.Cli
                     Move lap = table.Best(start, to, caps);
                     if (lap != null && !lap.Estimated) Console.WriteLine($"lap [{caps}] {start} -> {to}: {Describe(lap)}");
                 }
+
+            // Every course's gates are places, so a course the best never ran has a lap from its gate (its run a walk estimate).
+            string lastCaps = table.CapsAtGoal(best.Progress);
+            foreach (var (id, _) in run.CourseGates())
+            {
+                Check(table.Places.ContainsKey(id), $"course place {id}");
+                string n = id.Substring(id.IndexOf(':') + 1);
+                if (!id.StartsWith("start:", StringComparison.Ordinal) || labels.Contains(id)) continue;
+                Check(table.Targets(id, lastCaps).Contains("lap:" + n) && table.Best(id, "lap:" + n, lastCaps)?.Estimated == true,
+                    $"lap:{n}, a course the best never ran, from its gate [{lastCaps}]: {Describe(table.Best(id, "lap:" + n, lastCaps))}");
+            }
+
+            // The planner's start (GoalState) stands on the tick its goal is reached, a goal reached in ticks that take no input too
+            // (one that shares its input tick with the goal before: TouchGrass-ANY%'s 478-479, in a 269-tick fall), the last goal
+            // included (it doesn't end the run there).
+            int noInput = Enumerable.Range(2, Math.Max(0, best.Progress - 1)).FirstOrDefault(k => best.GoalInput[k - 1] == best.GoalInput[k - 2]);
+            foreach (int k in new[] { noInput, best.Progress }.Where(k => k > 0).Distinct())
+            {
+                var (state, route) = run.GoalState(k);
+                run.Read(state);
+                Check(state.Goal.Next == k && run._eval.Engine.PhysicsTicks == best.GoalPhysics[k - 1],
+                    $"GoalState({k}) {labels[k - 1]}: goal {state.Goal.Next} on tick {run._eval.Engine.PhysicsTicks} (the best's {best.GoalPhysics[k - 1]}), {route.Count} inputs (its input tick {best.GoalInput[k - 1]})");
+            }
 
             // Realize's measurement, an engine measurement as the best's split is: the fewest ticks stand, so a slower one never
             // replaces a faster one and a faster one does; it replaces an estimate even when slower; one whose ticks hold a wait

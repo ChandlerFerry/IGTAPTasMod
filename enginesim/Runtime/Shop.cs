@@ -14,7 +14,7 @@ namespace IGTAP.EngineSim
         const int CurrencyCount = 7;
         const int Cash = (int)globalStats.Currencies.Cash;
         internal static readonly AccessTools.FieldRef<upgradeBox, float> Cooldown = AccessTools.FieldRefAccess<upgradeBox, float>("boxCooldown");
-        static readonly AccessTools.FieldRef<upgradeBox, globalStats.Currencies> Currency = AccessTools.FieldRefAccess<upgradeBox, globalStats.Currencies>("upgradeCurrency");
+        internal static readonly AccessTools.FieldRef<upgradeBox, globalStats.Currencies> Currency = AccessTools.FieldRefAccess<upgradeBox, globalStats.Currencies>("upgradeCurrency");
         static readonly AccessTools.FieldRef<courseScript, bool> ClearedThisVman = AccessTools.FieldRefAccess<courseScript, bool>("clearedThisVman");
 
         readonly Simulation _sim;

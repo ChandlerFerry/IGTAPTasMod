@@ -651,12 +651,12 @@ namespace IGTAP.EngineSim.Cli
                             list.Add((new PlanOption(new Step("atoms", "atoms:" + n, m.Ticks), to, boxes, null, false, boxes, estimated.ToArray(), Stand: true, Levels: n), boxes));
                 }
                 // The target stands at its box until the Cash is there: everywhere with --stand, else only as the last resort where
-                // there's nowhere to lap from. Where no lap is offered (Area 2), every buy stands for its Cash (nothing earns by
-                // moving on), as long as what it costs comes in (Patient).
+                // there's nowhere to lap from. Where no lap is offered, and for a box paid in GP or NP (Area 2's: no lap pays them, the
+                // atoms do), every buy stands for its price (nothing earns it by moving on), as long as what it costs comes in (Patient).
                 for (int i = 0; i < list.Count; i++)
                 {
                     PlanOption o = list[i].option;
-                    if (!laps && o.Buys.Length > 0 && o.Step.Kind != "reward") list[i] = (o with { Stand = true, Patient = true }, list[i].boxes);
+                    if ((!laps || economy.AtomPaid(o.Buys)) && o.Buys.Length > 0 && o.Step.Kind != "reward") list[i] = (o with { Stand = true, Patient = true }, list[i].boxes);
                     else if (standAtTarget && o.Target) list[i] = (o with { Stand = true }, list[i].boxes);
                 }
                 return built[(place, caps)] = list;
@@ -709,7 +709,8 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>A lap's course timer, in ticks: the lap less its walk to the gate when both are measured (never shorter than
-        /// the table's run from the gate to the finish), else that run; else the whole lap (listed as estimated).</summary>
+        /// the table's run from the gate to the finish), else that run; else the saved record's timer, else the run estimated, else
+        /// the whole lap (listed as estimated).</summary>
         static int LapCourseTicks(MoveTable moves, string from, string n, Move lap, string caps, List<string> estimated)
         {
             string gate = "start:" + n;
@@ -718,6 +719,13 @@ namespace IGTAP.EngineSim.Cli
             int least = run != null && !run.Estimated ? run.Ticks : 1;
             if (!lap.Estimated && walk != null && !walk.Estimated) return Math.Max(least, lap.Ticks - walk.Ticks);
             if (run != null && !run.Estimated) return run.Ticks;
+            // A course the run never timed: the saved record's timer, else its gate to its finish estimated (not the walk there).
+            Move known = moves.Best(gate, "record:" + n, caps) ?? run;
+            if (known != null)
+            {
+                estimated.Add($"lap:{n}'s course timer [{caps}]: {known.Ticks} ticks, " + (known == run ? "its gate to its finish estimated" : "the saved record's"));
+                return known.Ticks;
+            }
             estimated.Add($"lap:{n}'s course timer from {from} [{caps}]: the whole lap's {lap.Ticks} ticks");
             return lap.Ticks;
         }
@@ -870,6 +878,10 @@ namespace IGTAP.EngineSim.Cli
         /// the segment on, the box off, levels left under its cap.</summary>
         public bool Growing(string[] labels) => labels.All(l => Ids(l).Select(_sim.Shop.Box).All(b => b != null && !b.gameObject.activeInHierarchy
             && b.transform.parent != null && b.transform.parent.gameObject.activeInHierarchy && b.TimesUsed < b.Cap));
+
+        /// <summary>One of these labels' boxes is paid in GP or NP (Area 2's currencies, which no course lap pays).</summary>
+        public bool AtomPaid(string[] labels) => labels.SelectMany(Ids).Select(_sim.Shop.Box).Any(b => b != null
+            && Shop.Currency(b) is globalStats.Currencies.GreenPower or globalStats.Currencies.AtomicPower);
 
         /// <summary>How many times a label's boxes were bought, all told.</summary>
         public int Level(string label) => _all.Where(b => _sim.Shop.Named(Ids(label), b)).Sum(b => b.TimesUsed);
