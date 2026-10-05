@@ -1761,11 +1761,20 @@ economy's, not the walk's. Its sources, by trust (`Best` takes the most trusted 
   grid or the player's clearance changes it by a few ticks; the best's way there (a chain of quick restarts) is over
   450, and before the walk Course 1's `buy:buywj` to Course 2's `buy:buyds` was 109 ticks in a line against the best's
   over 1000. Never under the fewest measured ticks to there from a spot of the same place (a place within 48 u, `Floor`), a box set as its boxes one after another, a lap
-  or record as the walk to its gate plus the course's known run. A pair the buy table's search found no way for
+  or record as the walk to its gate plus the course's known run (for a lap of a course nothing ran: its gate-to-finish
+  run estimated as any pair is). A pair the buy table's search found no way for
   (technique `miss`) has no estimate with the unlocks it was searched with, and with more unlocks only a chain of
   measured moves, no walk (`Missed`: FalseEnding%-280's `finish:1` to `reward:bonus1`, missed with none, was
   110 ticks in a line with the wall jump, where the measured ways there take 845 and more). A quick restart is never estimated: where
   it lands is the checkpoint the run last touched (README `### Rules` 35-36), which the table doesn't follow.
+
+Every course's start gate and end gate (the one that finishes it) is a place, `start:N` and `finish:N` at the gate box's
+centre (`FullTas.CourseGates`; no caps, as a box place), where the best never stood there, so laps are offered on any
+course the walk reaches: Area 2's Courses 6-10 after an arrival. Their runs: the saved routes these unlocks cover, as
+above; else the fastest saved record of any category as the gate-to-finish run, `record` and estimated (more unlocks only
+make a course faster: a lower bound, as a walk is; TouchGrass-ANY%'s `wjdsdjbs` gets Course 7's 6.86 s
+`WJ_DS_DJ_BS_ORB_ZIP_OM`); else the walk between the gates, a loose bound where a course loops back to its start (Course 8's
+gates are 18 ticks apart). The buy table's `lap:N` entries and realize measure them.
 
 A box the planner may buy that neither the best nor the buy table stood at (a target, a tree box on its way, a box
 `--only` names, the atom box: Area 2's, from a start the best only begins) gets a place where the player touches it,
@@ -1806,7 +1815,10 @@ stretch ([Auto](#auto), item 5). Area 2: [below](#area-2-the-zip-movers).
 ```
 
 `fulltas-plan` (`enginesim/Cli/EconomyPlan.cs`) plans a stretch of a Full-TAS run as one search over whole schedules. It
-replays the best to goal `--from` (a number or label; its place is that goal's) and searches for the earliest physics
+replays the best to goal `--from` (a number or label; its place is that goal's) and starts on the tick the goal is
+reached (`FullTas.GoalState`, `Simulation.AdvanceToGoal`: a goal reached in ticks that take no input too, such as
+TouchGrass-ANY%'s goals 478-479 in its 269-tick fall, and the run's last goal, which doesn't end the run there; realize, the
+goals part's pulls and the buy table start the same way), and searches for the earliest physics
 tick the run can buy the last of `--target` (the ones before it bought first). A tree box's target (Area 2's upgrade tree:
 `buy:buytree16`, the zip movers) has the boxes whose buys grow its tree down to it as earlier targets, the ones not bought
 yet, root first (`Shop.TreeWay`: segment by segment the box whose buy grows it, else the segment whose growth triggers it);
@@ -1815,7 +1827,8 @@ of a place, with the unlocks held there (`PlayerCaps`), is one of:
 
 - `lap:N`, a lap of Course N, or `record:N`, a lap on the saved record's path (routes.json), each with its move's ticks
   and its finish's course timer: a lap's is the lap less its measured walk to the gate (never under the table's gate to
-  finish run), else that run, else the whole lap (listed as estimated); a record's the record's;
+  finish run), else that run, else the saved record's timer, else the gate-to-finish run estimated, else the whole lap
+  (each listed as estimated); a record's the record's;
 - `buy:box` (or a set `buy:a + buy:b` the table stores) for each economy box (`FullTasGoal.IsEconomy`) or earlier target
   that is active (`Shop.Affordable`: not capped, unlocked, shown); `--only` names the laps and boxes offered instead (an
   unlock box too: Area 2's atom level and NP boxes, the tree's NP boxes);
@@ -1840,8 +1853,8 @@ was about 6% low on FalseEnding%-280's walk from Course 1's `buy:buywj` to Cours
 lap against the best's 566, 666 after bonus 1 against 694); a walk that leaves a course's clones on screen longer than
 its end place does would come out high instead. Where a lap is offered, only the target ever stands at its box until it
 can pay (its last Cash): in the beam (and with `--stand on`), at most 2000 ticks past its walk (`BeamStand`; a longer wait
-is a later state's). Wherever no lap is offered from a place (in any area; Area 2 is one, as Courses 6-10 have no saved
-route, so the table has no lap there) every buy stands for its price, its currency coming in by itself (the NP from the
+is a later state's). Wherever no lap is offered from a place, and for a box paid in GP or NP (Area 2's: no lap pays them,
+the atoms do; `SimEconomy.AtomPaid`), every buy stands for its price, its currency coming in by itself (the NP from the
 atoms, clones' payouts), and a box still growing on its tree segment (its segment on, the box off until
 `TreeSegmentActivationComponent.IE_Grow` ends) is offered and stood for until it comes on and drops onto its spot
 (`IE_Grow` turns it on 2000 u above it: about 2 s to come within reach). Such a stand is patient: the beam doesn't cut it
@@ -2090,15 +2103,16 @@ estimates.
 before it). The arrival (goal 479, tick 33092, 699.12 s): zone 2 loaded on the fall's 69th tick (y 8504), the atom grid
 running, 2.06e35 Cash, no GP, NP, RP or CD, no atoms. The landing's first input plays on tick 33128. Its run file plays
 482 goals: the buy table's Course 6 lap (`--targets lap:6`: 912 ticks, finish on tick 34044, 720.03 s); laps 7, 9 and 10
-found no way in their searches. No plan reaches the zip movers. Three things stop it:
+found no way in their searches. No plan reaches the zip movers. Three things stopped it:
 
-- **`--from 479` can't start.** `Simulation.Advance` captures when the input after the prefix is asked for, which is
-  before the no-input ticks that come with the last input (the 269-tick fall). Goals 478 and 479 come in those ticks, so
-  `PlanEconomy` throws "the best doesn't replay to goal 479" (`EconomyPlan.cs:936`). The `at:` goal 480 is there so a
-  plan can start after the landing.
-- **No laps where the best never ran a course.** The movement table has places only for the best's goals, so a buy-table
-  `lap:6` entry from the landing doesn't play ("no place finish:6 in the movement table", `EconomyPlan.cs:885`). Goals
-  481-482 make Course 6 a place. A Course 6 lap pays Cash only: no GP, even with 91 `buygreen6` levels.
+- **`--from 479` couldn't start** (fixed): `Simulation.Advance` captures when the input after the prefix is asked for,
+  before the no-input ticks that come with the last input (the 269-tick fall), where goals 478 and 479 come. The planner
+  now starts on the goal's own tick (`FullTas.GoalState`), so `fulltas-plan <TouchGrass-ANY% trace> --from 479` starts
+  (tick 33092); the `at:` goal 480 is no longer needed for that.
+- **No laps where the best never ran a course** (fixed): the movement table had places only for the best's goals, so a
+  buy-table `lap:6` entry from the landing didn't play ("no place finish:6 in the movement table"). Every course's gates
+  are places now ([Movement table](#movement-table)). A Course 6 lap pays Cash only: no GP, even with 91 `buygreen6`
+  levels.
 - **The tree's boxes end the run (the blocker).** The first atom costs 0 GP, and its buy resets Cash to 0. The plant box
   (0.1 NP) comes 40 ticks after it. The plant's growth wakes `GreenCloneChanceBox` (`buytree0`), whose first `Start`
   would set its cap (exported `Cap` 20, `baseCap` 0). The engine aborts there ("Unmodeled: GreenCloneChanceBox's Start,

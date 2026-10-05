@@ -881,8 +881,13 @@ pair give the fewer ticks; the buy table's reward box and lap entries (`fulltas-
 `reward:bonusN` and `lap:N` that `Best` and `Targets` give; a `Measured` move, an engine measurement as the best's and the
 buy table's are, replaces an estimate (even a slower one) or a slower measurement, never a faster one, and one of -1 ticks
 (a wait inside its way) isn't recorded; `Save` then `Read` gives the same
-table, and a second `Save` into the file keeps the first's measured moves. Checked: FalseEnding%-280 (its splits, goals
-89-97; goal 134's arrival) with a buy table of goal 1 to `buy:buyds` measured with `--targets reward:bonus1,lap:2`.
+table, and a second `Save` into the file keeps the first's measured moves. Every course's start and end gate is a place
+(`start:N`, `finish:N`), and a course the best never ran has an estimated `lap:N` from its gate that `Targets` offers.
+The planner's start (`FullTas.GoalState`) stands on the tick its goal is reached: checked for the first goal that shares
+its input tick with the goal before and for the best's last goal (TouchGrass-ANY%'s 479, reached in a 269-tick fall with
+no input, `Simulation.AdvanceToGoal`). Checked: FalseEnding%-280 (its splits, goals
+89-97; goal 134's arrival) with a buy table of goal 1 to `buy:buyds` measured with `--targets reward:bonus1,lap:2`, and
+TouchGrass-ANY%.
 
 `plan-selftest` checks the economy planner's search (`fulltas-plan`, `Cli/EconomyPlan.cs`,
 [docs/fulltas.md](../docs/fulltas.md#economy-planner)) without the game, on a toy economy (`Cli/EconomyPlanCheck.cs`):
