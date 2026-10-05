@@ -928,13 +928,7 @@ namespace IGTAP.EngineSim.Cli
                 if (GoalOf(b) == null) throw new ArgumentException($"{b}: no such goal (a box token of FullTasGoal.Boxes, or a bonus of courses.json)");
 
             MoveTable moves = MoveTable.Load(this, File.Exists(buyTable) ? buyTable : null, RoutesFile, _best, movesFile);
-            int length = (int)Math.Min(_best.GoalInput[kept - 1], _best.Inputs.Count);
-            var route = _best.Inputs.Take(length).ToList();
-            if (route.Count < length) Pad(route, length);
-            _eval.SetStart(_origin, 0);
-            _eval.Goals.Limit = _goals;
-            SimSnapshot at = _eval.Advance(route);
-            if (at == null || at.Goal.Next != kept) throw new InvalidOperationException($"the best doesn't replay to goal {kept}");
+            SimSnapshot at = GoalState(kept).at;
             string place = _labels[kept - 1];
             if (!moves.Places.ContainsKey(place)) throw new InvalidOperationException($"goal {kept} {place} is no place of the movement table");
             string[] tree = EconomyPlan.TreeTargets(_eval, targets, GoalOf);

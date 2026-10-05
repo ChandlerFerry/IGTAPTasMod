@@ -108,13 +108,7 @@ namespace IGTAP.EngineSim.Cli
                     Tick = tick, Press = press, Restart = expect < 0,
                 }));
             }
-            int start = kept == 0 ? 0 : (int)Math.Min(_best.GoalInput[kept - 1], _best.Inputs.Count);
-            var route = _best.Inputs.Take(start).ToList();
-            if (route.Count < start) Pad(route, start);
-            _eval.SetStart(_origin, 0);
-            _eval.Goals.Limit = _goals;
-            SimSnapshot at = _eval.Advance(route);
-            if (at == null || at.Goal.Next != kept) throw new InvalidOperationException($"the best doesn't replay to goal {kept}");
+            var (at, route) = GoalState(kept);
             AddPlace(at, route.Count, _labels[kept - 1] + " (the phase's start)", "start", null, -1, _best.GoalPhysics[kept - 1]);
             for (int k = kept; k < until && k <= _best.Progress; k++)
             {

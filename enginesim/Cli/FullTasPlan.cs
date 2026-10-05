@@ -159,22 +159,30 @@ namespace IGTAP.EngineSim.Cli
         /// two early), its own steps in the stretch and the saved course routes filed as pieces, its ways borrowable, and piece
         /// searches tracking the plan's goals. The state there and the route to it.
         /// </summary>
+        /// <summary>
+        /// The best replayed to goal <paramref name="kept"/>, the economy planner's start (fulltas-plan, realize, the goals part's pulls,
+        /// the buy table): the state on the tick it is reached (<see cref="Simulation.AdvanceToGoal"/>: a goal reached in ticks that
+        /// take no input too) and the inputs played to it. A goal's recorded input tick can fall a tick or two early on a replay, so
+        /// the replay may run two inputs past it.
+        /// </summary>
+        (SimSnapshot at, List<InputTick> route) GoalState(int kept)
+        {
+            if (kept == 0) return (_origin, new List<InputTick>());
+            int length = (int)_best.GoalInput[kept - 1] + 2;
+            List<InputTick> inputs = _best.Inputs.Take(length).ToList();
+            if (inputs.Count < length) Pad(inputs, length);
+            _eval.SetStart(_origin, 0);
+            _eval.Goals.Limit = _goals;
+            SimSnapshot at = _eval.AdvanceToGoal(inputs, kept, out int used);
+            if (at == null || at.Goal.Next != kept) throw new InvalidOperationException($"the best doesn't replay to goal {kept}");
+            return (at, inputs.GetRange(0, used));
+        }
+
         (SimSnapshot at, List<InputTick> route) BuildFrom(FullTasGoal[] all, int kept, int targetIndex)
         {
             if (_best.Progress < kept) throw new InvalidOperationException($"the best reaches goal {_best.Progress}, not the planned stretch's start (goal {kept})");
             int course = all.Skip(kept).Take(targetIndex - kept).FirstOrDefault(g => g.kind == FullTasGoal.Start || g.kind == FullTasGoal.Finish)?.course ?? 0;
-            int length = kept == 0 ? 0 : (int)_best.GoalInput[kept - 1];
-            List<InputTick> route = null;
-            SimSnapshot at = null;
-            for (int extra = 0; extra <= 2 && at?.Goal.Next != kept; extra++)
-            {
-                route = _best.Inputs.Take(length + extra).ToList();
-                if (route.Count < length + extra) Pad(route, length + extra);
-                _eval.SetStart(_origin, 0);
-                _eval.Goals.Limit = _goals;
-                at = _eval.Advance(route);
-            }
-            if (at == null || at.Goal.Next != kept) throw new InvalidOperationException($"the best doesn't replay to goal {kept}");
+            var (at, route) = GoalState(kept);
             Harvest(at, route, kept, Math.Min(targetIndex + 1, _best.Progress));
             var byLabel = new Dictionary<string, FullTasGoal>();
             foreach (FullTasGoal g in all) byLabel.TryAdd(g.label, g);
