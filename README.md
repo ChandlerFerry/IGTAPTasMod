@@ -137,7 +137,10 @@
     replay the gate runs `IGTAP.EngineSim techs-used <trace> <route> --json` from the run's trace, refuses an `nmg` or
     `human-nmg` route with a major span (naming the tech, its category and tick), scores a human one (its difficulty
     measured there) and keeps each route's result (`fulltas-classes.json`). A tech no check detects isn't counted
-    (`techs-used` lists them).
+    (`techs-used` lists them). A course (not a bonus or transition) keeps the two human classes of its record too,
+    `<course>_<CAT> human-major <score>` and `<course>_<CAT> human-nmg <score>`, the score on the game timer with the
+    default weights: the gate replays the route from the course start as a record, then runs `techs-used` from the
+    course's start trace, and saves it only under a strictly lower score (by its name's 0.01).
 
 #### Exceptions
 

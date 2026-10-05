@@ -210,13 +210,21 @@ namespace IGTAPTasMod
         JObject FullTasTechsUsed(FullTasRunDef run, IList<string> goals, List<SolverTick> inputs, bool difficulty, out string error)
         {
             error = null;
-            string trace = FullTasTracePath(run.name), exe = EngineSimExe;
+            string trace = FullTasTracePath(run.name);
             if (!FullTasTraceCurrent(run, trace, false)) { error = "need a current trace of " + run.name + " (Capture start)"; return null; }
-            if (string.IsNullOrEmpty(exe) || !File.Exists(exe)) { error = "need the engine built (" + exe + ")"; return null; }
             string file = Path.Combine(EngineSimDir, "fulltas-" + run.name + "-classes.json");
             File.WriteAllText(file, JsonConvert.SerializeObject(new { name = run.name, goals, ticks = inputs }));
-            using (Process process = StartEngineSim("techs-used " + Quote(trace) + " " + Quote(file) + " --json"
-                + (difficulty && run.Human.PricesDifficulty() ? "" : " --no-difficulty")))
+            return TechsUsedJson(trace, file, difficulty && run.Human.PricesDifficulty() ? "" : " --no-difficulty", out error);
+        }
+
+        /// <summary>The engine's `techs-used --json` line for the route in <paramref name="file"/> on <paramref name="trace"/>
+        /// (<paramref name="options"/> appended); null, with why, when it fails or gives no answer within FullTasTechsTimeoutMs.</summary>
+        JObject TechsUsedJson(string trace, string file, string options, out string error)
+        {
+            error = null;
+            string exe = EngineSimExe;
+            if (string.IsNullOrEmpty(exe) || !File.Exists(exe)) { error = "need the engine built (" + exe + ")"; return null; }
+            using (Process process = StartEngineSim("techs-used " + Quote(trace) + " " + Quote(file) + " --json" + options))
             {
                 var output = process.StandardOutput.ReadToEndAsync();
                 var errors = process.StandardError.ReadToEndAsync();

@@ -462,7 +462,8 @@ namespace IGTAP.EngineSim.Cli
             // --tech-weight <tech>=<seconds>: this solve's own price of a tech's spans in a human class (docs/fulltas.md "Classes").
             _weights = HumanWeights.Of(fulltas).WithTechWeights(_args);
             if (_weights.Techs.Count > 0 && !Human) throw new ArgumentException("--tech-weight prices a human class's score: give --class human-major or human-nmg");
-            if (PricesDifficulty) _meter = new Difficulty.Meter(_trace, header, _labels, _threads);
+            // A course run's on the course's own trace, to its finish: as the gate's techs-used measures it.
+            if (PricesDifficulty) _meter = _course != null ? new Difficulty.Meter(_course.Trace, _course.Header, null, _threads) : new Difficulty.Meter(_trace, header, _labels, _threads);
             _runKey = _name + Suffix;
             string dir = Path.GetDirectoryName(Path.GetFullPath(_trace));
             _runFile = Path.Combine(dir, "fulltas", _runKey + ".json");

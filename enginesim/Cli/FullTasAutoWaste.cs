@@ -243,7 +243,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 int e = c;
                 while (e + 1 < restarts.Count && s[restarts[e + 1]].Tick - s[restarts[e]].Tick <= ChainGap
-                    && Enumerable.Range(s[restarts[e]].Progress, s[restarts[e + 1]].Progress - s[restarts[e]].Progress).All(g => _labels[g].StartsWith("start:", StringComparison.Ordinal))) e++;
+                    && Enumerable.Range(s[restarts[e]].Progress, Math.Max(0, s[restarts[e + 1]].Progress - s[restarts[e]].Progress)).All(g => _labels[g].StartsWith("start:", StringComparison.Ordinal))) e++;
                 if (e > c)
                 {
                     int q0 = restarts[c], q1 = restarts[e], p = s[q0 - 1].Progress;

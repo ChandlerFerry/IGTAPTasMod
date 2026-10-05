@@ -19,3 +19,5 @@ span.pickSlot { cursor: default; }
 .routeRow .routeItem { width: 100%; min-width: 0; }
 .routeRow .routeItem:hover { background: transparent; box-shadow: none; }
 .toggleBar .connection { padding: 5px 12px; border-radius: 999px; }
+.routePicker .segmented { display: inline-flex; gap: 2px; }
+.routePicker .segmented button { padding: 2px 10px; }

@@ -29,6 +29,12 @@ Vman speedrun's start, split by area goals: [`docs/fulltas.md`](docs/fulltas.md#
   checks the blocks on its own replay and saves a record as each direction record it keeps and beats, beside or instead
   of the category record; a Full-TAS run reaching the course in another state gets both directions to pick from (its
   seeds, and `LoadCourseRoutes`' fastest of each direction by the offline bests' `directions`).
+- Human record (courses only, not bonuses or transitions): `<course>_<CAT> human-major <score>` and
+  `<course>_<CAT> human-nmg <score>`, the category's best of a human class (README `### Rules` 54: digital stick, two
+  jump buttons; human-nmg no major span) by its score, the game timer plus the default weights' seconds for spike grace,
+  frame-perfect inputs and back-to-back pairs. Improve with `class` (`solve --auto --class`) writes
+  `offline-best\<course>_<caps>-<class>-<score>.json`; the gate judges it as a record, scores it with `techs-used` on the
+  course trace and saves it under a strictly lower score.
 - Farm route (courses only; farm this course): `<course>_<CAT> farm <lap>`, a lap of the course's steady-state loop
   (finish to finish, by a quick restart or the drop through the end gate) in live time, seconds to 4 places (README `###
   Rules` 30); the route is its lead and its loop (`loopFrom`, `loopLaps`). A bonus or transition is timed in ticks from

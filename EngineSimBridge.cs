@@ -369,6 +369,27 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
+        /// Turbo replay of a human class's candidate, saved (SaveSolverRoute's humanClass) when it finishes and its score beats the
+        /// class's record. Null as <see cref="Judge"/>'s: a finish from a cached start is judged again from a fresh one.
+        /// </summary>
+        JudgeResult JudgeClass(List<SolverTick> inputs, string cls)
+        {
+            bool finished = Evaluate(inputs, out float time, out int finishTick, out _);
+            var result = new JudgeResult { finished = finished, time = time, finishTick = finishTick, runTicks = _engine.PhysicsTicks };
+            ParkAtStart();
+            if (!finished) return result;
+            if (!_startFresh)
+            {
+                _startStates.Remove(_startKey);
+                _startState = null;
+                return null;
+            }
+            result.saved = SaveSolverRoute(inputs.Take(finishTick + 1).Select(k => k.Clone()).ToList(), time, humanClass: cls);
+            if (!result.saved) result.rejected = _solverLog[_solverLog.Count - 1];
+            return result;
+        }
+
+        /// <summary>
         /// Turbo replay of a farm loop (<see cref="EvaluateLoop"/>), saved (SaveFarmLoop) when its steady cycle beats the farm
         /// route's. Null as <see cref="Judge"/>'s: a new best from a cached start is judged again from a fresh one.
         /// </summary>
@@ -411,6 +432,8 @@ namespace IGTAPTasMod
         }
 
         static readonly Regex OfflineBestFile = new Regex(@"^(\d+)_([a-z0-9]+)-([\d.]+)\.json$");
+        /// <summary>A human class's offline best (the engine's CourseAuto.WriteClassBest): its class and score in the name.</summary>
+        static readonly Regex OfflineClassFile = new Regex(@"^(\d+)_([a-z0-9]+)-(human-major|human-nmg)-([\d.]+)\.json$");
         /// <summary>A farm loop's offline best (the engine's FullTas.WriteLoopBest): its lap time in the name, its loop in the file.</summary>
         static readonly Regex OfflineLoopFile = new Regex(@"^(\d+)_([a-z0-9]+)-loop-([\d.]+)\.json$");
 
@@ -443,6 +466,8 @@ namespace IGTAPTasMod
             public bool loop;
             /// <summary>The directions the engine's course check found it keeps (its "directions"), judged for those records too; the gate checks them again.</summary>
             public string[] directions = new string[0];
+            /// <summary>A human class's best (<see cref="OfflineClassFile"/>): judged for that class's record only, its score in <see cref="time"/>.</summary>
+            public string cls;
             public List<(string label, JObject body, string category)> judgings;
         }
 
@@ -451,6 +476,7 @@ namespace IGTAPTasMod
         {
             Match m = OfflineBestFile.Match(file);
             if (!m.Success) m = OfflineLoopFile.Match(file);
+            if (!m.Success) m = OfflineClassFile.Match(file);
             if (m.Success) return int.TryParse(m.Groups[1].Value, out int id) && courseIds.Contains(id) && Categories.IsCategory(m.Groups[2].Value);
             m = OfflineFullTasBestFile.Match(file);
             return m.Success && runs.Contains(m.Groups[1].Value);
@@ -459,7 +485,17 @@ namespace IGTAPTasMod
         OfflineBest ReadOfflineBest(string path, string solving)
         {
             string file = Path.GetFileName(path);
-            Match m = OfflineBestFile.Match(file);
+            Match m = OfflineClassFile.Match(file);
+            if (m.Success)
+            {
+                int id = int.Parse(m.Groups[1].Value);
+                string caps = m.Groups[2].Value;
+                CourseDef course = _courses.Find(c => c.id == id);
+                if (course == null || !Categories.IsCategory(caps) || !course.HasCategory(caps) || id + "_" + caps == solving) return null;
+                return new OfflineBest { path = path, group = id + "_" + caps, time = float.Parse(m.Groups[4].Value, CultureInfo.InvariantCulture), cls = m.Groups[3].Value,
+                    judgings = CategoryJudgings(course, id, caps).Take(1).ToList() };
+            }
+            m = OfflineBestFile.Match(file);
             bool loop = !m.Success && (m = OfflineLoopFile.Match(file)).Success;
             if (m.Success)
             {
@@ -563,8 +599,8 @@ namespace IGTAPTasMod
                 if (group.Key == solving || group.Key == FullTasSolvingGroup) continue;
                 var files = group.OrderBy(f => f.time).ThenBy(f => f.runTicks).ToList();
                 // The record from a plain best, the farm from a farm loop (README ### Rules 30): a plain best is no farm loop.
-                OfflineBest fastest = files.FirstOrDefault(f => !f.loop), fewest = files.FirstOrDefault(f => f.loop);
-                OfflineBest any = fastest ?? fewest;
+                OfflineBest fastest = files.FirstOrDefault(f => !f.loop && f.cls == null), fewest = files.FirstOrDefault(f => f.loop);
+                OfflineBest any = fastest ?? fewest ?? files[0];
                 bool judgeable = any.judgings.Count > 0;
                 float best = judgeable ? CategoryBest(any.judgings[0].category) : 0f;
                 double farmBest = judgeable && any.farm ? FarmBest(any.judgings[0].category) : double.NegativeInfinity;
@@ -579,6 +615,13 @@ namespace IGTAPTasMod
                         if (d != null) candidates.Add((d, d.time <= DirectionBest(any.judgings[0].category, direction) + .0001f));
                     }
                 candidates.Add((fewest, fewest != null && FarmName(fewest.time) < farmBest));
+                // Each human class's lowest score, for that class's record (SaveSolverRoute's humanClass).
+                if (judgeable)
+                    foreach (string cls in HumanCourseClasses)
+                    {
+                        OfflineBest h = files.FirstOrDefault(f => f.cls == cls);
+                        if (h != null) candidates.Add((h, ScoreName(h.time) < HumanClassBest(any.judgings[0].category, cls)));
+                    }
                 foreach (var (file, worth) in candidates)
                 {
                     if (file == null || !worth && !_offlineJudgedPaths.Contains(file.path)) continue;
@@ -601,7 +644,8 @@ namespace IGTAPTasMod
                             if (error != null) return;
                             JObject json = JObject.Parse(File.ReadAllText(first.path));
                             List<SolverTick> inputs = json["ticks"].ToObject<List<SolverTick>>();
-                            JudgeResult r = first.loop ? JudgeLoop(inputs, (int?)json["loopFrom"] ?? 0, (int?)json["loopLaps"] ?? 1) : Judge(inputs);
+                            JudgeResult r = first.loop ? JudgeLoop(inputs, (int?)json["loopFrom"] ?? 0, (int?)json["loopLaps"] ?? 1)
+                                : first.cls != null ? JudgeClass(inputs, first.cls) : Judge(inputs);
                             if (r == null) return; // a new best from a cached start: judged again from a fresh one on the next pump
                             if (first.loop)
                                 line += "turbo " + r.loop + (r.previousFarm is double farm ? ", farm route's " + FarmSeconds(farm) + "s" : "")

@@ -34,6 +34,9 @@ namespace IGTAP.EngineSim.Cli
             /// <summary>A gated course's farm: a steady-state loop (CourseLoop.cs), timed finish to finish, of this many laps.</summary>
             public bool Loop;
             public int LoopLaps = 1;
+            /// <summary>--class human-major|human-nmg: the record by the class's score, played as a human class plays it
+            /// (MacroEngine.HumanClass: digital stick, two jump buttons); null: by the game timer.</summary>
+            public string Human;
         }
 
         /// <summary>A route played on the plain course simulation (the game's own finish and timer).</summary>
@@ -101,6 +104,13 @@ namespace IGTAP.EngineSim.Cli
                 Timing = farm || !gated ? "farm" : "record", Plain = Solve.Creator(trace, header), Clock = Stopwatch.StartNew(),
                 WaypointsFile = Solve.Option(args, "--waypoints-out", (string)null), LogJson = Solve.Option(args, "--log-json", (string)null),
             };
+            string cls = Solve.Option(args, "--class", "major");
+            if (cls != "major")
+            {
+                if (!Glitches.Human(Glitches.Parse(cls))) throw new ArgumentException("solve --auto --class: human-major or human-nmg (a course keeps nmg and major routes by time)");
+                if (run.Timing == "farm") throw new ArgumentException("--class " + cls + " improves the record: a human class has no farm");
+                run.Human = cls;
+            }
             List<string> optional = Solve.Optional(args, course, caps);
             // Both directions open (neither direction block picked): the waypoints follow one route, so one loop would only ever
             // improve the direction its best goes. Each direction gets half the minutes, its own run and waypoints: farm forwards
@@ -127,6 +137,8 @@ namespace IGTAP.EngineSim.Cli
             OfflineSolver.ForcedPath rules = Solve.ForcedPaths(args, course, caps);
             run.Rules = rules;
             run.Name = "course" + course + "_" + caps + (optional.Count == 0 ? "" : "-opt-" + string.Join("+", optional)) + (run.Timing == "farm" ? "-farm" : "");
+            // A class's own run file (FullTas.Suffix): fulltas/<name>.<class>.json.
+            string runKey = run.Name + (run.Human == null ? "" : "." + run.Human);
             string dir = Path.Combine(Path.GetDirectoryName(trace), "course-auto");
             Directory.CreateDirectory(dir);
             if (run.LogJson != null) File.WriteAllText(run.LogJson, "");
@@ -139,10 +151,12 @@ namespace IGTAP.EngineSim.Cli
             // The loop starts from the fastest of the trace's route, every --seed and the last --auto best (on this timing).
             var candidates = new List<(string how, List<InputTick> inputs)> { (Path.GetFileName(trace), Solve.ReadInputs(header)) };
             foreach (string seed in Solve.Args(args, "--seed")) candidates.Add((Path.GetFileName(seed), global::IGTAP.EngineSim.Cli.Plan.ReadRoute(seed)));
-            string runFile = Path.Combine(dir, "fulltas", run.Name + ".json");
+            string runFile = Path.Combine(dir, "fulltas", runKey + ".json");
             if (!args.Contains("--fresh") && File.Exists(runFile)) candidates.Add((AutoRunDir + Path.GetFileName(runFile), global::IGTAP.EngineSim.Cli.Plan.ReadRoute(runFile)));
             // A gated course's farm is its steady-state loop, finish to finish (README ### Rules 30).
             if (run.Timing == "farm" && gated) return LoopAuto(run, args, candidates, dir);
+            // A human class holds digital sticks: each candidate also as its part tilts snap to them.
+            if (run.Human != null) candidates.AddRange(candidates.ToList().Select(c => (c.how + " (digital)", Digital(c.inputs))));
             var played = candidates.Select(c => (c.how, c.inputs, result: PlayCourse(run, c.inputs))).ToList();
             foreach (var p in played)
                 Console.WriteLine($"{p.how}: " + (!p.result.Finished ? "no finish (" + p.result.EndReason + ")"
@@ -150,6 +164,9 @@ namespace IGTAP.EngineSim.Cli
             // The waypoints follow the best, so it has to keep the run's rules: one through an avoid box (the direction a picked
             // block shuts) would set every window's goals where the windows are cut.
             var finishing = played.Where(p => p.result.Finished && !p.result.OffPath).ToList();
+            if (finishing.Count == 0 && run.Human != null)
+                return run.WaypointsFile == null ? HumanReach(run, args, candidates, dir)
+                    : throw new InvalidOperationException($"No route a {run.Human} class plays to the finish yet: Improve reaches one first");
             if (finishing.Count == 0)
             {
                 if (run.WaypointsFile != null)
@@ -174,7 +191,7 @@ namespace IGTAP.EngineSim.Cli
             // The best the loop starts from is a kept best too: the loop writes only what it improves on (CourseCommitted), so a seed
             // that already beats the saved route (a library route, a hand TAS) would never reach the plugin's judge, which sees only
             // offline-best files. A read-only run (--waypoints-out) writes nothing.
-            if (run.WaypointsFile == null) WriteStartingBest(run, best.how, best.inputs, best.result);
+            if (run.WaypointsFile == null && run.Human == null) WriteStartingBest(run, best.how, best.inputs, best.result);
 
             // The goals: the waypoints along the best (the start gate among them in record timing), then the finish.
             WaypointOptions options = WaypointOptions.Parse(args, line => Console.WriteLine(line));
@@ -212,6 +229,69 @@ namespace IGTAP.EngineSim.Cli
                 return 0;
             }
             return loop.Search();
+        }
+
+        /// <summary>The route's sticks as a human class holds them: a part tilt snapped to full (half or more) or to rest. The
+        /// vertical is the game's own snap already (MacroEngine.ControllerAxis).</summary>
+        static List<InputTick> Digital(List<InputTick> inputs)
+        {
+            static float Snap(float v) => Math.Abs(v) >= .5f ? Math.Sign(v) : 0f;
+            static float? SnapOr(float? v) => v.HasValue ? Snap(v.Value) : (float?)null;
+            return inputs.Select(t =>
+            {
+                t.x = Snap(t.x);
+                t.lockX = SnapOr(t.lockX);
+                t.lockY = SnapOr(t.lockY);
+                t.turnX = SnapOr(t.turnX);
+                t.turnY = SnapOr(t.turnY);
+                return t;
+            }).ToList();
+        }
+
+        /// <summary>
+        /// A human class's first route, where no candidate plays to the finish as a human class plays it (the solver's routes tune
+        /// their speed with part tilts): the fastest route that finishes places the waypoints, and the reach windows (FullTas
+        /// --unsolved, under the class) take its digital version on from where it breaks, through them to the finish, for half the
+        /// minutes. The rest improve from it (its run file is a candidate then).
+        /// </summary>
+        static int HumanReach(CourseRun run, string[] args, List<(string how, List<InputTick> inputs)> candidates, string dir)
+        {
+            string human = run.Human;
+            run.Human = null;
+            var guide = candidates.Select(c => (c.how, c.inputs, result: PlayCourse(run, c.inputs)))
+                .Where(p => p.result.Finished && !p.result.OffPath).OrderBy(p => p.result.Time).FirstOrDefault();
+            run.Human = human;
+            if (guide.inputs == null)
+                throw new InvalidOperationException($"--class {human}: no route finishes the course on its forced path to start a human route from: improve the record first");
+            WaypointOptions options = WaypointOptions.Parse(args, line => Console.WriteLine(line));
+            options.Record = true;
+            run.Goals = CourseWaypoints.Build(run.Trace, guide.inputs, options).Goals;
+            TimerGoal = run.Goals.FindIndex(g => g.kind == FullTasGoal.Start && g.course == run.Course) + 1;
+            LoopTiming = false;
+            string synthetic = WriteCourseTrace(run, dir, Digital(guide.inputs));
+            Solve.CourseRuns[run.Name] = run.Rules;
+            double minutes = Solve.Option(args, "--minutes", 60.0);
+            string threads = Solve.Option(args, "--threads", Environment.ProcessorCount).ToString(CultureInfo.InvariantCulture);
+            Console.WriteLine($"--class {human}: no route plays to the finish with a digital stick and two jump buttons; reaching the finish from "
+                + $"{guide.how}'s digital version through its {run.Goals.Count} waypoints for {minutes / 2:0.##} min");
+            var reach = new FullTas(new[] { synthetic, "--unsolved", "--no-submit", "--class", human, "--threads", threads,
+                "--minutes", (minutes / 2).ToString(CultureInfo.InvariantCulture) }) { _course = run, _reachOnly = true };
+            reach._committed = reach.CourseCommitted;
+            reach.Search();
+            if (reach._best.Progress < run.Goals.Count)
+            {
+                Console.WriteLine($"--class {human}: the reach got to {reach._best.Progress} of {run.Goals.Count} waypoints; Improve again goes on from there");
+                return 1;
+            }
+            double left = minutes - run.Clock.Elapsed.TotalMinutes;
+            if (left < .25) return 0;
+            var rest = new List<string>();
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (args[i] == "--minutes") { i++; continue; }
+                rest.Add(args[i]);
+            }
+            return CourseAuto(rest.Concat(new[] { "--minutes", left.ToString(CultureInfo.InvariantCulture) }).ToArray());
         }
 
         /// <summary>
@@ -280,6 +360,7 @@ namespace IGTAP.EngineSim.Cli
             return Solve.OnThread(() =>
             {
                 Simulation sim = run.Plain();
+                sim.Engine.HumanClass = run.Human != null;
                 OfflineSolver.ForcedPath rules = run.Rules ?? new OfflineSolver.ForcedPath();
                 int via = 0;
                 bool avoided = false;
@@ -395,6 +476,13 @@ namespace IGTAP.EngineSim.Cli
             long timer = (long)Math.Round(c.Time / _dt), want = _course.Timing == "record" ? timer : c.RunTicks;
             if (want != r.Last)
                 Log($"course check: DISAGREES: the course's simulation times it {(_course.Timing == "record" ? $"{timer} ticks on the game timer" : $"{c.RunTicks} physics ticks")}, the loop {r.Last}");
+            // A class's best keeps its inputs as scored (dropping a pause moves its difficulty); its score on the game timer (the
+            // loop's clock runs from the first start-gate crossing, the timer from the last), as the gate scores it.
+            if (_course.Human != null)
+            {
+                if (Clean(r)) WriteClassBest(_course, r.Inputs, c, Math.Round(c.Time + ScoreSeconds(r) - r.LiveSeconds, 4), "auto: " + where);
+                return;
+            }
             List<InputTick> inputs = OfflineSolver.DropIdlePauses(r.Inputs, without =>
             {
                 CourseResult bare = PlayCourse(_course, without);
@@ -425,6 +513,18 @@ namespace IGTAP.EngineSim.Cli
             Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] offline best {c.Time:0.00}s via {how} ({inputs.Count} ticks, run {c.RunTicks * .02:0.00}s from the start) -> {Path.GetFileName(file)}");
             if (run.LogJson != null)
                 File.AppendAllText(run.LogJson, JsonSerializer.Serialize(new { wall = run.Clock.Elapsed.TotalSeconds, time = c.Time, runTicks = c.RunTicks, ticks = 0, how = how.StartsWith("auto", StringComparison.Ordinal) ? "auto" : "start" }) + "\n");
+        }
+
+        /// <summary>A human class's kept best: offline-best\&lt;label&gt;-&lt;class&gt;-&lt;score&gt;.json, its score (the class's: the game
+        /// timer's time, spike grace and difficulty, as techs-used scores it) and time; the plugin judges it for the class's record.</summary>
+        static void WriteClassBest(CourseRun run, List<InputTick> inputs, CourseResult c, double score, string how)
+        {
+            string text = score.ToString("0.00", CultureInfo.InvariantCulture);
+            string file = Path.Combine(Path.GetDirectoryName(run.Trace), "offline-best", run.Label + "-" + run.Human + "-" + text + ".json");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            Solve.WriteShared(file, JsonSerializer.Serialize(new { course = run.Course, capabilities = run.Caps, @class = run.Human, score, time = c.Time, runTicks = c.RunTicks,
+                ticks = inputs.Select(t => t.ToJson()) }));
+            Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] offline {run.Human} best {text} (time {c.Time:0.00}s) via {how} ({inputs.Count} ticks) -> {Path.GetFileName(file)}");
         }
 
         /// <summary>

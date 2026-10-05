@@ -105,6 +105,8 @@ namespace IGTAPTasMod
             public bool farm;
             /// <summary>Improve's `--focus a-b`: waypoints first..last (1-based, the finish last); null: the whole course.</summary>
             public int[] focus;
+            /// <summary>Improve's `--class`: the record of a human class (human-major, human-nmg) by its score; null: by the game timer.</summary>
+            public string cls;
             public string result;
         }
 
@@ -556,8 +558,15 @@ namespace IGTAPTasMod
             int[] focus = item["focus"] is JArray range && range.Count == 2 ? new[] { (int)range[0], (int)range[1] } : null;
             if (focus != null && (focus[0] < 1 || focus[1] < focus[0]))
                 throw new InvalidOperationException("focus: a waypoint range [first, last], 1-based.");
-            return new SolveJob { course = course, caps = capabilities, optional = optional, farm = farm, focus = focus,
-                label = def.Token + "_" + Caps.Parse(capabilities).Label + (farm ? " farm" : "") + (optional.Length == 0 ? "" : " +" + string.Join(" +", optional))
+            string cls = Text(item, "class");
+            if (cls != null)
+            {
+                if (!HumanCourseClasses.Contains(cls)) throw new InvalidOperationException("class: human-major or human-nmg.");
+                if (farm || def.IsBonus || def.IsTransition) throw new InvalidOperationException("A human class keeps a course's record only: no farm, bonus or transition.");
+                if (!HasCourseRoute(def, capabilities)) throw new InvalidOperationException("No route of " + def.Token + "_" + Caps.Parse(capabilities).Label + " yet to improve as " + cls + ": improve the record first.");
+            }
+            return new SolveJob { course = course, caps = capabilities, optional = optional, farm = farm, focus = focus, cls = cls,
+                label = def.Token + "_" + Caps.Parse(capabilities).Label + (farm ? " farm" : "") + (cls == null ? "" : " " + cls) + (optional.Length == 0 ? "" : " +" + string.Join(" +", optional))
                     + (focus == null ? "" : " waypoints " + focus[0] + "-" + focus[1]) };
         }
 
@@ -841,7 +850,7 @@ namespace IGTAPTasMod
             SolveJob current = _solverRunning && _solveIndex >= 0 && _solveIndex < _solveQueue.Count ? _solveQueue[_solveIndex] : null;
             return new {
                 running = _solverRunning, status = _solverStatus, course = _solveCourse, capabilities = _solveCaps, optional = _solveOptional, speed = _solverSpeed,
-                farm = current?.farm ?? false, focus = current?.focus, auto = _solveAuto, waypoints = _solveWaypoints, outlook = _solveOutlook, pulls = _solvePulls,
+                farm = current?.farm ?? false, focus = current?.focus, humanClass = current?.cls, auto = _solveAuto, waypoints = _solveWaypoints, outlook = _solveOutlook, pulls = _solvePulls,
                 evaluations = _solveRuns, finishes = _solveFinishes, turboChecks = _turboChecks, turboSaved = _turboSaved, toValidate = _offlineWaiting,
                 best = float.IsInfinity(_solveBest) ? (float?)null : _solveBest,
                 bestFarm = float.IsInfinity(_solveBestFarm) ? (float?)null : _solveBestFarm,
@@ -955,8 +964,9 @@ namespace IGTAPTasMod
             }
             args.Append(" --auto");
             if (job.farm) args.Append(" --farm");
+            if (job.cls != null) args.Append(" --class ").Append(job.cls);
             if (job.focus != null) args.Append(" --focus ").Append(job.focus[0]).Append('-').Append(job.focus[1]);
-            what = "Improving " + (job.farm ? "the farm time" : "the record") + (job.focus == null ? "" : " (waypoints " + job.focus[0] + "-" + job.focus[1] + ")")
+            what = "Improving " + (job.farm ? "the farm time" : job.cls != null ? "the " + job.cls + " score" : "the record") + (job.focus == null ? "" : " (waypoints " + job.focus[0] + "-" + job.focus[1] + ")")
                 + " on " + threads + " threads from " + seeds + " seed routes";
             return args.ToString();
         }
@@ -1055,12 +1065,13 @@ namespace IGTAPTasMod
                 request.StatusCode = 404;
                 return new { ok = false, error = "No route for " + job.label + " yet: its first solve makes one." };
             }
-            string name = "waypoints-c" + course.Token + "-" + job.caps + (job.farm ? "-farm" : "");
+            string name = "waypoints-c" + course.Token + "-" + job.caps + (job.farm ? "-farm" : "") + (job.cls == null ? "" : "-" + job.cls);
             string output = Path.Combine(EngineSimDir, name + ".json");
             if (MapInFlight(output)) return RunEngineSimMap(request, null, output);
             var args = new StringBuilder("solve ").Append(Quote(trace)).Append(CourseSeedArgs(course, name, out _));
             AppendOptional(args, job.course, job.caps, job.optional).Append(" --auto");
             if (job.farm) args.Append(" --farm");
+            if (job.cls != null) args.Append(" --class ").Append(job.cls);
             args.Append(" --waypoints-out ").Append(Quote(output));
             return RunEngineSimMap(request, args.ToString(), output);
         }
@@ -1169,6 +1180,7 @@ namespace IGTAPTasMod
         static readonly Regex SolveProgress = new Regex(@"^\[[\d:]+\] (\d+) runs/s, (\d+) ticks/s, (\d+) runs, (\d+) finishes");
         static readonly Regex SolveBest = new Regex(@"offline best ([\d.,]+)s via ");
         static readonly Regex SolveLoopBest = new Regex(@"offline best farm loop ([\d.,]+)s via ");
+        static readonly Regex SolveClassBest = new Regex(@"offline human-(?:major|nmg) best ([\d.,]+) ");
         const string AutoEvent = "@fulltas ", WaypointsLine = "waypoints ";
 
         void ReadSolveLine(string line)
@@ -1212,7 +1224,7 @@ namespace IGTAPTasMod
             }
             m = SolveLoopBest.Match(line);
             if (m.Success) _solveBestFarm = Math.Min(_solveBestFarm, float.Parse(m.Groups[1].Value.Replace(',', '.'), CultureInfo.InvariantCulture));
-            else if ((m = SolveBest.Match(line)).Success)
+            else if ((m = SolveBest.Match(line)).Success || (m = SolveClassBest.Match(line)).Success)
                 _solveBest = Math.Min(_solveBest, float.Parse(m.Groups[1].Value.Replace(',', '.'), CultureInfo.InvariantCulture));
             if (line.Contains("turbo check of") && !line.Contains("deferred")) _turboChecks++;
             if (line.Contains("saved as the new route")) _turboSaved++;
@@ -1435,9 +1447,11 @@ namespace IGTAPTasMod
         /// course start loops in exactly <paramref name="loopLive"/> units a loop (<see cref="EvaluateLoop"/>) and every tick obeys
         /// the category; named by a lap's share, `<c>&lt;category&gt; farm &lt;lap&gt;</c>`. On a two-way course a record is also
         /// saved as `<c>&lt;category&gt; &lt;direction&gt; &lt;time&gt;</c>` for each direction the replay keeps and beats
-        /// (Categories.Directions), and as only those when it doesn't beat the record.
+        /// (Categories.Directions), and as only those when it doesn't beat the record. A human class's record
+        /// (<paramref name="humanClass"/>): a record's replay whose score in the class (<see cref="CourseClassViolation"/>) beats
+        /// the class's, saved as `<c>&lt;category&gt; &lt;class&gt; &lt;score&gt;</c>` only.
         /// </summary>
-        bool SaveSolverRoute(List<SolverTick> inputs, float time, int loopFrom = 0, int loopLaps = 1, long loopLive = 0)
+        bool SaveSolverRoute(List<SolverTick> inputs, float time, int loopFrom = 0, int loopLaps = 1, long loopLive = 0, string humanClass = null)
         {
             string name;
             string violation;
@@ -1456,8 +1470,21 @@ namespace IGTAPTasMod
             {
                 name = SolverCategory + " " + time.ToString("0.00", CultureInfo.InvariantCulture);
                 violation = RouteViolation(inputs, time);
+                if (humanClass != null)
+                {
+                    name = SolverCategory + " " + humanClass;
+                    if (violation == null && (violation = CourseClassViolation(inputs, time, humanClass, out float score)) == null)
+                        name += " " + score.ToString("0.00", CultureInfo.InvariantCulture);
+                }
             }
             if (violation != null) return Rejected(name, violation);
+            if (humanClass != null)
+            {
+                _library.macros.Add(new MacroDefinition { name = name, steps = ToSteps(inputs) });
+                PruneSlowerRoutes();
+                SaveLibrary();
+                return true;
+            }
             // A record also saves as the best of each direction it keeps and beats (a direction record, Categories.Directions), and
             // only that when it doesn't beat the record itself.
             string[] beaten = loopFrom > 0 || _solverFullTas != null ? new string[0] : DirectionsBeaten(time);
@@ -1468,6 +1495,55 @@ namespace IGTAPTasMod
             PruneSlowerRoutes();
             SaveLibrary();
             return true;
+        }
+
+        static readonly string[] HumanCourseClasses = { "human-major", "human-nmg" };
+
+        /// <summary>
+        /// The human-class half of a course record's gate (README ### Rules 54, on a course): the engine's techs-used replays the
+        /// route from the course's start trace, again as a human class plays it (digital stick, two jump buttons), and scores it.
+        /// The route must finish there in the gate's own time, have a score in the class (human inputs; human-nmg: no major span)
+        /// and, as its name rounds it, a lower one than the class's record.
+        /// </summary>
+        string CourseClassViolation(List<SolverTick> inputs, float time, string cls, out float score)
+        {
+            score = float.NaN;
+            string trace = CourseTrace(_solverTarget, _solverCaps);
+            if (trace == null) return "no start trace of " + SolverCategory + " to score it on";
+            string file = Path.Combine(EngineSimDir, "classes-gate.json");
+            File.WriteAllText(file, JsonConvert.SerializeObject(new { name = SolverCategory + " " + cls, ticks = inputs }));
+            JObject used = TechsUsedJson(trace, file, " --threads " + Math.Max(1, Environment.ProcessorCount - 4), out string error);
+            if (used == null) return "the engine's tech checks (techs-used) " + error;
+            float live = (float?)used["live"] ?? -1f;
+            if ((bool?)used["finished"] != true || Math.Abs(live - time) > .0005f)
+                return "techs-used's replay " + ((bool?)used["finished"] == true ? "finishes in " + live.ToString("0.00", CultureInfo.InvariantCulture) : "doesn't finish");
+            float? scored = (float?)used["score"]?[cls];
+            if (scored == null)
+            {
+                JToken major = (used["spans"] as JArray)?.FirstOrDefault(s => (string)s["category"] == MajorClass);
+                return (string)used["humanBlock"] ?? (major == null ? "no " + cls + " score" : "uses " + major["tech"] + " (major) at tick " + major["tick"]);
+            }
+            score = scored.Value;
+            float best = HumanClassBest(SolverCategory, cls);
+            return ScoreName(score) < best ? null
+                : "score " + score.ToString("0.00", CultureInfo.InvariantCulture) + " not lower than " + SolverCategory + " " + cls + "'s " + best.ToString("0.00", CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>A score as a human record's name has it (to 0.01): one that would get the same name isn't lower (README ### Rules 52).</summary>
+        static float ScoreName(float score) { return float.Parse(score.ToString("0.00", CultureInfo.InvariantCulture), CultureInfo.InvariantCulture); }
+
+        /// <summary>The category's record score in a human class (+infinity: none yet).</summary>
+        float HumanClassBest(string category, string cls)
+        {
+            float best = float.PositiveInfinity;
+            foreach (MacroDefinition m in _library.macros)
+            {
+                Match g = MatchHumanRoute(m.name);
+                if (g.Success && string.Equals(g.Groups["category"].Value, category, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(g.Groups["class"].Value, cls, StringComparison.OrdinalIgnoreCase))
+                    best = Math.Min(best, float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture));
+            }
+            return best;
         }
 
         bool Rejected(string name, string violation)
@@ -1564,6 +1640,8 @@ namespace IGTAPTasMod
         // A direction record (Categories.Directions): "3_WJ_DS_DJ backwards 2.76", the category's best of one direction on a two-way course.
         static readonly Regex DirectionRoute = new Regex(@"^(?<category>(?<token>[^_\s]+)_(?<label>" + Caps.LabelPattern + @")) (?<direction>"
             + string.Join("|", Categories.Directions.Select(d => d.name)) + @") (?<time>[\d.]+)$", RegexOptions.IgnoreCase);
+        // A human class's record (SaveSolverRoute's humanClass): "4_WJ_DS human-major 9.12", by its score in the class.
+        static readonly Regex HumanRoute = new Regex(@"^(?<category>(?<token>[^_\s]+)_(?<label>" + Caps.LabelPattern + @")) (?<class>human-major|human-nmg) (?<time>[\d.]+)$", RegexOptions.IgnoreCase);
         static readonly Regex RoutePrefix = new Regex(@"^(?<category>(?<token>[^_\s]+)_(?<label>" + Caps.LabelPattern + @"))(?: |$)", RegexOptions.IgnoreCase);
 
         static Match MatchRoute(Regex pattern, string name)
@@ -1574,12 +1652,14 @@ namespace IGTAPTasMod
         static Match MatchCategoryRoute(string name) { return MatchRoute(CategoryRoute, name); }
         static Match MatchFarmRoute(string name) { return MatchRoute(FarmRoute, name); }
         static Match MatchDirectionRoute(string name) { return MatchRoute(DirectionRoute, name); }
+        static Match MatchHumanRoute(string name) { return MatchRoute(HumanRoute, name); }
 
-        /// <summary>A name only the gate gives: a record, a direction record or a farm route.</summary>
+        /// <summary>A name only the gate gives: a record, a direction record, a human class's record or a farm route.</summary>
         static Match MatchGatedRoute(string name)
         {
             Match g = MatchCategoryRoute(name);
             if (!g.Success) g = MatchDirectionRoute(name);
+            if (!g.Success) g = MatchHumanRoute(name);
             return g.Success ? g : MatchFarmRoute(name);
         }
         static Match MatchRoutePrefix(string name) { return MatchRoute(RoutePrefix, name); }
@@ -1588,6 +1668,7 @@ namespace IGTAPTasMod
         {
             Match g = MatchCategoryRoute(name);
             string direction = g.Success || !(g = MatchDirectionRoute(name)).Success ? null : g.Groups["direction"].Value.ToUpperInvariant();
+            if (!g.Success && (g = MatchHumanRoute(name)).Success) direction = g.Groups["class"].Value.ToUpperInvariant();
             bool farm = !g.Success && (g = MatchFarmRoute(name)).Success;
             key = g.Success ? g.Groups["category"].Value.ToUpperInvariant() + (farm ? " FARM" : direction != null ? " " + direction : "") : null;
             time = g.Success ? float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture) : 0f;

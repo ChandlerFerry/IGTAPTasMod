@@ -24,7 +24,7 @@ type Course = { id: number; token: string; bonus: boolean; categories: string[];
 type OptionalBlock = { name: string; note: string; on?: boolean; capabilities: string[] };
 type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; optional?: string[]; evaluations: number; finishes: number; turboChecks: number; turboSaved: number; toValidate?: number; best: number | null; log: string[]; courses: number[]; minutes?: number; repeat?: boolean; pass?: number; queue?: { label: string; result?: string | null; active: boolean }[];
   /** The running job: Improve (`solve --auto`) or the plain solve, by farm time or the record, focused on waypoints first..last. */
-  auto?: boolean; farm?: boolean; focus?: [number, number] | null; waypoints?: Waypoints | null; bestFarm?: number | null;
+  auto?: boolean; farm?: boolean; humanClass?: HumanCourseClass | null; focus?: [number, number] | null; waypoints?: Waypoints | null; bestFarm?: number | null;
   /** Improve's outlook after its last pull (the engine's `outlook` event), and the pulls running now (`pullStart`). */
   outlook?: Outlook | null; pulls?: PullNow[] };
 /** Improve's outlook: the chance more search beats the best (the folder's other Improve runs, past a dry spell as long as
@@ -52,7 +52,10 @@ type Waypoints = { timing: "record" | "farm"; route: string; goals: string[]; re
   loop?: { steady: boolean; laps: number; ticks: number; held: number; live: number; lap: number; settled: number; cycles: number[] } };
 /** The course target the Optimize tab has open: its route, waypoints and Improve. `farm`: Improve the farm time. */
 type Direction = "forwards" | "backwards";
-type CourseTarget = { course: number; capabilities: string; farm: boolean; direction?: Direction };
+/** A course record's human class (README ### Rules 54 on a course): ranked by its score, not the game timer. */
+type HumanCourseClass = "human-major" | "human-nmg";
+const HUMAN_LABEL: Record<HumanCourseClass, string> = { "human-major": "Human major", "human-nmg": "Human NMG" };
+type CourseTarget = { course: number; capabilities: string; farm: boolean; direction?: Direction; class?: HumanCourseClass };
 type FullTasRun = { name: string; start?: string | null; savestate?: string | null; goals: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
   offline?: { reached: number; time: number; splits: FullTasSplit[]; segments?: number[][] } | null; closest?: { reached: number; next: string | null; distance: number | null; ticks: number } | null; playable?: boolean; traceReady: boolean }
   & Partial<Omit<FullTasClassRun, "name">>;
@@ -88,7 +91,9 @@ export default function Studio() {
   const [tab, setTab] = useState("fulltas");
   const [error, setError] = useState("");
   const [mapTarget, setMapTarget] = useState<MapTarget | null>(null);
-  const [courseTarget, setCourseTarget] = useState<CourseTarget | null>(null);
+  // The Optimize tab's targets: one opens in Improve a course, several (ctrl+click) run in turn.
+  const [courseTargets, setCourseTargets] = useState<CourseTarget[]>([]);
+  const setCourseTarget = (t: CourseTarget) => setCourseTargets([t]);
   const [placePrefill, setPlacePrefill] = useState<PlacePrefill | null>(null);
   const saveUnlocks = state.connected ? state.saveUnlocks ?? null : null;
 
@@ -169,7 +174,7 @@ export default function Studio() {
 
         {tab === "ultras" && <UltraMap load={loadUltras}/>}
 
-        {tab === "optimize" && <><RoutePicker routes={state.routes} courses={state.courses ?? []} categories={state.categories} activeId={route?.id} saveUnlocks={saveUnlocks} target={courseTarget} onTarget={setCourseTarget} onCommand={command}/><div className="optimizeGrid"><Solver solver={state.solver ?? emptyState.solver} courses={state.courses ?? []} categories={state.categories} routes={state.routes} running={state.running} target={courseTarget} onTarget={setCourseTarget} onCommand={command} onMap={setMapTarget}/><SolveMatrix routes={state.routes} courses={state.courses ?? []} categories={state.categories} solver={state.solver ?? emptyState.solver} open={courseTarget} onOpen={setCourseTarget} onCommand={command}/></div><RouteClasses route={route ?? null}/>{mapTarget && <SolveMap key={`${mapTarget.course}_${mapTarget.capabilities}_${mapTarget.optional.join("+")}`} target={mapTarget} courses={state.courses ?? []} onClose={() => setMapTarget(null)}/>}</>}
+        {tab === "optimize" && <><RoutePicker routes={state.routes} courses={state.courses ?? []} categories={state.categories} activeId={route?.id} saveUnlocks={saveUnlocks} targets={courseTargets} onTargets={setCourseTargets} onCommand={command}/><div className="optimizeGrid"><Solver solver={state.solver ?? emptyState.solver} courses={state.courses ?? []} categories={state.categories} routes={state.routes} running={state.running} targets={courseTargets} onTargets={setCourseTargets} onCommand={command} onMap={setMapTarget}/><RouteClasses route={route ?? null}/></div>{mapTarget && <SolveMap key={`${mapTarget.course}_${mapTarget.capabilities}_${mapTarget.optional.join("+")}`} target={mapTarget} courses={state.courses ?? []} onClose={() => setMapTarget(null)}/>}</>}
 
         {tab === "savestates" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">START STATES</p><h2>Savestates</h2></div><button className="primary" onClick={() => command("/savestates/capture")}>Capture current state</button></div><p className="lede">Capture a game state, then assign it as a route start.</p><div className="savestateList">{!state.savestates.length && <div className="emptyState"><span className="orbit">●</span><h2>No savestates yet</h2><p>Capture one to start routes mid-game.</p></div>}{state.savestates.map(cp => <div className={`savestate ${cp.assigned ? "assigned" : ""}`} key={cp.id}><div><strong>{cp.name}</strong><small>{new Date(cp.createdUtc).toLocaleString()}</small></div>{cp.assigned && <span className="badge">Route start</span>}<button onClick={() => command("/savestates/restore", { savestateId: cp.id })}>Restore</button><button className="secondary" onClick={() => command("/savestates/assign", { savestateId: cp.assigned ? "" : cp.id })}>{cp.assigned ? "Unassign" : "Use as start"}</button></div>)}</div><PlaceLoadstate savestates={state.savestates} prefill={placePrefill} onCommand={command}/></div>}
       </div>
@@ -177,9 +182,10 @@ export default function Studio() {
   </main>;
 }
 
-// A category route's name: <course>_<label> [farm |forwards |backwards ]<time>. The label must name one of the registry's
+// A category route's name: <course>_<label> [farm |forwards |backwards |human-major |human-nmg ]<time> (a human class's: its
+// score). The label must name one of the registry's
 // categories (state.categories), checked below; names like "4_almost_completed" go to the other routes.
-const CATEGORY_ROUTE = /^([^_\s]+)_([A-Z][A-Z0-9_]*) (farm |forwards |backwards )?([\d.]+)$/i;
+const CATEGORY_ROUTE = /^([^_\s]+)_([A-Z][A-Z0-9_]*) (farm |forwards |backwards |human-major |human-nmg )?([\d.]+)$/i;
 
 // Every unlock of a is in b (counts no higher): a narrower unlock set.
 function capsSubset(a: Caps, b: Caps) {
@@ -263,7 +269,9 @@ type Bests = Map<string, {route: Route; time: number}>;
 
 function categoryBests(routes: Route[], courses: Course[], categories: Category[]) {
   const best: Bests = new Map(), farm: Bests = new Map(), forwards: Bests = new Map(), backwards: Bests = new Map();
-  const kinds: Record<string, Bests> = { "": best, "farm ": farm, "forwards ": forwards, "backwards ": backwards };
+  const human: Record<HumanCourseClass, Bests> = { "human-major": new Map(), "human-nmg": new Map() };
+  const kinds: Record<string, Bests> = { "": best, "farm ": farm, "forwards ": forwards, "backwards ": backwards,
+    "human-major ": human["human-major"], "human-nmg ": human["human-nmg"] };
   const other: Route[] = [];
   for (const r of routes) {
     const m = CATEGORY_ROUTE.exec(r.name);
@@ -275,7 +283,7 @@ function categoryBests(routes: Route[], courses: Course[], categories: Category[
     if (!current || time < current.time) kind.set(key, {route: r, time});
     else other.push(r);
   }
-  return {best, farm, forwards, backwards, other};
+  return {best, farm, forwards, backwards, human, other};
 }
 
 // The best route of this category or of a narrower one the course has (their unlocks are a subset).
@@ -298,21 +306,37 @@ function directionBest(bests: ReturnType<typeof categoryBests>, c: Course, cat: 
   return (direction === "forwards" ? soloBest(bests.forwards, c, cat, categories) : undefined) ?? soloBest(bests.best, c, cat, categories);
 }
 
-// Per course and category three slots, forwards record, backwards record and farm: a click targets Improve a course at
-// it and selects its route.
-function RoutePicker({routes,courses,categories,activeId,saveUnlocks,target,onTarget,onCommand}:{routes:Route[];courses:Course[];categories:Category[];activeId?:string;saveUnlocks:Caps|null;target:CourseTarget|null;onTarget:(t:CourseTarget)=>void;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
+const sameTarget = (a: CourseTarget, b: CourseTarget) => a.course === b.course && a.capabilities === b.capabilities && !!a.farm === !!b.farm && a.direction === b.direction && a.class === b.class;
+/** A target in words: its course, category and which of its records. */
+function targetLabel(t: CourseTarget, courses: Course[], categories: Category[]) {
+  const c = courses.find(x => x.id === t.course), lapless = !!c && (c.bonus || !!c.to);
+  return `${courseLabel(c, t.course)} · ${categories.find(x => x.id === t.capabilities)?.label ?? t.capabilities} · ${t.class ? HUMAN_LABEL[t.class]
+    : t.farm && !lapless ? "Farm" : t.direction === "backwards" ? "Backwards" : t.direction === "forwards" ? "Forwards" : "Record"}`;
+}
+
+// Per course and category three slots, forwards record, backwards record and farm (Human: a course's two human-class records,
+// by score): a click targets Improve a course at it and selects its route; ctrl+click adds it to (or drops it from) the
+// targets Improve runs in turn.
+function RoutePicker({routes,courses,categories,activeId,saveUnlocks,targets,onTargets,onCommand}:{routes:Route[];courses:Course[];categories:Category[];activeId?:string;saveUnlocks:Caps|null;targets:CourseTarget[];onTargets:(t:CourseTarget[])=>void;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
   const bests = categoryBests(routes, courses, categories), {best, farm, other} = bests;
+  const [human, setHuman] = useState(false);
   const slot = (label: string, t: CourseTarget, b: {route: Route; time: number} | undefined, digits: number) => {
-    const on = target?.course === t.course && target.capabilities === t.capabilities && !!target.farm === t.farm && target.direction === t.direction;
+    const on = targets.some(x => sameTarget(x, t));
     return <button className={`pickSlot ${b ? "" : "empty"} ${b && b.route.id === activeId ? "active" : ""} ${on ? "targeted" : ""}`}
-      title={`${b?.route.name ?? "No route yet: Improve a course finds a first finish"}\nClick to improve it`}
-      onClick={() => { onTarget(t); if (b) onCommand("/routes/select", { routeId: b.route.id }); }}><small>{label}</small>{b ? b.time.toFixed(digits) : "—"}</button>;
+      title={`${b?.route.name ?? "No route yet: Improve a course finds a first finish"}\nClick to improve it; ctrl+click to add it to the targets`}
+      onClick={e => {
+        const many = e.ctrlKey || e.metaKey;
+        onTargets(!many ? [t] : on ? targets.filter(x => !sameTarget(x, t)) : [...targets, t]);
+        if (b && !(many && on)) onCommand("/routes/select", { routeId: b.route.id });
+      }}><small>{label}</small>{b ? b.time.toFixed(digits) : "—"}</button>;
   };
   const groups: [string, Course[]][] = [
     ["COURSES", courses.filter(c => !c.bonus && !c.to)],
     ["TRANSITIONS", courses.filter(c => c.to)],
     ["BONUSES", courses.filter(c => c.bonus && !c.to)]];
-  return <div className="panel routePicker"><div className="panelTitle"><div><p className="eyebrow">ROUTES</p><h2>Select a route</h2></div><span className="hint">{routes.find(r => r.id === activeId)?.name ?? "No route selected"}</span></div>
+  return <div className="panel routePicker"><div className="panelTitle"><div><p className="eyebrow">ROUTES</p><h2>Select a route</h2></div><span className="hint"><span className="segmented">
+      <button className={human ? "secondary" : "primary"} onClick={() => setHuman(false)}>Records</button>
+      <button className={human ? "primary" : "secondary"} title="Each course's human-class records, by score: time + spike grace + frame-perfect inputs + back-to-back pairs" onClick={() => setHuman(true)}>Human</button></span> · {targets.length > 1 && <>{targets.length} targets · <button className="secondary" onClick={() => onTargets([])}>Clear</button> · </>}{routes.find(r => r.id === activeId)?.name ?? "No route selected"}</span></div>
     <div className="matrixScroll"><table className="matrix">
       <thead><tr><th />{categories.map(cat => <th key={cat.id} title={describeCaps(cat.caps)}>{cat.label}</th>)}</tr></thead>
       <tbody>
@@ -326,6 +350,10 @@ function RoutePicker({routes,courses,categories,activeId,saveUnlocks,target,onTa
                 if (!c.categories.includes(cat.id)) return <td key={cat.id} className="na" />;
                 const beyond = !!saveUnlocks && !capsSubset(cat.caps, saveUnlocks), both = twoWay(c, cat.id);
                 const at = { course: c.id, capabilities: cat.id };
+                // A human class keeps a gated course's record only (bonuses and transitions are timed in ticks).
+                if (human) return lapless ? <td key={cat.id} className="na" /> : <td key={cat.id} className={beyond ? "beyondUnlocks" : ""}><div className="pickSlots">
+                  {(Object.keys(HUMAN_LABEL) as HumanCourseClass[]).map(k => <Fragment key={k}>{slot(k === "human-major" ? "Major" : "NMG", { ...at, farm: false, class: k }, soloBest(bests.human[k], c, cat, categories), 2)}</Fragment>)}
+                </div></td>;
                 return <td key={cat.id} className={beyond ? "beyondUnlocks" : ""} title={beyond ? `Your unlocks only reach ${shortCaps(saveUnlocks!)}` : undefined}><div className="pickSlots">
                   {slot("Fwd", { ...at, farm: false, direction: both ? "forwards" : undefined }, directionBest(bests, c, cat, categories, "forwards"), 2)}
                   {both ? slot("Bwd", { ...at, farm: false, direction: "backwards" }, directionBest(bests, c, cat, categories, "backwards"), 2)
@@ -354,7 +382,12 @@ function waypointName(label: string, world: number[] | null | undefined) {
 }
 const waypointSpan = ([a, b]: [number, number]) => a === b ? `waypoint ${a}` : `waypoints ${a}–${b}`;
 
-function Solver({solver,courses,categories,routes,running,target,onTarget,onCommand,onMap}:{solver:SolverState;courses:Course[];categories:Category[];routes:Route[];running:boolean;target:CourseTarget|null;onTarget:(t:CourseTarget)=>void;onCommand:(path:string,body?:unknown)=>Promise<boolean>;onMap:(target:MapTarget)=>void}) {
+function Solver(props:{solver:SolverState;courses:Course[];categories:Category[];routes:Route[];running:boolean;targets:CourseTarget[];onTargets:(t:CourseTarget[])=>void;onCommand:(path:string,body?:unknown)=>Promise<boolean>;onMap:(target:MapTarget)=>void}) {
+  return props.targets.length>1?<SolveMany {...props}/>:<SolveOne {...props}/>;
+}
+
+function SolveOne({solver,courses,categories,routes,running,targets,onTargets,onCommand,onMap}:{solver:SolverState;courses:Course[];categories:Category[];routes:Route[];running:boolean;targets:CourseTarget[];onTargets:(t:CourseTarget[])=>void;onCommand:(path:string,body?:unknown)=>Promise<boolean>;onMap:(target:MapTarget)=>void}) {
+  const target=targets[0]??null;
   const chosen=target?.course??solver.courses[0]??1;
   const chosenCourse=courses.find(c=>c.id===chosen);
   const capsOptions=chosenCourse&&chosenCourse.categories.length?categories.filter(cat=>chosenCourse.categories.includes(cat.id)):categories;
@@ -362,17 +395,20 @@ function Solver({solver,courses,categories,routes,running,target,onTarget,onComm
   const chosenCaps=chosenCat?.id??"";
   // Bonuses and transitions are timed in ticks already: their record is their farm time.
   const lapless=!!chosenCourse&&(chosenCourse.bonus||!!chosenCourse.to);
-  const farm=!!target?.farm&&!lapless;
-  const direction=!farm&&twoWay(chosenCourse,chosenCaps)?target?.direction:undefined;
+  const cls=lapless?undefined:target?.class;
+  const farm=!!target?.farm&&!lapless&&!cls;
+  const direction=!farm&&!cls&&twoWay(chosenCourse,chosenCaps)?target?.direction:undefined;
   // Names whose checkbox was flipped from its forced-paths.json default ("default": true starts it checked).
   const [optional,setOptional]=useState<string[]>([]);
   const optionalBlocks=(chosenCourse?.optional??[]).filter(b=>b.capabilities.includes(chosenCaps)&&!(direction&&Object.values(DIRECTION_BLOCK).includes(b.name)));
   const chosenOptional=[...optionalBlocks.filter(b=>!!b.on!==optional.includes(b.name)).map(b=>b.name),...direction?[DIRECTION_BLOCK[direction]]:[]].sort();
-  const job={course:chosen,capabilities:chosenCaps,optional:chosenOptional,farm};
+  const job={course:chosen,capabilities:chosenCaps,optional:chosenOptional,farm,...cls?{class:cls}:{}};
   const bests=categoryBests(routes,courses,categories),{best,farm:farms}=bests;
   const solo=chosenCourse&&chosenCat?directionBest(bests,chosenCourse,chosenCat,categories,direction):undefined;
   const lap=chosenCourse&&chosenCat?soloBest(lapless?best:farms,chosenCourse,chosenCat,categories):undefined;
-  // Improve starts from a route; without one the plugin runs the plain solve, which finds a first finish.
+  const humanBest=cls&&chosenCourse&&chosenCat?soloBest(bests.human[cls],chosenCourse,chosenCat,categories):undefined;
+  // Improve starts from a route; without one the plugin runs the plain solve, which finds a first finish (a human class
+  // starts from the routes a human class plays to the finish).
   const improvable=!!solo||!!lap;
   // The waypoints the engine places on the target's route (re-placed when a new route is saved); a running Improve of this
   // target sends its own with every new best.
@@ -384,7 +420,7 @@ function Solver({solver,courses,categories,routes,running,target,onTarget,onComm
     request("/solver/waypoints",JSON.parse(key)[0]).then((w:Waypoints)=>{ if(live) setFetched({key,waypoints:w}); },e=>{ if(live) setFetched({key,error:e instanceof Error?e.message:String(e)}); });
     return ()=>{ live=false; };
   },[key,improvable]);
-  const mine=solver.course===chosen&&solver.capabilities===chosenCaps&&!!solver.farm===farm;
+  const mine=solver.course===chosen&&solver.capabilities===chosenCaps&&!!solver.farm===farm&&(solver.humanClass??undefined)===cls;
   const waypoints=(mine?solver.waypoints:null)??(fetched?.key===key?fetched.waypoints:undefined);
   const note=!improvable?"No route yet: Solve finds a first finish; Improve then places waypoints on it."
     :waypoints?undefined:fetched?.key===key?fetched.error:"Placing waypoints on the route…";
@@ -397,14 +433,14 @@ function Solver({solver,courses,categories,routes,running,target,onTarget,onComm
   const tickAt=(goal:number)=>goal<1?0:waypoints?.splits[goal-1]??-1;
   const focusTicks=focus&&tickAt(focus[1])>=0&&tickAt(focus[0]-1)>=0?tickAt(focus[1])-tickAt(focus[0]-1):null;
   const mapWaypoints:MapGoal[]=(waypoints?.goals??[]).flatMap((label,i)=>{ const r=waypoints!.world[i]; return r?[{index:i+1,label,box:[r[0]-r[2]/2,r[1]-r[3]/2,r[0]+r[2]/2,r[1]+r[3]/2]}]:[]; });
-  const route=farm?lap:solo;
+  const route=cls?humanBest:farm?lap:solo;
   const runRoute=async()=>{ if(route&&await onCommand("/routes/select",{routeId:route.route.id})) await onCommand("/routes/run"); };
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">OFFLINE SEARCH</p><h2>Improve a course</h2></div><span className={`offlineStatus ${solver.running?"running":""}`}>{solver.running?solver.auto?"Improving":"Solving":"Idle"}</span></div>
     <p className="lede">Captures the start in game, then improves the route offline.</p><details className="howTo"><summary>How it works</summary><ol><li><b>Improve</b> searches from the target&apos;s route and picks where to look itself.</li><li>Waypoints split the course into 1–3 s stretches; momentum carries through them.</li><li>Think a stretch is slow? Click its waypoints (shift-click extends), then Improve.</li><li>Record: the game timer, gate to gate. Farm: the steady loop, finish to finish by a quick restart or the drop through the end, a lap&apos;s live time (ticks and dash freezes).</li><li>Every offline best is replayed in game (turbo check); held-up bests save as record, and a farm loop that repeats exactly as farm.</li><li>No route yet: <b>Solve</b> finds a first finish.</li></ol></details>
     <div className="offlineControls">
-      <div className="field"><span>Target (pick a slot in the grid above)</span>
-        <strong title={placeTitle(chosenCourse)}>{courseLabel(chosenCourse,chosen)} · {chosenCat?.label??"—"} · {farm?`Farm${lap?` · ${lap.time.toFixed(4)}s a lap`:""}`:`${direction==="backwards"?"Backwards record":direction==="forwards"?"Forwards record":"Record"}${solo?` · ${solo.time.toFixed(2)}s`:""}`}</strong>
-        <button className="secondary" disabled={solver.running} onClick={()=>{ let id=1; while(solver.courses.includes(id)) id++; onCommand("/courses/add-from-recording").then(ok=>{ if(ok) onTarget({course:id,capabilities:"",farm:false}); }); }}>+ New course from last recording</button></div>
+      <div className="field"><span>Target (pick a slot in the grid above; ctrl+click picks several)</span>
+        <strong title={placeTitle(chosenCourse)}>{courseLabel(chosenCourse,chosen)} · {chosenCat?.label??"—"} · {cls?`${HUMAN_LABEL[cls]}${humanBest?` · score ${humanBest.time.toFixed(2)}`:" · none yet"}`:farm?`Farm${lap?` · ${lap.time.toFixed(4)}s a lap`:""}`:`${direction==="backwards"?"Backwards record":direction==="forwards"?"Forwards record":"Record"}${solo?` · ${solo.time.toFixed(2)}s`:""}`}</strong>
+        <button className="secondary" disabled={solver.running} onClick={()=>{ let id=1; while(solver.courses.includes(id)) id++; onCommand("/courses/add-from-recording").then(ok=>{ if(ok) onTargets([{course:id,capabilities:"",farm:false}]); }); }}>+ New course from last recording</button></div>
       {optionalBlocks.length>0&&<div className="field"><span>Optional avoid blocks</span>{optionalBlocks.map(b=><label key={b.name} className="passLoop" title={b.note}><input type="checkbox" disabled={solver.running} checked={chosenOptional.includes(b.name)} onChange={()=>setOptional(o=>o.includes(b.name)?o.filter(n=>n!==b.name):[...o,b.name])}/>{b.name}</label>)}</div>}
     </div>
     <div className="courseWaypoints">
@@ -428,8 +464,8 @@ function Solver({solver,courses,categories,routes,running,target,onTarget,onComm
     </div>
     <div className="ftImprove">{solver.running
       ? <button className="danger" onClick={()=>onCommand("/solver/stop")}>Stop</button>
-      : <button className="primary" title={!improvable?"Finds a first finish (the plain solve).":focus?`Searches only stretches starting in ${waypointSpan(focus)}; known faster pieces still join anywhere.`:`Searches the whole course from its ${farm?"farm route":"record"} until its minutes run out or Stop.`}
-        onClick={()=>onCommand("/solver/start",focus?{...job,focus}:job)}>{!improvable?"Solve":focus?`Improve ${waypointSpan(focus)}`:farm?"Improve farm":direction?`Improve ${direction} record`:"Improve record"}</button>}</div>
+      : <button className="primary" disabled={!!cls&&!improvable} title={cls&&!improvable?"No route yet: improve the record first.":cls?`Searches for a lower ${HUMAN_LABEL[cls]} score (digital stick, two jump buttons) from the routes a human class plays to the finish.`:!improvable?"Finds a first finish (the plain solve).":focus?`Searches only stretches starting in ${waypointSpan(focus)}; known faster pieces still join anywhere.`:`Searches the whole course from its ${farm?"farm route":"record"} until its minutes run out or Stop.`}
+        onClick={()=>onCommand("/solver/start",focus?{...job,focus}:job)}>{cls?focus?`Improve ${waypointSpan(focus)} · ${HUMAN_LABEL[cls]}`:`Improve ${HUMAN_LABEL[cls]} score`:!improvable?"Solve":focus?`Improve ${waypointSpan(focus)}`:farm?"Improve farm":direction?`Improve ${direction} record`:"Improve record"}</button>}</div>
     <div className="buttonRow"><button className="secondary" onClick={()=>onMap({course:chosen,capabilities:chosenCaps,optional:chosenOptional,waypoints:mapWaypoints,picked:focus})} title="Draws the explored area, saved routes, best, waypoints and forced-path boxes.">Show map</button><button className="secondary" disabled={!route||running||solver.running} onClick={runRoute} title={route?`Run ${route.route.name} in the game`:"No saved route for this course and category"}>▶ Run route</button><button className="secondary" disabled={running||solver.running} onClick={()=>onCommand("/enginesim/play",{course:chosen,capabilities:chosenCaps})} title={"Plays this category's newest offline best. Nothing is saved."}>▶ Play offline best</button><button className="secondary humanButton" disabled={running||solver.running} onClick={()=>onCommand("/enginesim/play",{course:chosen,capabilities:chosenCaps,human:true})} title={"Plays the humanized best for practice. Nothing is saved."}>▶ Play human version</button></div>
     <div className="offlineSummary"><div><span>{solver.farm?"Best farm":"Best"}</span><strong>{(solver.farm?solver.bestFarm:solver.best)!=null?`${(solver.farm?solver.bestFarm:solver.best)!.toFixed(solver.farm?4:2)}s`:"—"}</strong><small>{solver.course?`${courseLabel(courses.find(c=>c.id===solver.course),solver.course)} · ${solver.capabilities}${solver.optional?.length?` +${solver.optional.join(" +")}`:""}${solver.focus?` · ${waypointSpan(solver.focus)}`:""}`:"Not started"}</small></div><div><span>{solver.auto?"Pulls":"Runs"}</span><strong>{solver.evaluations.toLocaleString()}</strong><small>{solver.auto?"short searches Improve chose":`${solver.finishes.toLocaleString()} timed finishes`}</small></div><div><span>Turbo checks</span><strong>{solver.turboChecks.toLocaleString()}</strong><small>{solver.turboSaved.toLocaleString()} saved as routes</small></div><div><span>To validate</span><strong>{(solver.toValidate??0).toLocaleString()}</strong><small>offline bests waiting for a turbo check</small></div></div>
     <p className="offlineConfirmation">{solver.status}</p>
@@ -1062,10 +1098,6 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   </div>;
 }
 
-/** One matrix target: a course and category, queued as an Improve of its record and (courses only; bonuses and transitions
- * are timed in ticks) one of its farm loop. */
-type SolveTarget = { key: string; body: CourseTarget; time?: number; farmTime?: number; lapless: boolean };
-
 type Passes = { minutes: number; maxMinutes: number; repeat: boolean };
 function usePasses(): [Passes, (update: Partial<Passes>) => void] {
   const [passes, setPasses] = useState<Passes>({ minutes: 1, maxMinutes: 15, repeat: true });
@@ -1093,64 +1125,32 @@ function progressText(solver: SolverState) {
   return [solver.repeat ? `Pass ${solver.pass ?? 1}` : "", at >= 0 && queue.length > 1 ? `target ${at + 1} of ${queue.length}` : "", solver.minutes ? `${minutesText(solver.minutes)} each` : ""].filter(Boolean).join(" · ");
 }
 
-function SolveMatrix({routes,courses,categories,solver,open,onOpen,onCommand}:{routes:Route[];courses:Course[];categories:Category[];solver:SolverState;open:CourseTarget|null;onOpen:(t:CourseTarget)=>void;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+/** Several targets (ctrl+click in the grid): each Improve of its record, direction record or farm loop, in turn. */
+function SolveMany({solver,courses,categories,routes,targets,onTargets,onCommand}:{solver:SolverState;courses:Course[];categories:Category[];routes:Route[];targets:CourseTarget[];onTargets:(t:CourseTarget[])=>void;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
   const [passes, updatePasses] = usePasses();
-  useEffect(() => setSelected(new Set(JSON.parse(window.localStorage.getItem("optimizeSelection") ?? "[]"))), []);
-  const select = (next: Set<string>) => { setSelected(next); window.localStorage.setItem("optimizeSelection", JSON.stringify([...next])); };
-  const toggle = (keys: string[]) => {
-    const next = new Set(selected), on = keys.some(k => !next.has(k));
-    for (const k of keys) { if (on) next.add(k); else next.delete(k); }
-    select(next);
-  };
-  const {best, farm} = categoryBests(routes, courses, categories);
-  const groups: [string, Course[]][] = ([
-    ["COURSES", courses.filter(c => !c.bonus && !c.to).sort((a, b) => a.id - b.id)],
-    ["TRANSITIONS", courses.filter(c => c.to).sort((a, b) => a.id - b.id)],
-    ["BONUSES", courses.filter(c => c.bonus).sort((a, b) => a.id - b.id)]] as [string, Course[]][])
-    .map(([label, list]): [string, Course[]] => [label, list.filter(c => c.categories.length > 0)]);
-  // Per category the one target: its record, with the farm loop's lap shown where it is its own (bonuses and transitions are
-  // timed in ticks, so their record is their farm time).
-  const cells = (c: Course): (SolveTarget | null)[] => categories.map(cat => !c.categories.includes(cat.id) ? null
-    : { key: `c:${c.id}:${cat.id}`, body: { course: c.id, capabilities: cat.id, farm: false }, time: best.get(`${c.id}:${cat.id}`)?.time,
-      farmTime: farm.get(`${c.id}:${cat.id}`)?.time, lapless: !!(c.bonus || c.to) });
-  const all = groups.flatMap(([, list]) => list.flatMap(c => cells(c).filter((t): t is SolveTarget => t != null)));
-  const queue = all.filter(t => selected.has(t.key)).flatMap(t => t.lapless ? [t.body] : [t.body, { ...t.body, farm: true }]);
-  const cell = (t: SolveTarget | null, level: number) => {
-    if (!t) return <td key={level} className="na" />;
-    const on = selected.has(t.key), opened = open?.course === t.body.course && open.capabilities === t.body.capabilities;
-    const times = `Record ${t.time != null ? `${t.time.toFixed(2)}s` : "none yet"}${t.lapless ? "" : `, farm ${t.farmTime != null ? `${t.farmTime.toFixed(4)}s a lap` : "none yet"}`}`;
-    return <td key={level} className={`matrixCell ${on ? "on" : ""} ${opened ? "opened" : ""}`} role="button" tabIndex={0} aria-pressed={on}
-      title={`${times}. Click to ${on ? "drop it from" : "add it to"} the batch.`} onClick={() => toggle([t.key])}
-      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle([t.key]); } }}>
-      <div className="matrixTimes"><span>{t.time != null ? `${t.time.toFixed(2)}s` : "—"}</span>{!t.lapless && <small>farm {t.farmTime != null ? `${t.farmTime.toFixed(4)}s` : "—"}</small>}</div>
-      <button className="matrixOpen" title="Open its route and waypoints in Improve a course" aria-label="Open in Improve a course"
-        onClick={e => { e.stopPropagation(); onOpen(t.body); }} onKeyDown={e => e.stopPropagation()}>↗</button></td>; };
+  const bests = categoryBests(routes, courses, categories);
+  const rows = targets.map(t => {
+    const c = courses.find(x => x.id === t.course), cat = categories.find(x => x.id === t.capabilities);
+    const lapless = !!c && (c.bonus || !!c.to);
+    const b = !c || !cat ? undefined : t.class ? soloBest(bests.human[t.class], c, cat, categories)
+      : t.farm && !lapless ? soloBest(bests.farm, c, cat, categories) : directionBest(bests, c, cat, categories, t.direction);
+    // A direction keeps the course's default-on blocks and adds its own; without one the plugin picks the defaults.
+    const optional = t.direction ? [...(c?.optional ?? []).filter(o => o.on && o.capabilities.includes(t.capabilities) && !Object.values(DIRECTION_BLOCK).includes(o.name)).map(o => o.name), DIRECTION_BLOCK[t.direction]] : undefined;
+    return { t, label: targetLabel(t, courses, categories),
+      time: b ? `${t.class ? "score " : ""}${b.time.toFixed(t.farm && !lapless ? 4 : 2)}` : "no route yet",
+      job: { course: t.course, capabilities: t.capabilities, farm: t.farm && !lapless, ...optional ? { optional } : {}, ...t.class ? { class: t.class } : {} } };
+  });
   const progress = solver.queue ?? [];
-  return <div className="panel offlinePanel solveMatrix"><div className="panelTitle"><div><p className="eyebrow">BATCH</p><h2>Improve many</h2></div><span className={`offlineStatus ${solver.running ? "running" : ""}`}>{solver.running ? progressText(solver) || "Improving" : "Idle"}</span></div>
-    <p className="lede">Pick cells; each improves its record, then its farm loop, in turn.</p><details className="howTo"><summary>How it works</summary><ol><li>Click a cell to add it to the batch; click again to drop it.</li><li>Row or column headers pick whole groups.</li><li>↗ opens its route and waypoints.</li><li>A course cell runs two jobs: its record (game timer), then its farm loop (finish to finish, a lap&apos;s live time).</li><li>A target without a route gets a first solve.</li><li>Every gain goes through the same turbo check.</li><li>Loop: each pass doubles minutes, capped at the max.</li></ol></details>
-    <div className="matrixTools">
-      <button className="secondary" onClick={() => select(new Set(all.map(t => t.key)))}>All</button>
-      <button className="secondary" onClick={() => select(new Set(all.filter(t => t.time != null).map(t => t.key)))} title="Only targets that already have a route">With a time</button>
-      <button className="secondary" onClick={() => select(new Set())}>None</button>
-    </div>
+  return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">OFFLINE SEARCH</p><h2>Improve {targets.length} targets</h2></div><span className={`offlineStatus ${solver.running ? "running" : ""}`}>{solver.running ? progressText(solver) || "Improving" : "Idle"}</span></div>
+    <p className="lede">Each target improves in turn; a target without a route gets a first solve. Click a slot above to open one alone.</p>
+    <ul className="manyTargets">{rows.map((r, i) => <li key={i}><span>{r.label}</span><small>{r.time}</small>
+      <button className="secondary" disabled={solver.running} title="Drop it from the targets" onClick={() => onTargets(targets.filter((_, k) => k !== i))}>✕</button></li>)}</ul>
     <PassFields passes={passes} update={updatePasses} disabled={solver.running} />
-    <div className="matrixScroll"><table className="matrix">
-      <thead><tr><th />{categories.map((cat, level) => <th key={cat.id}><button title={`${cat.label} — ${describeCaps(cat.caps)}. Picks every target in this column.`} onClick={() => toggle(groups.flatMap(([, list]) => list.flatMap(c => cells(c)[level] ?? [])).map(t => t.key))}>{cat.label}</button></th>)}</tr></thead>
-      <tbody>
-        {groups.map(([label, list]) => list.length > 0 && <Fragment key={label}>
-          <tr className="matrixSection"><th colSpan={categories.length + 1}>{label}</th></tr>
-          {list.map(c => <tr key={c.id}>
-            <th><button title={`${placeTitle(c)}. Picks every target in this row.`} onClick={() => toggle(cells(c).flatMap(t => t ? [t.key] : []))}>{courseLabel(c, c.id)}</button></th>
-            {cells(c).map(cell)}
-          </tr>)}
-        </Fragment>)}
-      </tbody>
-    </table></div>
     <div className="buttonRow">{solver.running
       ? <><button className="secondary" onClick={() => onCommand("/solver/skip")}>Skip current target</button><button className="danger" onClick={() => onCommand("/solver/stop")}>Stop all</button></>
-      : <button className="primary" disabled={queue.length === 0} onClick={() => onCommand("/solver/start", { queue, ...passes })}>Improve: {queue.length} job{queue.length === 1 ? "" : "s"}{queue.length === 0 ? "" : passes.repeat ? " · loop until stopped" : ` · up to ${minutesText(queue.length * passes.minutes)}`}</button>}</div>
+      : <button className="primary" onClick={() => onCommand("/solver/start", { queue: rows.map(r => r.job), ...passes })}>Improve {rows.length} targets{passes.repeat ? " · loop until stopped" : ` · up to ${minutesText(rows.length * passes.minutes)}`}</button>}</div>
     {progress.length > 1 && <ol className="matrixQueue">{progress.map((q, i) => <li key={i} className={q.active ? "active" : q.result ? "done" : ""}><strong>{q.label}</strong><span>{q.active ? "Improving…" : q.result ?? "Waiting"}</span></li>)}</ol>}
+    <p className="offlineConfirmation">{solver.status}</p>
   </div>;
 }
 

@@ -205,6 +205,8 @@ namespace IGTAP.EngineSim.Cli
                 }
             if (_best.Progress < _goals)
                 throw new InvalidOperationException($"--auto improves a complete route; the best reaches {_best.Progress} of {_goals} goals (run the solve with --unsolved first)");
+            // A course class's start is a kept best too (CourseAuto writes it for the class's record): the gate knows only offline-best files.
+            if (_course?.Human != null) _committed?.Invoke(_best, "start");
             // A repair chases the lead its window found: it gets --repair-cpu-per-tick CPU seconds per tick of that lead and is dropped
             // once it falls behind the best at a goal (--repair-slack ticks, default none).
             _repairSlack = Solve.Option(args, "--repair-slack", 0);
