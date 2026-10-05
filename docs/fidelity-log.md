@@ -1146,3 +1146,42 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
 - **Where:** `TurboRunner` (`BeforeStartCoroutine`, `Resume`, `StartPass`, `Restore`), `EngineSimExport.WriteSnapshot`,
   `Scheduler`, `Simulation` (`Activated`, `InterpolatedFrames`), `Economy` (`GridStart`, `GridNow`, `StartPass`),
   `WokenStarts.cs`.
+
+## Woken upgrade boxes' Start
+
+- **Symptom:** a Full-TAS run that plants the Area 2 tree ended at `buytree0` in turbo and the engine ("Unmodeled:
+  GreenCloneChanceBox's Start, the first since a run woke it, would change its cap", `TouchGrass-Zip`, tick 34226), and
+  every way to the zip movers goes through it.
+- **Cause:** Unity runs a woken `upgradeBox`'s `Start` (upgradeBox.cs:199-298: `baseCap = Cap`, the cap times
+  `baseCapMult`, the base cost, `deactivate`, visibility, ...) before its first Update, but a turbo run is one Unity
+  frame, so Unity's real `Start` came after the run, and the engine has no Unity: both ended the run instead
+  (`WokenStarts.Unmodeled`). The probe also showed what both legs' Start pass had wrong: Unity runs the `Start` of what a
+  frame's end woke first thing in the next frame, before that frame's `FixedUpdate` when it has one, and both ran it after
+  the tick's `FixedUpdate`s and physics step.
+- **Fix:** README ### Rules, exception 12. Turbo's `StartPass` runs the game's own `Start` of a woken box
+  (`WokenStarts.Start`) and puts the box's fields and the RNG back around Unity's later real `Start`
+  (`BeforeDrawingStart`, `AfterDrawingStart`); the engine's `Economy.StartPass` runs it with the box and its tree touched
+  and `upgradeBox.updateCostTextDisplay` and `setBoxText` cut (`cuts.txt`; a `PlayerPrefs` stub that throws,
+  `Shim/Engine/Misc.cs`). Both make a Start pass at each tick's start, before its Invokes and `FixedUpdate`s, as well as at
+  each frame's. `WokenStarts.Unmodeled` now refuses only a `Start` that would move a door. Probe rows, trace ticks and
+  `--ticks-out` lines carry the tree boxes on (`econ.treeBoxes`), and `replay` compares a string field by its value.
+- **Checked:** (1) a `WJ_DS_DJ_BS` Course 6 start on a fresh new game with 1e6 Cash and NP, 1e9 GP, 1e4 CD and RP, the
+  1861 inputs of `t13-door-q` (the plant box, `buytree0` to `buytree7`, eleven box Starts; probe `tree-start2`, trace
+  `tree-start-turbo`): turbo and the engine equal on all 2029 ticks (RNG, Cash, the economy, `treeBoxes`; positions as
+  before); the probe's `treeBoxes` equal to both on every tick, three model rows aside (taken after a tick's last frame, they
+  show a box woken there and not yet started; 1x's row is taken in the next tick's `globalStats.FixedUpdate`, after its
+  Start). Each box starts in the same frame in all three: `GreenCloneChanceBox` in tick 513's frame k = 1 (woken at k = 0's
+  end), `GlobalNPincreaseBox` on in tick 961's frame k = 5 and started before tick 962's `FixedUpdate` (the probe's
+  `boxStart` row before tick 962's, the engine's `EconomyTickStart`). The probe's NP and RNG are its own, as a category
+  start's always were. (2) `Test-Tree`, a Full-TAS run from Test-Zone12's savestate with the wall jump, dash and double
+  jump (`lab/zone12-shaft-top-wjdsdj`, loose buys, waypoints from TouchGrass-Zip's way to Course 6): the fall through the
+  zone 2 activator, the atom box (tick 1735), the plant (1753), `buytree0` (2184). 1x (probe `tree-ft`) against the engine
+  (`fulltas --check --ticks-out`): every economy field equal on all 3100 ticks (NP, atoms, the grid, `treeBoxes`;
+  `doorAtom` 0.01 apart in 71, rounding), positions within 0.01 but at 11 single landing ticks, the RNG on every tick but
+  6 whose draws fall inside the tick (the zone load, the buys, a box's light), the box Starts in tick 1850's and 2281's
+  frame k = 1 in both. Turbo isn't in (2): its trace drifts from 1x after the landing (tick 314 on, 0.002 u every few
+  ticks: its x steps 9.19922 u where 1x's and the engine's alternate 9.1992 and 9.2012) and misses the atom box. Nothing
+  runs a `Start` there before tick 1850, so the drift is older than this; open.
+- **Where:** `WokenStarts.cs`, `TurboRunner` (`StartPass`, its tick loop, `BeforeDrawingStart`, `AfterDrawingStart`),
+  `Economy.StartPass`, `EconomyTickStart`, `cuts.txt`, `Shim/Engine/Misc.cs`, `ProbeRunner.EconomyNow`,
+  `FullTas.EconomyRow`, `Program.Compare`, `tools/economy-diff.py`.

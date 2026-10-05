@@ -1846,8 +1846,8 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   wait and resumes frame waits once per modelled frame (`TurboRunner.Resume(Wait.Frame)`); the engine runs it on the
   Scheduler (`Continues`, `Scheduler.Frame`), `cuts.txt` no longer drops the trigger. A woken behaviour whose Start never
   ran (the trace start's `neverStarted`, `TurboRunner.NeverStarted`: the drawers, the atom collider, upgrade boxes) runs
-  it at the next frame's Start pass: the drawers draw, the collider recomputes NP, and a box whose Start would change
-  what a run reads ends the run (`WokenStarts.Unmodeled`). The trace start also carries `activeZone`, and a start
+  it at the next Start pass: the drawers draw, the collider recomputes NP, and a box runs the game's own
+  `upgradeBox.Start` (below). The trace start also carries `activeZone`, and a start
   captured with a load under way is refused. Snapshots keep `activeZone` and the zone objects' on/off; a turbo restore
   stops Unity's own `IE_Load` and restores the zip movers after the scene (whose re-activation ran their `OnEnable`).
   Checked at 1x, in turbo and here (2026-10-04, the zone 1 → 2 activator falling from savestate `lab/zone12-shaft-top-rebased`
@@ -1857,6 +1857,26 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   1x against turbo, 629 turbo against the engine), and the engine's `probe` frame rows show the load and the first grid call
   in frame k = 2. A recreated body's place at the head of Box2D's body list (Unity remakes a re-activated object's body)
   changes nothing there: the engine with the woken bodies moved to the head wrote byte-identical `--ticks-out`.
+- A woken behaviour's `Start` (README ### Rules, exception 12): Unity runs it before the behaviour's first `Update`, in
+  the rendered frame after the one that woke it, and first thing in that frame: a box `IE_Grow` turns on at the end of a
+  tick's last frame starts before the next tick's `FixedUpdate` (a 1x probe's `boxStart` rows: `GlobalNPincreaseBox` on
+  in tick 961's frame k = 5, its `Start` in frame k = 6, logged before tick 962's tick row, `inFixedStep` false); one woken
+  in the physics step (a buy's `OnTriggerStay2D`) starts in that tick's frame k = 0, before its Updates. Turbo and the
+  engine make a Start pass at each tick's start, before its Invokes and `FixedUpdate`s (`TurboRunner`'s tick loop,
+  `EconomyTickStart`), and at each rendered frame's start (`InterpolatedFrames`). An `upgradeBox` there runs the game's own
+  `Start` (`WokenStarts.Start`, upgradeBox.cs:199-298: `baseCap = Cap`, the cap times `baseCapMult`, the `init` base cost
+  and course tier or `CalcBoxCost`, `deactivate`, off when not `visible`, the statue text, the Vman omnidash box, the key
+  prompt, `localUpgradeScript`, a bought box's tree). Turbo's puts the box's fields back around Unity's later real `Start`
+  (`BeforeDrawingStart`, `AfterDrawingStart`, with the RNG), so it doesn't apply twice; the engine's touches the box and
+  its tree first, so a restore puts them back, and runs with `upgradeBox.updateCostTextDisplay` and `setBoxText` cut
+  (texts). A box whose `Start` would move a door (the atom box's, which reads the machine's PlayerPrefs "OpenA2Door",
+  upgradeBox.cs:264, and the engine has no `PlayerPrefs`; the Area 2 door box's when bought out before it, :260) ends the
+  run (`WokenStarts.Unmodeled`). Every probe row, trace tick and `--ticks-out` line carries the tree boxes that are on
+  (`econ.treeBoxes`: each one's segment, name, buys/cap, base cap, cost and base cost; `tools/economy-diff.py` compares
+  it). Checked against 1x (2026-10-04, [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Woken upgrade boxes'
+  Start*): a Course 6 start's tree climb (eleven box Starts, `buytree0` to `buytree7`) and the `Test-Tree` Full-TAS run
+  (Test-Zone12's fall with the wall jump, dash and double jump, then the atom box, the plant and `buytree0`): each `Start`
+  in the frame 1x runs it, and `treeBoxes` equal on every tick.
 - Buy-max boxes (`IE_BuyMax`, the statue's boosted Courses 1 and 2): on build 25630570 the coroutine buys a level, then
   waits for the next physics step (`WaitForFixedUpdate`): one level a tick at any frame rate
   ([`docs/fulltas.md`](../docs/fulltas.md#clones-and-buy-max-build-25630570)). Offline `Shop.FixedStep` (`Shop.cs:148`,
@@ -1926,12 +1946,9 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
     SpriteRenderer + ParticleSystem only: activating one draws nothing).
   - Never stepped in a turbo tick: FloatingNumberScript.cs:89-99 (`ActuallySpawnText` is off). PlatformMover.cs:154,165
     only run once zip movers are unlocked (`zipMoversUnlocked`), and then in turbo and here alike.
-  - Not reproduced: a block swap's re-activated boxes (upgradeBox.cs:804, behind a purchase that ends the run), and the
-    `Start` of what a tree segment wakes the first time (its box's `LightFlicker` and `upgradeBox.Start`, its trunks' and
-    lights' `RandomAnimSpeedComponent`: one draw, two or three). Start runs before a behaviour's first Update: for an
-    object woken in the buy's physics step (OnTriggerStay2D) in that same rendered frame, before the frame's
-    Movement.Update and clone draws; for one woken at a frame's end (IE_Grow's box, an auto-triggered segment) in the
-    next frame. Turbo never reaches them; left to Task 7's 1x probe. The Omni Dash buy's Area 2 → 1 transition
+  - Not reproduced: a block swap's re-activated boxes (upgradeBox.cs:804, behind a purchase that ends the run). The
+    `Start` of what a tree segment wakes the first time (its box's `LightFlicker`, its trunks' and lights'
+    `RandomAnimSpeedComponent`: one draw, two or three) is made at the Start pass (below). The Omni Dash buy's Area 2 → 1 transition
     (`Zone2to1TransitionController.doStateVisuals`) runs to its first yield, as in turbo; at 1x its later frames turn
     `closedObject` off (the "Transition ground" collider over the box) 4.31 s after the buy at the earliest, so a run
     still going then ends (`Economy.TransitionOpensAfter`).

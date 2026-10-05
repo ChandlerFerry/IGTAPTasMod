@@ -182,15 +182,24 @@
     timer turns on at 1x only) play and put `UnityEngine.Random`'s state back after them
     (`TasPlugin.PresentationDraw`; the offline engine makes no bobber draw in a Full-TAS
     run, `Economy.Activate`), so the fixed seed's draws are the same at 1x as judged.
-12. Relaxes rule 39. The `Start` draws of what a run wakes: a `LightFlicker` (a box's pulse light, 1 draw), a
-    `RandomAnimSpeedComponent` (a tree segment's lights, 2, 3 when broken) and a `JiggleDropScript` (a refill orb, 1)
-    that a run switches on before Unity ever started it. Unity runs `Start` before the behaviour's first `Update`: in the
-    same rendered frame when it was woken in the physics step (a tree box's buy), in the next when woken at a frame's end
-    (`IE_Grow` turning a segment's box on). Turbo draws them at that modelled frame and puts `UnityEngine.Random`'s state
-    back around Unity's later real `Start` (`TurboRunner.StartPass`, as `TasPlugin.PresentationDraw` does for exception 11);
-    the offline engine makes the same draws at the same frame (`Economy.StartPass`). 1x is untouched. A course's `Start`
-    draws too (`InvokeRepeating("UpdateReward", Random.Range(0, 5), 5)`), but no run wakes a course (zone loads happen
-    outside runs).
+12. Relaxes rule 39. The `Start` of what a run wakes, switched on before Unity ever started it: the draws of a
+    `LightFlicker` (a box's pulse light, 1 draw), a `RandomAnimSpeedComponent` (a tree segment's lights, 2, 3 when
+    broken) and a `JiggleDropScript` (a refill orb, 1), and an `upgradeBox`'s gameplay writes (a tree segment's box,
+    `buytree0` first; upgradeBox.cs:199-298): `baseCap = Cap`, `Cap = round(baseCap × baseCapMult)`, the `init` base
+    cost (course tier scaling) or `CalcBoxCost`, `deactivate` when `Cap ≤ TimesUsed`, off when not `visible`, the statue
+    text, the Vman omnidash box, `SetBoxPromptActiveState`, `localUpgradeScript` and, bought already, its tree's
+    `growSegments`. Unity runs `Start` before the behaviour's first `Update`: in the same rendered frame when it was woken
+    in the physics step (a tree box's buy), first thing in the next when woken at a frame's end (`IE_Grow` turning a
+    segment's box on), before that frame's `FixedUpdate` when it has one (a 1x probe: a box on in tick 961's last frame
+    starts before tick 962's). Turbo makes them at that modelled frame (`TurboRunner.StartPass`, for a box the game's own
+    `Start`) and puts `UnityEngine.Random`'s state and the box's fields back around Unity's later real `Start`
+    (`BeforeDrawingStart`, as `TasPlugin.PresentationDraw` does for exception 11), so it doesn't apply twice; the offline
+    engine makes the same at the same frame (`Economy.StartPass`, the box's texts cut). The atom collider's `Start` (an
+    NP recompute) is made the same way. A box whose `Start` would move a door (the Area 2 door box's bought out before it,
+    the atom box's, which reads the machine's PlayerPrefs; upgradeBox.cs:260-267) ends the run (`WokenStarts.Unmodeled`);
+    its Steam and text parts are presentation, left to Unity. 1x is untouched. A course's `Start` draws too
+    (`InvokeRepeating("UpdateReward", Random.Range(0, 5), 5)`), but no run wakes a course: a zone load in a run (a zone
+    activator's `ZoneLoader.IE_Load`, in its tick's third rendered frame) turns zones on and off, never the `Courses` root.
 
 Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run with goals:
 [`docs/fulltas.md`](docs/fulltas.md). What a human can put into the game, and how routes match it:

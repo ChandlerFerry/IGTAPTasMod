@@ -2113,12 +2113,13 @@ found no way in their searches. No plan reaches the zip movers. Three things sto
   buy-table `lap:6` entry from the landing didn't play ("no place finish:6 in the movement table"). Every course's gates
   are places now ([Movement table](#movement-table)). A Course 6 lap pays Cash only: no GP, even with 91 `buygreen6`
   levels.
-- **The tree's boxes end the run (the blocker).** The first atom costs 0 GP, and its buy resets Cash to 0. The plant box
+- **The tree's boxes ended the run** (fixed): the first atom costs 0 GP, and its buy resets Cash to 0. The plant box
   (0.1 NP) comes 40 ticks after it. The plant's growth wakes `GreenCloneChanceBox` (`buytree0`), whose first `Start`
-  would set its cap (exported `Cap` 20, `baseCap` 0). The engine aborts there ("Unmodeled: GreenCloneChanceBox's Start,
-  the first since a run woke it, would change its cap": `WokenStarts.cs`, `Economy.StartPass`), and so does turbo
-  (`TurboRunner.cs:205`). Every way to `buytree16` goes through `buytree0`. Until the engine and turbo model
-  `upgradeBox.Start` for a woken box, no plan to the zip movers can be played or judged. The beams from `finish:6`
+  sets its base cap (exported `Cap` 20, `baseCap` 0). The engine and turbo ended the run there ("Unmodeled:
+  GreenCloneChanceBox's Start, the first since a run woke it, would change its cap"), and every way to `buytree16` goes
+  through `buytree0`. Both now run the game's own `upgradeBox.Start` in the frame 1x does (README ### Rules, exception
+  12; [`enginesim/README.md`](../enginesim/README.md), *A woken behaviour's `Start`*; checked against 1x, fidelity log
+  *Woken upgrade boxes' Start*). The beams from `finish:6`
   (`--only lap:6,record:6,buy:buygreen6,buy:buyclone6,buy:buyatomlevel9,buy:buyatomlevel10,buy:buynp10,buy:buyatom`
   and the tree's NP boxes) ran 40 minutes to tick 48910 with no plan. Their `atoms:N` stands made up nearly all of the
   run time, and nearly all failed.
