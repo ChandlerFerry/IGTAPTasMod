@@ -120,7 +120,8 @@ namespace IGTAP.EngineSim.Cli
             /// cover them.</summary>
             public Caps Caps;
             public List<InputTick> Inputs;
-            /// <summary>Another run's start, where its player stands still before these inputs (null: none).</summary>
+            /// <summary>Another run's start (its "trace"), or the seed's own "start" ({x, y, facingRight}, world: a hand recording's), where
+            /// its player stands still before these inputs (null: none).</summary>
             public SeedStart At;
         }
         /// <summary>A Full-TAS run's start: the player's world position and facing (it stands still there).</summary>
@@ -1466,7 +1467,9 @@ namespace IGTAP.EngineSim.Cli
                 Caps = !root.TryGetProperty("capabilities", out JsonElement caps) || caps.ValueKind != JsonValueKind.String
                     || !Caps.TryParse(caps.GetString(), out Caps seedCaps) ? default(Caps) : seedCaps,
                 Inputs = Solve.ReadInputs(root),
-                At = root.TryGetProperty("trace", out JsonElement trace) && trace.ValueKind == JsonValueKind.String ? StartOf(trace.GetString()) : null,
+                At = root.TryGetProperty("start", out JsonElement start) && start.ValueKind == JsonValueKind.Object
+                    ? new SeedStart { X = start.GetProperty("x").GetSingle(), Y = start.GetProperty("y").GetSingle(), FacingRight = start.GetProperty("facingRight").GetBoolean() }
+                    : root.TryGetProperty("trace", out JsonElement trace) && trace.ValueKind == JsonValueKind.String ? StartOf(trace.GetString()) : null,
             };
         }
 
