@@ -2085,6 +2085,30 @@ zip-plan's were estimates) and the Area 2 courses' boxes (no clones without a la
 isn't built (the walk to the atom level box doesn't play), so 9008 is a plan, not a route; both models' walks are
 estimates.
 
+**TouchGrass-Zip (2026-10-04).** The first plan from a real arrival: `TouchGrass-Zip` is TouchGrass-ANY%'s 479 goals,
+`at:16820,3240,40,80`, `start:6`, `finish:6`, then `buy:buytree16` (`fulltas.json.before-touchgrass-zip` is the file
+before it). The arrival (goal 479, tick 33092, 699.12 s): zone 2 loaded on the fall's 69th tick (y 8504), the atom grid
+running, 2.06e35 Cash, no GP, NP, RP or CD, no atoms. The landing's first input plays on tick 33128. Its run file plays
+482 goals: the buy table's Course 6 lap (`--targets lap:6`: 912 ticks, finish on tick 34044, 720.03 s); laps 7, 9 and 10
+found no way in their searches. No plan reaches the zip movers. Three things stop it:
+
+- **`--from 479` can't start.** `Simulation.Advance` captures when the input after the prefix is asked for, which is
+  before the no-input ticks that come with the last input (the 269-tick fall). Goals 478 and 479 come in those ticks, so
+  `PlanEconomy` throws "the best doesn't replay to goal 479" (`EconomyPlan.cs:936`). The `at:` goal 480 is there so a
+  plan can start after the landing.
+- **No laps where the best never ran a course.** The movement table has places only for the best's goals, so a buy-table
+  `lap:6` entry from the landing doesn't play ("no place finish:6 in the movement table", `EconomyPlan.cs:885`). Goals
+  481-482 make Course 6 a place. A Course 6 lap pays Cash only: no GP, even with 91 `buygreen6` levels.
+- **The tree's boxes end the run (the blocker).** The first atom costs 0 GP, and its buy resets Cash to 0. The plant box
+  (0.1 NP) comes 40 ticks after it. The plant's growth wakes `GreenCloneChanceBox` (`buytree0`), whose first `Start`
+  would set its cap (exported `Cap` 20, `baseCap` 0). The engine aborts there ("Unmodeled: GreenCloneChanceBox's Start,
+  the first since a run woke it, would change its cap": `WokenStarts.cs`, `Economy.StartPass`), and so does turbo
+  (`TurboRunner.cs:205`). Every way to `buytree16` goes through `buytree0`. Until the engine and turbo model
+  `upgradeBox.Start` for a woken box, no plan to the zip movers can be played or judged. The beams from `finish:6`
+  (`--only lap:6,record:6,buy:buygreen6,buy:buyclone6,buy:buyatomlevel9,buy:buyatomlevel10,buy:buynp10,buy:buyatom`
+  and the tree's NP boxes) ran 40 minutes to tick 48910 with no plan. Their `atoms:N` stands made up nearly all of the
+  run time, and nearly all failed.
+
 ## When a game update breaks a route
 
 A Steam update can move the Cash, the RNG or a collider, and a route that played through stops short. In order:
