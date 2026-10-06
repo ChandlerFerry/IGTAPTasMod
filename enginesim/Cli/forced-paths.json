@@ -108,7 +108,7 @@
       "course": 6,
       "capabilities": ["wjdsdjbs", "wjdsdjbsorbzipom", "wjdsdjbsorb", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom"],
       "note": "Right third of the room (x 27244.4 to 28079.5): the floor below y -80 and the strip over y 600 under the ceiling are cut in every category; the band between, the 6_WJ_DS_DJ_BS record's run up the right wall and back left under the ceiling (y -59 to 577 there), is open here and cut in the other categories by the next rule.",
-      "avoid": [[27244.4, -664.8, 28079.5, -80], [27244.4, 600, 28079.5, 870.1], [22378.9, -512.5, 22584.0, 1346.5], [22533.2, 406.1, 25855.5, 629.9], [26061.6, 5.5, 26291.4, 40.9], [22506.8, 258.3, 25004.8, 484.2], [24231.5, -734.0, 24744.7, -679.3]],
+      "avoid": [[27244.4, -664.8, 28079.5, -80], [27244.4, 600, 28079.5, 870.1], [22378.9, -512.5, 22584.0, 1346.5], [22533.2, 406.1, 25855.5, 629.9], [26061.6, 5.5, 26291.4, 40.9], [22506.8, 258.3, 25004.8, 484.2], [24231.5, -734.0, 24744.7, -679.3], [22434.8, -716.9, 24710.3, 661.5], [26934.6, -679.3, 28063.1, 871.4]],
       "via": []
     },
     {
@@ -132,6 +132,12 @@
           "default": true,
           "avoid": [[19800.2, 3538.6, 19978.2, 3581.9]],
           "via": []
+        },
+        {
+          "name": "mid-right",
+          "note": "x 19040.7 to 19630.5, y 3869.2 to 5995.5. Off unless picked.",
+          "avoid": [[19040.7, 3869.2, 19630.5, 5995.5]],
+          "via": []
         }
       ]
     },
@@ -139,7 +145,7 @@
       "course": 8,
       "capabilities": ["wjdsdjbs", "wjdsdjbsorbzipom", "wjdsdjbsorb", "wjdsdjbszip", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom"],
       "note": "x 26057 to 26249, y -2445 to -1663, is cut.",
-      "avoid": [[26056.6, -2445.43, 26248.6, -1663.43]],
+      "avoid": [[26941.4, -3360.5, 27525.7, -1779.8], [26501.2, -1427.0, 27227.1, -1164.6], [26210.8, -1801.8, 26412.2, -1392.1], [26477.3, -2604.7, 27009.6, -2481.5], [25350.9, -2537.5, 25496.9, -1309.2], [25393.8, -2019.3, 26278.5, -1254.8]],
       "via": []
     },
     {
@@ -153,14 +159,13 @@
       "course": 10,
       "capabilities": ["wjdsdjbs", "wjdsdjbsorbzipom", "wjdsdjbsorb", "wjdsdjbszip", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom"],
       "note": "x 29520 to 29761, y 5709 to 7448, is cut.",
-      "avoid": [[29519.6, 5708.57, 29760.6, 7447.57], [29718.8, 6370.8, 29856.8, 6858.7], [28388.6, 7462.8, 33846.1, 8730.4], [32588.0, 5732.4, 33490.5, 7429.7], [29741.8, 6970.2, 30422.7, 7458.0]],
+      "avoid": [[29519.6, 5708.57, 29760.6, 7447.57], [28388.6, 7462.8, 33846.1, 8730.4], [32588.0, 5732.4, 33490.5, 7429.7], [29755.8, 6921.6, 30432.5, 7445.1], [29970.5, 4464.1, 30987.0, 4771.3]],
       "via": [],
       "optional": [
         {
           "name": "avoid-backwards",
-          "note": "x 29850.5 to 29931.1, y 6431 to 6765.4. On unless turned off.",
-          "default": true,
-          "avoid": [[29850.5, 6431.0, 29931.1, 6765.4]],
+          "note": "x 29752.8 to 29942, y 6459.5 to 6740.2. Off unless picked.",
+          "avoid": [[29752.8, 6459.5, 29942.0, 6740.2]],
           "via": []
         }
       ]

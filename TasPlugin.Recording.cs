@@ -28,7 +28,9 @@ namespace IGTAPTasMod
             TasClose("Recording started");
             EnsureGameUnpaused();
             if (_engine.IsRunning) _engine.Abort("Recording started");
-            string name = (SelectedMacro == null ? "Run" : SelectedMacro.name) + " " + DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss");
+            int n = 1;
+            while (_recordings.Exists(r => r.name == "Recording " + n)) n++;
+            string name = "Recording " + n;
             _recorder.Start(name);
             Logger.LogInfo("Fixed-tick recording started: " + name);
         }

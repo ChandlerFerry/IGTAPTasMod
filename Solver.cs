@@ -1219,28 +1219,6 @@ namespace IGTAPTasMod
             }).ToArray() };
         }
 
-        // The Ultra map: every floor a hyper lands on in the VMAN Full-TAS run's world (the Vman speedrun's start, the
-        // only place with the omnidirectional dash) and the ultras (the game's "Did an ultra!" hyper) two chained
-        // wavedashes reach from launch points along them. Served from the last result unless `refresh`.
-        object EngineSimUltras(WebStudioRequest request, JObject body)
-        {
-            string trace = FullTasTracePath("VMAN");
-            if (!File.Exists(trace))
-            {
-                request.StatusCode = 404;
-                return new { ok = false, error = "No VMAN trace yet: capture the VMAN Full-TAS run's start or solve it once first." };
-            }
-            string output = Path.Combine(EngineSimDir, "ultras-VMAN.json");
-            if (File.Exists(output) && !Truthy(body, "refresh"))
-            {
-                request.AsyncHandling = true;
-                request.Response = File.ReadAllText(output);
-                request.Completed.Set();
-                return null;
-            }
-            return RunEngineSimMap(request, "ultras " + Quote(trace) + " --courses " + Quote(CoursesPath) + " --out " + Quote(output), output);
-        }
-
         // Draws `output` with the engine (`args`), or joins the job already drawing it (`args` null), or the one that
         // last finished it (a progressive map's poll).
         object RunEngineSimMap(WebStudioRequest request, string args, string output, bool progressive = false)

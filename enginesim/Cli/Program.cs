@@ -287,7 +287,7 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         replayed to the course's finish (no search)\n"
                             + "  ultras <fulltas-VMAN.json> --out <file> [--courses <courses.json>] [--spacing U] [--threads N]\n"
                             + "                                         floors a hyper lands on and the game's ultras two chained wavedashes\n"
-                            + "                                         get from launch points along them, for the studio's Ultra map\n");
+                            + "                                         get from launch points along them, for the igtap-ultra-map viewer\n");
                         return 2;
                 }
             }

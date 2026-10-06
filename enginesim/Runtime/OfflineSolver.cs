@@ -672,6 +672,8 @@ namespace IGTAP.EngineSim
                 public readonly int[] Waypoints;
                 public readonly long[] Keys;
                 public readonly float[] Elapsed;
+                /// <summary>A dash in hand (unlocked, an air dash left) before the tick's input.</summary>
+                public readonly bool[] Dash;
                 public readonly Dictionary<long, float> Arrival = new Dictionary<long, float>();
                 public readonly Dictionary<long, (float time, int tick)> First = new Dictionary<long, (float, int)>();
 
@@ -683,6 +685,7 @@ namespace IGTAP.EngineSim
                     Waypoints = new int[inputs + 1];
                     Keys = new long[inputs + 1];
                     Elapsed = new float[inputs + 1];
+                    Dash = new bool[inputs + 1];
                     Array.Fill(Elapsed, float.NaN);
                 }
 
@@ -696,6 +699,7 @@ namespace IGTAP.EngineSim
                     Array.Copy(best.Waypoints, Waypoints, n);
                     Array.Copy(best.Keys, Keys, n);
                     Array.Copy(best.Elapsed, Elapsed, n);
+                    Array.Copy(best.Dash, Dash, n);
                     for (int t = 0; t < n; t++) Record(t, Keys[t], Elapsed[t]);
                 }
 
@@ -1441,11 +1445,36 @@ namespace IGTAP.EngineSim
                 for (int i = 0, skip = _rng.Next(count); ; i++) if (match(t[i]) && skip-- == 0) return i;
             }
 
+            static readonly string[] NewDashKinds = { "dash", "dashjump", "latejump", "superbounce", "backdash",
+                "aim", "steep", "wavedash", "ultra", "dashbounce", "wavebounce", "wavejump", "superground", "bouncechain" };
+            // How long after its press a dash can still go: its 0.12 s buffer (8 ticks with the gate's slack), held through a
+            // wall jump's lock (Movement 1596-1599, 6 more), and the press tick's own refill (a landing refills it before the
+            // input is read, so it shows only after that tick).
+            const int DashReach = 16;
+            readonly List<int> _dashTicks = new List<int>();
+
+            /// <summary>A random input tick of the best where a dash pressed could go (a dash in hand within
+            /// <see cref="DashReach"/> of it); -1 for none. A press out of dashes that nothing refills in time does
+            /// nothing at all (the buffer just lapses), so a mutation there replays the best.</summary>
+            int DashTick(int n)
+            {
+                bool[] ready = _bestRun.Dash;
+                _dashTicks.Clear();
+                int next = int.MaxValue;
+                for (int q = Math.Min(n + DashReach, ready.Length - 1); q >= 0; q--)
+                {
+                    if (ready[q]) next = q;
+                    if (q < n && next - q <= DashReach) _dashTicks.Add(q);
+                }
+                return _dashTicks.Count == 0 ? -1 : _dashTicks[_rng.Next(_dashTicks.Count)];
+            }
+
             void Optimize()
             {
                 List<InputTick> t = _bestInputs.ToList();
                 int n = t.Count, p = _rng.Next(n);
                 string kind = OneOf(_kinds);
+                if (Array.IndexOf(NewDashKinds, kind) >= 0 && (p = DashTick(n)) < 0) return;
                 switch (kind)
                 {
                     case "aim": case "steep":
@@ -1454,7 +1483,7 @@ namespace IGTAP.EngineSim
                         Omni(t, dash >= 0 && _rng.NextDouble() < .7 ? dash : p, 0, kind);
                         break;
                     }
-                    case "wavedash": case "ultra": case "dashbounce": case "wavebounce": case "wavejump": case "superground":
+                    case "wavedash": case "ultra": case "dashbounce": case "wavebounce": case "wavejump": case "superground": case "bouncechain":
                         Cut(t, Omni(t, p, 0, kind) + _rng.Next(1, 25), _rng.Next(0, 20));
                         break;
                     case "cut": Cut(t, p, OneOf(Steps)); break;
@@ -1764,6 +1793,7 @@ namespace IGTAP.EngineSim
                     replay.Body[tick] = _sim.Physics.PlayerBody();
                     if (tick % StateEvery == 0) replay.Fingerprint[tick] = _sim.Fingerprint();
                     replay.Waypoints[tick] = _waypoints;
+                    replay.Dash[tick] = _sim.Player.dashUnlocked && _sim.Player.airDashesLeft > 0;
                 }
                 else if (tick >= _runConverge && _bestRun != null && tick < _bestRun.Fingerprint.Length && _bestRun.Fingerprint[tick] is int best
                     && _sim.Physics.PlayerBody() == _bestRun.Body[tick] && _sim.Fingerprint() == best && _waypoints == _bestRun.Waypoints[tick])

@@ -245,6 +245,8 @@ namespace IGTAP.EngineSim.Cli
             public List<InputTick> Path;
             public int Ticks;
             public bool JumpHeld, CanDash;
+            /// <summary>A dash in hand after its tick (unlocked, an air dash left).</summary>
+            public bool DashLeft;
             public string Key;
             /// <summary>The highest world y the player can still reach with any inputs (a dead node is below the finish box).</summary>
             public float MaxY;
@@ -380,7 +382,7 @@ namespace IGTAP.EngineSim.Cli
             float boxBottom = fy + anchor.y - fh / 2f;
             float bx0 = fx + anchor.x - fw / 2f, bx1 = fx + anchor.x + fw / 2f;
             float by0 = boxBottom, by1 = fy + anchor.y + fh / 2f;
-            long prunedHeight = 0, prunedTime = 0, prunedFlight = 0, explored = 0, localDead = 0, boundChecks = 0, boundViolations = 0;
+            long prunedHeight = 0, prunedTime = 0, prunedFlight = 0, prunedDash = 0, explored = 0, localDead = 0, boundChecks = 0, boundViolations = 0;
             var violations = new List<string>();
             float highestCut = float.NegativeInfinity;
             var unbounded = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
@@ -421,11 +423,18 @@ namespace IGTAP.EngineSim.Cli
                 SimSnapshot state = null;
                 List<Node> kept = null;
                 List<(InputTick, int)> done = null;
+                // A dash pressed out of dashes does nothing unless a refill comes within its buffer, and then it goes as a press
+                // on the refill's tick would. A refill on this tick (a landing, before the input is read) shows after it, so the
+                // plain input before its dash variants (Alphabet's order) says whether they can go: without a dash in hand after
+                // its tick they are pruned (admissible). A plain input that dies or finishes keeps them.
+                bool dashes = true;
                 foreach (InputTick input in Alphabet(node.JumpHeld, node.CanDash, control && !node.SolidGround))
                 {
                     if (Volatile.Read(ref bound) <= ticks + 1) break;
+                    if (input.dash && !dashes) { Interlocked.Increment(ref prunedDash); continue; }
                     Interlocked.Increment(ref explored);
                     Node child = Step(worker, node, input, ref state, exact, control, wallControl, boostControl, flight, out RunResult run, out int stepped);
+                    if (!input.dash) dashes = child == null || child.DashLeft;
                     if (child == null)
                     {
                         if (run != null && run.Finished)
@@ -524,7 +533,7 @@ namespace IGTAP.EngineSim.Cli
                     }
                     if (bucket.Count > 0)
                         Console.WriteLine($"  [{clock.Elapsed.TotalSeconds:0.#}s] tick {ticks}: {bucket.Count:N0} states expanded ({explored:N0} extensions); {states:N0} states, "
-                            + $"{visited.Count:N0} keys, {dead:N0} dead ends, prunes {prunedFlight:N0} flight / {prunedHeight:N0} height / {prunedTime:N0} time, best {(best == null ? "-" : bound.ToString())}"
+                            + $"{visited.Count:N0} keys, {dead:N0} dead ends, prunes {prunedFlight:N0} flight / {prunedHeight:N0} height / {prunedTime:N0} time / {prunedDash:N0} dash, best {(best == null ? "-" : bound.ToString())}"
                             + (unbounded.IsEmpty ? "" : "; without the free-flight bound so far: " + string.Join(", ", unbounded.OrderByDescending(p => p.Value).Take(4).Select(p => $"{p.Value:N0} {p.Key}"))));
                     bucket.Clear();
                 }
@@ -689,7 +698,7 @@ namespace IGTAP.EngineSim.Cli
             path.Add(input);
             path.Add(input);
             string key = null;
-            bool canDash = from.CanDash;
+            bool canDash = from.CanDash, dashLeft = false;
             float maxY = from.MaxY, x = from.X, y = from.Y;
             bool solid = from.SolidGround, illegal = false;
             SimSnapshot resume = state, captured = null;
@@ -716,6 +725,7 @@ namespace IGTAP.EngineSim.Cli
                 }
                 key = KeyOf(sim, exact);
                 canDash = sim.Player.dashUnlocked;
+                dashLeft = canDash && sim.Player.airDashesLeft > 0;
                 maxY = MaxReach(sim, control);
                 WorldPos p = sim.PlayerWorld;
                 x = p.x; y = p.y;
@@ -750,7 +760,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 Path = childPath,
                 Ticks = stepped, JumpHeld = input.press || input.held && !input.release || from.JumpHeld && !input.release && !input.press,
-                CanDash = canDash, Key = key, MaxY = maxY, X = x, Y = y, SolidGround = solid,
+                CanDash = canDash, DashLeft = dashLeft, Key = key, MaxY = maxY, X = x, Y = y, SolidGround = solid,
                 FlightTop = flightTop, FlightWhy = flightWhy, Envelope = envelope,
             };
         }

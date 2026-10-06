@@ -429,11 +429,11 @@ bonus), and a **ground bounce** a straight-down dash into the ground then a jump
   right held after) lands; the closest (walk left 9 ticks, dash up-right) hits the spiked face 37 u below the top. The
   lab shows three of them as ghosts beside the freeze aim.
 
-The studio's **Ultra map** tab (`POST /api/enginesim/ultras`, `IGTAP.EngineSim ultras`) shows where the game's ultra
+`IGTAP.EngineSim ultras` (the data of the public viewer, `igtap-ultra-map`) finds where the game's ultra
 bonus can be had in the VMAN run's world. The game's check (`Sign(preDashMomentum.x) == Sign(dashDirection.x)` and the
 lifted `y < lastHyperY - 4`) compares against `lastHyperY`, which is the height of the last hyper or of the floor last
 stood on (written on every grounded tick), so an ultra joins two floors: the one it comes from and a lower one where
-the ultra's hyper happens. First the map finds every floor a hyper can land on: the top face of a Ground-layer
+the ultra's hyper happens. First it finds every floor a hyper can land on: the top face of a Ground-layer
 collider, triggers included (the ground rays hit upgrade boxes too), where the dash box fits and no spike is near (floors only in the zone the capture had
 loaded, Zone 1; the level drawn shows every zone). Then it pairs every floor with every other floor more than 4 lower,
 at most 2600 across and 2000 down, joined by a flight line no solid crosses; a floor sloping more than 4 pairs with
@@ -444,7 +444,7 @@ height difference over a clear line. These are lines, not jump arcs. To check th
 the floors the dot can stand on, the engine plays a hop plus wavedash and a second wavedash 1–14 input ticks later, each
 way, with the unlocks a VMAN route has there (dash, omnidash, wall jump, 2 air dashes). Every ultra it gets confirms
 the pair it joins (from the launch floor, or the first hyper's floor for the second hyper of a chain, to the ultra's
-floor), and adds the pair if the lines missed it (dashed on the map).
+floor), and adds the pair if the lines missed it.
 
 The trees' ground (the platforms each `TreeController` segment turns on as its tree upgrade is bought) is drawn as
 dashed tan outlines, **Tree ground + purchase order**, each numbered with the fewest tree purchases that grow it: Plant
@@ -477,22 +477,15 @@ secrets** marks start and end gates, checkpoints, teleporters, dash, jump and fu
 gold star at its box's trigger: an `upgradeBox` with `isSecret`, named by its achievement number and cost; a bonus's
 finish is one) in every zone. Course labels sit at each course's start and bonus labels at the bonus's finish (its
 reward box in `courses.json`), not at the course it starts from. The map spans the whole level, not only the floors of
-the zones the capture had loaded. The course and Full-TAS maps draw all of this the same way (`ultra-level.tsx`,
+the zones the capture had loaded. The course and Full-TAS maps draw all of this (`ultra-level.tsx`,
 shared with the public viewer's `level.tsx`).
 
-With nothing selected, each floor is coloured by the biggest drop onto it. Clicking a floor draws arrows to every floor
-its ultras reach (coloured by drop) and from every floor whose ultras reach it (cyan), and lists the biggest drops.
-Clicking a listed pair picks out its arrow and, for an engine-confirmed pair, draws the engine ultra's moves and its
-inputs. **Pairs** switches between every height drop, only engine-confirmed ones, and origin-shift ultras;
-**Selected floor** shows its ultras out, in, or both. The result is cached in `enginesim\ultras-VMAN.json`;
-**Recompute** reruns it (about a minute and a half on all cores). Its launches are placed anywhere, so it models
+A run takes about a minute and a half on all cores. Its launches are placed anywhere, so it models
 `FloatingOrigin`'s rebase itself instead of the engine's (the VMAN world's scene sets `Threshold` 17500, `Use2DDistance` off): once the
 player is more than 17500 from the origin, the next physics step moves the world by the player's position but leaves
-`lastHyperY` alone, and the next hyper passes the check on any floor. A pair only such an ultra makes is green. The
-search only models a rebase for launches that start inside the threshold, from origin 0. The map also draws that first
-rebase line (dashed green) and, for each later rebase the VMAN run's best so far makes, the line it crossed. The
-**First shift at** slider moves the first rebase along its line (it starts at the run's) and draws the next line
-around it (cyan).
+`lastHyperY` alone, and the next hyper passes the check on any floor (an origin-shift ultra). The search only models
+a rebase for launches that start inside the threshold, from origin 0. The output also carries that first rebase line
+and each later rebase the VMAN run's best so far makes (`rebase`).
 
 While a route plays, and in manual play once its list starts, the in-game input list marks the ticks of each trick with a
 colored bar (`TasOverlayTechs.cs`): the superbounce, reversed super and backwards dash-jump, the GC and KB wall clips (the

@@ -36,8 +36,6 @@ namespace IGTAPTasMod
                 return EngineSimSlack(request, body);
             if (request.Path == "/api/enginesim/classes")
                 return EngineSimClasses(request, body);
-            if (request.Path == "/api/enginesim/ultras")
-                return EngineSimUltras(request, body);
             if (request.Path == "/api/enginesim/play")
                 return EngineSimPlay(body);
             request.StatusCode = 404;

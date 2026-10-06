@@ -123,22 +123,32 @@ namespace IGTAPTasMod
             }
             else
             {
-                args.Append(" --auto --window-minutes 0.5");
                 int[] focus = body["focus"] is JArray range && range.Count == 2 ? new[] { (int)range[0], (int)range[1] } : null;
-                if (focus != null)
-                {
-                    if (focus[0] < 1 || focus[1] < focus[0] || focus[1] > run.goals.Count)
-                        throw new InvalidOperationException("focus: a goal range [first, last] within 1-" + run.goals.Count + ".");
-                    args.Append(" --focus ").Append(focus[0]).Append('-').Append(focus[1]);
-                }
+                if (focus != null && (focus[0] < 1 || focus[1] < focus[0] || focus[1] > run.goals.Count))
+                    throw new InvalidOperationException("focus: a goal range [first, last] within 1-" + run.goals.Count + ".");
                 MacroDefinition record = FullTasClassBest(run.name, cls, out _);
-                if (record != null)
+                // --auto refuses a best that misses goals: picked goals on one (no record yet) are searched as one window instead
+                // (`--goal b --window n`: goal a-1 to goal b, over and over), which needs only the goals the best reaches.
+                int reached = FullTasOfflineBest(run.name + (cls == MajorClass ? "" : "." + cls), run.goals)?.reached ?? 0;
+                if (focus != null && record == null && reached < run.goals.Count)
                 {
-                    string file = Path.Combine(EngineSimDir, "fulltas-" + run.name + (cls == MajorClass ? "" : "-" + cls) + "-record.json");
-                    File.WriteAllText(file, JsonConvert.SerializeObject(new { name = record.name, ticks = ToTicks(record.steps) }));
-                    args.Append(" --ref ").Append(Quote(file));
+                    if (focus[1] > reached)
+                        throw new InvalidOperationException("focus: the offline best reaches goal " + reached + " of " + run.goals.Count + "; pick goals up to it, or Reach missing goals first.");
+                    args.Append(" --goal ").Append(focus[1]).Append(" --window ").Append(focus[1] - focus[0] + 1);
+                    what = "Improving " + of + " goals " + focus[0] + "-" + focus[1] + " (the best reaches " + reached + " of " + run.goals.Count + " goals) on " + threads + " threads";
                 }
-                what = "Improving " + of + (focus == null ? "" : " goals " + focus[0] + "-" + focus[1]) + " on " + threads + " threads";
+                else
+                {
+                    args.Append(" --auto --window-minutes 0.5");
+                    if (focus != null) args.Append(" --focus ").Append(focus[0]).Append('-').Append(focus[1]);
+                    if (record != null)
+                    {
+                        string file = Path.Combine(EngineSimDir, "fulltas-" + run.name + (cls == MajorClass ? "" : "-" + cls) + "-record.json");
+                        File.WriteAllText(file, JsonConvert.SerializeObject(new { name = record.name, ticks = ToTicks(record.steps) }));
+                        args.Append(" --ref ").Append(Quote(file));
+                    }
+                    what = "Improving " + of + (focus == null ? "" : " goals " + focus[0] + "-" + focus[1]) + " on " + threads + " threads";
+                }
             }
             while (_fullTasOutput.TryDequeue(out _)) { }
             _fullTasProcess = StartEngineSim(args.ToString(), _fullTasOutput, stdin: true);

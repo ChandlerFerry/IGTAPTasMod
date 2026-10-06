@@ -7,8 +7,7 @@ import { FullTasSolvePanel, LEVERS, SegmentGroup, SegmentLegend, goalSpan, liveS
 import { FullTasClasses, RouteClasses, type FullTasClassRun, type FullTasDifficultyJob, type FullTasQueue } from "./fulltas-classes";
 import { TechPanel, type TechState } from "./techs";
 import { PlaceLoadstate, TasEditor, type PlacePrefill, type TasLive } from "./tas-editor";
-import { BOX_KINDS, boxCost, boxTitle, UltraMap, type BoxCategory, type BoxInfo, type BoxMarker, type UltraData } from "./ultras";
-import { artTiles, capturedStates, GROWN_COLOR, inState, MARKERS, SPRING_COLOR, StatePicker, TONE_COLORS, type ArtIndex, type StatePick, type TreeStep, type WorldState } from "./ultra-level";
+import { artTiles, BOX_KINDS, boxCost, boxTitle, type BoxCategory, type BoxInfo, type Marker, capturedStates, GROWN_COLOR, inState, MARKERS, SPRING_COLOR, StatePicker, TONE_COLORS, type ArtIndex, type StatePick, type TreeStep, type WorldState } from "./ultra-level";
 import { request, subscribe } from "./studio-socket";
 
 type Action = { id: string; label: string; type: string; direction: number; wallJumpHoldDirection: number; durationTicks: number; enabled: boolean; rawMoveX?: number; rawJumpPressed?: boolean; rawJumpHeld?: boolean; rawJumpReleased?: boolean; rawDashPressed?: boolean; rawDashHeld?: boolean };
@@ -83,9 +82,6 @@ function mergeState(s: StaticState, l: LiveState): StudioState {
     techs: s.techs && l.techs ? { ...s.techs, ...l.techs } : undefined };
 }
 
-// Module-level so the Ultra map's load effect doesn't rerun on every render.
-const loadUltras = (refresh: boolean): Promise<UltraData> => request("/enginesim/ultras", { refresh });
-
 export default function Studio() {
   const [state, setState] = useState<StudioState>(emptyState);
   const [tab, setTab] = useState("fulltas");
@@ -152,18 +148,17 @@ export default function Studio() {
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/walk", { slowdown: 10 })} title={"Replays the route 10× slower, human version when it's as fast."}>⏵ Walk route</button>
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/duplicate")}>Duplicate</button>
           <button className="secondary" disabled={!route} onClick={() => { const name=window.prompt("Rename route",route?.name); if(name?.trim()) command("/routes/rename",{routeId:route?.id,name:name.trim()}); }}>Rename</button>
-          <button className="record" disabled={!route || state.running} onClick={() => command(state.recording ? "/record/stop" : "/record/start")}>{state.recording ? "■ Stop recording" : "● Record"}</button>
           <button className="danger" disabled={!state.running && !state.recording} onClick={() => command("/routes/stop")}>Stop</button>
         </div>
       </header>
 
-      <nav className="tabs">{[["tas","TAS"],["fulltas","Full-TAS"],["tech","Tech"],["ultras","Ultra map"],["optimize","Optimize"],["recordings","Recordings"],["savestates","Savestates"]].map(([id,label]) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}</nav>
+      <nav className="tabs">{[["tas","TAS"],["fulltas","Full-TAS"],["tech","Tech"],["optimize","Optimize"],["recordings","Recordings"],["savestates","Savestates"]].map(([id,label]) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}</nav>
       {error && <div className="errorBanner">{error}<button onClick={() => setError("")}>×</button></div>}
       {state.paused && <div className="pauseBanner"><div><strong>The game is paused</strong><span>Automation needs the physics simulation running.</span></div><button onClick={() => command("/game/resume")}>Resume simulation</button></div>}
 
       <div className="content">
 
-        {tab === "recordings" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">RAW FIXED-FRAME CAPTURES</p><h2>Recordings</h2></div><span className="hint">{state.recording ? "Recording now…" : `${state.recordings.length} saved`}</span></div>{state.recording&&<p className="recordingActive">● Recording is active. Finishing the course saves it automatically.</p>}<div className="recordingList">{state.recordings.map(recording=><div className="recordingCard" key={recording.id}><div className="recordingTitle"><div><strong>{recording.name}</strong><small>{new Date(recording.createdUtc).toLocaleString()} · {recording.sampleCount} physics frames · {recording.actionCount} actions</small></div>{recording.courseTimeSeconds>0&&<b>{recording.courseTimeSeconds.toFixed(3)}s</b>}</div><p>{recording.actions.map(action=>`${action.label.replace(/^Exact /,"")} ${action.durationTicks}f`).join(" → ")}</p><div className="buttonRow"><button className="primary" onClick={()=>command("/recordings/create-route",{recordingId:recording.id})}>Create route</button><button title="Name it Course1_To_Course2 or Course2_To_Bonus2: a transition route." onClick={()=>command("/recordings/create-transition",{recordingId:recording.id})}>Create transition</button><button onClick={()=>{const name=window.prompt("Rename recording",recording.name);if(name?.trim())command("/recordings/rename",{recordingId:recording.id,name:name.trim()});}}>Rename</button><button className="danger" onClick={()=>{if(window.confirm(`Delete recording “${recording.name}”?`)) command("/recordings/delete",{recordingId:recording.id});}}>Delete</button></div></div>)}</div>{!state.recordings.length&&!state.recording&&<div className="emptyState"><span className="orbit">●</span><h2>No recordings yet</h2><p>Press Record, play the route, and finish the course.</p></div>}</div>}
+        {tab === "recordings" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">RAW FIXED-FRAME CAPTURES</p><h2>Recordings</h2></div><span className="buttonRow"><span className="hint">{state.recording ? "Recording now…" : `${state.recordings.length} saved`}</span><button className="record" disabled={state.running} onClick={() => command(state.recording ? "/record/stop" : "/record/start")}>{state.recording ? "■ Stop recording" : "● Record"}</button></span></div>{state.recording&&<p className="recordingActive">● Recording is active. Finishing the course saves it automatically.</p>}<div className="recordingList">{state.recordings.map(recording=><div className="recordingCard" key={recording.id}><div className="recordingTitle"><div><strong>{recording.name}</strong><small>{new Date(recording.createdUtc).toLocaleString()} · {recording.sampleCount} physics frames · {recording.actionCount} actions</small></div>{recording.courseTimeSeconds>0&&<b>{recording.courseTimeSeconds.toFixed(3)}s</b>}</div><p>{recording.actions.map(action=>`${action.label.replace(/^Exact /,"")} ${action.durationTicks}f`).join(" → ")}</p><div className="buttonRow"><button className="primary" onClick={()=>command("/recordings/create-route",{recordingId:recording.id})}>Create route</button><button title="Name it Course1_To_Course2 or Course2_To_Bonus2: a transition route." onClick={()=>command("/recordings/create-transition",{recordingId:recording.id})}>Create transition</button><button onClick={()=>{const name=window.prompt("Rename recording",recording.name);if(name?.trim())command("/recordings/rename",{recordingId:recording.id,name:name.trim()});}}>Rename</button><button className="danger" onClick={()=>{if(window.confirm(`Delete recording “${recording.name}”?`)) command("/recordings/delete",{recordingId:recording.id});}}>Delete</button></div></div>)}</div>{!state.recordings.length&&!state.recording&&<div className="emptyState"><span className="orbit">●</span><h2>No recordings yet</h2><p>Press Record, play the route, and finish the course.</p></div>}</div>}
 
         {tab === "fulltas" && <><FullTas fullTas={state.fullTas} running={state.running} onCommand={command} onMap={name => setMapTarget({ course: 0, capabilities: "", optional: [], fulltas: name })}/>{mapTarget?.fulltas && <SolveMap key={`fulltas_${mapTarget.fulltas}`} target={mapTarget} courses={state.courses ?? []} runs={(state.fullTas?.runs ?? []).map(r => r.name)} busy={state.running || !!state.fullTas?.solve.running} onClose={() => setMapTarget(null)}/>}</>}
 
@@ -172,7 +167,6 @@ export default function Studio() {
 
         {tab === "tech" && <TechPanel techs={state.techs} running={state.running || state.recording} onCommand={command}/>}
 
-        {tab === "ultras" && <UltraMap load={loadUltras}/>}
 
         {tab === "optimize" && <><RoutePicker routes={state.routes} courses={state.courses ?? []} categories={state.categories} activeId={route?.id} saveUnlocks={saveUnlocks} targets={courseTargets} onTargets={setCourseTargets} onCommand={command}/><div className="optimizeGrid"><Solver solver={state.solver ?? emptyState.solver} courses={state.courses ?? []} categories={state.categories} routes={state.routes} running={state.running} targets={courseTargets} onTargets={setCourseTargets} onCommand={command} onMap={setMapTarget}/><RouteClasses route={route ?? null}/></div>{mapTarget && <SolveMap key={`${mapTarget.course}_${mapTarget.capabilities}_${mapTarget.optional.join("+")}`} target={mapTarget} courses={state.courses ?? []} onClose={() => setMapTarget(null)}/>}</>}
 
@@ -600,7 +594,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   const [hidden, setHidden] = useState<Set<number>>(new Set());
   const [cursor, setCursor] = useState<{ x: number; y: number; marker?: string; reached?: number; delta?: number } | null>(null);
   // The buy box tapped (not dragged over): its tooltip card where hover titles aren't a thing.
-  const [boxTip, setBoxTip] = useState<BoxMarker | null>(null);
+  const [boxTip, setBoxTip] = useState<Marker | null>(null);
   // The last press panned the map, so its click is no tap on a box.
   const panned = useRef(false);
   const arrivals = useMemo(() => new Map(data?.explored.cells.map(([cx, cy, t]) => [`${cx},${cy}`, t] as [string, number]) ?? []), [data]);
@@ -765,7 +759,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
         let cx = 0, cy = 0, reach = 0;
         for (let i = 0; i < n; i++) { cx += s.p[2 * i] / n; cy += s.p[2 * i + 1] / n; }
         for (let i = 0; i < n; i++) reach = Math.max(reach, (s.p[2 * i] - cx) * ux + (s.p[2 * i + 1] - cy) * uy);
-        // Only once zoomed in (6 world units per pixel or closer, as the Ultra map); zoomed out a spring is its box.
+        // Only once zoomed in (6 world units per pixel or closer); zoomed out a spring is its box.
         if (px > 6) continue;
         const len = reach + 40, head = 16, tx = cx + ux * len, ty = cy + uy * len;
         g.lineWidth = 2 * px; g.beginPath(); g.moveTo(cx, cy); g.lineTo(tx, ty);
@@ -875,7 +869,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
         g.setLineDash([]);
       };
       // Buy boxes and gates are their trigger boxes; a checkpoint is its spawn box (where a death or quick restart puts
-      // the player, solid) over its trigger (where touching it sets the spawn, dashed), as the Ultra map draws them.
+      // the player, solid) over its trigger (where touching it sets the spawn, dashed).
       // A refill orb is the game's own orb sprite (art index icons), drawn upright.
       const icon = art?.icons?.[m.kind];
       if (icon) {
@@ -1001,8 +995,8 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (panned.current) return;
     const p = world(e), reach = 10 / view.current.scale;
-    let near: BoxMarker | null = null, best = reach;
-    for (const m of markers as BoxMarker[]) {
+    let near: Marker | null = null, best = reach;
+    for (const m of markers as Marker[]) {
       if (m.kind !== "box" || !layers[`box:${m.box!.category}`]) continue;
       const gap = Math.hypot(m.x - p.x, m.y - p.y);
       if (gap < best) { best = gap; near = m; }
@@ -1202,10 +1196,12 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const segments = resetSegments(run?.offline?.segments);
   // --auto improves a complete route only; a run that misses goals gets the reach search instead.
   const complete = labels.length > 0 && splits.length === labels.length;
+  // Picked goals can be improved on a best that misses later goals too, up to the goals it reaches.
+  const reached = splits.length;
   // A click picks a goal (or a segment's goals), clicking the same pick again clears it, shift-click extends the pick to cover both.
   const pick = (first: number, last: number, shift: boolean) => setPicked(p => shift && p ? [Math.min(p[0], first), Math.max(p[1], last)]
     : p && p[0] === first && p[1] === last ? null : [first, last]);
-  const pickedSeconds = picked && complete ? liveSeconds(splits[picked[1] - 1]) - (picked[0] > 1 ? liveSeconds(splits[picked[0] - 2]) : 0) : null;
+  const pickedSeconds = picked && picked[1] <= reached ? liveSeconds(splits[picked[1] - 1]) - (picked[0] > 1 ? liveSeconds(splits[picked[0] - 2]) : 0) : null;
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className={`offlineStatus ${busy?"running":""}`}>{solve.running?"Improving":running?"Playing":"Idle"}</span></div>
     <p className="lede">The whole game as one input stream, timed to the last goal.</p><details className="howTo"><summary>Goal syntax</summary><ul><li>One goal per line; reached in order.</li><li><code>start:1</code> · <code>finish:1</code></li><li><code>buy:&lt;box&gt;</code> · <code>reward:bonusN</code> · <code>reward:&lt;name&gt;</code> (a named courses.json bonus)</li><li><code>at:x,y,w,h</code> area goal, any entry side.</li><li><code>at:x,y,w,h,from=left+bottom</code> limits entry sides.</li><li><code>"start": "vman"</code> in fulltas.json: Vman world.</li></ul></details><details className="howTo"><summary>How improving works</summary><ol><li><b>Improve</b> searches offline from the run&apos;s record and picks where to look itself.</li><li>Think a stretch is slow? Click its goals or segment bar (shift-click extends), then Improve.</li><li>Improve also edits the economy goals itself: it drops laps the Cash no longer needs, laps where the route stood waiting, and swaps in a record lap when that pays; an edit stays only when the whole run is faster. The game saves the new goal list with the record (fulltas.json backed up first).</li><li>The game replays every faster route in turbo from its start.</li><li>Runs save only when complete, held up and faster.</li><li>Goals split the run; nothing restarts between them.</li><li>A quick restart after an area goal takes it back.</li></ol></details>
     {([["complete", "Complete"], ["wip", "WIP"], ["test", "Tests"]] as const).map(([section, title]) => <div key={section}><h3 className="fullTasSection">{title}</h3><div className="fullTasRuns">
@@ -1225,15 +1221,15 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
       <div className="fullTasGoals">
         <div className="panelTitle"><div><p className="eyebrow">{run?.best?run.best.name:run?.offline?`OFFLINE BEST · ${run.offline.reached}/${run.goals.length} GOALS · UNSAVED`:"NO ROUTE YET"}</p><h2>{name}{run?.best?` · ${liveText(run.best.time, run.best.splits[run.best.splits.length - 1]?.ticks ?? 0)} live`:run?.offline?` · ${runTime(run.offline.time)} to goal ${run.offline.reached - 1}`:""}</h2></div></div>
         <div className="fullTasSolve">
-          {complete && <div className={`ftFocus ${picked ? "on" : ""}`}>
+          {reached > 0 && <div className={`ftFocus ${picked ? "on" : ""}`}>
             {picked
               ? <><span>Improve selected: <b>{goalSpan(picked)}</b> ({picked[1] - picked[0] + 1} goal{picked[1] > picked[0] ? "s" : ""}, {pickedSeconds?.toFixed(2)} s in the record)</span>
                 <button className="secondary" onClick={() => setPicked(null)}>Clear selection</button></>
-              : <span>Improve searches the whole run. Think a stretch is slow? Click its goals or segment bar below (shift-click extends).</span>}
+              : <span>{complete ? "Improve searches the whole run. Think a stretch is slow? Click its goals or segment bar below (shift-click extends)." : "Click reached goals or a segment bar below (shift-click extends) to improve just them."}</span>}
           </div>}
           <div className="ftImprove">
-            {complete || !run
-              ? <button className="primary" disabled={busy || !complete} title={picked ? `Searches only windows starting in ${goalSpan(picked)}; known faster pieces still join anywhere.` : "Searches the whole run from its record until Stop."}
+            {complete || !run || picked
+              ? <button className="primary" disabled={busy || !(complete || picked)} title={picked ? `Searches only windows starting in ${goalSpan(picked)}; known faster pieces still join anywhere.` : "Searches the whole run from its record until Stop."}
                 onClick={() => onCommand("/fulltas/solve", picked ? { name, focus: picked } : { name })}>{picked ? `Improve ${goalSpan(picked)}` : "Improve"}</button>
               : <button className="primary" disabled={busy || !run.goals.length} title="The best misses goals: searches for them in order first. Improve works once every goal is reached."
                 onClick={() => onCommand("/fulltas/solve", { name, unsolved: true })}>Reach missing goals</button>}
@@ -1256,9 +1252,9 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
           <div className="tableHead"><span>#</span><span>Goal</span><span>Split (live · frames)</span><span>Cumulative (live · frames)</span></div>
           {(() => {
             const goalRow = (i: number) => { const label = labels[i]; const s = splits[i]; const b = run?.breaker; const inPick = picked != null && i + 1 >= picked[0] && i + 1 <= picked[1];
-              const title = [b!=null&&i===b?"Trips the breaker: the lights go out":"", goalTitle(label) ?? "", complete ? "Click to improve just this goal; shift-click to extend" : ""].filter(Boolean).join("\n");
-              return <div className={`tableRow ${s?"":"pending"} ${b==null||i<b?"":i===b?"breakerTrip":"breakerOut"} ${complete ? "pickable" : ""} ${inPick ? "picked" : ""}`} key={i} title={title || undefined}
-                onClick={complete ? e => pick(i + 1, i + 1, e.shiftKey) : undefined}>
+              const title = [b!=null&&i===b?"Trips the breaker: the lights go out":"", goalTitle(label) ?? "", i < reached ? "Click to improve just this goal; shift-click to extend" : ""].filter(Boolean).join("\n");
+              return <div className={`tableRow ${s?"":"pending"} ${b==null||i<b?"":i===b?"breakerTrip":"breakerOut"} ${i < reached ? "pickable" : ""} ${inPick ? "picked" : ""}`} key={i} title={title || undefined}
+                onClick={i < reached ? e => pick(i + 1, i + 1, e.shiftKey) : undefined}>
               <span>{i}</span><span>{label}</span>
               <span>{s ? liveText(liveSeconds(s) - (i > 0 ? liveSeconds(splits[i - 1]) : 0), s.ticks - (i > 0 ? splits[i - 1].ticks : 0)) : "—"}</span>
               <span>{s ? liveText(liveSeconds(s), s.ticks) : "—"}</span>
@@ -1270,7 +1266,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
             const rows: ReactElement[] = segments.map((r, k) => {
               const goals: ReactElement[] = [];
               for (let i = r.first; i < r.last && i < labels.length; i++) goals.push(goalRow(i));
-              return <SegmentGroup key={`segment${r.n}`} r={r} end={k === segments.length - 1} alt={k % 2 === 1} safe={r.first > lastBuy} selected={picked != null && picked[0] === r.first + 1 && picked[1] === r.last} onPick={shift => pick(r.first + 1, r.last, shift)} disabled={!complete}>{goals}</SegmentGroup>;
+              return <SegmentGroup key={`segment${r.n}`} r={r} end={k === segments.length - 1} alt={k % 2 === 1} safe={r.first > lastBuy} selected={picked != null && picked[0] === r.first + 1 && picked[1] === r.last} onPick={shift => pick(r.first + 1, r.last, shift)} disabled={r.last > reached}>{goals}</SegmentGroup>;
             });
             for (let i = segments[segments.length - 1].last; i < labels.length; i++) rows.push(goalRow(i));
             return rows;
