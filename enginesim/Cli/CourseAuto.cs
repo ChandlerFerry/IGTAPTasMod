@@ -490,6 +490,41 @@ namespace IGTAP.EngineSim.Cli
             });
         }
 
+        /// <summary>
+        /// The plain solve's walks (--walk-seed): each call, the solver's explored cells nearest each walker's start (as a reach
+        /// window's CellWalks), walked there and the walker played on from there, offered to the solver as seeds (Offer): it
+        /// judges each on the course and explores on from where it goes, finished or not. Played exactly they seldom finish: by
+        /// the atom room Course 9 · WJ_DS_DJ_BS stands a unit above tree0to9's start, and the wall bounce at its tick 44 misses.
+        /// Null when no walk seed has a start under these unlocks.
+        /// </summary>
+        internal static Action<OfflineSolver> PlainWalks(Func<Simulation> create, IReadOnlyList<string> walkSeeds, string caps, Action<string> log)
+        {
+            IGTAPTasMod.Caps runCaps = IGTAPTasMod.Caps.Parse(caps);
+            List<Seed> walkers = walkSeeds.Select(ReadSeed).Where(s => s.At != null && s.Caps.IsSubsetOf(runCaps)).ToList();
+            if (walkers.Count == 0) return null;
+            Simulation eval = create();
+            SimSnapshot origin = eval.Start;
+            var tried = new HashSet<long>();
+            return solver =>
+            {
+                foreach (Seed s in walkers)
+                {
+                    eval.SetStart(origin, 0);
+                    var spot = eval.ToCapture(new WorldPos(s.At.X, s.At.Y)).AsVector2();
+                    foreach (List<InputTick> cell in solver.Near(spot, _ => true, MaxWalk, CellWalkRise, tried, CellWalksPerCheck))
+                    {
+                        eval.SetStart(origin, 0);
+                        SimSnapshot there = eval.Advance(cell);
+                        if (there == null) continue;
+                        eval.SetStart(there, cell.Count);
+                        var walks = WalkedStarts(eval, s);
+                        foreach (var (_, walk) in walks) solver.Offer(cell.Concat(walk).ToList());
+                        if (walks.Count > 0) log($"{s.Name}: {walks.Count} walks to its start from an explored cell {cell.Count} inputs in");
+                    }
+                }
+            };
+        }
+
         /// <summary>The reach windows (FullTas --unsolved) of a course run under <paramref name="path"/>, from <paramref name="inputs"/>
         /// through <paramref name="goals"/>, ending once it reaches them all: its best.</summary>
         static Route Reach(CourseRun run, string dir, string name, List<FullTasGoal> goals, List<InputTick> inputs, OfflineSolver.ForcedPath path,
@@ -522,7 +557,7 @@ namespace IGTAP.EngineSim.Cli
             for (int i = 1; i < args.Length; i++)
             {
                 string a = args[i];
-                if (a == "--seed" || a == "--waypoints-out" || a == "--log-json" || a == "--optional" || a == "--no-optional" || a == "--via" || a == "--avoid"
+                if (a == "--seed" || a == "--walk-seed" || a == "--waypoints-out" || a == "--log-json" || a == "--optional" || a == "--no-optional" || a == "--via" || a == "--avoid"
                     || a == "--stall-minutes" || a == "--rng" || a == "--tech-cache" || a == "--tech-dir" || a == "--guide-weight" || a == "--path-name"
                     || a == "--whole-minutes")
                 {

@@ -953,8 +953,9 @@ namespace IGTAPTasMod
         {
             return _courses.Select(c => (object)new { id = c.id, token = c.Token, bonus = c.IsBonus,
                 categories = c.CategoryIds, @from = c.from, to = c.to,
-                hint = c.tree != null ? "From the checkpoint " + (c.from == "tree" + c.tree ? "by the atom room" : "at " + c.x.ToString("0") + ", " + c.y.ToString("0")) + " to Course " + c.to + "'s start checkpoint, The Tree at level " + c.tree + "."
-                    : c.IsBonus ? BonusHint(c) : c.overgrown ? "Course " + c.GameCourse + " with Area 1 overgrown (overgrowth spikes, moss, zip movers)." : null,
+                hint = c.IsBonus ? BonusHintWithTree(c)
+                    : c.tree != null ? "From the checkpoint " + (c.from == "tree" + c.tree ? "by the atom room" : "at " + c.x.ToString("0") + ", " + c.y.ToString("0")) + " to Course " + c.to + "'s start checkpoint, The Tree at level " + c.tree + "."
+                    : c.overgrown ? "Course " + c.GameCourse + " with Area 1 overgrown (overgrowth spikes, moss, zip movers)." : null,
                 optional = OptionalBlocks(c.id).Select(b => new { name = b.name, note = b.note, on = b.on, capabilities = b.caps }).ToArray() }).ToArray();
         }
 
@@ -975,6 +976,14 @@ namespace IGTAPTasMod
             catch (Exception) { price = box.upgradeCost.ToString("0.##", CultureInfo.InvariantCulture) + " " + currency; }
             return "Reward: " + reward + (tier.Length > 0 ? " " + tier : "") + "\nPrice: " + price
                 + (box.TimesUsed > 0 ? " (bought)" : "");
+        }
+
+        /// <summary>A bonus's hint with The Tree's level when the target carries one (<c>unlockJumpDash</c>: The Tree at
+        /// level 10, courses.json <c>tree</c>).</summary>
+        string BonusHintWithTree(CourseDef bonus)
+        {
+            string hint = BonusHint(bonus);
+            return hint == null || bonus.tree == null ? hint : hint + "\nThe Tree at level " + bonus.tree + ".";
         }
 
         /// <summary>Why the last start capture failed (engine status and the player's state at the end), for the caller's error.</summary>
@@ -1032,7 +1041,7 @@ namespace IGTAPTasMod
         string CourseSolveArgs(SolveJob job, CourseDef course, string trace, string name, float minutes, out string what, out bool auto)
         {
             var args = new StringBuilder("solve ").Append(Quote(trace));
-            args.Append(CourseSeedArgs(course, name, out int seeds));
+            args.Append(CourseSeedArgs(course, name, out int seeds)).Append(CourseWalkSeedArgs(course, name));
             AppendOptional(args, job.course, job.caps, job.optional);
             auto = HasCourseRoute(course, job.caps);
             int threads = Math.Max(1, Environment.ProcessorCount - (auto ? 4 : 2));
@@ -1071,6 +1080,31 @@ namespace IGTAPTasMod
                 File.WriteAllText(seed, JsonConvert.SerializeObject(new { name = route.name, ticks = ToTicks(route.steps) }));
                 args.Append(" --seed ").Append(Quote(seed));
             }
+            return args.ToString();
+        }
+
+        /// <summary>` --walk-seed "file"` per raw route of a tree transition into this course (tree&lt;L&gt;to&lt;C&gt;), with a start
+        /// capture of its target as its start, written as <paramref name="name"/>-walkN.json: the engine walks a run that gets to
+        /// that start (bonus11's checkpoint by the atom room) there and plays the route on, which crosses Course 9's end.</summary>
+        string CourseWalkSeedArgs(CourseDef course, string name)
+        {
+            var args = new StringBuilder();
+            foreach (string old in Directory.GetFiles(EngineSimDir, name + "-walk*.json")) File.Delete(old);
+            if (course.IsBonus || course.IsTransition) return "";
+            int walks = 0;
+            foreach (CourseDef tree in _courses.Where(c => c.tree != null && c.to == course.Token))
+                foreach (MacroDefinition route in _library.macros.Where(m => m.name != null && m.steps.All(s => s.type == MacroStepType.RawInput)))
+                {
+                    Match g = MatchGatedRoute(route.name);
+                    if (!g.Success || !string.Equals(g.Groups["token"].Value, tree.Token, StringComparison.OrdinalIgnoreCase)) continue;
+                    string caps = Caps.Parse(g.Groups["label"].Value.ToUpperInvariant()).Id;
+                    // Every category of a tree target starts on the same spot: any capture of it gives the start.
+                    string trace = CourseTrace(tree, caps) ?? tree.CategoryIds.Select(id => CourseTrace(tree, id)).FirstOrDefault(t => t != null);
+                    if (trace == null) continue;
+                    string seed = Path.Combine(EngineSimDir, name + "-walk" + walks++ + ".json");
+                    File.WriteAllText(seed, JsonConvert.SerializeObject(new { name = route.name, capabilities = caps, trace, ticks = ToTicks(route.steps) }));
+                    args.Append(" --walk-seed ").Append(Quote(seed));
+                }
             return args.ToString();
         }
 

@@ -23,7 +23,8 @@ Vman speedrun's start, split by area goals: [`docs/fulltas.md`](docs/fulltas.md#
   `WJ_DS_DJ_BS_ZIP` only on those with zip movers (`Categories.cs` lists them; README `### Rules` 19); bonus4 and bonus12 need the zip
   movers, so they run only the `ZIP` categories. The tree transitions `tree<L>to<C>` (README `### Rules` 21) run
   `WJ_DS_DJ_BS` and every outside-ladder category. Bonuses 17–21
-  and 23 (unlock boxes, the Start a VMAN speedrun boxes among them) run no category.
+  and 23 (unlock boxes, the Start a VMAN speedrun boxes among them) run no category, and neither does `unlockJumpDash`
+  (the jump and dash refresh orbs box at The Tree level 10, courses.json `tree`).
 - Direction record (two-way courses: both `avoid-forwards` and `avoid-backwards` in `forced-paths.json`, Courses 1-3):
   `<course>_<CAT> forwards <time>` and `<course>_<CAT> backwards <time>`, the category's best by the game timer of a
   route that never cuts `avoid-backwards` (forwards) or `avoid-forwards` (backwards) (`Categories.Directions`). The gate

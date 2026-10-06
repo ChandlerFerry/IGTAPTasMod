@@ -206,6 +206,11 @@ namespace IGTAP.EngineSim
 
         public void Stop() { _stop = true; }
 
+        /// <summary>A route found outside the search (a walk to another route's start, Solve's --walk-seed), tried by the next free
+        /// worker as a seed is.</summary>
+        public void Offer(List<InputTick> inputs) { _offered.Enqueue(inputs); }
+        readonly System.Collections.Concurrent.ConcurrentQueue<List<InputTick>> _offered = new System.Collections.Concurrent.ConcurrentQueue<List<InputTick>>();
+
         public Thread[] Start(int workers)
         {
             var threads = new Thread[workers];
@@ -236,7 +241,7 @@ namespace IGTAP.EngineSim
         }
 
         /// <summary>The memory the states may take half of: the machine's physical memory, or the GC's limit when that is lower.
-        /// (The GC reports its heap hard limit alone when one is set, as the CLI's 70 GiB is, however much RAM there is.)</summary>
+        /// (The GC reports its heap hard limit alone when one is set, as the CLI's 54 GiB is, however much RAM there is.)</summary>
         static long AvailableMemory()
         {
             long limit = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes, ram = PhysicalMemory();
@@ -778,6 +783,7 @@ namespace IGTAP.EngineSim
                     int generation = _owner._exportGeneration;
                     if (Exported != generation) HandOver(generation);
                     if (_seeds.Count > 0) { Try(_seeds.Dequeue(), "seed"); continue; }
+                    if (_owner._offered.TryDequeue(out List<InputTick> offered)) { Try(offered, "walk"); continue; }
                     if (_restore.Count > 0)
                     {
                         Restore(_restore.Dequeue());
@@ -1131,9 +1137,9 @@ namespace IGTAP.EngineSim
 
             SimSnapshot Capture(int tick)
             {
-                long before = GC.GetAllocatedBytesForCurrentThread();
+                long before = GC.GetAllocatedBytesForCurrentThread() - _sim.SharedBytes;
                 SimSnapshot state = _sim.Capture(tick);
-                _stateBytes += (GC.GetAllocatedBytesForCurrentThread() - before - _stateBytes) / 64;
+                _stateBytes += (GC.GetAllocatedBytesForCurrentThread() - _sim.SharedBytes - before - _stateBytes) / 64;
                 return state;
             }
 

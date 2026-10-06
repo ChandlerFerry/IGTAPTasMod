@@ -5,7 +5,6 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 using FullTasGoal = IGTAPTasMod.FullTasGoal;
 using FullTasTracker = IGTAPTasMod.FullTasTracker;
 using Caps = IGTAPTasMod.Caps;
@@ -272,9 +271,9 @@ namespace IGTAP.EngineSim.Cli
         /// reward goals the planner took that the run doesn't have (at 0).</summary>
         readonly Dictionary<string, (int at, JsonNode header, FullTasGoal goal)> _insertedGoals = new Dictionary<string, (int, JsonNode, FullTasGoal)>();
 
-        /// <summary>A goal the trace's header doesn't have, its entry and goal as the game resolves the label: reward:bonusN's box the one
-        /// nearest the bonus's end rect in the config folder's courses.json, buy:token's the token's box (FullTasGoal.Boxes). Null when
-        /// there is no such bonus, box or token.</summary>
+        /// <summary>A goal the trace's header doesn't have, its entry and goal as the game resolves the label: reward:&lt;bonus&gt;'s
+        /// box the one nearest the bonus's end rect in the config folder's courses.json, buy:token's the token's box
+        /// (FullTasGoal.Boxes). Null when there is no such bonus, box or token.</summary>
         (JsonNode header, FullTasGoal goal)? NewGoal(string label)
         {
             if (label.StartsWith("buy:", StringComparison.Ordinal))
@@ -285,9 +284,9 @@ namespace IGTAP.EngineSim.Cli
                 return (new JsonObject { ["label"] = label, ["kind"] = FullTasGoal.Buy, ["course"] = 0, ["boxes"] = new JsonArray(id) },
                     new FullTasGoal { label = label, kind = FullTasGoal.Buy, boxes = new[] { id } });
             }
-            if (!label.StartsWith("reward:bonus", StringComparison.Ordinal)) return null;
+            if (!label.StartsWith("reward:", StringComparison.Ordinal)) return null;
             string token = label.Substring("reward:".Length);
-            JsonElement c = Bonuses().FirstOrDefault(e => e.GetProperty("name").GetString() == token);
+            JsonElement c = Bonuses().FirstOrDefault(e => string.Equals(e.GetProperty("name").GetString(), token, StringComparison.OrdinalIgnoreCase));
             if (c.ValueKind != JsonValueKind.Object) return null;
             float x = c.GetProperty("endX").GetSingle(), y = c.GetProperty("endY").GetSingle(), w = c.GetProperty("endW").GetSingle(), h = c.GetProperty("endH").GetSingle();
             _eval.Restore(_origin); // the box positions in the start's frame, the rect's (a replay may have rebased the world)
@@ -297,14 +296,16 @@ namespace IGTAP.EngineSim.Cli
                 new FullTasGoal { label = label, kind = FullTasGoal.Reward, boxes = new[] { box }, x = x, y = y, w = w, h = h });
         }
 
-        /// <summary>The config folder's courses.json entries named bonusN with an end rect.</summary>
+        /// <summary>The config folder's courses.json bonus entries: named, not transitions, with an end rect (the bonusN
+        /// bonuses and named ones like unlockJumpDash).</summary>
         List<JsonElement> Bonuses()
         {
             string courses = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetFullPath(_trace))), "courses.json");
             if (!File.Exists(courses)) return new List<JsonElement>();
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(courses));
-            return doc.RootElement.EnumerateArray().Where(e => e.TryGetProperty("name", out JsonElement n) && n.GetString() is string s
-                && Regex.IsMatch(s, @"^bonus\d+$") && e.TryGetProperty("endX", out _)).Select(e => e.Clone()).ToList();
+            return doc.RootElement.EnumerateArray().Where(e => e.TryGetProperty("name", out JsonElement n) && n.GetString() is string s && s.Length > 0
+                && !(e.TryGetProperty("to", out JsonElement to) && to.GetString() is string t && t.Length > 0)
+                && e.TryGetProperty("endX", out _)).Select(e => e.Clone()).ToList();
         }
 
         static FullTasGoal Grouped(string label, Dictionary<string, FullTasGoal> byLabel)
@@ -644,7 +645,7 @@ namespace IGTAP.EngineSim.Cli
             // A reward or single buy goal the trace doesn't have came from a planned list (the loop adopts those past
             // EditRefused: GoalsRefused; the trace's header has no entry for it): its entry is made again as they make it. Anything else
             // that changes the skeleton stays refused.
-            string[] added = goals.Distinct().Where(l => !_labels.Contains(l) && (l.StartsWith("reward:bonus", StringComparison.Ordinal)
+            string[] added = goals.Distinct().Where(l => !_labels.Contains(l) && (l.StartsWith("reward:", StringComparison.Ordinal)
                 || l.StartsWith("buy:", StringComparison.Ordinal) && !l.Contains('+'))).ToArray();
             var made = new List<string>();
             foreach (string l in added)

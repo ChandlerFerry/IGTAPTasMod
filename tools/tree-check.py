@@ -4,8 +4,8 @@ the level leaves them, a normal course start after them has the save's tree back
 from tree starts as turbo played it (a Course 6 run captured alongside is the baseline).
 
   tree-check.py [engine.exe]
-  tree-check.py --door      right after a game launch: 1x probes of tree10to7 (the Area 2 door box's first Start in the
-                            session) and tree7to7 hold the door open and shut on every tick
+  tree-check.py --door      right after a game launch: 1x probes of tree13to10 (the Area 2 door box's first Start in the
+                            session) and tree3to7 hold the door open and shut on every tick
 """
 import json, random, subprocess, sys
 from pathlib import Path
@@ -15,7 +15,7 @@ from gamepaths import TRACES, call_retry, course_ids
 IDS = course_ids()
 CAPS = "wjdsdjbs"
 # The Tree's segments grown at each checked level (the spec's table).
-GROWN = {0: 1, 7: 10, 10: 13, 22: 28, 27: 28}
+GROWN = {0: 1, 13: 17, 22: 28, 27: 28}
 
 
 def capture(token, name, ticks=()):
@@ -70,9 +70,9 @@ def door(name, route):
 
 
 def check_door():
-    opened, shut = door("treecheck-door10", "tree10to7_WJ_DS_DJ_BS"), door("treecheck-door7", "tree7to7_WJ_DS_DJ_BS")
-    print("level 10", opened[:4], "level 7", shut[:4])
-    assert len(set(opened)) == 1 and len(set(shut)) == 1 and opened[0] != shut[0], "the door must hold, open at 10 and shut at 7"
+    opened, shut = door("treecheck-door13", "tree13to10_WJ_DS_DJ_BS"), door("treecheck-door3", "tree3to7_WJ_DS_DJ_BS")
+    print("level 13", opened[:4], "level 3", shut[:4])
+    assert len(set(opened)) == 1 and len(set(shut)) == 1 and opened[0] != shut[0], "the door must hold, open at 13 and shut at 3"
     print("tree-check --door: OK")
 
 
@@ -83,18 +83,18 @@ def main():
     before = tree_state(capture("6", "treecheck-c6-before"))
     print("save", before)
     seen = {}
-    # Course 6 keeps only tree0to6; the other levels check on Course 7 (README ### Rules 21).
-    for level, token in ((27, "tree27to7"), (22, "tree22to7"), (10, "tree10to7"), (7, "tree7to7"), (0, "tree0to6")):
+    # Course 6 keeps only tree0to6 and Course 10 levels 13 up; the door shut checks at level 0 (README ### Rules 21).
+    for level, token in ((27, "tree27to10"), (22, "tree22to10"), (13, "tree13to10"), (0, "tree0to6")):
         seen[level] = tree_state(capture(token, f"treecheck-tree{level}"))
         print(level, seen[level])
         assert seen[level][0] == GROWN[level], (level, seen[level][0], GROWN[level])
         assert seen[level][2] == (level >= 23), (level, "path", seen[level][2])
-    assert seen[7][1] != seen[10][1] and seen[10][1] == seen[27][1], "the Area 2 door: shut at 7, open from 8"
+    assert seen[0][1] != seen[13][1] and seen[13][1] == seen[27][1], "the Area 2 door: shut at 0, open from 8"
     after = tree_state(capture("6", "treecheck-c6-after"))
     assert after[0] == before[0] and after[2] == before[2], ("the save's tree must be back", before, after)
     rng = random.Random(7)
     runs = []
-    for token in ("6", "tree27to7", "tree10to7", "tree0to6"):
+    for token in ("6", "tree27to10", "tree13to10", "tree0to6"):
         ticks = []
         while len(ticks) < 300:
             x = rng.choice([-1.0, 0.0, 1.0, 0.5])

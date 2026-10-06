@@ -131,6 +131,8 @@ namespace IGTAP.EngineSim.Cli
             Console.WriteLine($"Solving course {course} ({caps}) on {threads} threads from {Path.GetFileName(startTrace)} with {seeds.Count} seed routes"
                 + (guide ? $", guide weight {guideWeight}" : ", no guide"));
             Thread[] workers = solver.Start(threads);
+            // --walk-seed: routes from another start a run can walk to (a tree transition's into this course), played on from there.
+            Action<OfflineSolver> walks = FullTas.PlainWalks(create, Args(args, "--walk-seed").ToList(), caps, line => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] walk: {line}"));
             Thread confirmer = submit ? new Thread(() => Confirm(target, pending, clock)) { IsBackground = true } : null;
             confirmer?.Start();
             long lastRuns = 0, lastTicks = 0;
@@ -149,6 +151,7 @@ namespace IGTAP.EngineSim.Cli
                     + ", " + solver.GuideStatus() + ", branch replays matching "
                     + $"{Interlocked.Read(ref solver.BranchMatches)}/{Interlocked.Read(ref solver.BranchChecks)}, {solver.ArchiveStatus()}, heap {GC.GetTotalMemory(false) >> 20} MB, ws {Environment.WorkingSet >> 20} MB");
                 lastRuns = runs; lastTicks = ticks; lastSeconds = s;
+                walks?.Invoke(solver);
                 if (++beats % 6 == 0 && archive) SaveMemory(archiveFile, solver.Export(5000));
             }
             if (archive) SaveMemory(archiveFile, solver.Export(10000));

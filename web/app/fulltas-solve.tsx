@@ -23,7 +23,8 @@ const BONUS_NAMES: Record<string, string> = {
   bonus9: "Global watts, secret 12", bonus10: "Global watts, secret 13", bonus11: "Global watts, secret 14", bonus12: "Global watts, secret 15",
   bonus13: "Global watts, secret 16", bonus14: "Global watts, secret 17", bonus15: "Global watts, secret 3", bonus16: "Global watts, free (not a secret)",
   bonus17: "Refill orbs unlock", bonus18: "Clone dust on Course 8", bonus19: "Buy max on Course 10", bonus20: "VMAN speedrun, 1x",
-  bonus21: "VMAN speedrun, ∞x", bonus22: "Global watts, secret 2", bonus23: "Block swap on dash" };
+  bonus21: "VMAN speedrun, ∞x", bonus22: "Global watts, secret 2", bonus23: "Block swap on dash",
+  unlockjumpdash: "Jump and Dash refresh orbs (The Tree at level 10)" };
 
 export const place = (p: string) => {
   if (/^\d+$/.test(p)) return `Course ${p}`;

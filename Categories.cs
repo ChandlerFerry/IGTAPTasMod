@@ -173,8 +173,9 @@ namespace IGTAPTasMod
 
         /// <summary>courses.json bonuses that run no category (the batch solver has no row for them): their end is an unlock
         /// box, not a bonus stretch (bonus17 refill orbs, bonus18 clone dust, bonus19 buy max, bonus20/21 the 1x and ∞x
-        /// Start a VMAN speedrun boxes, bonus23 block swap on dash). Full-TAS <c>reward:</c> goals still name them.</summary>
-        static readonly string[] NoCategoryTargets = { "bonus17", "bonus18", "bonus19", "bonus20", "bonus21", "bonus23" };
+        /// Start a VMAN speedrun boxes, bonus23 block swap on dash, unlockJumpDash the jump and dash refresh orbs at The
+        /// Tree level 10). Full-TAS <c>reward:</c> goals still name them.</summary>
+        static readonly string[] NoCategoryTargets = { "bonus17", "bonus18", "bonus19", "bonus20", "bonus21", "bonus23", "unlockJumpDash" };
 
         /// <summary>The target with this courses.json token runs categories at all.</summary>
         public static bool IsTarget(string token) { return Array.IndexOf(NoCategoryTargets, token) < 0; }

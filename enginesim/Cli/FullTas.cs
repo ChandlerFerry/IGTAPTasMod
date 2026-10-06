@@ -1184,14 +1184,16 @@ namespace IGTAP.EngineSim.Cli
         /// A seed from another run's start (<see cref="Seed.At"/>): that run's player stood still there, facing one way, before its
         /// inputs, so from here walk to that spot (held for n ticks, the last one maybe partial), stand still, tap the start's way
         /// once when the walk faced the other, stand still again, then play the seed. The closest stands first; none when the spot
-        /// is too far or no walk ends on its floor facing its way. The start must be _eval's.
+        /// is too far or no walk ends on its floor facing its way, from <paramref name="eval"/>'s start.
         /// </summary>
-        List<(string how, List<InputTick> inputs)> WalkedStarts(Seed s)
+        List<(string how, List<InputTick> inputs)> WalkedStarts(Seed s) => WalkedStarts(_eval, s);
+
+        static List<(string how, List<InputTick> inputs)> WalkedStarts(Simulation eval, Seed s)
         {
             var found = new List<(float miss, string how, List<InputTick> inputs)>();
             SeedStart to = s.At;
-            _eval.Restore(_eval.Start);
-            float dx = to.X - _eval.PlayerWorld.x;
+            eval.Restore(eval.Start);
+            float dx = to.X - eval.PlayerWorld.x;
             if (Math.Abs(dx) > MaxWalk) return new List<(string, List<InputTick>)>();
             float dir = dx < 0f ? -1f : 1f, face = to.FacingRight ? 1f : -1f;
             // Walks, stands, taps `turn` of the start's way (0: none) and stands again: how far past the spot it stands, null when
@@ -1199,19 +1201,19 @@ namespace IGTAP.EngineSim.Cli
             float? Stand(int n, float last, float turn)
             {
                 var walk = Enumerable.Range(0, n).Select(i => new InputTick { x = i == n - 1 ? dir * last : dir }).ToList();
-                int still = _eval.Still(walk, 300);
+                int still = eval.Still(walk, 300);
                 if (still < 0) return null;
                 if (turn > 0f)
                 {
                     walk.AddRange(Enumerable.Repeat(new InputTick(), still - walk.Count));
                     walk.Add(new InputTick { x = face * turn });
-                    still = _eval.Still(walk, 300);
+                    still = eval.Still(walk, 300);
                     if (still < 0) return null;
                 }
-                WorldPos p = _eval.PlayerWorld;
+                WorldPos p = eval.PlayerWorld;
                 if (Math.Abs(p.y - to.Y) > MaxWalkRise) return null;
                 float miss = Math.Abs(p.x - to.X);
-                if (miss <= MaxWalkMiss && _eval.Player.facingRight == to.FacingRight)
+                if (miss <= MaxWalkMiss && eval.Player.facingRight == to.FacingRight)
                 {
                     walk.AddRange(Enumerable.Repeat(new InputTick(), still - walk.Count + StandTicks));
                     walk.AddRange(s.Inputs);

@@ -97,7 +97,12 @@ writes each new best to `<traces>\offline-best\`, and sends each best that beats
 exactly as fast (or rejoins the best's state) replaces it (`drifts` in the progress line), since a faster route is often
 several mutations away, each alone no faster. A best is the fastest course time; at the same time, the fewest
 physics ticks from the run start (`runTicks`), which shortens a flying start's setup before its last start-gate
-crossing (off the timer, but a player still sits through it). The search never finishes a run slower on the course
+crossing (off the timer, but a player still sits through it). `--walk-seed <file>` (a route with its own start: a
+`trace` of it, or `start` `{x, y, facingRight}`) is played from the start a run can walk to instead: every 10 s the
+solve takes its explored cells nearest that start, walks each there and stands (as a Full-TAS reach window's seeds do),
+and tries cell, walk and route as a seed, finished or not. The plugin passes a course's tree transitions' routes so
+(`tree<L>to<C>`, from bonus11's checkpoint by the atom room): tree0to9 climbs the tree room's wall to the shelf and
+crosses Course 9's end from the right, the way no Course 9 search found. The search never finishes a run slower on the course
 timer than its best, so it doesn't search for farm routes: those are farm loops, from `solve --auto --farm` (below).
 With the game closed the best stays on disk; the plugin judges every waiting `offline-best\` file that beats or ties
 the saved route (its category, then the course's other categories), and the group's fastest farm loop
@@ -2045,8 +2050,12 @@ differ from a shared base, the pair/move buffers only their live prefix, and unc
 between snapshots. So are the field captures of the touched scripts and the courses: a capture reuses the previous
 one's array while none of its fields changed (`Simulation.CaptureShared`, `FieldState.Matches`) — before, every touched
 script's capture was copied into every snapshot, and a VMAN search with 28 workers ran out of memory within minutes
-([`docs/fidelity-log.md`](../docs/fidelity-log.md), *Field captures copied into every snapshot*). `solve` prints heap and working set every 10 s, and the host
-runs with `System.GC.HeapHardLimit` at 70 GiB, so a leak throws OutOfMemory instead of paging the machine.
+([`docs/fidelity-log.md`](../docs/fidelity-log.md), *Field captures copied into every snapshot*). A changed tree node is
+stored without its `UserData` (32 bytes to 48; the few whose `UserData` isn't the base's are listed apart), and a fresh
+capture's boxed fields (the player's ~160 every state) reuse the last capture's boxes where the bits are equal
+(`Simulation.ShareBoxes`): 53 KB → 42 KB a state on the tree19to10 transition. `solve` prints heap and working set
+every 10 s, and the host runs with `System.GC.HeapHardLimit` at 54 GiB, so a leak throws OutOfMemory instead of paging
+the machine.
 
 A best's replay (on every new best, adopted best and plateau drift) keeps a snapshot every 16 input ticks, not every
 tick (`OfflineSolver.StateEvery`); a mutation resumes from the one at or before its first changed tick (snapshotting
@@ -2091,13 +2100,16 @@ to 7/8 of it, then takes every removed cell (evicted, or replaced since) out of 
 workers rebuild their draw pools and drop their states for removed cells. Under budget none of this changes a
 decision, so a search that stays under it is the search it was. The progress line shows the archive's MB (and the
 cells evicted). A loaded archive's sources are dropped once each worker has restored its share (the solver keeps only
-its runs count and plateau routes). The budget follows the heap limit: under the CLI's default 70 GiB the states alone
-may take 35 GiB (Course 6 WJ_DS_DJ_BS_ORB_ZIP_OM with 4 threads grew ~20 MB/s into a 12 GB kill that way, filling its
+its runs count and plateau routes). The budget follows the heap limit: under the CLI's default 54 GiB the states alone
+may take 27 GiB, as many states as 70 GiB held before the smaller states (30 threads on tree19to10, 6 minutes: ~22k a
+worker either way, peak working set 52 GB against 70 GB; a smaller budget costs the search: at half of it the states
+were 71-83% cached against 85-98% and it played 15% fewer runs) (Course 6 WJ_DS_DJ_BS_ORB_ZIP_OM with 4 threads grew ~20 MB/s into a 12 GB kill that way, filling its
 state cache as designed), so a solve that has to stay under a cap sets `DOTNET_GCHeapHardLimit` to it. Below ~2 GB
 the fixed part (tech-graft patterns, worlds) doesn't fit: a 1 GiB C6 solve runs out of memory before its first explore,
 on the old build as on this one. Measured on C6 WJ_DS_DJ_BS_ORB_ZIP_OM (2 threads, 3 GiB heap): a state is ~55 KB, two
 thirds of it the broadphase tree's delta (~670 of 12,000 nodes differ from the shared base; 25% of 32-node chunks do,
-so chunked sharing would be larger); live heap after a full GC stays 1.65-1.76 GB for 7 minutes while the archive grows
+so chunked sharing would be larger; rebasing at 1/64 of the nodes instead of 1/4 cuts the delta to ~8 nodes but makes
+a new 576 KB base every ~17 captures, no smaller: the ~700 are the moving bodies' leaves and their ancestors); live heap after a full GC stays 1.65-1.76 GB for 7 minutes while the archive grows
 ~13 MB a minute (81 MB of inputs at 71k cells); with the archive's budget forced to 40 MB the count holds 35-39 MB (a
 heap walk agrees: 34 MB of inputs plus 24.6k cells) through 131k evictions in 6.5 minutes.
 

@@ -31,7 +31,7 @@ namespace IGTAP.EngineSim.Cli
     // `tick` is the snapshot's own physics tick; a restart's `press` is the tick the reset is played from and `land` the
     // landing's, so the planner adds land - press to every restart walk. Entries come in every box-set order (order
     // matters) and per technique; the planner prefers the cheapest technique per box set.
-    // --targets measures these instead of the phase's box sets, from every place: `reward:bonusN` (the bonus's reward box as a
+    // --targets measures these instead of the phase's box sets, from every place: `reward:<bonus>` (the bonus's reward box as a
     // one-box set, the box nearest its end rect: the run's goal, else NewGoal's) and `lap:N` (Course N's gate then its finish,
     // played as the plan plays a lap: FullTasPlan.Lap). The entry's `boxes` is the target's id (`["lap:2"]`), its ticks run to
     // the reward box's buy or the lap's finish.
@@ -207,16 +207,16 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        /// <summary>A --targets id's goals: `reward:bonusN` its reward box (the run's goal, else as the game resolves it, NewGoal),
+        /// <summary>A --targets id's goals: `reward:<bonus>` its reward box (the run's goal, else as the game resolves it, NewGoal),
         /// `lap:N` Course N's gate and finish.</summary>
         List<FullTasGoal> TargetGoals(string target)
         {
             if (target.StartsWith("lap:", StringComparison.Ordinal) && int.TryParse(target.Substring(4), out int course))
                 return new List<FullTasGoal> { RunGoal("start:" + course, FullTasGoal.Start, course), RunGoal("finish:" + course, FullTasGoal.Finish, course) };
-            if (target.StartsWith("reward:bonus", StringComparison.Ordinal))
+            if (target.StartsWith("reward:", StringComparison.Ordinal))
                 return new List<FullTasGoal> { _runGoals.Goals.FirstOrDefault(g => g.label == target) ?? NewGoal(target)?.goal
                     ?? throw new ArgumentException($"--targets {target}: no such bonus in courses.json, or no box near its end") };
-            throw new ArgumentException($"--targets {target}: reward:bonusN or lap:N");
+            throw new ArgumentException($"--targets {target}: reward:<bonus> or lap:N");
         }
 
         static string EntryKey(string place, string[] boxes, string technique) => place + " | " + string.Join(",", boxes) + " | " + technique;

@@ -592,11 +592,48 @@ namespace Box2D
         {
             internal Node[] baseNodes;
             internal int[] changedIndex;
-            internal Node[] changedNode;
+            internal PackedNode[] changedNode;
+            // The changed nodes (positions in changedIndex) whose UserData isn't their base node's, and that UserData.
+            internal int[] dataAt;
+            internal object[] data;
             internal int root;
             internal int freeNodes;
             internal int nodeCount;
         }
+
+        // A changed node without its UserData: 32 bytes to Node's 48. The delta is most of a snapshot (~700 nodes on Area 2's
+        // maps, the moving bodies' leaves and their ancestors), and a changed node nearly always keeps its base's UserData.
+        private struct PackedNode
+        {
+            internal b2AABB Aabb;
+            internal int Parent, Child1, Child2;
+            internal int HeightMoved;
+
+            internal PackedNode(in Node n)
+            {
+                Aabb = n.Aabb; Parent = n.Parent; Child1 = n.Child1; Child2 = n.Child2;
+                HeightMoved = n.Height << 1 | (n.Moved ? 1 : 0);
+            }
+
+            internal Node Unpack(object userData) => new Node
+            {
+                Aabb = Aabb, Parent = Parent, Child1 = Child1, Child2 = Child2, UserData = userData,
+                Height = HeightMoved >> 1, Moved = (HeightMoved & 1) != 0,
+            };
+        }
+
+        private static void ApplyDelta(TreeSnapshot snap, Node[] nodes)
+        {
+            for (int k = 0; k < snap.changedIndex.Length; k++)
+            {
+                int i = snap.changedIndex[k];
+                nodes[i] = snap.changedNode[k].Unpack(snap.baseNodes[i].UserData);
+            }
+            for (int k = 0; k < snap.dataAt.Length; k++) nodes[snap.changedIndex[snap.dataAt[k]]].UserData = snap.data[k];
+        }
+
+        private readonly List<int> _dataAt = new List<int>();
+        private readonly List<object> _data = new List<object>();
 
         private readonly Dictionary<int, Node[]> _snapshotBases = new Dictionary<int, Node[]>();
 
@@ -674,17 +711,26 @@ namespace Box2D
                 changed = 0;
             }
             int[] index = changed == 0 ? Array.Empty<int>() : new int[changed];
-            Node[] node = changed == 0 ? Array.Empty<Node>() : new Node[changed];
+            PackedNode[] node = changed == 0 ? Array.Empty<PackedNode>() : new PackedNode[changed];
             int n = 0;
+            _dataAt.Clear();
+            _data.Clear();
+            void Add(int i)
+            {
+                index[n] = i;
+                node[n] = new PackedNode(_nodes[i]);
+                if (!ReferenceEquals(_nodes[i].UserData, baseNodes[i].UserData)) { _dataAt.Add(n); _data.Add(_nodes[i].UserData); }
+                n++;
+            }
             if (tracked)
                 foreach (int i in _dirty)
                 {
                     if (n == changed) break;
-                    if (!Same(_nodes[i], baseNodes[i])) { index[n] = i; node[n] = _nodes[i]; n++; }
+                    if (!Same(_nodes[i], baseNodes[i])) Add(i);
                 }
             else
                 for (int i = 0; i < _capacity && n < changed; i++)
-                    if (!Same(_nodes[i], baseNodes[i])) { index[n] = i; node[n] = _nodes[i]; n++; }
+                    if (!Same(_nodes[i], baseNodes[i])) Add(i);
             if (CheckTree)
             {
                 int k = 0;
@@ -696,9 +742,16 @@ namespace Box2D
             }
             var saved = new TreeSnapshot
             {
-                baseNodes = baseNodes, changedIndex = index, changedNode = node,
+                baseNodes = baseNodes, changedIndex = index, changedNode = node, dataAt = _dataAt.ToArray(), data = _data.ToArray(),
                 root = _root, freeNodes = _freeNodes, nodeCount = _nodeCount,
             };
+            if (CheckTree)
+            {
+                var full = (Node[])baseNodes.Clone();
+                ApplyDelta(saved, full);
+                for (int i = 0; i < _capacity; i++)
+                    if (!Same(_nodes[i], full[i])) TreeMismatch($"b2DynamicTree.SaveSnapshot: node {i} restores differently");
+            }
             Resync(saved);
             return saved;
         }
@@ -730,12 +783,12 @@ namespace Box2D
                 if (_nodes.Length < capacity) { _nodes = new Node[capacity]; _dirtyFlag = new bool[capacity]; }
                 Array.Copy(snap.baseNodes, _nodes, capacity);
             }
-            for (int i = 0; i < snap.changedIndex.Length; i++) _nodes[snap.changedIndex[i]] = snap.changedNode[i];
+            ApplyDelta(snap, _nodes);
             Resync(snap);
             if (CheckTree)
             {
                 var full = (Node[])snap.baseNodes.Clone();
-                for (int i = 0; i < snap.changedIndex.Length; i++) full[snap.changedIndex[i]] = snap.changedNode[i];
+                ApplyDelta(snap, full);
                 for (int i = 0; i < capacity; i++)
                     if (!Same(_nodes[i], full[i])) TreeMismatch($"b2DynamicTree.LoadSnapshot: node {i} differs from a full restore");
                 System.Threading.Interlocked.Increment(ref TreeChecks);

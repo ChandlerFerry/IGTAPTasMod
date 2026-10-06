@@ -1,8 +1,10 @@
 """The tree transitions (docs/superpowers/specs/2026-10-05-tree-transitions-design.md): from the checkpoint by the atom
 room (bonus11's start) to Courses 6-10's start checkpoints (the course's reset point, a 32 u arrival box on it as a
 transition to a bonus has), The Tree at each level that changes the world. Drops 6to10. Course 6 keeps only level 0
-(tree0to6): its start is accessible on Course 0, so tree1to6..tree27to6 are dropped (2026-10-05). Course 8 keeps only
-level 10 (tree10to8); every other tree*to8 level is dropped (2026-10-05). Courses 7, 9 and 10 keep every level.
+(tree0to6): its start is accessible on Course 0, so tree1to6..tree27to6 are dropped (2026-10-05). Course 7 keeps only
+levels 0 and 3 (tree1to7, tree2to7 play as tree0to7; tree5to7 up are dropped, 2026-10-05). Course 8 keeps only
+level 10 (tree10to8); every other tree*to8 level is dropped (2026-10-05). Course 9 keeps only levels 0 and 3
+(2026-10-05). Course 10 keeps only levels 13 and up (tree0to10..tree12to10 are dropped, 2026-10-05).
 
   tree-transitions.py            what it would write
   tree-transitions.py --write    write courses.json (a .bak-tree copy first)
@@ -16,9 +18,9 @@ COURSES = CONFIG / "courses.json"
 # Each group of levels whose boxes change nothing in the world, by its highest (the spec's table).
 LEVELS = [0, 1, 2, 3, 5, 6, 7, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20, 22, 27]
 # Course 6 keeps only level 0 (tree0to6): its start is accessible on Course 0, so the tree1to6..tree27to6 targets
-# are dropped (2026-10-05). Course 8 keeps only level 10 (tree10to8); every other tree*to8 level is dropped
-# (2026-10-05). A course not listed here keeps every level.
-COURSE_LEVELS = {6: [0], 8: [10]}
+# are dropped (2026-10-05). Course 7 keeps only levels 0 and 3 (2026-10-05). Course 8 keeps only level 10 (tree10to8); every other tree*to8 level is dropped
+# (2026-10-05). Course 9 keeps only levels 0 and 3 (2026-10-05). Course 10 keeps only levels 13 and up (2026-10-05).
+COURSE_LEVELS = {6: [0], 7: [0, 3], 8: [10], 9: [0, 3], 10: [l for l in LEVELS if l >= 13]}
 START = (22643.9, -364.685)
 
 

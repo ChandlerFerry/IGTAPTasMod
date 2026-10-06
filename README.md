@@ -45,7 +45,8 @@
     `WJ_DS_DJ_BS_ZIP` only where zip movers are (the targets are listed in [`Categories.cs`](Categories.cs); the tree transitions count as bonus11, whose start they share):
     anywhere else they play exactly as `WJ_DS_DJ_BS`, and `WJ_DS_DJ_BS_ZIP_OM` as `WJ_DS_DJ_BS_ORB_ZIP_OM`. The ends of Bonuses 4 and 12
     need the zip movers: they run only the categories with `ZIP`, none of their ladder. Bonuses 17–21
-    and 23 run no category: their end is an unlock box (refill orbs, clone dust, buy max, the 1x and ∞x Start a VMAN
+    and 23 run no category, and neither does `unlockJumpDash` (the jump and dash refresh orbs bonus17 ends at, The Tree
+    at level 10): their end is an unlock box (refill orbs, clone dust, buy max, the 1x and ∞x Start a VMAN
     speedrun boxes, block swap on dash), not a bonus stretch.
 20. Courses 6–10 are Area 2 courses: a start gate is on only while its zone is loaded (Courses 1–5 zone 1, 6–10
     zone 2).
@@ -63,10 +64,12 @@
     in segment order bought once, `TimesUsed` and `instaGrowSegments` as `TreeController.load`, a bought-out box
     deactivated as its `Start`, the segments above off as `Awake` leaves them), the Area 2 door open from level 8, the
     Zone 2→1 path open and Area 1 overgrown from 23; no unlock is written. The save's tree and path are put back before a
-    save. Courses 7, 9 and 10: levels whose box changes nothing in the world are one target, by the highest (0, 1, 2, 3,
-    5, 6, 7, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20, 22, 27). Course 6 keeps only level 0 (`tree0to6`): its start is
-    accessible on Course 0, so `tree1to6` through `tree27to6` are dropped. Course 8 keeps only level 10 (`tree10to8`);
-    its other tree targets are dropped.
+    save. Levels whose box changes nothing in the world are one target, by the highest (0, 1, 2, 3, 5, 6, 7, 10, 11, 12,
+    13, 14, 15, 16, 17, 19, 20, 22, 27). Course 10 keeps only levels 13 and up (`tree13to10` through `tree27to10`):
+    `tree0to10` through `tree12to10` are dropped. Course 6 keeps only level 0 (`tree0to6`): its start is accessible on
+    Course 0, so `tree1to6` through `tree27to6` are dropped. Courses 7 and 9 keep only levels 0 and 3 (`tree0to7`,
+    `tree3to7`, `tree0to9`, `tree3to9`): levels 1 and 2 play as level 0, and levels 5 up are dropped. Course 8 keeps only
+    level 10 (`tree10to8`); its other tree targets are dropped.
 22. Their lowest category is `WJ_DS_DJ_BS`.
 23. Courses 11–15 are Courses 1–5 with Area 1 overgrown: the game's own Course 1–5 gates and timer on the overgrown
     terrain (spikes, moss, zip movers) and boxes (no movement, prestige, breaker-light or unlock-prestige box in Courses

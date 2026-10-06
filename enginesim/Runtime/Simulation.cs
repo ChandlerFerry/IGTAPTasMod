@@ -177,7 +177,35 @@ namespace IGTAP.EngineSim
         object[] CaptureShared(object target)
         {
             if (_captured.TryGetValue(target, out object[] last) && FieldState.Matches(target, last)) return last;
-            return _captured[target] = FieldState.Capture(target);
+            return ShareBoxes(target, FieldState.Capture(target));
+        }
+
+        // A capture's boxed value fields that are bit for bit the target's last capture's become that capture's boxes: a
+        // state holds ~160 boxed Movement fields and few change between captures. Bits, not Equals: -0 isn't 0.
+        object[] ShareBoxes(object target, object[] values)
+        {
+            if (_captured.TryGetValue(target, out object[] last))
+                for (int i = 0; i < values.Length; i++)
+                    if (values[i] is ValueType v && last[i] is ValueType l && v.GetType() == l.GetType() && SameBits(v, l))
+                    {
+                        values[i] = l;
+                        SharedBytes += (BoxSizes[v.GetType()] + 16 + 7) & ~7;
+                    }
+            return _captured[target] = values;
+        }
+
+        /// <summary>The bytes of the boxes <see cref="ShareBoxes"/> dropped for the last capture's, since the simulation was made: a
+        /// capture allocated them, but no state keeps them.</summary>
+        public long SharedBytes;
+
+        sealed class RawBox { public byte Data; }
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, int> BoxSizes = new System.Collections.Concurrent.ConcurrentDictionary<Type, int>();
+
+        static bool SameBits(object a, object b)
+        {
+            int size = BoxSizes.GetOrAdd(a.GetType(), t => (int)typeof(System.Runtime.CompilerServices.Unsafe).GetMethod("SizeOf").MakeGenericMethod(t).Invoke(null, null));
+            return System.Runtime.InteropServices.MemoryMarshal.CreateReadOnlySpan(ref System.Runtime.CompilerServices.Unsafe.As<RawBox>(a).Data, size)
+                .SequenceEqual(System.Runtime.InteropServices.MemoryMarshal.CreateReadOnlySpan(ref System.Runtime.CompilerServices.Unsafe.As<RawBox>(b).Data, size));
         }
         readonly Dictionary<GameObject, bool> _activeAsLoaded = new Dictionary<GameObject, bool>();
         readonly Dictionary<Behaviour, bool> _enabledAsLoaded = new Dictionary<Behaviour, bool>();
@@ -1112,8 +1140,8 @@ namespace IGTAP.EngineSim
             return new SimSnapshot
             {
                 Tick = tick,
-                Movement = FieldState.Capture(Player),
-                Engine = Engine.CaptureState(),
+                Movement = ShareBoxes(Player, FieldState.Capture(Player)),
+                Engine = ShareBoxes(Engine, Engine.CaptureState()),
                 Courses = CaptureCourses(),
                 Position = Player.transform.m_Position,
                 LocalScale = Player.transform.m_LocalScale,

@@ -14,7 +14,7 @@
   </PropertyGroup>
   <ItemGroup>
 
-    <RuntimeHostConfigurationOption Include="System.GC.HeapHardLimit" Value="75161927680" />
+    <RuntimeHostConfigurationOption Include="System.GC.HeapHardLimit" Value="57982058496" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Runtime\IGTAP.EngineSim.Runtime.csproj" />
