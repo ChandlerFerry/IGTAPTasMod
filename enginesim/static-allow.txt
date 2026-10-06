@@ -64,3 +64,4 @@ IGTAP.EngineSim.Engine::LayerNames  # the game's fixed 32-name layer database; W
 IGTAP.EngineSim.Engine::NextInstanceId  # a shared counter keeps shim instance ids unique across solver threads; Object's ctor only decrements it and no run compares ids across worlds
 UnityEngine.Camera::<main>k__BackingField  # no writer anywhere: Camera.main reads null in every world and thread (FloatingOrigin and cameraMover already handle that)
 UnityEngine.Time::<time>k__BackingField  # no writer: the clock is the tick; the only readers (AtomColliderSystem, light flicker) already see 0
+UnityEngine.GameObject::Attached  # a shared Interlocked generation for World.All's cache: an attach on any thread only invalidates caches sooner, never leaves one stale

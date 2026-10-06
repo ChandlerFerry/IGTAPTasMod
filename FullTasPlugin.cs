@@ -208,13 +208,14 @@ namespace IGTAPTasMod
         }
 
         List<FullTasRunDef> _fullTasRuns = new List<FullTasRunDef>();
-        DateTime _fullTasWritten;
+        long _fullTasWritten;
         float _fullTasCheckAt;
-        // fulltas.json's write time (ticks; 0: no file), read on a pool thread for PumpFullTas's once-a-second check (a hand
-        // edit reloads it): -1 until a read lands. _fullTasStatOf is _fullTasWritten when that read started; a plugin write
-        // since then makes the read stale. _fullTasStatBusy is 1 while a read runs.
-        long _fullTasStat = -1;
-        DateTime _fullTasStatOf;
+        // The run files' stamp (FullTasRunsStamp; 0: none), read on a pool thread for PumpFullTas's once-a-second check (a hand
+        // edit or an engine's --install reloads them): NoFullTasStat until a read lands. _fullTasStatOf is _fullTasWritten when
+        // that read started; a plugin write since then makes the read stale. _fullTasStatBusy is 1 while a read runs.
+        long _fullTasStat = NoFullTasStat;
+        const long NoFullTasStat = long.MinValue;
+        long _fullTasStatOf;
         int _fullTasStatBusy;
         Dictionary<string, List<FullTasSplit>> _fullTasSplits = new Dictionary<string, List<FullTasSplit>>();
         /// <summary>fulltas-classes.json: each saved Full-TAS route's class result, by route id.</summary>
@@ -275,7 +276,11 @@ namespace IGTAPTasMod
         static readonly HashSet<string> FullTasBreakerTokens = new HashSet<string> { "buyprestige5" };
         const int MaxBuyGoalBoxes = 8;
 
-        string FullTasPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas.json"); } }
+        /// <summary>The Full-TAS run definitions, one file per run (runs\&lt;run&gt;.json, the run's name its file's): the source
+        /// tree's the plugin was built from (IgtapRepo, IGTAPTasMod.csproj), kept with the code.</summary>
+        static readonly string FullTasRunsDir = Path.Combine(typeof(TasPlugin).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false)
+            .Cast<System.Reflection.AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "IgtapRepo")?.Value ?? Path.Combine(Paths.ConfigPath, "IGTAPTasMod"), "runs");
+        static string FullTasRunFile(string run) { return Path.Combine(FullTasRunsDir, run + ".json"); }
         string FullTasSplitsPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas-splits.json"); } }
         string FullTasClassesPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas-classes.json"); } }
         string FullTasCandidatesDir(string run) { return Path.Combine(EngineSimDir, "fulltas", "candidates", run); }
