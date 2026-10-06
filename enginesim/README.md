@@ -506,7 +506,7 @@ finish ended.
 ### Course --auto
 
 ```powershell
-& $exe solve $traces\start-c4-wjdsdj.json --auto --threads 4 --minutes 5 --window-minutes 0.25   # --farm, --class human-major|human-nmg, --seed FILE, --parts LIST, --focus a-b, --waypoints-out FILE, --fresh, --log-json FILE
+& $exe solve $traces\start-c4-wjdsdj.json --auto --threads 4 --minutes 5 --window-minutes 0.25   # --farm, --class human-major|human-nmg, --seed FILE, --parts LIST, --focus a-b, --waypoints-out FILE, --fresh, --log-json FILE, --whole-minutes M, --no-whole
 ```
 
 `--auto` (`Cli\CourseAuto.cs`) runs the Full-TAS `--auto` loop ([`docs/fulltas.md`](../docs/fulltas.md#auto), its parts
@@ -515,6 +515,21 @@ included) on a course. The course becomes a Full-TAS run: its goals are waypoint
 start-gate crossing `start:<course>`) and the finish (`finish:<course>`; a bonus's reward rect, a transition's next
 `start:`). Waypoints are checkpoints, not cut points: every window plays on from the state the route has there, so
 momentum carries through them, and a window is scored on its arrival.
+
+- **Whole-route search first.** Before the loop (record timing, or a bonus or transition; not the farm loop, a human
+  class, `--focus` or `--waypoints-out`), the plain solve (`Solve.Run`) runs on the course for `--whole-minutes` (half
+  the minutes; `--no-whole` skips it), ended once it goes min(5, half that) minutes without a faster route: seeded with
+  the trace's route, every `--seed` (the plugin passes every category's and, on a tree transition, every tree level's
+  routes to the course; one that dies in this category still gives its cells) and the loop's run file; with
+  `--no-archive` (no archive read or written: each Improve searches as a target's first does, and the target's archive
+  is left as it is) and `--no-submit` (its bests are written to `offline-best` as a plain solve's and judged after the
+  session with the loop's). Its best joins the candidates the loop starts from; the loop gets the minutes left. Why: the
+  plugin runs the plain solve only for a target with no route of its own (`Solver.cs` `CourseSolveArgs`), so each new
+  target's first Improve gained what the loop on an old one couldn't (2026-10-05, `WJ_DS_DJ_BS`: tree27to10's
+  `--auto` went 21.74 to 21.70 while the plain solve took the same routes to 19.20 on tree22to10, where 19.20 also plays
+  19.20 on tree27to10's start, and tree20to10's to 17.20, about 72 of its 93 ticks on ground the two levels share). The
+  loop's windows had found such gains (a find 45 ticks ahead at waypoint 3, one 20 ahead at waypoint 2) and lost them at
+  the merge; the merge's join ([`docs/fulltas.md`](../docs/fulltas.md), "The join") keeps more of them now.
 
 - **Human class** (`--class human-major|human-nmg`, record timing on a gated course only): the loop plays as the class
   plays (`MacroEngine.HumanClass`: digital stick, two jump buttons) and ranks by the class's score (the Full-TAS
@@ -532,7 +547,9 @@ momentum carries through them, and a window is scored on its arrival.
   scored on its arrival's physics tick, which is the timer's only once the gate crossing is in its prefix, so in record
   timing the loop's windows start after the gate (`--focus` defaults to the goals after `start:`; combine still splices
   the run-up). `--farm` on a gated course: the farm loop (below). A bonus or transition is timed from its start either
-  way.
+  way, in physics ticks as its record is (README `### Rules` 31): no held frames count (`FullTas.TickTiming`, every
+  course run but the farm loop; its windows' searches rank their finds so too, `Simulation.TickTimed`). Before 2026-10-05 a transition's loop ranked its runs in live time (tree27to10: 23.09 s
+  against its 21.74 record), a dash some 2.7 ticks dearer than the record has it.
 - **Farm loop** (`Cli\CourseLoop.cs`, README `### Rules` 30). The farm is the course's steady-state loop: a lead (the
   course start through its last lead finish) and the loop (the laps after it through the last one's finish), timed from
   the lead's last finish in live time (`TimerGoal` that finish, `FullTas.LoopTiming`: held frames count from it). The

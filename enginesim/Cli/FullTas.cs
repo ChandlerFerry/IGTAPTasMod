@@ -37,11 +37,11 @@ namespace IGTAP.EngineSim.Cli
             /// <summary>Goal k's arrival on the run's own clock (its tick less the timer goal's once that is behind it).</summary>
             public long Clock(int k) { return GoalPhysics[k - 1] - (TimerGoal > 0 && k >= TimerGoal ? GoalPhysics[TimerGoal - 1] : 0); }
             /// <summary>The frames the run stood still in by goal k, on its own clock. A course record run is timed by the game
-            /// timer, physics ticks from its start gate: none count there. A farm loop (<see cref="LoopTiming"/>) counts them from
-            /// its lead finish.</summary>
+            /// timer, physics ticks from its start gate, and a bonus or transition in physics ticks from its start (<see
+            /// cref="TickTiming"/>): none count there. A farm loop (<see cref="LoopTiming"/>) counts them from its lead finish.</summary>
             public long Held(int k)
             {
-                if (GoalHeld == null || TimerGoal > 0 && !LoopTiming) return 0;
+                if (GoalHeld == null || TickTiming || TimerGoal > 0 && !LoopTiming) return 0;
                 return GoalHeld[k - 1] - (TimerGoal > 0 && k >= TimerGoal ? GoalHeld[TimerGoal - 1] : 0);
             }
             /// <summary>
@@ -69,6 +69,10 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>A course farm loop (CourseLoop.cs): timed from <see cref="TimerGoal"/>, the lead's last finish, to the loop
         /// lap's finish in live time, held frames included.</summary>
         internal static bool LoopTiming;
+
+        /// <summary>A course run timed in physics ticks (`solve --auto` but its farm loop): a record by the game timer, a bonus or
+        /// transition from its start (README ### Rules 31), so no held frames count.</summary>
+        internal static bool TickTiming;
 
         readonly string _trace;
         readonly int _threads, _window, _onlyGoal;
@@ -472,7 +476,7 @@ namespace IGTAP.EngineSim.Cli
             // Every purchase is a goal: a route that buys a box other than its next goal's spends Cash and levels the goals
             // (and the plans that wrote them) don't count, so no search or check here plays one (docs/fulltas.md).
             Func<Simulation> make = Solve.Creator(_trace, header);
-            _create = () => { Simulation sim = make(); sim.StrictBuys = true; sim.Engine.HumanClass = Human; return sim; };
+            _create = () => { Simulation sim = make(); sim.StrictBuys = true; sim.TickTimed = TickTiming; sim.Engine.HumanClass = Human; return sim; };
             _clock = Stopwatch.StartNew();
             _eval = _create();
             _origin = _eval.Start;
@@ -683,11 +687,11 @@ namespace IGTAP.EngineSim.Cli
             return a.Progress > 0 && Ahead(a, b);
         }
 
-        Route Evaluate(List<InputTick> inputs, int limit = -1)
+        Route Evaluate(List<InputTick> inputs, int limit = -1, Func<int, bool> afterTick = null)
         {
             _eval.SetStart(_origin, 0);
             _eval.Goals.Limit = limit < 0 ? _goals : limit;
-            RunResult r = _eval.Run(inputs, null, null, 1000000);
+            RunResult r = _eval.Run(inputs, null, afterTick, 1000000);
             return new Route { Inputs = inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks, GoalHeld = r.GoalHeldFrames, EndReason = r.EndReason };
         }
 

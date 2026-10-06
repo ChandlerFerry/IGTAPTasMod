@@ -310,6 +310,33 @@ namespace IGTAP.EngineSim
             return ((long)Mathf.FloorToInt(world.x / cell) << 32) | (uint)Mathf.FloorToInt(world.y / cell);
         }
 
+        /// <summary>The goal-mode cell the simulation's player is in now, as a Full-TAS window files it (its place, resources,
+        /// momentum and goals reached).</summary>
+        internal static long GoalKey(Simulation sim, colouredBlockSwapper swapper)
+        {
+            float behind = float.NaN;
+            return Worker.GoalCellKey(Worker.Place(sim, swapper, true, ref behind, false), sim.Progress);
+        }
+
+        /// <summary>
+        /// The seam of a join at input <paramref name="at"/> (one run's inputs before it, another's from it): a jump held into it is
+        /// pressed there, one let go is released, so every press is a press (README ### Rules 3). False when the join would need its
+        /// previous input to let go of a press, or one at or before <paramref name="floor"/>.
+        /// </summary>
+        internal static bool Seam(List<InputTick> t, int at, int floor)
+        {
+            InputTick k = t[at], before = t[at - 1];
+            if (k.held && !before.held && before.dashJump == 0) k.press = true;
+            if (!k.held) k.release = before.held;
+            if (k.press && before.held)
+            {
+                if (before.press || at - 1 <= floor) return false;
+                before.held = false; before.release = true; t[at - 1] = before;
+            }
+            t[at] = k;
+            return true;
+        }
+
         /// <summary>
         /// Every worker's visited cells: while they run, the copies each made of its own at the last <see cref="Export"/>; once
         /// stopped (and joined), their maps themselves.
@@ -1129,16 +1156,7 @@ namespace IGTAP.EngineSim
                 var t = new List<InputTick>(at + _bestInputs.Count - bestTick);
                 t.AddRange(CollectionsMarshal.AsSpan(run)[..Math.Min(at, run.Count)]);
                 if (bestTick < _bestInputs.Count) t.AddRange(CollectionsMarshal.AsSpan(_bestInputs)[Math.Max(0, bestTick)..]);
-                if (t.Count <= at) return;
-                InputTick k = t[at], before = t[at - 1];
-                if (k.held && !before.held && before.dashJump == 0) k.press = true;
-                if (!k.held) k.release = before.held;
-                if (k.press && before.held)
-                {
-                    if (before.press || at - 1 <= from.Tick) return;
-                    before.held = false; before.release = true; t[at - 1] = before;
-                }
-                t[at] = k;
+                if (t.Count <= at || !Seam(t, at, from.Tick)) return;
                 Interlocked.Increment(ref _owner.Splices);
                 Try(t, "splice", from);
             }
@@ -1822,7 +1840,7 @@ namespace IGTAP.EngineSim
             internal const int ProgressShift = 51;
             const float MomentumStep = 250f;
 
-            static long Place(Simulation sim, colouredBlockSwapper swapper, bool resources, ref float behind, bool spent)
+            internal static long Place(Simulation sim, colouredBlockSwapper swapper, bool resources, ref float behind, bool spent)
             {
                 Movement player = sim.Player;
                 CapturePos position = sim.PlayerAtCapture;
@@ -1872,7 +1890,7 @@ namespace IGTAP.EngineSim
                 return timing ? -1 - key : key;
             }
 
-            static long GoalCellKey(long place, int progress)
+            internal static long GoalCellKey(long place, int progress)
             {
                 return -1 - (((long)progress << ProgressShift) | place);
             }

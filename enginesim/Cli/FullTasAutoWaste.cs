@@ -114,7 +114,7 @@ namespace IGTAP.EngineSim.Cli
                 w.Add(new WasteTick { VX = m.Velocity.x, VY = m.Velocity.y, StickX = stick, Ground = m.onGround, Wall = m.OnWall,
                     Dash = m.cutsceneMode == Movement.cutsceneModes.dash, Ceiling = _eval.Physics.PlayerTouch.Ceiling,
                     Fresh = fresh, Press = fresh && t.press, Release = fresh && t.release, Reset = fresh && t.reset,
-                    Live = MacroEngine.LiveUnits(_eval.Engine.PhysicsTicks, _eval.Engine.HeldFrames) / 28.0 });
+                    Live = MacroEngine.LiveUnits(_eval.Engine.PhysicsTicks, TickTiming ? 0 : _eval.Engine.HeldFrames) / 28.0 });
             });
             return (s, w);
         }

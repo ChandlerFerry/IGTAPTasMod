@@ -54,6 +54,7 @@ namespace IGTAP.EngineSim.Cli
                     case "techgrafts": return TechGrafts.Command(args.Skip(1).ToArray());
                     case "routegrafts": return TechGrafts.RouteCommand(args.Skip(1).ToArray());
                     case "clip": return ClipLab.Run(args.Skip(1).ToArray());
+                    case "join-check": return FullTas.JoinCheck(args.Skip(1).ToArray());
                     case "lab": return Lab.Run(args.Skip(1).ToArray());
                     case "path":
                     {
@@ -136,6 +137,9 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         --log-json <file>: one JSON line per new best (wall s, time, runTicks, ticks, cpu s)\n"
                             + "                                         --tech-cache <file>: where the tech grafts' mining is cached\n"
                             + "                                         --plan [--plan-minutes M]: plan (and polish) first, its route a seed\n"
+                            + "                                         --no-archive: no archive read or written (archive\\<course>_<caps>.json)\n"
+                            + "                                         --auto: the Full-TAS --auto loop on the course (CourseAuto), after the\n"
+                            + "                                         whole-route search above for --whole-minutes (half; --no-whole skips it)\n"
                             + "  searchbench <suite.json> [--seeds N] [--minutes M] [--threads T] [--arms {name: [solve args]}] [--out file] [--keep]\n"
                             + "                                         solve per course, arm and seed (--rng 1..N) on temp trace copies;\n"
                             + "                                         median/min/max of the time to the first finish, to the target, and the best\n"
@@ -278,6 +282,9 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         the target's routes, archive coverage, colliders and forced-path\n"
                             + "                                         boxes as one JSON for the studio's Optimize map; a Full-TAS trace\n"
                             + "                                         takes --goals <labels.json> (the run's goals now, drawn over the trace's)\n"
+                            + "  join-check <trace.json> <best.json> <find.json> [--from N] [--count N]\n"
+                            + "                                         the --auto merge's joins of find onto best (JoinFinds), each\n"
+                            + "                                         replayed to the course's finish (no search)\n"
                             + "  ultras <fulltas-VMAN.json> --out <file> [--courses <courses.json>] [--spacing U] [--threads N]\n"
                             + "                                         floors a hyper lands on and the game's ultras two chained wavedashes\n"
                             + "                                         get from launch points along them, for the studio's Ultra map\n");

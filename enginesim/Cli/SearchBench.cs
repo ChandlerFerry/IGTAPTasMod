@@ -188,7 +188,7 @@ namespace IGTAP.EngineSim.Cli
                         var runArgs = c.FullTas
                             ? new List<string> { "fulltas", copy, "--goal", c.To.ToString(CultureInfo.InvariantCulture), "--window", (c.To - c.From).ToString(CultureInfo.InvariantCulture),
                                 "--window-minutes", M }
-                            : new List<string> { "solve", copy, "--no-humanize" };
+                            : new List<string> { "solve", copy, "--no-humanize", "--no-whole" };
                         runArgs.AddRange(new[] { "--rng", s.ToString(CultureInfo.InvariantCulture), "--no-submit", "--fresh", "--minutes", M,
                             "--threads", threads.ToString(CultureInfo.InvariantCulture), "--log-json", log, "--tech-cache", cache });
                         runArgs.AddRange(caseArgs);

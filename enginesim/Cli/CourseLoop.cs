@@ -291,6 +291,7 @@ namespace IGTAP.EngineSim.Cli
             Solve.CourseRuns[name] = run.Rules;
             TimerGoal = route.LeadLaps;
             LoopTiming = true;
+            TickTiming = false;
             Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: repairing the lap before from where it breaks, through {goals.Count - route.LeadLaps - 1} "
                 + $"waypoints to the finish, for {minutes:0.##} min");
             var repair = new FullTas(new[] { synthetic, "--unsolved", "--fresh", "--no-submit", "--threads", threads.ToString(CultureInfo.InvariantCulture),
@@ -392,6 +393,7 @@ namespace IGTAP.EngineSim.Cli
             var (route, cycle, how) = start.Value;
             TimerGoal = route.LeadLaps;
             LoopTiming = true;
+            TickTiming = false;
             run.LoopLaps = route.LoopLaps;
             // The loop the run starts from is a kept best too: the plugin judges only offline-best files, and the loop writes only what
             // it improves on (LoopCommitted). A loop the lap search just found or a seed's (a library route) reaches the judge here; the

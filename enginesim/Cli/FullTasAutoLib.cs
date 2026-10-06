@@ -1112,9 +1112,11 @@ namespace IGTAP.EngineSim.Cli
         readonly HashSet<ulong> _merged = new HashSet<ulong>();
 
         /// <summary>
-        /// Stage 1's merge of a window's finds: each (the last five) spliced with the old tail and traced into the library; a whole
-        /// run that is faster is kept; one that misses a later goal waits there (WaitFix); then the library's shortest path; and only
-        /// then the solve's repair (goal by goal from the new state) as before.
+        /// Stage 1's merge of a window's finds: each (the last five, and the first two: a window's first finds are its splices onto
+        /// the best's own inputs, which arrive as the best does) spliced with the old tail and traced into the library; a whole run
+        /// that is faster is kept; one that misses a later goal waits there (WaitFix); then route-sync; then the join of the finds
+        /// onto the best inside the window (JoinFinds); then the library's shortest path; and only then the solve's repair (goal by
+        /// goal from the new state) as before.
         /// </summary>
         void MergeAuto(string where, Route best, int prefixLength, int limit, List<List<InputTick>> found)
         {
@@ -1125,20 +1127,27 @@ namespace IGTAP.EngineSim.Cli
             // 8723, repaired three times for 4,600 CPU s).
             if (_mergedOn != best) { _mergedOn = best; _merged.Clear(); }
             int given = found.Count, short_ = 0;
-            found = Enumerable.Reverse(found).Take(MergeFinds).Reverse().Where(f =>
+            var cellsOf = new Dictionary<List<InputTick>, List<JoinCell>>();
+            found = found.Take(FirstFinds).Concat(Enumerable.Reverse(found).Take(MergeFinds).Reverse()).Distinct().ToList();
+            int picked = found.Count;
+            found = found.Where(f =>
             {
-                Route at = Evaluate(best.Inputs.Take(prefixLength).Concat(f).ToList(), limit);
+                List<InputTick> played = best.Inputs.Take(prefixLength).Concat(f).ToList();
+                var cells = new List<JoinCell>();
+                Route at = Evaluate(played, limit, RecordCells(_eval, cells, prefixLength, played.Count));
                 if (at.Progress < limit) { short_++; return false; }
+                cellsOf[f] = cells;
                 return _merged.Add(Mix(Mix(StateKey(_eval), (ulong)(uint)WorldDigest(_eval)), (ulong)at.GoalPhysics[limit - 1]) ^ (ulong)limit);
             }).ToList();
             if (found.Count == 0)
             {
                 Log($"auto: {where}: " + (short_ == 0 ? $"its {given} finds were merged onto this best already"
-                    : $"{short_} of its last {Math.Min(MergeFinds, given)} finds replay from the run's start short of goal {limit}"));
+                    : $"{short_} of its {picked} finds merged replay from the run's start short of goal {limit}"));
                 return;
             }
+            List<(List<InputTick>, List<JoinCell>)> Joinable() => found.Select(f => (best.Inputs.Take(prefixLength).Concat(f).ToList(), cellsOf[f])).ToList();
             var broken = new List<Route>();
-            foreach (List<InputTick> f in Enumerable.Reverse(found).Take(MergeFinds))
+            foreach (List<InputTick> f in Enumerable.Reverse(found))
             {
                 List<InputTick> inputs = best.Inputs.Take(prefixLength).Concat(f).ToList();
                 Route through = Evaluate(inputs, limit);
@@ -1163,7 +1172,12 @@ namespace IGTAP.EngineSim.Cli
             {
                 Log($"auto: cost-to-go dropped {hopeless.Count} of {broken.Count(c => c.Progress < _goals)} broken finds of {where} before their repair ({hopeless[0].why})");
                 foreach (var (c, _) in hopeless) broken.Remove(c);
-                if (broken.Count == 0) { _findsHopeless = true; return; }
+                if (broken.Count == 0)
+                {
+                    if (JoinFinds(where, best, prefixLength, Joinable())) return;
+                    _findsHopeless = true;
+                    return;
+                }
             }
             foreach (Route c in broken.Where(c => c.Progress < _goals).OrderByDescending(c => c.Progress))
             {
@@ -1175,6 +1189,7 @@ namespace IGTAP.EngineSim.Cli
                 Route synced = RouteSync(c, (int)Math.Min(c.GoalInput[limit - 1], c.Inputs.Count), where);
                 if (synced != null) { Commit(synced, where + ", route-synced"); return; }
             }
+            if (JoinFinds(where, best, prefixLength, Joinable())) return;
             // The cheap repair (--parts tail): the goals after the break re-searched as one window from the broken run's state.
             Route ahead = Part("tail") ? broken.Where(c => c.Progress > 0 && c.Progress < _goals && ScoreAt(c, c.Progress) < ScoreAt(best, c.Progress))
                 .OrderByDescending(c => c.Progress).FirstOrDefault() : null;

@@ -18,8 +18,12 @@ namespace IGTAP.EngineSim.Cli
     {
         internal const string Api = "http://127.0.0.1:17426";
 
-        public static int Run(string[] args)
+        public static int Run(string[] args) => Run(args, out _);
+
+        /// <summary>The solve; <paramref name="best"/> is its fastest route once its workers have stopped (null: none finished).</summary>
+        internal static int Run(string[] args, out List<InputTick> best)
         {
+            best = null;
             // --auto: the Full-TAS --auto loop over the course's waypoints (CourseAuto.cs).
             if (args.Contains("--auto")) return FullTas.CourseAuto(args);
             string startTrace = args[0];
@@ -28,6 +32,10 @@ namespace IGTAP.EngineSim.Cli
             double stallMinutes = Option(args, "--stall-minutes", double.PositiveInfinity);
             bool submit = !args.Contains("--no-submit");
             bool fresh = args.Contains("--fresh");
+            // --no-archive: none read or written (CourseAuto's whole-route search, a new target's every Improve).
+            bool archive = !args.Contains("--no-archive");
+            // --no-seed-files: a seed's or plateau route's best isn't written to offline-best (the caller has those routes).
+            bool seedFiles = !args.Contains("--no-seed-files");
             bool techGrafts = !args.Contains("--no-tech-grafts");
             bool guide = args.Contains("--guide");
             double guideWeight = Option(args, "--guide-weight", 1.0);
@@ -60,7 +68,7 @@ namespace IGTAP.EngineSim.Cli
             var target = new Target(course, caps);
             string archiveDir = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(startTrace)), "archive");
             string archiveFile = Path.Combine(archiveDir, ArchiveName(label, optional) + (customPath ? "-path-" + pathName : "") + ".json");
-            OfflineSolver.Memory memory = fresh ? null : LoadMemory(archiveFile);
+            OfflineSolver.Memory memory = fresh || !archive ? null : LoadMemory(archiveFile);
             if (memory != null)
                 Console.WriteLine($"Resuming from {Path.GetFileName(archiveFile)}: {memory.Sources.Sum(s => s.Cells.Count)} cells over {memory.Sources.Count} prefixes, "
                     + $"{memory.Plateau.Count} plateau routes, {memory.Runs} runs before");
@@ -109,10 +117,12 @@ namespace IGTAP.EngineSim.Cli
             {
                 lastBest = clock.Elapsed;
                 string file = Path.Combine(outDir, label + "-" + time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
-                WriteShared(file, JsonSerializer.Serialize(new { course, capabilities = caps, time, runTicks, directions, ticks = inputs.Select(t => t.ToJson()) }));
-                Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] offline best {time:0.00}s via {how} ({inputs.Count} ticks, run {runTicks * .02:0.00}s from the start) -> {Path.GetFileName(file)}");
-                if (submit && how != "seed" && how != "plateau") pending.Set(new Pending(time, runTicks, inputs));
-                humanize?.Set(file, inputs);
+                bool known = how == "seed" || how == "plateau";
+                if (seedFiles || !known) WriteShared(file, JsonSerializer.Serialize(new { course, capabilities = caps, time, runTicks, directions, ticks = inputs.Select(t => t.ToJson()) }));
+                Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] offline best {time:0.00}s via {how} ({inputs.Count} ticks, run {runTicks * .02:0.00}s from the start)"
+                    + (seedFiles || !known ? " -> " + Path.GetFileName(file) : ""));
+                if (submit && !known) pending.Set(new Pending(time, runTicks, inputs));
+                if (seedFiles || !known) humanize?.Set(file, inputs);
                 // Raised one at a time, in the order the bests were found, so the appends never interleave.
                 if (logJson != null)
                     File.AppendAllText(logJson, JsonSerializer.Serialize(new { wall = clock.Elapsed.TotalSeconds, time, runTicks, ticks = Interlocked.Read(ref solver.Ticks), how,
@@ -120,7 +130,7 @@ namespace IGTAP.EngineSim.Cli
             };
             Console.WriteLine($"Solving course {course} ({caps}) on {threads} threads from {Path.GetFileName(startTrace)} with {seeds.Count} seed routes"
                 + (guide ? $", guide weight {guideWeight}" : ", no guide"));
-            solver.Start(threads);
+            Thread[] workers = solver.Start(threads);
             Thread confirmer = submit ? new Thread(() => Confirm(target, pending, clock)) { IsBackground = true } : null;
             confirmer?.Start();
             long lastRuns = 0, lastTicks = 0;
@@ -139,12 +149,14 @@ namespace IGTAP.EngineSim.Cli
                     + ", " + solver.GuideStatus() + ", branch replays matching "
                     + $"{Interlocked.Read(ref solver.BranchMatches)}/{Interlocked.Read(ref solver.BranchChecks)}, {solver.ArchiveStatus()}, heap {GC.GetTotalMemory(false) >> 20} MB, ws {Environment.WorkingSet >> 20} MB");
                 lastRuns = runs; lastTicks = ticks; lastSeconds = s;
-                if (++beats % 6 == 0) SaveMemory(archiveFile, solver.Export(5000));
+                if (++beats % 6 == 0 && archive) SaveMemory(archiveFile, solver.Export(5000));
             }
-            SaveMemory(archiveFile, solver.Export(10000));
+            if (archive) SaveMemory(archiveFile, solver.Export(10000));
             solver.Stop();
+            foreach (Thread t in workers) t.Join(60000);
             humanize?.Finish();
             Console.WriteLine("Done. Best " + solver.Shared.Time.ToString("0.00", CultureInfo.InvariantCulture) + "s");
+            lock (solver.Shared) best = solver.Shared.Inputs;
             return 0;
         }
 

@@ -123,6 +123,12 @@ namespace IGTAP.EngineSim.Cli
                 for (int i = 0; i < args.Length; i++)
                 {
                     if (args[i] == "--minutes") { i++; continue; }
+                    if (args[i] == "--whole-minutes")
+                    {
+                        rest.AddRange(new[] { "--whole-minutes", (Solve.Option(args, "--whole-minutes", 0.0) / 2).ToString(CultureInfo.InvariantCulture) });
+                        i++;
+                        continue;
+                    }
                     rest.Add(args[i]);
                 }
                 // Each way is a try: the run fails only when neither way gets a route (Course 3's farm loops one way).
@@ -186,18 +192,28 @@ namespace IGTAP.EngineSim.Cli
                     plain.AddRange(new[] { "--stall-minutes", Math.Min(5.0, Solve.Option(args, "--minutes", 60.0) / 2).ToString(CultureInfo.InvariantCulture) });
                 return Solve.Run(plain.ToArray());
             }
+            double total = Solve.Option(args, "--minutes", 60.0);
+            // The whole-route search first, as a target with no route of its own gets it on every Improve (Solver.cs CourseSolveArgs):
+            // the loop's windows judge a find at a waypoint and lose most of them at the merge, where the plain solve joins an earlier
+            // arrival at a state cell onto the best's own inputs and judges the whole course (enginesim/README.md, "Course --auto").
+            if (run.Human == null && run.WaypointsFile == null && !args.Contains("--focus") && !args.Contains("--no-whole"))
+            {
+                List<InputTick> whole = WholeRoute(run, args, args.Contains("--fresh") ? null : runFile);
+                CourseResult wholeResult = whole == null ? null : PlayCourse(run, whole);
+                if (wholeResult != null && wholeResult.Finished && !wholeResult.OffPath && !finishing.Any(p => p.inputs.SequenceEqual(whole))) finishing.Add((WholeHow, whole, wholeResult));
+            }
             // --other-ways: other ways than the known one first, a quarter of the minutes, once per known route (the loop's waypoints
             // follow its best's way). Off by default: on tree27to10 `WJ_DS_DJ_BS` it found none in 15 minutes.
             if (run.Human == null && run.WaypointsFile == null && args.Contains("--other-ways"))
             {
                 var known = run.Timing == "record" ? finishing.OrderBy(p => p.result.Time).ThenBy(p => p.result.RunTicks).First()
                     : finishing.OrderBy(p => p.result.RunTicks).ThenBy(p => p.result.Time).First();
-                double minutes = Solve.Option(args, "--minutes", 60.0);
-                foreach (List<InputTick> way in OtherWays(trace, header, rules, known.inputs, Solve.Option(args, "--threads", Environment.ProcessorCount), minutes / 4))
+                foreach (List<InputTick> way in OtherWays(trace, header, rules, known.inputs, Solve.Option(args, "--threads", Environment.ProcessorCount), total / 4))
                     finishing.Add(("another way", way, PlayCourse(run, way)));
-                double left = Math.Max(.25, minutes - run.Clock.Elapsed.TotalMinutes);
-                args = args.Select((a, i) => i > 0 && args[i - 1] == "--minutes" ? left.ToString(CultureInfo.InvariantCulture) : a).ToArray();
             }
+            double left = Math.Max(.25, total - run.Clock.Elapsed.TotalMinutes);
+            args = args.Where((a, i) => a != "--minutes" && (i == 0 || args[i - 1] != "--minutes"))
+                .Concat(new[] { "--minutes", left.ToString(CultureInfo.InvariantCulture) }).ToArray();
             var best = run.Timing == "record" ? finishing.OrderBy(p => p.result.Time).ThenBy(p => p.result.RunTicks).First()
                 : finishing.OrderBy(p => p.result.RunTicks).ThenBy(p => p.result.Time).First();
             // The best the loop starts from is a kept best too: the loop writes only what it improves on (CourseCommitted), so a seed
@@ -211,6 +227,7 @@ namespace IGTAP.EngineSim.Cli
             run.Goals = CourseWaypoints.Build(trace, best.inputs, options).Goals;
             TimerGoal = 0;
             LoopTiming = false;
+            TickTiming = true;
             if (options.Record)
             {
                 TimerGoal = run.Goals.FindIndex(g => g.kind == FullTasGoal.Start && g.course == course) + 1;
@@ -280,6 +297,7 @@ namespace IGTAP.EngineSim.Cli
             run.Goals = CourseWaypoints.Build(run.Trace, guide.inputs, options).Goals;
             TimerGoal = run.Goals.FindIndex(g => g.kind == FullTasGoal.Start && g.course == run.Course) + 1;
             LoopTiming = false;
+            TickTiming = true;
             string synthetic = WriteCourseTrace(run, dir, Digital(guide.inputs));
             Solve.CourseRuns[run.Name] = run.Rules;
             double minutes = Solve.Option(args, "--minutes", 60.0);
@@ -482,6 +500,7 @@ namespace IGTAP.EngineSim.Cli
             Solve.CourseRuns[name] = path;
             TimerGoal = 0;
             LoopTiming = false;
+            TickTiming = true;
             var args = new List<string> { synthetic, "--unsolved", "--no-submit", "--threads", threads.ToString(CultureInfo.InvariantCulture),
                 "--minutes", minutes.ToString(CultureInfo.InvariantCulture), "--window-minutes", windowMinutes.ToString(CultureInfo.InvariantCulture) };
             if (fresh) args.Add("--fresh");
@@ -504,12 +523,14 @@ namespace IGTAP.EngineSim.Cli
             {
                 string a = args[i];
                 if (a == "--seed" || a == "--waypoints-out" || a == "--log-json" || a == "--optional" || a == "--no-optional" || a == "--via" || a == "--avoid"
-                    || a == "--stall-minutes" || a == "--rng" || a == "--tech-cache" || a == "--tech-dir" || a == "--guide-weight" || a == "--path-name")
+                    || a == "--stall-minutes" || a == "--rng" || a == "--tech-cache" || a == "--tech-dir" || a == "--guide-weight" || a == "--path-name"
+                    || a == "--whole-minutes")
                 {
                     i++;
                     continue;
                 }
-                if (a == "--auto" || a == "--farm" || a == "--other-ways" || a == "--no-submit" || a == "--no-humanize" || a == "--no-tech-grafts" || a == "--guide" || a == "--plan") continue;
+                if (a == "--auto" || a == "--farm" || a == "--other-ways" || a == "--no-submit" || a == "--no-humanize" || a == "--no-tech-grafts" || a == "--guide" || a == "--plan"
+                    || a == "--no-whole") continue;
                 fullArgs.Add(a);
             }
             return fullArgs;
@@ -723,14 +744,59 @@ namespace IGTAP.EngineSim.Cli
             Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] offline {run.Human} best {text} (time {c.Time:0.00}s) via {how} ({inputs.Count} ticks) -> {Path.GetFileName(file)}");
         }
 
+        const string WholeHow = "the whole-route search";
+
         /// <summary>
-        /// The route a run starts from, written like a kept best. Not the last --auto best (the loop wrote it when it kept it), and
-        /// not a route whose file is already there, waiting or judged (the same inputs and time: a rerun writes nothing twice).
-        /// The plugin judges a file only when it ties or beats the saved route, so a slower start is moved to judged\ unjudged.
+        /// The whole-route search (Solve.Run, the plain solve) on the course: seeded with the trace's route, every --seed (another
+        /// category's or tree level's route that dies here gives its cells too) and the loop's run file; for --whole-minutes (half the
+        /// minutes), ended once it goes min(5, half that) minutes without a faster route. No archive read or written, so each Improve
+        /// searches as a target's first does and the target's archive is left as it is. Its bests go to offline-best as a plain
+        /// solve writes them, judged after the session with the loop's. Returns its best (null: none, or it failed).
+        /// </summary>
+        static List<InputTick> WholeRoute(CourseRun run, string[] args, string runFile)
+        {
+            double total = Solve.Option(args, "--minutes", 60.0), budget = Solve.Option(args, "--whole-minutes", total / 2);
+            if (budget <= 0) return null;
+            var plain = new List<string>();
+            for (int i = 0; i < args.Length; i++)
+            {
+                string a = args[i];
+                if (a == "--focus" || a == "--class" || a == "--minutes" || a == "--whole-minutes" || a == "--stall-minutes" || a == "--log-json") { i++; continue; }
+                if (a == "--auto" || a == "--farm" || a == "--other-ways" || a == "--no-whole") continue;
+                plain.Add(a);
+            }
+            plain.AddRange(new[] { "--no-archive", "--no-seed-files", "--no-submit", "--no-first-finish", "--minutes", budget.ToString(CultureInfo.InvariantCulture),
+                "--stall-minutes", Math.Min(5.0, budget / 2).ToString(CultureInfo.InvariantCulture) });
+            if (runFile != null && File.Exists(runFile)) plain.AddRange(new[] { "--seed", runFile });
+            Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] --auto: the whole-route search first, for {budget:0.##} min at most");
+            // Solve.Run turns the distance field on for a guided rule; the loop's windows read it in their goal distance.
+            bool guided = DistanceField.Enabled;
+            try
+            {
+                Solve.Run(plain.ToArray(), out List<InputTick> best);
+                return best;
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] --auto: the whole-route search failed ({ex.GetBaseException().Message}); the loop goes on without it");
+                return null;
+            }
+            finally
+            {
+                DistanceField.Enabled = guided;
+                GC.Collect();
+            }
+        }
+
+        /// <summary>
+        /// The route a run starts from, written like a kept best. Not the last --auto best (the loop wrote it when it kept it), nor
+        /// the whole-route search's (it wrote its own), and not a route whose file is already there, waiting or judged (the same
+        /// inputs and time: a rerun writes nothing twice). The plugin judges a file only when it ties or beats the saved route, so a
+        /// slower start is moved to judged\ unjudged.
         /// </summary>
         static void WriteStartingBest(CourseRun run, string how, List<InputTick> inputs, CourseResult c)
         {
-            if (how.StartsWith(AutoRunDir, StringComparison.Ordinal)) return;
+            if (how.StartsWith(AutoRunDir, StringComparison.Ordinal) || how == WholeHow) return;
             var (file, text) = RecordBestFile(run, inputs, c);
             foreach (string folder in new[] { Path.GetDirectoryName(file), Path.Combine(Path.GetDirectoryName(file), "judged") })
                 if (File.Exists(Path.Combine(folder, Path.GetFileName(file))) && File.ReadAllText(Path.Combine(folder, Path.GetFileName(file))) == text) return;

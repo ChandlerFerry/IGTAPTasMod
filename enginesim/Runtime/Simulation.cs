@@ -354,11 +354,12 @@ namespace IGTAP.EngineSim
         {
             if (!reached || !Goals.Done || !Engine.IsRunning) return;
             // A Full-TAS run's time is live time: its ticks and the frames it stood still in (README ### Rules 31).
-            if (!StrictBuys) Engine.CompleteFromGame(MacroEngine.FullTasFinishReason, MacroEngine.LiveSeconds(Engine.PhysicsTicks, Engine.HeldFrames));
+            long held = TickTimed ? 0 : Engine.HeldFrames;
+            if (!StrictBuys) Engine.CompleteFromGame(MacroEngine.FullTasFinishReason, MacroEngine.LiveSeconds(Engine.PhysicsTicks, held));
             else if (_finishIn < 0)
             {
                 _finishIn = StrictFinishTicks;
-                _finishTimeAtGoal = MacroEngine.LiveSeconds(Engine.PhysicsTicks, Engine.HeldFrames);
+                _finishTimeAtGoal = MacroEngine.LiveSeconds(Engine.PhysicsTicks, held);
             }
         }
 
@@ -368,6 +369,9 @@ namespace IGTAP.EngineSim
         /// (fulltas.json "buys": "loose", <see cref="FullTasTracker.LooseBuys"/>): there any purchase stands.
         /// </summary>
         internal bool StrictBuys;
+        /// <summary>A course run's goals timed in physics ticks, as its record (`solve --auto`, FullTas.TickTiming): the frames it
+        /// stood still in don't count in its finish time, which a search ranks its finds by.</summary>
+        internal bool TickTimed;
         /// <summary>Every purchase of a Full-TAS run (the box's path), goal or not: `fulltas --check` lists them.</summary>
         internal Action<string> Purchased;
 

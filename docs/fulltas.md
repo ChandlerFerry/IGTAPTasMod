@@ -1148,7 +1148,9 @@ baseline). The default is set by the measurements below, and has every part exce
    the library's gains come from the two things around it:
 
    - **Extend to the end.** A window find is spliced with the old tail and replayed to the end; a complete, faster run is
-     kept (the fresh check still replays it on a new simulation).
+     kept (the fresh check still replays it on a new simulation). The finds merged are the window's last five (16 in a
+     class) and its first two: a window's first finds are mostly its splices onto the best's own inputs, which arrive at
+     its last goal as the best does, where the last ones are the fastest arrivals, often in a state the old tail can't use.
    - **The wait fix.** A spliced run that is ahead and then misses a later buy (its Cash comes on the old route's ticks, and
      the clones' rolls re-time) gets w idle ticks before the quick restart ahead of that goal, the fewest that get it past
      (binary search from a snapshot at the restart); the restart puts the player back as the old route had it. Up to 6
@@ -1159,6 +1161,23 @@ baseline). The default is set by the measurements below, and has every part exce
    - **Route-sync against every library run.** When the tail still breaks: wherever after the change the player is exactly
      as on another library run (the player key), that run's inputs from there; then, at the first goals after the change,
      the tails other complete runs play from that goal (at most 16 replays). Only then the goal-by-goal repair.
+   - **The join** (`FullTasAutoJoin.cs`). Then, and also when the cost-to-go calls every broken find hopeless (it judges a
+     find's end state; a join keeps only the part before it): each find is joined onto the best inside the window, as the
+     plain solve's splices join an earlier arrival onto the best's inputs. Wherever the find is in a goal-mode cell
+     (`OfflineSolver.GoalKey`: its 48 u place, air jumps, dashes and wall jumps left, momentum, goals reached) that the best
+     first reaches at least 2 physics ticks later, moving alike (velocity within 300 u/s each way, the same dash), the
+     find's inputs to there and the best's from its first arrival there are a candidate (the seam pressed and released as a
+     splice's, `OfflineSolver.Seam`; never two quick restarts in a row). Up to 4 a find, 24 inputs apart, the finds in turn,
+     replayed from the start: 12 a merge on a course, 4 on a Full-TAS run (each a whole-run replay); none tried on this best
+     before. The first ahead of the best is kept; else the one that reached the most goals gets the wait fix. Each merge
+     with candidates logs `auto join: ...` and a `join` line in the jsonl (finds, candidates, replayed, kept, gain).
+     Why: across every recorded `--auto` run to 2026-10-05, window pulls found faster arrivals that the merge then lost far
+     more often than it kept them (courses 395 lost against 57 kept, Full-TAS 734 against 69; 237 and 476 distinct finds);
+     the merge's joins were exact states only (route-sync, the library) or goal boundaries (combine). Alike is enough
+     often, not always: on tree27to10 `WJ_DS_DJ_BS` (21.70) the 19.20 route's first 475 inputs as a find give a join at its
+     input 374 onto 21.70's 453 that finishes in 20.10, where the seams nearer the find's end (107-118 ticks ahead) all
+     break, and so do seams with equal velocities 2-60 ticks ahead earlier on. `join-check TRACE BEST FIND` lists a find's
+     joins on a course trace and replays each (no search).
    - **Tail windows** (`tail`). A broken splice still ahead of the best at its last goal p re-searches goals p+1..p+3 as one
      window from its own state there (every thread, `--tail-minutes`, default `--window-minutes`; seeds: the best's and its
      own inputs from there), scored at goal p+3 against the best; each find is spliced with the best's tail, replayed, wait-fixed

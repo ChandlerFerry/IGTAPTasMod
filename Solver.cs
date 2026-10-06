@@ -1298,8 +1298,12 @@ namespace IGTAPTasMod
             Match m = SolveProgress.Match(line);
             if (m.Success)
             {
-                _solveRuns = long.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture);
-                _solveFinishes = long.Parse(m.Groups[4].Value, CultureInfo.InvariantCulture);
+                // Improve counts its pulls as runs: its whole-route search's runs don't go in.
+                if (!_solveAuto)
+                {
+                    _solveRuns = long.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture);
+                    _solveFinishes = long.Parse(m.Groups[4].Value, CultureInfo.InvariantCulture);
+                }
                 _solverSpeed = m.Groups[1].Value + " runs/s, " + m.Groups[2].Value + " ticks/s offline";
                 return;
             }

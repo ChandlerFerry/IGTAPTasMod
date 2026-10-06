@@ -268,6 +268,9 @@ namespace IGTAP.EngineSim.Cli
         /// human class may rank ahead.</summary>
         int MergeFinds => Classed ? 16 : 5;
 
+        /// <summary>A window's first finds a merge splices too: its splices onto the best's own inputs (MergeAuto).</summary>
+        const int FirstFinds = 2;
+
         /// <summary>A route's class, score (with its difficulty term) and difficulty and spans in its run file, after the run file's
         /// own fields.</summary>
         string RunJson(Route r, object run)
