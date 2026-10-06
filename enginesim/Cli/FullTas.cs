@@ -397,7 +397,7 @@ namespace IGTAP.EngineSim.Cli
                 }
                 if (reached < _goals && (_unsolved || reached == 0))
                 {
-                    if (SeedFrontier() || GraftKnownTails()) continue;
+                    if (SeedFrontier() || GraftKnownTails() || TransplantFrontier()) continue;
                     // A course run's finish is its lap's end, reached as a waypoint is: loop pieces are Full-TAS laps from a restart.
                     if (IsLoop(reached) && _course == null)
                     {

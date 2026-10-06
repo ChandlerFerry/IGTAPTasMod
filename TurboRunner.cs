@@ -673,8 +673,8 @@ namespace IGTAPTasMod
             /// (floor(dueIn / fixedDeltaTime) is that tick; whole ticks don't all survive the float round trip).
             /// </summary>
             public float? atomGridDueIn, atomEnabledAt, atomLastCall, atomTimeNow;
-            /// <summary>For the trace start: whether the machine's PlayerPrefs hold "OpenA2Door" (read only), which the atom box's
-            /// first buy reads (upgradeBox.cs:644) and every atom buy writes (:648). A restore can't take it back.</summary>
+            /// <summary>Whether the machine's PlayerPrefs hold "OpenA2Door", which the atom box's first buy reads (upgradeBox.cs:644)
+            /// and every atom buy writes (:648); the trace start's, and a restore puts it back (SavestateService.SetAtomDoorKey).</summary>
             public bool openA2Door;
         }
 
@@ -906,7 +906,7 @@ namespace IGTAPTasMod
                 atomEnabledAt = raw && !float.IsNegativeInfinity(_atomEnabledAt) ? _atomEnabledAt : (float?)null,
                 atomLastCall = raw && !float.IsNegativeInfinity(_atomLastCall) ? _atomLastCall : (float?)null,
                 atomTimeNow = raw ? Time.time : (float?)null,
-                openA2Door = PlayerPrefs.HasKey("OpenA2Door"),
+                openA2Door = PlayerPrefs.HasKey(SavestateService.AtomDoorKey),
                 visitedTeleporters = Singleton<globalStats>.Instance.visitedTeleporters == null ? null : new List<int>(Singleton<globalStats>.Instance.visitedTeleporters),
                 locals = Array.ConvertAll(locals, l => (l, l.localUpgradeDict == null ? null : new Dictionary<localUpgrades.localUpgradeSet, double>(l.localUpgradeDict))),
                 clones = Array.ConvertAll(clones, c =>
@@ -921,6 +921,7 @@ namespace IGTAPTasMod
         {
             RestoreDictionary(globalStats.currencyLookup, e.currencies);
             RestoreDictionary(globalStats.globalUpgradeDict, e.globalUpgrades);
+            SavestateService.SetAtomDoorKey(e.openA2Door);
             if (e.scene != null) RestoreScene(e.scene);
             foreach (var (box, fields) in e.boxes) if (box != null) RestoreFields(box, fields);
             foreach (var (script, upgrades) in e.locals) if (script != null) RestoreDictionary(script.localUpgradeDict, upgrades);
@@ -1177,6 +1178,24 @@ namespace IGTAPTasMod
                 if (!origin.UpdateAllScenes && scene != SceneManager.GetActiveScene() || !scene.isLoaded) continue;
                 foreach (GameObject root in scene.GetRootGameObjects()) PristineRoots[root.transform] = root.transform.position;
             }
+            RecordPristineStatics();
+        }
+
+        /// <summary>Every static body under a recorded root at its local position as loaded (<see cref="RecordPristineRoots"/>).</summary>
+        static readonly Dictionary<Transform, Vector3> PristineStatics = new Dictionary<Transform, Vector3>();
+
+        /// <summary>
+        /// A static body's transform drifts by a float step now and then (the moss tilemaps under biggerGrid: local x -16184,
+        /// -16183.998, -16183.9961 as the session ran), though nothing in the game moves it: the start of a later run then
+        /// differs by that step, and a bonus13 route that grazed the moss finished from one start and hit it from another.
+        /// Recorded with the roots, put back with them (<see cref="PutCanonicalOrigin"/>).
+        /// </summary>
+        static void RecordPristineStatics()
+        {
+            PristineStatics.Clear();
+            foreach (Transform root in PristineRoots.Keys)
+                foreach (Rigidbody2D body in root.GetComponentsInChildren<Rigidbody2D>(true))
+                    if (body.bodyType == RigidbodyType2D.Static && body.transform != root) PristineStatics[body.transform] = body.transform.localPosition;
         }
 
         /// <summary>
@@ -1201,6 +1220,7 @@ namespace IGTAPTasMod
                 for (int i = 0; i < SceneManager.sceneCount; i++)
                     foreach (GameObject root in SceneManager.GetSceneAt(i).GetRootGameObjects())
                         PristineRoots[root.transform] = root.transform.position - origin.currentOrigin;
+                RecordPristineStatics();
             }
             Vector3 target = -reference;
             PutOrigin(target);
@@ -1209,6 +1229,9 @@ namespace IGTAPTasMod
                 Vector3 canonical = root.Value - reference;
                 if ((root.Key.position - canonical).sqrMagnitude < 1f) root.Key.position = canonical;
             }
+            foreach (KeyValuePair<Transform, Vector3> body in PristineStatics)
+                if (body.Key != null && body.Key.localPosition != body.Value && (body.Key.localPosition - body.Value).sqrMagnitude < 1f)
+                    body.Key.localPosition = body.Value;
             origin.currentOrigin = target;
         }
 

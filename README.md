@@ -42,21 +42,31 @@
     it's unset: Courses 1–5 and the Area 1 transitions stop at `WJ_DS_DJ`.
 19. Outside the ladder, every course, bonus and transition runs `WJ_DS_BS_ZIP_OM`, `WJ_DS2_BS_ZIP_OM` and
     `WJ_DS_DJ_BS_ORB_ZIP_OM`. `WJ_DS_DJ_BS_ORB` and `WJ_DS_DJ_BS_ZIP_OM` run only where refill orbs are in reach,
-    `WJ_DS_DJ_BS_ZIP` only where zip movers are (the targets are listed in [`Categories.cs`](Categories.cs)):
-    anywhere else they play exactly as `WJ_DS_DJ_BS`, and `WJ_DS_DJ_BS_ZIP_OM` as `WJ_DS_DJ_BS_ORB_ZIP_OM`. Bonus 4's end
-    needs the zip movers: it runs only the categories with `ZIP`, none of its ladder. Bonuses 17–21
+    `WJ_DS_DJ_BS_ZIP` only where zip movers are (the targets are listed in [`Categories.cs`](Categories.cs); the tree transitions count as bonus11, whose start they share):
+    anywhere else they play exactly as `WJ_DS_DJ_BS`, and `WJ_DS_DJ_BS_ZIP_OM` as `WJ_DS_DJ_BS_ORB_ZIP_OM`. The ends of Bonuses 4 and 12
+    need the zip movers: they run only the categories with `ZIP`, none of their ladder. Bonuses 17–21
     and 23 run no category: their end is an unlock box (refill orbs, clone dust, buy max, the 1x and ∞x Start a VMAN
     speedrun boxes, block swap on dash), not a bonus stretch.
 20. Courses 6–10 are Area 2 courses: a start gate is on only while its zone is loaded (Courses 1–5 zone 1, 6–10
     zone 2).
 21. Every quick restart onto a course, bonus or transition loads the zone of the start gate or checkpoint nearest its
-    start the game's way (`ZoneLoader`, as the zone activators do); the breaker plays no part. Courses 6–15 start as if the free first atom had been bought: the atom
+    start the game's way (`ZoneLoader`, as the zone activators do); the breaker plays no part. Courses 6–15 and bonus 11 start as if the free first atom had been bought: the atom
     room's door (`AtomColliderArea/Door`) is open, as a game load opens it with PlayerPrefs `OpenA2Door` (the atom box's
     `doorToOpen.JumpToNextState()`), without buying the atom, its prestige or any PlayerPrefs write (`CourseStart.OpenAtomDoor`,
     in the plugin's category start and the offline engine's course trace load). Course 9's end is reachable only through it.
     On a machine without the `OpenA2Door` key, the atom box's first buy then shuts the door: the game's first-buy branch
     (upgradeBox.cs:644-646) applied to a state a real game never has (a load opens the door only with the key or the box
     bought, upgradeBox.cs:264).
+    A tree transition (`tree<L>to<C>`, courses.json `tree`: from bonus11's checkpoint by the atom room, its door open, to
+    Course C's start checkpoint, its reset point, reached as a transition reaches a bonus, not its start gate) sets The
+    Tree at level L the game's load way at every quick restart onto it (`TreeLevel`: the plant and the first L tree boxes
+    in segment order bought once, `TimesUsed` and `instaGrowSegments` as `TreeController.load`, a bought-out box
+    deactivated as its `Start`, the segments above off as `Awake` leaves them), the Area 2 door open from level 8, the
+    Zone 2→1 path open and Area 1 overgrown from 23; no unlock is written. The save's tree and path are put back before a
+    save. Courses 7, 9 and 10: levels whose box changes nothing in the world are one target, by the highest (0, 1, 2, 3,
+    5, 6, 7, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20, 22, 27). Course 6 keeps only level 0 (`tree0to6`): its start is
+    accessible on Course 0, so `tree1to6` through `tree27to6` are dropped. Course 8 keeps only level 10 (`tree10to8`);
+    its other tree targets are dropped.
 22. Their lowest category is `WJ_DS_DJ_BS`.
 23. Courses 11–15 are Courses 1–5 with Area 1 overgrown: the game's own Course 1–5 gates and timer on the overgrown
     terrain (spikes, moss, zip movers) and boxes (no movement, prestige, breaker-light or unlock-prestige box in Courses
@@ -151,7 +161,7 @@
 2. Relaxes rule 39. The interpolation/fixed-clock patch (rules 7–9), the Vman credits' crash (below) and playback's
    wall-clock reads (the dash freeze, the camera's easing and `ObjectBobber` count the fixed clock's frame instead of
    the wall clock, [`enginesim/README.md`](enginesim/README.md#probe)) change game logic; the other places a patch does are
-   the exceptions below that relax rule 39 (3, 4, 5, 10, 11 and 12), each named there.
+   the exceptions below that relax rule 39 (3, 4, 5, 10, 11, 12 and 13), each named there.
 3. Relaxes rule 39. The one other patch: a Vman speedrun's credits (`FakeCreditsControlScript.IE_DoVmanCredits`, the
    `VMAN` run's last goal) crash the game on purpose (`Utils.ForceCrash`) after writing PlayerPrefs
    `VmanCoursesCompleteTemp`; the plugin drops both calls. Both come after the goal, so no route sees them.
@@ -165,7 +175,8 @@
    unlocks in the settled new game. It sets no checkpoint: a quick restart before a real checkpoint (or a course reset
    point) ends the run. With `rebaseAt` it also rebases the world around that point once the restored player rests, as
    FloatingOrigin would have with the player there, so the run's next rebase happens where the test needs it. It tests
-   a stretch; it is not a whole-game route.
+   a stretch; it is not a whole-game route. With `tree` it also sets The Tree at that level right after the restore, as
+   rule 21 sets a tree transition's (Area 1 overgrown and the path open from 23), and loads the zone at the player.
 7. Relaxes rule 33. The one exception to "no teleports" for a lab: a lab map (`labmaps/<id>.json`,
    [`enginesim/README.md`](enginesim/README.md#lab-maps)) is a custom level piece injected additively into empty map
    space (a `lab space` region, far from routes) to demonstrate one tech exactly, with its own start and finish box. It
@@ -203,6 +214,13 @@
     its Steam and text parts are presentation, left to Unity. 1x is untouched. A course's `Start` draws too
     (`InvokeRepeating("UpdateReward", Random.Range(0, 5), 5)`), but no run wakes a course: a zone load in a run (a zone
     activator's `ZoneLoader.IE_Load`, in its tick's third rendered frame) turns zones on and off, never the `Courses` root.
+13. Relaxes rule 39. The one PlayerPrefs write: the machine's `OpenA2Door` key, which outlives saves (only the pause menu's
+    delete save clears it, pauseMenuScript.cs:360). The atom box's `Start` opens the atom room's door when it is set
+    (upgradeBox.cs:264), its first buy opens the door only when it isn't (:644) and every buy sets it (:648), so a new game
+    on a machine that ever bought an atom starts with that door open. The TAS holds the key as state
+    (`SavestateService.SetAtomDoorKey`): a Full-TAS new game loads without it (a savestate start: with the savestate's),
+    a turbo restore puts its snapshot's back, and a savestate keeps it and puts it back. Category starts leave it as it is
+    (21).
 
 Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run with goals:
 [`docs/fulltas.md`](docs/fulltas.md). What a human can put into the game, and how routes match it:
@@ -220,7 +238,7 @@ Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run wit
 | `EngineSimBridge.cs` | Trace, submit and raycast endpoints for the offline engine; read-only ghost-compare and humanize-slack endpoints for the studio. |
 | `enginesim/` | The game's own code running offline for search. See [`enginesim/README.md`](enginesim/README.md). |
 | `FullTas.cs`, `FullTasPlugin.cs`, `FullTasPlugin.*.cs` | Full-TAS: goals (shared with `enginesim`), gate, trace, playback, solve. `FullTasPlugin.cs` holds the model & state; `FullTasPlugin.Goals.cs`, `FullTasPlugin.Trace.cs`, `FullTasPlugin.Playback.cs`, `FullTasPlugin.Solve.cs`, `FullTasPlugin.Session.cs`, `FullTasPlugin.Http.cs` the rest. |
-| `TechCatalog.cs`, `techs.json` | The studio's Tech tab: every named tech (glitchless, NMG, major), who named it, and its labs (`labmaps/`), each with a demo to play or walk and the lab to load by hand. `techs.json` seeds the config folder's `techs.json`, which the tab edits. |
+| `TechCatalog.cs`, `techs.json` | The studio's Tech tab: every named tech (glitchless, NMG, major) and its labs (`labmaps/`), each with a demo to play or walk and the lab to load by hand. `techs.json` seeds the config folder's `techs.json`, which the tab edits. |
 | `ProbeRunner.cs` | 1x probes: exact inputs at normal speed from a category start or savestate, logged every tick and rendered frame (`enginesim/README.md#probe`). |
 | `TasPlugin.Editor.cs`, `TasPlugin.Share.cs`, `TasMarkup.cs` | The TAS editor (studio **TAS** tab, `/api/tas/*`): frame advance, rewind and tick editing on the live game, re-recording, suggestions, sharing, and routes as text ([`docs/tas-markup.md`](docs/tas-markup.md)). |
 | `web/` | Next.js studio, served by the plugin. |

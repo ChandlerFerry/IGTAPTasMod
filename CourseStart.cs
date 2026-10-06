@@ -83,11 +83,15 @@ namespace IGTAPTasMod
             MoverPositions = typeof(PlatformMover).GetField("Positions", Fields);
 
         /// <summary>
-        /// Courses 6-15 run as if the atom room's door were open (README ### Rules 21): the free first atom (the
+        /// Courses 6-15 and bonus 11 run as if the atom room's door were open (README ### Rules 21): the free first atom (the
         /// <c>AtomUpgrade</c> box, <c>spawnNewAtom</c>) bought, without its purchase or its atom prestige. Course 9's end is
-        /// reachable only through that door. <paramref name="course"/> is courses.json's id: 11-15 are Courses 1-5 overgrown.
+        /// reachable only through that door. <paramref name="course"/> is courses.json's id: 11-15 are Courses 1-5 overgrown,
+        /// 111 bonus 11 (secret 14, its start the checkpoint by the door).
         /// </summary>
-        public static bool AssumesAtomDoor(int course) { return course >= 6 && course <= 15; }
+        public static bool AssumesAtomDoor(int course) { return course >= 6 && course <= 15 || course == 111 || IsTreeTransition(course); }
+
+        /// <summary>A tree transition (courses.json id 1000 + 10 × level + course): from bonus11's checkpoint by the atom room.</summary>
+        public static bool IsTreeTransition(int course) { return course >= 1000 && course < 2000; }
 
         /// <summary>
         /// The atom room's door opened as a game load opens it once the first atom was bought (PlayerPrefs <c>OpenA2Door</c>
@@ -95,12 +99,22 @@ namespace IGTAPTasMod
         /// <c>doorToOpen.JumpToNextState()</c>, which takes the door from its first stop to the next (index 1, the stop's
         /// local position, 380 up). A door already there is left alone. Whether the door moved.
         /// </summary>
-        public static bool OpenAtomDoor(IEnumerable<upgradeBox> boxes)
+        public static bool OpenAtomDoor(IEnumerable<upgradeBox> boxes) { return OpenDoors(boxes, IsAtomBox); }
+
+        /// <summary>The Area 2 door (TreePart7's box, <c>area2DoorOpen</c>) open, as the bought box's Start leaves it
+        /// (upgradeBox.cs:260): the tree transitions from level 8.</summary>
+        public static bool OpenArea2Door(IEnumerable<upgradeBox> boxes)
+        {
+            return OpenDoors(boxes, b => b != null && b.globalUpgrade == globalStats.globalUpgradeSet.area2DoorOpen
+                && DoorToOpen.GetValue(b) is PlatformMover door && door != null);
+        }
+
+        static bool OpenDoors(IEnumerable<upgradeBox> boxes, System.Func<upgradeBox, bool> which)
         {
             bool moved = false;
             foreach (upgradeBox box in boxes)
             {
-                if (!IsAtomBox(box) || !(DoorToOpen.GetValue(box) is PlatformMover door)
+                if (!which(box) || !(DoorToOpen.GetValue(box) is PlatformMover door)
                     || !(MoverPositions.GetValue(door) is System.Array stops) || stops.Length < 2 || (int)MoverIndex.GetValue(door) != 0) continue;
                 object open = stops.GetValue(1);
                 MoverIndex.SetValue(door, 1);

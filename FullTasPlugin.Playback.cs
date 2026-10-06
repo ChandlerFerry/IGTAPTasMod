@@ -24,7 +24,7 @@ namespace IGTAPTasMod
             if (_fullTasPending != null) throw new InvalidOperationException("Busy: " + _fullTasPending.what + ".");
             if (route == null) throw new InvalidOperationException("Full-TAS run " + run.name + " has no route yet.");
             var tracker = NewFullTasTracker(run);
-            StartNewGame(null, run.Vman, run.savestate, run.RebaseAt);
+            StartNewGame(null, run.Vman, run.savestate, run.RebaseAt, run.tree);
             EnsureGameUnpaused();
             FullTasOffline offline = FullTasOfflineBest(run.name, tracker.Goals.Select(g => g.label).ToList());
             int expected = expectedGoals ?? (IsTechDemo(route) || route.id == ProbeRouteId ? 0 : FullTasSavedRoute(run.name, route) ? tracker.Goals.Length : offline?.reached ?? 0);

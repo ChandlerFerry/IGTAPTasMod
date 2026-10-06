@@ -87,7 +87,7 @@ namespace IGTAPTasMod
             // the wrong world, and a good route would not finish. The start is captured again then, which loads the course's world.
             if (Truthy(body, "freshStart")) _startStates.Clear();
             _startKey = key;
-            if (!ZoneReady(_solverTarget) || !Area1StateReady(_solverTarget)) _startStates.Remove(key);
+            if (!ZoneReady(_solverTarget) || !Area1StateReady(_solverTarget) || !TreeReady(_solverTarget)) _startStates.Remove(key);
             _startFresh = !_startStates.TryGetValue(key, out TurboRunner.Snapshot cached);
             if (_startFresh)
             {

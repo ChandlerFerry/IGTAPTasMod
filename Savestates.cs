@@ -76,6 +76,9 @@ namespace IGTAPTasMod
         public float rebaseAtY;
         public Dictionary<string, SnapshotValue> movementFields = new Dictionary<string, SnapshotValue>();
         public Dictionary<string, SnapshotValue> bodyFields = new Dictionary<string, SnapshotValue>();
+        /// <summary>Whether the machine's PlayerPrefs held "OpenA2Door" (<see cref="SavestateService.SetAtomDoorKey"/>); a restore
+        /// puts it back. Null in savestates from before it: a restore leaves the key, a new game's start takes it as absent.</summary>
+        public bool? openA2Door;
     }
 
     public sealed class SavestateResult
@@ -98,6 +101,20 @@ namespace IGTAPTasMod
             "simulated"
         };
 
+        internal const string AtomDoorKey = "OpenA2Door";
+
+        /// <summary>
+        /// The machine's PlayerPrefs "OpenA2Door" (README ### Rules, exception 13): the atom box's Start opens the atom room's
+        /// door when it is set (upgradeBox.cs:264), its first buy opens the door only when it isn't (:644) and every buy sets it
+        /// (:648). It outlives saves (only the pause menu's delete save clears it, pauseMenuScript.cs:360), so the TAS holds it
+        /// as part of the state: a new game starts without it, a turbo snapshot and a savestate put theirs back.
+        /// </summary>
+        internal static void SetAtomDoorKey(bool on)
+        {
+            if (PlayerPrefs.HasKey(AtomDoorKey) == on) return;
+            if (on) PlayerPrefs.SetInt(AtomDoorKey, 1); else PlayerPrefs.DeleteKey(AtomDoorKey);
+        }
+
         public static Savestate Capture(Movement movement, string name)
         {
             if (movement == null) throw new ArgumentNullException(nameof(movement));
@@ -115,6 +132,7 @@ namespace IGTAPTasMod
             result.originX = origin.x;
             result.originY = origin.y;
             if (movement.cam != null) result.camSize = movement.cam.camSize;
+            result.openA2Door = PlayerPrefs.HasKey(AtomDoorKey);
             CaptureMembers(movement, MovementFieldNames, result.movementFields);
             Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
             if (body != null) CaptureMembers(body, BodyFieldNames, result.bodyFields);
@@ -157,6 +175,7 @@ namespace IGTAPTasMod
             transform.rotation = new Quaternion(savestate.rotationX, savestate.rotationY, savestate.rotationZ, savestate.rotationW);
             transform.localScale = new Vector3(savestate.scaleX, savestate.scaleY, savestate.scaleZ);
             RestoreMembers(movement, savestate.movementFields, TasPlugin.UnlocksLocked);
+            if (savestate.openA2Door.HasValue) SetAtomDoorKey(savestate.openA2Door.Value);
             if (body != null)
             {
                 RestoreMembers(body, savestate.bodyFields, false);

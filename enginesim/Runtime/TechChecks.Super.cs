@@ -189,13 +189,11 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        static int SuperInwallSuper(TechSteps run, int from, int to, SuperInwallKind want, bool refilled)
+        static int SuperInwallSuper(TechSteps run, int from, int to, SuperInwallKind want)
         {
             foreach ((int e, MoveState at) in SuperJumps(run))
             {
-                if (e < from || e > to) continue;
-                if (!SuperInwall(run, e, at, out SuperInwallKind kind, out int landing) || kind != want) continue;
-                if (!refilled || SuperRefilled(run, e, at, landing)) return e;
+                if (e >= from && e <= to && SuperInwall(run, e, at, out SuperInwallKind kind, out _) && kind == want) return e;
             }
             return -1;
         }
@@ -207,43 +205,21 @@ namespace IGTAP.EngineSim
         /// which a standing backwards dash jump on a floor is too: that one has no clip, so it is not this.
         /// </summary>
         [TechCheck("inwall-super")]
-        static int SuperInwallPlain(TechSteps run, int from, int to) => SuperInwallSuper(run, from, to, SuperInwallKind.Plain, false);
+        static int SuperInwallPlain(TechSteps run, int from, int to) => SuperInwallSuper(run, from, to, SuperInwallKind.Plain);
 
         /// <summary>
         /// Inwall reverse super: the clip's ground and a super with the stick against the dash (ReversedSuper): the dash goes the
         /// way the clip left the dot facing, into the wall, and the stick flipped in the freeze sends the momentum away from it.
         /// </summary>
         [TechCheck("inwall-reverse-super")]
-        static int SuperInwallReverse(TechSteps run, int from, int to) => SuperInwallSuper(run, from, to, SuperInwallKind.Reverse, false);
+        static int SuperInwallReverse(TechSteps run, int from, int to) => SuperInwallSuper(run, from, to, SuperInwallKind.Reverse);
 
         /// <summary>
         /// Inwall super into wall: the clip's ground and a plain super (stick with the dash) whose dash and momentum go into the
         /// wall the clip grounded the dot on: the momentum pins the dot to the wall face while it rises.
         /// </summary>
         [TechCheck("inwall-super-into-wall")]
-        static int SuperInwallIntoWall(TechSteps run, int from, int to) => SuperInwallSuper(run, from, to, SuperInwallKind.Into, false);
-
-        /// <summary>
-        /// Infinite mossy blocks stamina: an inwall super into the wall whose clip grounding refilled the abilities: the landing on
-        /// the Ground-tagged wall (touchedSolidGround) put back air jumps, wall jumps or air dashes the dot had spent (a dash that
-        /// starts on the landing step counts the one it spent). The same clip with the abilities full refilled nothing.
-        /// </summary>
-        [TechCheck("infinite-mossy-stamina")]
-        static int SuperMossyStamina(TechSteps run, int from, int to) => SuperInwallSuper(run, from, to, SuperInwallKind.Into, true);
-
-        /// <summary>The abilities went up across the landing step <paramref name="landing"/> (the Super call's state when the
-        /// landing is the super's own step).</summary>
-        static bool SuperRefilled(TechSteps run, int e, MoveState at, int landing)
-        {
-            MoveState pre = SuperBefore(run, landing), post = at;
-            int started = 0;
-            if (landing != e)
-            {
-                post = run.Steps[landing].After;
-                if (post.Dash && post.SinceDash == 0f && !pre.Dash) started = 1;
-            }
-            return post.WallJumps > pre.WallJumps || post.AirJumps > pre.AirJumps || post.AirDashes + started > pre.AirDashes;
-        }
+        static int SuperInwallIntoWall(TechSteps run, int from, int to) => SuperInwallSuper(run, from, to, SuperInwallKind.Into);
 
         // ---- stored superbounce ----
 

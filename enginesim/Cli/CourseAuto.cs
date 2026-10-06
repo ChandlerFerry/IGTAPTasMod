@@ -186,6 +186,18 @@ namespace IGTAP.EngineSim.Cli
                     plain.AddRange(new[] { "--stall-minutes", Math.Min(5.0, Solve.Option(args, "--minutes", 60.0) / 2).ToString(CultureInfo.InvariantCulture) });
                 return Solve.Run(plain.ToArray());
             }
+            // --other-ways: other ways than the known one first, a quarter of the minutes, once per known route (the loop's waypoints
+            // follow its best's way). Off by default: on tree27to10 `WJ_DS_DJ_BS` it found none in 15 minutes.
+            if (run.Human == null && run.WaypointsFile == null && args.Contains("--other-ways"))
+            {
+                var known = run.Timing == "record" ? finishing.OrderBy(p => p.result.Time).ThenBy(p => p.result.RunTicks).First()
+                    : finishing.OrderBy(p => p.result.RunTicks).ThenBy(p => p.result.Time).First();
+                double minutes = Solve.Option(args, "--minutes", 60.0);
+                foreach (List<InputTick> way in OtherWays(trace, header, rules, known.inputs, Solve.Option(args, "--threads", Environment.ProcessorCount), minutes / 4))
+                    finishing.Add(("another way", way, PlayCourse(run, way)));
+                double left = Math.Max(.25, minutes - run.Clock.Elapsed.TotalMinutes);
+                args = args.Select((a, i) => i > 0 && args[i - 1] == "--minutes" ? left.ToString(CultureInfo.InvariantCulture) : a).ToArray();
+            }
             var best = run.Timing == "record" ? finishing.OrderBy(p => p.result.Time).ThenBy(p => p.result.RunTicks).First()
                 : finishing.OrderBy(p => p.result.RunTicks).ThenBy(p => p.result.Time).First();
             // The best the loop starts from is a kept best too: the loop writes only what it improves on (CourseCommitted), so a seed
@@ -295,6 +307,190 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
+        /// A first finish for a target no seed finishes in its own category, from its seeds of other categories: the fastest that
+        /// finishes in its own category's trace (with more unlocks: an omnidash route) gives the way, as waypoints along its path
+        /// (CourseWaypoints, carried to this trace's frame), and the reach windows (FullTas --unsolved, the target's forced path)
+        /// take its inputs on from where they break here, waypoint to waypoint, to the finish. A waypoint the reach doesn't get to
+        /// is dropped and the reach goes on from the one before. A long way is short hops then: tree27to10 `WJ_DS_DJ_BS`, whose
+        /// `ZIP_OM` and `ORB_ZIP_OM` routes climb the same corridor (up the left side to y 6400, along the top, past the
+        /// checkpoint at (25844, 6264), right at y 5800), had no finish from the plain solve in an hour: aimed at the finish, the
+        /// search spreads over the open floor to the right. This is only a first finish, the baseline: OtherWays looks for
+        /// different ones. The route, or null; at most <paramref name="minutes"/>.
+        /// </summary>
+        internal static List<InputTick> FirstFinish(string trace, JsonElement header, OfflineSolver.ForcedPath rules, List<List<InputTick>> seeds,
+            IReadOnlyList<string> seedPaths, int threads, double minutes)
+        {
+            trace = Path.GetFullPath(trace);
+            if (header.TryGetProperty("fulltas", out _)) return null;
+            CourseRun run = Run(trace, header, rules);
+            if (seeds.Any(s => s.Count > 0 && PlayCourse(run, s) is { Finished: true, OffPath: false })) return null;
+            // The guide: the seed of another category that finishes fastest in that category's own trace.
+            string dir = Path.GetDirectoryName(trace);
+            (string trace, List<InputTick> inputs, long ticks, string name)? guide = null;
+            var traces = new Dictionary<string, string>();
+            foreach (string seed in seedPaths)
+            {
+                string name;
+                using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(seed), new JsonDocumentOptions { MaxDepth = 256 }))
+                    name = doc.RootElement.TryGetProperty("name", out JsonElement n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
+                string label = name == null ? null : name.Split(' ')[0];
+                if (label == null || label.IndexOf('_') < 0) continue;
+                string caps = label.Substring(label.IndexOf('_') + 1).Replace("_", "").ToLowerInvariant();
+                if (caps == run.Caps) continue;
+                if (!traces.TryGetValue(caps, out string own)) traces[caps] = own = CategoryTrace(dir, run.Course, caps);
+                if (own == null) continue;
+                List<InputTick> inputs = global::IGTAP.EngineSim.Cli.Plan.ReadRoute(seed);
+                CourseResult c = PlayCourse(Run(own, Solve.ReadHeader(own), null), inputs);
+                if (c.Finished && (guide == null || c.RunTicks < guide.Value.ticks)) guide = (own, inputs, c.RunTicks, name);
+            }
+            if (guide == null) return null;
+            var (finish, _, origin) = Ends(run);
+            CapturePos from = Solve.OnThread(() => Run(guide.Value.trace, Solve.ReadHeader(guide.Value.trace), null).Plain().WorldOriginInCapture);
+            var options = new WaypointOptions { Stretches = 12, Record = false };
+            List<FullTasGoal> goals = CourseWaypoints.Build(guide.Value.trace, guide.Value.inputs, options).Goals.Where(g => g.kind == FullTasGoal.At).SkipLast(1)
+                .Select(g => AtGoal(g.x - from.x + origin.x, g.y - from.y + origin.y, g.w, g.h, g.from)).Append(finish).ToList();
+            string autoDir = Path.Combine(dir, "course-auto");
+            Directory.CreateDirectory(autoDir);
+            List<InputTick> carried = guide.Value.inputs;
+            Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] no seed finishes {run.Caps}: reaching the finish along {guide.Value.name}'s way ({goals.Count - 1} waypoints)");
+            for (int dropped = 0; minutes - run.Clock.Elapsed.TotalMinutes >= .25; dropped++)
+            {
+                double left = minutes - run.Clock.Elapsed.TotalMinutes;
+                Route best = Reach(run, autoDir, "course" + run.Course + "_" + run.Caps + "-first" + (dropped == 0 ? "" : "-" + dropped), goals, carried, rules,
+                    threads, left, Math.Max(.5, left / 12), false);
+                if (best.Progress == goals.Count)
+                {
+                    CourseResult c = PlayCourse(run, best.Inputs);
+                    Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] first finish: " + (c.Finished && !c.OffPath ? $"{c.RunTicks * .02:0.00}s ({c.RunTicks} ticks)"
+                        : c.Finished ? "off the forced path" : "no finish on the course (" + c.EndReason + ")"));
+                    return c.Finished && !c.OffPath ? best.Inputs : null;
+                }
+                // The finish itself out of reach: nothing left to drop.
+                if (best.Progress == goals.Count - 1) return null;
+                Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] no way to waypoint {best.Progress + 1} ({goals[best.Progress].label}) in {run.Caps}: dropped");
+                carried = best.Progress == 0 ? new List<InputTick>() : best.Inputs.GetRange(0, (int)Math.Min(best.GoalInput[best.Progress - 1] + 1, best.Inputs.Count));
+                goals = goals.Where((_, k) => k != best.Progress).ToList();
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Different ways to the finish than the known ones: the reach windows (FullTas --unsolved) from the start to the finish
+        /// with every known way's corridor discouraged (OfflineSolver.ForcedPath.Discourage: boxes along its path, picked a fiftieth
+        /// as often, not cut; the start's and the finish's surroundings left open, as every way shares them), each way found
+        /// discouraged in turn, until a reach finds none or the minutes are up. The search otherwise keeps to the way its best
+        /// takes (the waypoints follow it), so another way (a pauselift up a wall instead of the climb) would never be tried. Done
+        /// once per known route (`course-auto\&lt;run&gt;.ways.json`). The ways found that finish on the target's forced path.
+        /// </summary>
+        internal static List<List<InputTick>> OtherWays(string trace, JsonElement header, OfflineSolver.ForcedPath rules, List<InputTick> known, int threads, double minutes)
+        {
+            var found = new List<List<InputTick>>();
+            trace = Path.GetFullPath(trace);
+            CourseRun run = Run(trace, header, rules);
+            string autoDir = Path.Combine(Path.GetDirectoryName(trace), "course-auto"), name = "course" + run.Course + "_" + run.Caps + "-ways";
+            Directory.CreateDirectory(autoDir);
+            string done = Path.Combine(autoDir, name + ".json"), key = SnapshotIndex.Hash(known, known.Count).ToString("x16");
+            if (File.Exists(done) && File.ReadAllText(done).Contains(key)) return found;
+            var (finish, start, origin) = Ends(run);
+            var end = new WorldPos(finish.x - origin.x, finish.y - origin.y);
+            var ways = new List<List<InputTick>> { known };
+            while (minutes - run.Clock.Elapsed.TotalMinutes >= .5)
+            {
+                var path = new OfflineSolver.ForcedPath();
+                path.Via.AddRange(rules.Via);
+                path.Avoid.AddRange(rules.Avoid);
+                foreach (List<InputTick> way in ways) path.Discourage.AddRange(Corridor(run, way, start, finish.kind == FullTasGoal.At ? end : (WorldPos?)null));
+                double left = minutes - run.Clock.Elapsed.TotalMinutes;
+                Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] other ways: reaching {finish.label} away from {ways.Count} known way(s) ({path.Discourage.Count} boxes) for {left:0.##} min");
+                Route best = Reach(run, autoDir, name + "-" + ways.Count, new List<FullTasGoal> { finish }, new List<InputTick>(), path, threads, left, left / 3, true);
+                if (best.Progress < 1) { Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] other ways: none found"); break; }
+                CourseResult c = PlayCourse(run, best.Inputs);
+                Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] other ways: one at {best.LiveSeconds:0.00}s, " + (c.Finished && !c.OffPath ? $"{c.RunTicks * .02:0.00}s on the course"
+                    : c.Finished ? "off the forced path" : "no finish on the course (" + c.EndReason + ")"));
+                ways.Add(best.Inputs);
+                if (c.Finished && !c.OffPath) found.Add(best.Inputs);
+            }
+            File.AppendAllText(done, key + "\n");
+            return found;
+        }
+
+        /// <summary>A course run of <paramref name="trace"/> for the reach windows and PlayCourse (no name yet).</summary>
+        static CourseRun Run(string trace, JsonElement header, OfflineSolver.ForcedPath rules)
+        {
+            int course = header.GetProperty("course").GetInt32();
+            string caps = header.GetProperty("capabilities").GetString();
+            return new CourseRun { Trace = trace, Course = course, Caps = caps, Header = header, Label = course + "_" + caps, Timing = "farm",
+                Plain = Solve.Creator(trace, header), Clock = Stopwatch.StartNew(), Rules = rules };
+        }
+
+        /// <summary>The run's finish goal, its start (world) and the world origin in its capture frame.</summary>
+        static (FullTasGoal finish, WorldPos start, CapturePos origin) Ends(CourseRun run)
+        {
+            return Solve.OnThread(() => { Simulation sim = run.Plain(); return (CourseWaypoints.Finish(sim, run.Header), sim.PlayerWorld, sim.WorldOriginInCapture); });
+        }
+
+        static FullTasGoal AtGoal(float x, float y, float w, float h, int from = 0)
+        {
+            var g = new FullTasGoal { kind = FullTasGoal.At, x = x, y = y, w = w, h = h, from = from };
+            g.label = FormattableString.Invariant($"at:{x:0.#},{y:0.#},{w:0.#},{h:0.#}");
+            return g;
+        }
+
+        /// <summary>The newest trace of this course in another category beside it (optimize-c..., start-c..., map-c...), or null.</summary>
+        static string CategoryTrace(string dir, int course, string caps)
+        {
+            foreach (string file in Directory.GetFiles(dir, "*-" + caps + ".json").OrderByDescending(File.GetLastWriteTimeUtc))
+            {
+                if (!File.Exists(Path.ChangeExtension(file, null) + ".world.json")) continue;
+                JsonElement h = Solve.ReadHeader(file);
+                if (h.TryGetProperty("fulltas", out _) || !h.TryGetProperty("course", out JsonElement c) || c.GetInt32() != course
+                    || h.GetProperty("capabilities").GetString() != caps) continue;
+                return file;
+            }
+            return null;
+        }
+
+        /// <summary>A way's corridor: a 320-unit box on its path every 10 physics ticks, but none within 600 of the start or the
+        /// finish (world frame).</summary>
+        static List<OfflineSolver.Box> Corridor(CourseRun run, List<InputTick> way, WorldPos start, WorldPos? end)
+        {
+            const float Half = 160f, Open = 600f;
+            static float Far(WorldPos a, WorldPos b) => MathF.Sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
+            return Solve.OnThread(() =>
+            {
+                var boxes = new List<OfflineSolver.Box>();
+                Simulation sim = run.Plain();
+                int step = 0;
+                sim.Run(way, null, null, 0, _ =>
+                {
+                    if (step++ % 10 != 0) return;
+                    WorldPos p = sim.PlayerWorld;
+                    if (Far(p, start) < Open || end is WorldPos e && Far(p, e) < Open) return;
+                    boxes.Add(new OfflineSolver.Box(new WorldPos(p.x - Half, p.y - Half), new WorldPos(p.x + Half, p.y + Half)));
+                });
+                return boxes;
+            });
+        }
+
+        /// <summary>The reach windows (FullTas --unsolved) of a course run under <paramref name="path"/>, from <paramref name="inputs"/>
+        /// through <paramref name="goals"/>, ending once it reaches them all: its best.</summary>
+        static Route Reach(CourseRun run, string dir, string name, List<FullTasGoal> goals, List<InputTick> inputs, OfflineSolver.ForcedPath path,
+            int threads, double minutes, double windowMinutes, bool fresh)
+        {
+            run.Name = name;
+            string synthetic = WriteCourseTrace(run, dir, inputs, name, goals);
+            Solve.CourseRuns[name] = path;
+            TimerGoal = 0;
+            LoopTiming = false;
+            var args = new List<string> { synthetic, "--unsolved", "--no-submit", "--threads", threads.ToString(CultureInfo.InvariantCulture),
+                "--minutes", minutes.ToString(CultureInfo.InvariantCulture), "--window-minutes", windowMinutes.ToString(CultureInfo.InvariantCulture) };
+            if (fresh) args.Add("--fresh");
+            var reach = new FullTas(args.ToArray()) { _course = run, _reachOnly = true };
+            reach.Search();
+            return reach._best;
+        }
+
+        /// <summary>
         /// The Full-TAS --auto loop's arguments for a course run: its synthetic trace, then the solve's own options it takes. A
         /// run timed from a later goal (<see cref="TimerGoal"/>: a record's start gate, a farm loop's lead finish) is scored on
         /// arrival ticks that are its time only once that goal is in a window's prefix, so its windows start after that goal
@@ -313,7 +509,7 @@ namespace IGTAP.EngineSim.Cli
                     i++;
                     continue;
                 }
-                if (a == "--auto" || a == "--farm" || a == "--no-submit" || a == "--no-humanize" || a == "--no-tech-grafts" || a == "--guide" || a == "--plan") continue;
+                if (a == "--auto" || a == "--farm" || a == "--other-ways" || a == "--no-submit" || a == "--no-humanize" || a == "--no-tech-grafts" || a == "--guide" || a == "--plan") continue;
                 fullArgs.Add(a);
             }
             return fullArgs;

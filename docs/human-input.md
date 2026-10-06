@@ -248,6 +248,23 @@ move a press or a dash a few ticks while keeping where the hold ends.
   wall or floor in reach before the flag clears. The overlay labels the jump FINAL-CLING FLOAT (`Tech.FinalClingFloat`:
   a jump with the flag still on). While the lab is injected, its trainer panel (`LabTrainerFloat.cs`) follows each attempt
   as the pauselift's does: these steps as chips (green done, red failed and why) and a timeline in ticks from the cling.
+- **Reverse walljump** (`WJ` and up, tech demo `reverse-walljump` on its lab map): a wall jump into the wall the dot
+  is clinging to. The wall jump goes against `localScale.x`, which `OnWall` holds at the first wall's side, while the
+  wall rays look the way the dot faces (`facingRight`, from `Velocity.x`): so a cling that moves to the other wall of a
+  shaft without `OnWall` ever going off keeps the first wall's direction. By hand on the lab map (a 56-wide shaft: a
+  hanging metal wall on the left over a spike wall, a spike-capped pillar on the right under a spike ceiling):
+  1. Slide down the left wall holding left (so `Velocity.x` is at its -460).
+  2. Hold right for exactly 4 ticks (80 ms), then let go of the stick. The dot drifts across with its sprite still
+     facing left and clings to the pillar 10 u off its face. One tick less never reaches the pillar inside the wall
+     coyote window (a normal cling later, whose jump kicks left into the spikes); one tick more pushes the front ground
+     ray into the pillar (grounded on its face, the jump is an 805 ground jump into the ceiling).
+  3. Keep the stick at rest: the reverse cling holds while the dot slides down, facing away from the pillar.
+  4. 30-33 ticks after letting go, press jump with the stick right and let go of jump 14-16 ticks later: +460 into
+     the pillar and 730 up, straight up its face for the 7-tick lock and over the spike cap into the box.
+  The push length is the whole trick, a one-tick window that depends on the shaft: 4 ticks at full tilt in 56 u, 5 in
+  63, 9 at half tilt in 70, nothing under ~54 (offline). Keyboard is enough for the lab (full-tilt presses). The
+  overlay labels the jump REVERSE WALL JUMP (`Tech.ReverseWallJump`: a wall jump off a wall the rays hit that tick,
+  kicked the way they looked).
 - **Spring clip** (`NONE` and up, tech demo `spring-clip` on its lab map): fall through a spike strip on a downward
   spring's momentum. A spike kills on its 2nd Stay (`counter > graceFrames` 1) and the first overlapping tick is the
   Enter, so the dot may be in the spikes on 2 ticks: through a 32-tall strip the hurtbox (54 tall) has to travel 86 u in

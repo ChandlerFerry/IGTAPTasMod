@@ -1,4 +1,5 @@
-.fullTasRuns { display: grid; grid-template-columns: repeat(auto-fill,minmax(200px,1fr)); gap: 10px; margin-top: 18px; }
+.fullTasRuns { display: grid; grid-template-columns: repeat(auto-fill,minmax(200px,1fr)); gap: 10px; margin-top: 8px; }
+.fullTasSection { margin: 18px 0 0; color: var(--muted); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
 .fullTasRun { display: flex; flex-direction: column; gap: 5px; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: #101f35; color: var(--text); text-align: left; cursor: pointer; }
 .fullTasRun.selected { border-color: #247eb4; background: #10263d; }
 .fullTasRun.unsaved { border-style: dashed; }

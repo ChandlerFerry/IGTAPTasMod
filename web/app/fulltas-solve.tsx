@@ -86,11 +86,15 @@ function asWindow(e: FullTasEvent): Window {
     start: num(e.start) ?? 0, target: num(e.target), savedStarts: num(e.savedStarts) ?? 0, piece: str(e.piece), at: e.at };
 }
 
-function span(w: Window) { return w.limit - w.first <= 1 ? `goal ${w.limit}` : `goals ${w.first + 1}–${w.limit}`; }
+// Goals are 1-based in the engine's events and logs (a count of goals reached); the studio shows them 0-based, as fulltas.json
+// indexes them: goal n (1-based) shows as n − 1.
+function span(w: Window) { return w.limit - w.first <= 1 ? `goal ${w.limit - 1}` : `goals ${w.first}–${w.limit - 1}`; }
+/** Where a window starts: after goal `first` (1-based), or the run's start. */
+const fromGoal = (first: number) => first > 0 ? `goal ${first - 1}` : "the start";
 
 function segmentGoals(r: { first: number; last: number }) {
   if (r.last <= r.first) return "no goals";
-  return r.last - r.first === 1 ? `goal ${r.last}` : `goals ${r.first + 1}–${r.last}`;
+  return r.last - r.first === 1 ? `goal ${r.last - 1}` : `goals ${r.first}–${r.last - 1}`;
 }
 
 /** The saved best's reset segments (the plugin's, from its Quick Restarts). */
@@ -134,7 +138,7 @@ function changedGoals(prev: RouteJson, best: RouteJson): [number, number] | null
   return first ? [first, last] : null;
 }
 
-export const goalSpan = ([a, b]: [number, number]) => a === b ? `goal ${a}` : `goals ${a}–${b}`;
+export const goalSpan = ([a, b]: [number, number]) => a === b ? `goal ${a - 1}` : `goals ${a - 1}–${b - 1}`;
 
 /** A --auto log's latest pull (`auto: pull N: <lever> at goal k (<label>), ...`): what Improve is searching now. */
 function lastPull(log: string[]): { lever: string; goal: number; label: string } | null {
@@ -158,7 +162,7 @@ function recordItem(e: FullTasEvent, goals: string[]): Item {
   if (e.firstComplete) return { key: `r${e.at}`, at: e.at, tone: "best", title: `First complete route: ${of} goals in ${s2(best.time)}`,
     detail: "Replaying in the game to save it. Polishing starts next." };
   if (best.progress > prev.progress) {
-    const reached = best.progress - prev.progress === 1 ? `goal ${best.progress}/${of}` : `goals ${prev.progress + 1}–${best.progress}/${of}`;
+    const reached = best.progress - prev.progress === 1 ? `goal ${best.progress - 1}/${of - 1}` : `goals ${prev.progress}–${best.progress - 1}/${of - 1}`;
     return { key: `r${e.at}`, at: e.at, tone: "best", title: `Reached ${reached}: ${goalName(goals[best.progress - 1])} at ${s2(best.time)}`, detail: how };
   }
   const d = (best.time ?? 0) - (prev.time ?? 0);
@@ -166,7 +170,7 @@ function recordItem(e: FullTasEvent, goals: string[]): Item {
   if (changed) return { key: `r${e.at}`, at: e.at, tone: "best", title: `Improved ${goalSpan(changed)}: ${delta(d)}`,
     detail: `New record ${s2(best.time)} · ${how}` };
   if (e.complete) return { key: `r${e.at}`, at: e.at, tone: "best", title: `New record: ${s2(best.time)} (${delta(d)})`, detail: how };
-  return { key: `r${e.at}`, at: e.at, tone: "best", title: `Goal ${best.progress}/${of} now at ${s2(best.time)} (${delta(d)})`, detail: how };
+  return { key: `r${e.at}`, at: e.at, tone: "best", title: `Goal ${best.progress - 1}/${of - 1} now at ${s2(best.time)} (${delta(d)})`, detail: how };
 }
 
 /** Improve's search steps (windows, finds, repairs) are its own business: its feed is the start, the records, the game's
@@ -217,10 +221,10 @@ function feed(events: FullTasEvent[], goals: string[]): Item[] {
         const w = windows.get(num(e.id) ?? 0), t = num(e.time);
         if (!w) break;
         push(w.kind === "piece"
-          ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Found a piece for goal ${w.limit}: ${w.piece}`, detail: "Filed for reuse; checking it in the run." }
+          ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Found a piece for goal ${w.limit - 1}: ${w.piece}`, detail: "Filed for reuse; checking it in the run." }
           : w.kind === "polish" && w.target != null
             ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Faster through ${span(w)}: ${s2(t)} vs ${s2(w.target)} (${delta((t ?? 0) - w.target)})`, detail: "Verifying in the whole run." }
-            : { key: `f${e.at}`, at: e.at, tone: "progress", title: `Found goal ${w.limit}: ${goalName(goals[w.limit - 1])} at ${s2(t)}`, detail: "Verifying from the start." });
+            : { key: `f${e.at}`, at: e.at, tone: "progress", title: `Found goal ${w.limit - 1}: ${goalName(goals[w.limit - 1])} at ${s2(t)}`, detail: "Verifying from the start." });
         break;
       }
       case "windowEnd": {
@@ -228,9 +232,9 @@ function feed(events: FullTasEvent[], goals: string[]): Item[] {
         if (!w || (num(e.candidates) ?? 0) > 0) break;
         const secs = Math.round((e.at - w.at) / 1000);
         push(w.kind === "piece"
-          ? { key: `m${e.at}`, at: e.at, tone: "miss", title: `No piece found for goal ${w.limit}: ${w.piece} (${secs}s)` }
+          ? { key: `m${e.at}`, at: e.at, tone: "miss", title: `No piece found for goal ${w.limit - 1}: ${w.piece} (${secs}s)` }
           : w.kind === "reach"
-            ? { key: `m${e.at}`, at: e.at, tone: "miss", fold: "reach", title: `No route to goal ${w.limit} (${w.first === w.limit - 1 ? `from goal ${w.first}` : w.logged === w.limit - 1 ? `from just before goal ${w.logged}` : `redoing ${span({ ...w, limit: w.limit - 1 })}`}, ${secs}s)` }
+            ? { key: `m${e.at}`, at: e.at, tone: "miss", fold: "reach", title: `No route to goal ${w.limit - 1} (${w.first === w.limit - 1 ? `from ${fromGoal(w.first)}` : w.logged === w.limit - 1 ? `from just before goal ${w.logged - 1}` : `redoing ${span({ ...w, limit: w.limit - 1 })}`}, ${secs}s)` }
             : { key: `m${e.at}`, at: e.at, tone: "miss", fold: "polish", title: `No time saved through ${span(w)} (${secs}s)` });
         break;
       }
@@ -266,11 +270,11 @@ function outcomeText(r: FullTasOutcome): { title: string; detail?: string } {
   const next = r.next ? `Next goal: ${goalName(r.next)}` : null;
   if (r.kind === "play") {
     if (r.finished) return { title: `Played ${r.run}: finished in ${s2(r.time)}` };
-    if (r.error) return { title: `Playback stopped at goal ${r.reached} of ${r.expected}`, detail: sentences(r.reason, next) };
+    if (r.error) return { title: `Playback stopped after ${r.reached} of ${r.expected} goals`, detail: sentences(r.reason, next) };
     return { title: `Played the current best: ${r.reached} of ${r.of} goals in ${s2(r.time)}`, detail: sentences("The route ends here so far", next) };
   }
   if (r.kind === "judge") {
-    if (!r.finished) return { title: `Game replay failed at goal ${r.reached} of ${r.of}`, detail: sentences(r.reason, next) };
+    if (!r.finished) return { title: `Game replay failed after ${r.reached} of ${r.of} goals`, detail: sentences(r.reason, next) };
     return r.saved ? { title: `Game replay: ${s2(r.time)}, saved`, detail: r.reason ?? undefined }
       : { title: `Game replay: ${s2(r.time)}, not saved`, detail: r.reason ?? undefined };
   }
@@ -367,14 +371,14 @@ export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay
     <div className="ftStats">
       <div className={`ftStat ${complete ? "good" : ""}`}><p>{complete ? "Record (offline)" : "Route"}</p>
         <strong>{best ? complete ? s2(best.time) : `${best.progress} / ${of}` : "—"}</strong>
-        <span>{best && !complete && best.progress > 0 ? `goal ${best.progress} at ${s2(best.time)}` : complete ? "all goals reached" : "no goals reached"}</span></div>
+        <span>{best && !complete && best.progress > 0 ? `goal ${best.progress - 1} at ${s2(best.time)}` : complete ? "all goals reached" : "no goals reached"}</span></div>
       <div className={`ftStat ${sessionDelta ? "good" : ""}`}><p>{autoStart ? "This Improve" : "This search"}</p><strong>{sessionDelta ?? "—"}</strong>
         <span>{records.length ? recordsText : autoStart ? solve.running ? "no improvement yet" : "no improvement found" : session ? "no record yet" : outdated ? "goals changed" : "not started"}</span></div>
       {autoStart
-        ? <div className="ftStat"><p>Searching</p><strong>{pull ? `Goal ${pull.goal}` : solve.running ? "Starting" : "—"}</strong>
+        ? <div className="ftStat"><p>Searching</p><strong>{pull ? `Goal ${pull.goal - 1}` : solve.running ? "Starting" : "—"}</strong>
           <span>{pull ? `${LEVERS[pull.lever] ?? pull.lever} · ` : ""}{focused ? `only ${goalSpan(focused)}` : "whole run"}</span></div>
         : <div className="ftStat"><p>Phase</p><strong>{!session ? "—" : polishing ? "Polish" : phase === "build" ? "Build" : "Reach"}</strong>
-          <span>{!session ? "" : polishing ? (best && best.progress < of ? `goals 1-${best.progress} of ${of}` : "whole-run checked") : best ? `next: goal ${best.progress + 1} of ${of}` : ""}</span></div>}
+          <span>{!session ? "" : polishing ? (best && best.progress < of ? `goals 0–${best.progress - 1}/${of - 1}` : "whole-run checked") : best ? `next: goal ${best.progress}/${of - 1}` : ""}</span></div>}
       <div className="ftStat"><p>Elapsed</p><strong>{session ? clock((solve.running ? now : events[events.length - 1].at) - session.at) : "—"}</strong>
         <span>{!session ? "" : minutes != null && minutes >= 24 * 60 ? "until Stop" : `of ${minutes} min`}</span></div>
     </div>
@@ -386,24 +390,24 @@ export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay
         const isPicked = picked != null && i + 1 >= picked[0] && i + 1 <= picked[1];
         return <span key={i} className={`${reached ? "reached" : ""} ${improved.has(i + 1) ? "improved" : ""} ${isPicked ? "picked" : ""} ${active ? "active" : ""}`}
           onClick={e => onPick(i + 1, e.shiftKey)}
-          title={`${i + 1}. ${goalName(label)}${reached && best ? ` · ${s2(best.splits[i])}` : ""}${improved.has(i + 1) ? " · improved" : ""} · click to pick, shift-click to extend`}/>;
+          title={`${i}. ${goalName(label)}${reached && best ? ` · ${s2(best.splits[i])}` : ""}${improved.has(i + 1) ? " · improved" : ""} · click to pick, shift-click to extend`}/>;
       })}
     </div>}
 
     {windowOpen && window_ && <div className={`ftNow ${window_.kind}`}>
       <p className="eyebrow">CURRENT WINDOW</p>
       {window_.kind === "piece"
-        ? <h3>Searching a loop piece for goal {window_.limit}: {window_.piece}</h3>
+        ? <h3>Searching a loop piece for goal {window_.limit - 1}: {window_.piece}</h3>
         : window_.kind === "reach"
-          ? <h3>Searching for goal {window_.limit}: {goalName(labels[window_.limit - 1])}</h3>
+          ? <h3>Searching for goal {window_.limit - 1}: {goalName(labels[window_.limit - 1])}</h3>
           : window_.kind === "repair"
             ? <h3>Re-finding {span(window_)} after an earlier change</h3>
             : <h3>Searching for time saves through {span(window_)}</h3>}
       <p className="ftNowDetail">{window_.kind === "piece"
-        ? `From goal ${window_.first} (${s2(window_.start)}).`
+        ? `From ${fromGoal(window_.first)} (${s2(window_.start)}).`
         : window_.kind === "reach"
-          ? window_.first === window_.limit - 1 ? `From goal ${window_.first} (${s2(window_.start)}).`
-            : window_.logged === window_.limit - 1 ? `Starts just before goal ${window_.logged}: its dash's trailing ticks also reach goal ${window_.limit}.`
+          ? window_.first === window_.limit - 1 ? `From ${fromGoal(window_.first)} (${s2(window_.start)}).`
+            : window_.logged === window_.limit - 1 ? `Starts just before goal ${window_.logged - 1}: its dash's trailing ticks also reach goal ${window_.limit - 1}.`
             : `Redoing ${span({ ...window_, limit: window_.limit - 1 })} for a different setup.`
           : ""}
         {(window_.kind === "reach" || window_.kind === "piece") && window_.attempt > 1 ? ` Round ${window_.attempt}, longer search.` : ""}

@@ -48,6 +48,10 @@ namespace IGTAP.EngineSim.Cli
             if (guide) DistanceField.Enabled = true;
             var seeds = new List<List<InputTick>> { ReadInputs(header) };
             seeds.AddRange(seedPaths.Select(Plan.ReadRoute));
+            // Nothing finishes in this category yet: along another category's way first, up to half the minutes (CourseAuto.cs).
+            var firstClock = Stopwatch.StartNew();
+            if (!args.Contains("--no-first-finish") && FullTas.FirstFinish(startTrace, header, forced, seeds, seedPaths, threads, minutes / 2) is List<InputTick> first) seeds.Add(first);
+            minutes -= firstClock.Elapsed.TotalMinutes;
 
             Func<Simulation> create = Creator(startTrace, header);
             string outDir = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(startTrace)), "offline-best");
@@ -283,6 +287,7 @@ namespace IGTAP.EngineSim.Cli
             if (CourseRuns.TryGetValue(run, out OfflineSolver.ForcedPath course))
             {
                 forced.Avoid.AddRange(course.Avoid);
+                forced.Discourage.AddRange(course.Discourage);
                 return forced;
             }
             foreach (PathRule rule in PathRules().Where(r => r.Fulltas != null && r.Fulltas.Contains(run)))

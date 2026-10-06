@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "id": "reverse-walljump",
+  "name": "Reverse walljump: cross a shaft facing back, then wall jump into the far wall",
+  "tech": "reverse-walljump",
+  "techNote": "A 56-wide shaft: a metal wall on the left (face x 100) that ends at y 480 with a spike wall under it, and a metal pillar on the right (face x 156, top y 400, 120 wide) capped with spikes, under a spike ceiling from y 530 over the pillar. The finish box hangs past the pillar's far side. Slide down the left wall holding left, then hold right for exactly 4 ticks and let go: the dot drifts across inside the left wall's wall coyote window (OnWall still on, localScale held at wallCoyoteDir -1, so the sprite keeps facing left) while facingRight turns right with Velocity.x, and once the pillar sits 25-27 u ahead of its centre the rays cast right find it while the front ground ray is still short of it. That cling stores wallCoyoteDir = localScale.x = -1, and as long as the stick stays at rest it holds: the dot slides down the pillar facing away from it, 10 u off its face. Jump 30-33 ticks after letting go and release it 14-16 ticks later: the wall jump goes against localScale, +460 into the pillar and 730 up, rides straight up the face for the 7-tick lock and crosses the spike cap under the ceiling into the box (tick 86). A normal cling on the pillar kicks left into the spike wall; every jump off the left wall (or in its coyote ticks, with any jump cut) starts too high and hits the ceiling or lands on the cap; a fall off the left wall can't cross the 120-wide cap. Hold right 3 ticks (the short demo) and the pillar is never reached in the window; 5 ticks (the long demo) and the front ground ray starts inside the pillar: grounded on its face, the jump is an 805 ground jump that hits the ceiling.",
+  "category": "WJ",
+  "anchor": [-1333, -10585],
+  "shapes": [
+    { "kind": "box", "at": [80, 640], "size": [40, 320], "layer": "Ground", "tag": "Ground" },
+    { "kind": "box", "at": [91, 90], "size": [12, 780], "layer": "6", "tag": "Untagged", "trigger": true, "spike": true },
+    { "kind": "box", "at": [216, 50], "size": [120, 700], "layer": "Ground", "tag": "Ground" },
+    { "kind": "box", "at": [216, 404], "size": [120, 8], "layer": "6", "tag": "Untagged", "trigger": true, "spike": true },
+    { "kind": "box", "at": [266, 730], "size": [220, 400], "layer": "6", "tag": "Untagged", "trigger": true, "spike": true }
+  ],
+  "start": {
+    "x": 125.5,
+    "y": 490,
+    "vx": 0,
+    "vy": 0,
+    "facing": -1,
+    "fields": {
+      "onGround": false,
+      "wallJumpUnlocked": true,
+      "maxWallJumps": 4,
+      "wallJumpsLeft": 4,
+      "coyoteFrames": -10
+    }
+  },
+  "finish": [336, 310, 40, 220],
+  "ghosts": [
+    { "label": "Right 4 ticks: reverse wall jump" },
+    { "demo": "short", "label": "Right 3 ticks: normal cling, kicks left", "offset": [450, 0] },
+    { "demo": "long", "label": "Right 5 ticks: grounded on the face, ground jump", "offset": [900, 0] }
+  ],
+  "maxTicks": 130
+}

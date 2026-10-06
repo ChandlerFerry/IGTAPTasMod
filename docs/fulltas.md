@@ -55,6 +55,9 @@ missed it replayed from the start (`a window route missed its goals ...`). That 
 replays part (from the stored state, after a straight replay, played through), each on a thread of its own. Stored goal
 states carry each type's field layout: a state of another build is dropped and replayed, not misread.
 
+`"section"` on a run puts it under one of the studio's run list headings: `complete`, `wip` or `test` (unset: `test`
+for a savestate run, `wip` otherwise).
+
 An event that isn't the next goal changes nothing (buying another box, finishing another course), except under loose
 buys (below). Unlocks come only from the game's purchases; the plugin writes none.
 
@@ -331,6 +334,14 @@ the game's first FixedUpdate after a rebase already sees the moved world: the of
 for that tick (a "ghost" wall that ended the dash in the spikes), and dies there now as the game does
 (`PhysicsWorld.SyncMovedWorld`).
 
+`"tree": L` on a savestate run sets The Tree at level L right after the restore, as a tree transition's start does
+(README `### Rules` 21: from 23 Area 1 overgrown and the Zone 2→1 path open; no unlock written), and loads the zone of the
+gate or checkpoint nearest the player, so a zone 2 savestate has its floor (without it the player falls through zone 1's
+world and never rests). The trace header carries `tree`; changing it retires the run's routes. `test-c10-zip-skip` uses
+it: from savestate `lab/test-c10-zip-skip` (`4f3d1ecd…`, the checkpoint at (25844, 6264), resting at (25851, 6245.5),
+facing right, `WJ_DS_DJ_BS`, the atom door key set), The Tree at 27, to Course 10's start checkpoint
+(`at:30186.6,5780.6,32,32`, tree27to10's end) without the zip movers.
+
 `Test-Pauselift` (savestate `lab/pauselift`, `02db5c474fdb4e9cb3230c042ce328b5`: standing on the floating block at world
 (19730.86, 10933.51), facing left, with wall jump, 1 dash and 1 double jump, on a plain new game) is the pauselift's
 start ([`human-input.md`](human-input.md), tech demo `pauselift`). Its goal (`at:19880,14200,200,100`) is out of reach, so a
@@ -436,6 +447,16 @@ restart on. The solve plays a restart seed after a tap right, a tap left or none
 a row, so one of them lands the lap's frame phase), then its own restart. These are 31 alternatives for one start, so
 each takes a seed start of its own ahead of the standing seeds (`SeedStarts`), and the 64 starts don't fill before any
 is tried. `fulltas-plan --realize` files restart seeds as lap pieces too (`SeedLaps`, `LapInputs`).
+
+When no saved route's start reaches the frontier goal and no known tail does, `TransplantFrontier` (FullTasTransplant.cs)
+follows the goal's saved course routes along their own path, as their category start plays them, from the frontier and
+from up to two area goals before it (a restart there takes them back, and the route touches them again): each of their
+seed starts (as they are, after a restart and idle ticks, walked) is played, the four that stay on the path longest are
+repaired where they leave it ([Transplant](#transplant)'s local repairs), and a route that reaches more goals is
+spliced in. `TrueEnding%`'s bonus 8, 2026-10-05: its category start stands 0.52 u lower than the run's restart at the
+bonus start, so `bonus8_WJ_DS_DJ 2.04`'s two pauselifts missed from the run, and reach windows ran 2.3 M runs without
+it. From goal 501 a restart, `2.04` and one local repair (two ticks held) reach the box: the run was complete
+(727.67 s) 3 minutes into the solve.
 
 For the respawn to be the checkpoint, the lap's quick restart has to come before the gate. So a lap after buys is
 `finish:N` alone, not `start:N, finish:N`: with `start:N` the search walks into the gate first and the restart lands at
@@ -1648,6 +1669,14 @@ them together from pieces instead:
   `Simulation.UseGoals`), from the same `start:N` and `finish:N` pieces as the run's own laps. A lap step is cut at the
   first input by which its goal is reached; a lap with dashes plays more physics ticks than inputs (a dash's ticks
   read no input of their own), so the check runs on past the cut's inputs rather than stopping at as many ticks.
+- A lap's gate is picked by its finish (`KnownLap`), the run's own `start:N` before `finish:N` and an extra lap's alike:
+  of the gate's library ways, the one whose finish comes soonest by a library piece, and the finish pieces played as they
+  are or after a restart pad (their way crosses the gate). With none, the gate and finish are searched as one piece,
+  seeded with the finish pieces after the gate's ways and after restarts. When nothing replays, each restart pad is also
+  tried with a tap either way and 0-9 idle ticks after the restart (`Settles`): the restart keeps the facing a dash at rest
+  takes, and the grid's phase moves the lap's dashes. `TrueEnding%`, 2026-10-05: goal 354's piece ends in a dash into
+  `cashPerLoop`, so the Cash lap before goal 355 has to restart at once; the library's lap, filed facing right, fell out
+  of Course 5 from the left-facing restart and 2.2 M runs found no other. After a tap right and 2 idle ticks it plays.
 - Except when the clones pay for it soon: when standing still for 900 ticks (`ShortWaitTicks`) would pay for the box, the
   builder first tries a walk of 0-60 ticks either way and then hops in place (every 30, 40 or 50 ticks, jump held 6 or 14)
   until it buys, then a piece search, and laps only when neither buys it. Boxes buy on a touch of their trigger, a strip
@@ -2192,7 +2221,11 @@ boost and Area 2 clones aren't checked: [`fidelity-log.md`](fidelity-log.md), *A
 *Atom grid a tick late, and the atom start*. An atom box buy writes PlayerPrefs `OpenA2Door` on the machine (the game's own
 write, upgradeBox.cs:648), which the atom box's first buy reads: a trace start records it (`enginesim/README.md`). On a
 machine without the key, a Course 6-15 start's stand-in open door (README ### Rules 21) is shut by that first buy, a
-state a real game never reaches (its load opens the door only with the key or the box bought, upgradeBox.cs:264).
+state a real game never reaches (its load opens the door only with the key or the box bought, upgradeBox.cs:264). A
+Full-TAS new game loads without the key (a savestate start: with the savestate's), and a turbo restore puts its
+snapshot's back (README ### Rules, exception 13): before, a machine that had ever bought an atom (any judge's or probe's
+buy) loaded every new game with the atom room's door open, and routes traced or judged so may use a door a fresh install
+keeps shut (2026-10-05: `TrueEnding%` at 1x walked through it at (21513, -303)). Trace and judge them again.
 
 The trip breaker (`buyprestige5`) is modeled in full: `BoostOldCourses`, then each of Courses 1–5 through
 `localUpgrades.OnPrestige` (local upgrades and clones reset, the best path on Courses 4–5 only; Courses 1–3 get the breaker layer's tier mods,

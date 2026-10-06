@@ -46,6 +46,9 @@ namespace IGTAP.EngineSim
         public sealed class ForcedPath
         {
             public readonly List<Box> Via = new List<Box>(), Avoid = new List<Box>();
+            /// <summary>Boxes the search is steered away from without cutting a run: an explore cell filed inside one is picked
+            /// <see cref="DiscouragedWeight"/> as often (the known routes' corridors, CourseAuto's OtherWays).</summary>
+            public readonly List<Box> Discourage = new List<Box>();
             /// <summary>A standing rule's "guide": true turns the guide on for every solve it covers, as --guide does.</summary>
             public bool Guide;
             public bool IsEmpty => Via.Count == 0 && Avoid.Count == 0;
@@ -90,12 +93,12 @@ namespace IGTAP.EngineSim
         public readonly string Capabilities;
         readonly Func<Simulation> _createSimulation;
         readonly List<List<InputTick>> _seeds;
-        // The loaded archive (Memory) is not kept: its runs count and plateau routes are, and its sources only until each
-        // worker has restored its share (a resident 150k-cell archive held 3 GB of inputs after its cells were replaced).
-        readonly long _priorRuns;
         // No route yet: a plain solve's cells also key the air dashes, air jumps and wall jumps left, so an arrival that kept
         // them (a super off a ledge, its dash and air jump still to come) isn't replaced by an earlier one that spent them.
         readonly bool _fresh;
+        // The loaded archive (Memory) is not kept: its runs count and plateau routes are, and its sources only until each
+        // worker has restored its share (a resident 150k-cell archive held 3 GB of inputs after its cells were replaced).
+        readonly long _priorRuns;
         readonly List<List<InputTick>> _plateaus;
         List<Memory.Source> _loaded;
         readonly ForcedPath _path;
@@ -167,6 +170,9 @@ namespace IGTAP.EngineSim
                 + $"{Interlocked.Read(ref ReplayTicks)} replay ticks" + (goals == 0 ? "" : $", {goals} from stored goal states");
         }
 
+        /// <summary>How much less often a cell in a <see cref="ForcedPath.Discourage"/> box is picked.</summary>
+        public const double DiscouragedWeight = .02;
+
         /// <summary>How hard the guide pulls explore cell picks toward the target (0: no guidance, 1: its full share).</summary>
         public readonly float GuideWeight;
         /// <summary>The search's random seed (each worker gets this + its index); 0: the clock, as ever.</summary>
@@ -186,13 +192,13 @@ namespace IGTAP.EngineSim
             _createSimulation = createSimulation;
             Capabilities = capabilities;
             _seeds = seeds;
+            _fresh = seeds.Count == 0;
             _priorRuns = memory?.Runs ?? 0;
             _plateaus = memory?.Plateau ?? new List<List<InputTick>>();
             _loaded = memory?.Sources;
-            _path = path != null && !path.IsEmpty ? path : null;
+            _path = path != null && (!path.IsEmpty || path.Discourage.Count > 0) ? path : null;
             VisitCell = visitCell;
             GuideWeight = guide;
-            _fresh = seeds.Count == 0;
             Rng = rng;
             Mined = mined;
             Mined?.Prepare(capabilities);
@@ -393,6 +399,8 @@ namespace IGTAP.EngineSim
             /// Length ticks. Run-length stored: as lists, the cells' inputs outgrew the states on Area 2's long routes.</summary>
             public InputRuns Source;
             public int Length, Picks, Waypoints;
+            /// <summary>Filed inside one of the run's <see cref="ForcedPath.Discourage"/> boxes.</summary>
+            public bool Discouraged;
             public Cell Parent;
             public float Rank, Distance;
             /// <summary>Its map cell: what a state's eviction weighs (the draw pool's pick weight).</summary>
@@ -709,6 +717,9 @@ namespace IGTAP.EngineSim
                 _omni = caps.Omni;
                 _dash = caps.Dash;
                 _goalMode = sim.Goals != null;
+                if (!sim.TimedFromRunStart && sim.TargetCourse > 0)
+                    _gates = sim.World.All<startGate>().Where(g => g.GetComponentInParent<courseScript>() is courseScript c && c.courseNumber == sim.TargetCourse)
+                        .Select(g => sim.ToWorld(ScenePos.From(g.transform.position))).ToArray();
                 // A run that may quick-restart (a Full-TAS window, resets allowed) also grafts the mined windows that restart.
                 _resets = _goalMode && !owner.NoResets;
                 if (owner.GuideWeight > 0f && DistanceField.Enabled)
@@ -1146,6 +1157,7 @@ namespace IGTAP.EngineSim
                 }
                 if (_owner._path != null && _bestInputs == null) w *= 1 + 10 * cell.Waypoints;
                 if (closeness > 0f) w *= 1 + 10 * _owner.GuideWeight * closeness * closeness;
+                if (cell.Discouraged) w *= DiscouragedWeight;
                 return w / Math.Sqrt(cell.Picks + 1);
             }
 
@@ -1202,7 +1214,7 @@ namespace IGTAP.EngineSim
                         }
                     }
                 }
-                if (_owner._path != null && inputs.Count > 0)
+                if (_owner._path != null && !_owner._path.IsEmpty && inputs.Count > 0)
                 {
                     InputTick coast = inputs[inputs.Count - 1].Coast();
                     for (int i = 0; i < 25; i++) inputs.Add(coast);
@@ -1737,6 +1749,7 @@ namespace IGTAP.EngineSim
                 }
                 courseScript active = _sim.TimingCourse();
                 bool timing = _sim.TimedFromRunStart || active != null;
+                if (!timing && OutOfSetupReach()) return false;
                 long key = _goalMode ? GoalCellKey(Place(_sim, _swapper, true, ref behind, false), _sim.Progress)
                     : CellKey(Place(_sim, _swapper, false, ref behind, _owner._fresh) | (timing ? 0L : Motion(_sim.Player)), timing, _waypoints);
                 bool losing = false;
@@ -1759,6 +1772,21 @@ namespace IGTAP.EngineSim
                 if (_capturePath != null && CaptureOnPath(tick)) return false;
                 FileCell(inputs, filed, key, elapsed >= 0f ? elapsed : tick * .02f, replay?.States);
                 return !losing;
+            }
+
+            // Before the timer a course run sets its start up, and no saved route's set-up strays more than 1626 u (x or y) from
+            // the start gate (3_WJ_DS_DJ 2.76's flying start). Past SetupReach it is wandering the world: unseeded, Course 7
+            // WJ_DS_DJ_BS filed 131k of its 158k untimed cells there, out to 8600 u, and never finished.
+            const float SetupReach = 2500f;
+            readonly WorldPos[] _gates;
+
+            bool OutOfSetupReach()
+            {
+                if (_gates == null || _gates.Length == 0) return false;
+                WorldPos p = _sim.PlayerWorld;
+                foreach (WorldPos g in _gates)
+                    if (Math.Max(Math.Abs(p.x - g.x), Math.Abs(p.y - g.y)) <= SetupReach) return false;
+                return true;
             }
 
             /// <summary>The tick's <see cref="ContactRays.WallBehind"/>, cast on the first ask (<paramref name="behind"/> NaN).</summary>
@@ -1861,6 +1889,11 @@ namespace IGTAP.EngineSim
                 if (!better || state == null) return;
                 float distance = _guide != null ? _guide.Distance(_sim.PlayerAtCapture, _waypoints) : _goalMode ? GoalDistance(_sim) : float.NaN;
                 var filed = new Cell { Source = _runEncoded ??= InputRuns.From(inputs), Length = tick, Rank = rank, Distance = distance, Waypoints = _waypoints, Parent = _fromCell, Key = key };
+                if (_owner._path != null && _owner._path.Discourage.Count > 0)
+                {
+                    WorldPos at = _sim.PlayerWorld;
+                    filed.Discouraged = _owner._path.Discourage.Exists(b => b.Contains(at));
+                }
                 if (!_owner.File(key, filed)) return;
                 Keep(filed, state);
                 _owner.Extend(key, filed, _goalMode ? GoalProgress(key) : -1);

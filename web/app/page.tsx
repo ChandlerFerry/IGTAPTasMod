@@ -56,7 +56,7 @@ type Direction = "forwards" | "backwards";
 type HumanCourseClass = "human-major" | "human-nmg";
 const HUMAN_LABEL: Record<HumanCourseClass, string> = { "human-major": "Human major", "human-nmg": "Human NMG" };
 type CourseTarget = { course: number; capabilities: string; farm: boolean; direction?: Direction; class?: HumanCourseClass };
-type FullTasRun = { name: string; start?: string | null; savestate?: string | null; goals: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
+type FullTasRun = { name: string; start?: string | null; savestate?: string | null; section: "complete" | "wip" | "test"; goals: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
   offline?: { reached: number; time: number; splits: FullTasSplit[]; segments?: number[][] } | null; closest?: { reached: number; next: string | null; distance: number | null; ticks: number } | null; playable?: boolean; traceReady: boolean }
   & Partial<Omit<FullTasClassRun, "name">>;
 type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string; queue?: FullTasQueue | null; difficulty?: FullTasDifficultyJob | null };
@@ -228,15 +228,15 @@ const BONUS_WHERE: Record<string, string> = {
   bonus6: "Above Course 3, left of Course 4 (buyfree4c). Starts at Course 4.",
   bonus7: "Left of Course 4's upgrades (buyfree4a), higher. Starts at Course 4.",
   bonus8: "Far above Course 4 (Course 6's box). Starts at Checkpoint (2) (20201, 13045).",
-  bonus9: "Below and left of Course 9's start. Starts at Course 6.",
-  bonus10: "Left of Course 7's start, lower. Starts at Course 6.",
-  bonus11: "Just below Course 7's start, right. Starts at Course 6.",
-  bonus12: "Above Course 7, below Course 9. Starts at Course 6.",
-  bonus13: "Below Course 10, slightly left. Starts at Course 10's restart.",
+  bonus9: "Below and left of Course 9's start. Starts at the checkpoint at (16669, 3213).",
+  bonus10: "Left of Course 7's start, lower. Starts at Checkpoint (4) (13063, 1482).",
+  bonus11: "Just below Course 7's start, right. Starts at the checkpoint by the atom room (22644, -375), its door open.",
+  bonus12: "Above Course 7, below Course 9. Starts at Course 7.",
+  bonus13: "Below Course 10, slightly left. Starts at the checkpoint at (24931, -487).",
   bonus14: "Right of Course 10. Starts at Course 10's restart.",
   bonus15: "Far left of Course 5, high up. Starts at Course 5's restart.",
   bonus16: "Above Course 1 (buyfree4b), level with Bonus 6. Starts at Course 4.",
-  bonus17: "Far below Course 7 (jiggle drops). Starts at Course 7.",
+  bonus17: "Far below Course 7 (jiggle drops). Starts at Checkpoint (1) (24619, -1618).",
   bonus18: "Left of Course 8's start (clone dust). Starts at Course 8.",
   bonus19: "The Tree in Area 1 (plants it). Starts at Course 10.",
   bonus20: "Vman start, overgrown Area 1, above Course 10. Starts at Course 10.",
@@ -318,7 +318,7 @@ function targetLabel(t: CourseTarget, courses: Course[], categories: Category[])
 // by score): a click targets Improve a course at it and selects its route; ctrl+click adds it to (or drops it from) the
 // targets Improve runs in turn.
 function RoutePicker({routes,courses,categories,activeId,saveUnlocks,targets,onTargets,onCommand}:{routes:Route[];courses:Course[];categories:Category[];activeId?:string;saveUnlocks:Caps|null;targets:CourseTarget[];onTargets:(t:CourseTarget[])=>void;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
-  const bests = categoryBests(routes, courses, categories), {best, farm, other} = bests;
+  const bests = categoryBests(routes, courses, categories), {farm, other} = bests;
   const [human, setHuman] = useState(false);
   const slot = (label: string, t: CourseTarget, b: {route: Route; time: number} | undefined, digits: number) => {
     const on = targets.some(x => sameTarget(x, t));
@@ -343,7 +343,7 @@ function RoutePicker({routes,courses,categories,activeId,saveUnlocks,targets,onT
         {groups.map(([label, list]) => list.some(c => c.categories.length > 0) && <Fragment key={label}>
           <tr className="matrixSection"><th colSpan={categories.length + 1}>{label}</th></tr>
           {list.filter(c => c.categories.length > 0).sort((a, b) => a.id - b.id).map(c => {
-            // Bonuses and transitions are timed in ticks already: their record is their farm.
+            // Bonuses and transitions are timed in ticks already: their record is their farm, and they have no backwards.
             const lapless = !!(c.bonus || c.to);
             return <tr key={c.id}><th title={placeTitle(c)}>{courseLabel(c, c.id)}</th>
               {categories.map(cat => {
@@ -356,9 +356,11 @@ function RoutePicker({routes,courses,categories,activeId,saveUnlocks,targets,onT
                 </div></td>;
                 return <td key={cat.id} className={beyond ? "beyondUnlocks" : ""} title={beyond ? `Your unlocks only reach ${shortCaps(saveUnlocks!)}` : undefined}><div className="pickSlots">
                   {slot("Fwd", { ...at, farm: false, direction: both ? "forwards" : undefined }, directionBest(bests, c, cat, categories, "forwards"), 2)}
-                  {both ? slot("Bwd", { ...at, farm: false, direction: "backwards" }, directionBest(bests, c, cat, categories, "backwards"), 2)
-                    : <span className="pickSlot empty" title="One way: no backwards"><small>Bwd</small>·</span>}
-                  {slot("Farm", { ...at, farm: !lapless }, soloBest(lapless ? best : farm, c, cat, categories), lapless ? 2 : 4)}
+                  {!lapless && <>
+                    {both ? slot("Bwd", { ...at, farm: false, direction: "backwards" }, directionBest(bests, c, cat, categories, "backwards"), 2)
+                      : <span className="pickSlot empty" title="One way: no backwards"><small>Bwd</small>·</span>}
+                    {slot("Farm", { ...at, farm: true }, soloBest(farm, c, cat, categories), 4)}
+                  </>}
                 </div></td>;
               })}</tr>;
           })}
@@ -531,7 +533,7 @@ function OutlookCard({outlook:o,pulls}:{outlook:Outlook;pulls:PullNow[]}) {
         <small>floor {o.floor.toFixed(2)}s (top speed on every {o.unit}; optimistic) · the model's guess: ~{o.headroom} ticks findable</small></div>
     </div>
     {pulls.length>0&&<div className="outlookNow"><span>Searching now</span><ul>{pulls.map(p=><li key={p.pull}>
-      <b>{LEVERS[p.lever]??p.lever}</b> at {o.unit} {p.goal} for up to {searchSpan(p.budget*60)} · {p.pulls?`${p.misses?`${p.misses} miss${p.misses===1?"":"es"} in a row here`:`−${p.gained} ticks here`} (${searchSpan(p.cpu)} CPU)`:"first time here"} · {p.history.pulls?`such pulls gained ${p.history.gains} of ${p.history.pulls} times`:"no record of such pulls"}</li>)}</ul></div>}
+      <b>{LEVERS[p.lever]??p.lever}</b> at {o.unit} {o.unit === "goal" ? p.goal - 1 : p.goal} for up to {searchSpan(p.budget*60)} · {p.pulls?`${p.misses?`${p.misses} miss${p.misses===1?"":"es"} in a row here`:`−${p.gained} ticks here`} (${searchSpan(p.cpu)} CPU)`:"first time here"} · {p.history.pulls?`such pulls gained ${p.history.gains} of ${p.history.pulls} times`:"no record of such pulls"}</li>)}</ul></div>}
     <details className="howTo"><summary>How Improve decides</summary><ul>
       <li>A <b>pull</b> is one short search: one tactic at one {o.unit}, for a minute or two. Improve runs pulls until its minutes are up.</li>
       <li>Tactics: <b>window search</b> re-finds the inputs between two {o.unit}s; <b>input polish</b> nudges the timing of the inputs the route has; <b>look-ahead</b> and <b>long windows</b> search further on, so a slower arrival that carries more speed can win; <b>graft</b>, <b>combine</b> and <b>revive</b> splice in faster pieces other found routes have.</li>
@@ -547,7 +549,7 @@ type MapTarget = { course: number; capabilities: string; optional: string[]; ful
 // `when`: the world state it's only in ("<state>:<option>"), none: every one. An "area" is ground off in the capture:
 // its outline rings end to end in `p`, `rings` the length of each, filled even-odd.
 type MapSolid = { k: "poly" | "line" | "circle" | "capsule" | "area"; spike: boolean; p: number[]; r: number; tone?: "blue" | "orange" | null; spring?: number[] | null; when?: string | null; rings?: number[] | null };
-type MapRoute = { name: string; kind: "seed" | "best" | "plateau" | "human"; finished: boolean; time: number; timerStart: number; points: number[]; cells?: number[][]; state?: number[] };
+type MapRoute = { name: string; kind: "seed" | "best" | "plateau" | "human" | "closest"; finished: boolean; time: number; timerStart: number; points: number[]; cells?: number[][]; state?: number[] };
 // Ghost compare (`/api/enginesim/ghost`, served from the map JSON `map` wrote to disk): two routes' per-tick positions,
 // per-cell first arrivals and per-tick state fingerprints, with the first tick their states diverge.
 type GhostRoute = MapRoute & { cells: number[][]; state: number[] };
@@ -566,7 +568,10 @@ type MapData = { course: number; capabilities: string; label: string; fulltas?: 
   states?: WorldState[];
   // Zip movers and moving platforms: box, path, per-leg corridor (Map.Zips).
   zips?: { name: string; zip: boolean; box: number[]; path: number[][]; corridor: number[][]; when?: string | null }[];
-  explored: { cell: number; runs: number; prefixes: number; cells: number[][] } };
+  // `replayed` of `toReplay`: the explore prefixes the engine has replayed so far (a course map still drawing).
+  explored: { cell: number; runs: number; prefixes: number; replayed?: number; toReplay?: number; cells: number[][] };
+  // The engine is still drawing it: this is what it has so far (an earlier draw's before its first write).
+  pending?: boolean; queued?: boolean };
 // A Full-TAS run's at: goal: its number in the run's goal list (1-based, as the goals table), its label and its rect (x0, y0, x1, y1).
 type MapGoal = { index: number; label: string; box: number[] };
 type MapLayers = { art: boolean; background: boolean; tree: boolean; shapes: boolean; explored: boolean; boxes: boolean; markers: boolean } & Record<`box:${BoxCategory}`, boolean>;
@@ -648,27 +653,37 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   const [moving, setMoving] = useState(false);
   const [moved, setMoved] = useState<{ goal: MapGoal; box: number[] } | null>(null);
   const grab = useRef<{ goal: MapGoal; box: number[]; x: number; y: number } | null>(null);
-  const colors = useMemo(() => data?.routes.map((r, i) => r.kind === "best" ? "#ffd54f" : r.kind === "human" ? "#c77dff" : r.kind === "plateau" ? "rgba(255,255,255,.55)" : ROUTE_COLORS[i % ROUTE_COLORS.length]) ?? [], [data]);
+  const colors = useMemo(() => data?.routes.map((r, i) => r.kind === "best" ? "#ffd54f" : r.kind === "human" ? "#c77dff" : r.kind === "closest" ? "#ff5252" : r.kind === "plateau" ? "rgba(255,255,255,.55)" : ROUTE_COLORS[i % ROUTE_COLORS.length]) ?? [], [data]);
   const view = useRef({ ox: 0, oy: 0, scale: 1 });
   const drag = useRef<{ x: number; y: number } | null>(null);
   const fitted = useRef(false);
 
   // Only the latest load lands: an older one still in flight (a Redraw, a second mount) neither overwrites its data nor
-  // leaves its error standing.
+  // leaves its error standing. While the engine draws, the plugin answers with what it has so far (`pending`) and the
+  // map polls, drawing each answer: avoid boxes can go on the explored area before the replay ends.
   const loads = useRef(0);
-  const load = useCallback(async () => {
-    const id = ++loads.current;
-    setLoading(true); setFailure("");
+  const poller = useRef<number | undefined>(undefined);
+  const fresh = useRef(true);
+  const load = useCallback(async (poll = false) => {
+    window.clearTimeout(poller.current);
+    const id = poll ? loads.current : ++loads.current;
+    if (!poll) { setLoading(true); setFailure(""); fresh.current = true; }
+    let pending = false;
     try {
-      const d: MapData = target.fulltas ? await request("/fulltas/map", { name: target.fulltas }) : await request("/enginesim/map", target);
+      const d: MapData = target.fulltas ? await request("/fulltas/map", { name: target.fulltas, poll }) : await request("/enginesim/map", { ...target, poll });
       if (id !== loads.current) return;
-      setData(d); setFailure(""); setWorldState(w => ({ ...capturedStates(d.states), ...w })); setHidden(new Set(d.routes.map((r, i) => r.kind === "plateau" ? i : -1).filter(i => i >= 0)));
+      pending = !!d.pending;
+      if (pending) poller.current = window.setTimeout(() => load(true), 1000);
+      if (!d.solids) return;
+      setData(d); setFailure(""); setWorldState(w => ({ ...capturedStates(d.states), ...w }));
+      if (fresh.current) { setHidden(new Set(d.routes.map((r, i) => r.kind === "plateau" ? i : -1).filter(i => i >= 0))); fresh.current = false; }
       if (!fitted.current) { fit(d); fitted.current = true; }
     }
     catch (e) { if (id === loads.current) setFailure(e instanceof Error ? e.message : String(e)); }
-    finally { if (id === loads.current) setLoading(false); }
+    finally { if (id === loads.current && !pending) setLoading(false); }
   }, [target]);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); return () => window.clearTimeout(poller.current); }, [load]);
+  const progress = data?.queued ? " (queued behind another map)" : data?.pending && data.explored.toReplay ? ` ${data.explored.replayed ?? 0}/${data.explored.toReplay}` : "";
 
   function fit(d: MapData) {
     const c = canvas.current; if (!c) return;
@@ -1021,7 +1036,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   const boxText = (b: number[]) => `${Math.min(b[0], b[2]).toFixed(1)}, ${Math.min(b[1], b[3]).toFixed(1)} to ${Math.max(b[0], b[2]).toFixed(1)}, ${Math.max(b[1], b[3]).toFixed(1)}`;
   const toggle = (key: keyof MapLayers) => setLayers(l => ({ ...l, [key]: !l[key] }));
   return <div className="panel offlinePanel solveMap"><div className="panelTitle"><div><p className="eyebrow">SEARCH MAP</p><h2>{target.fulltas ? `Full-TAS · ${target.fulltas}` : <>{courseLabel(courses.find(c => c.id === target.course), target.course)} · {target.capabilities}{target.optional.map(n => ` +${n}`).join("")}</>}</h2></div>
-    <div className="buttonRow"><button className="secondary" disabled={loading} onClick={load}>{loading ? "Drawing…" : "Redraw"}</button><button className="secondary" disabled={!data} onClick={() => { if (data) { fit(data); draw(); } }}>Fit</button><button className="secondary" onClick={onClose}>Close</button></div></div>
+    <div className="buttonRow"><button className="secondary" disabled={loading} onClick={() => load()}>{loading ? `Drawing…${progress}` : "Redraw"}</button><button className="secondary" disabled={!data} onClick={() => { if (data) { fit(data); draw(); } }}>Fit</button><button className="secondary" onClick={onClose}>Close</button></div></div>
     {target.fulltas
       ? <><p className="lede">Shows this run&apos;s search windows, best route, goals and avoid boxes.</p><details className="howTo"><summary>How it works</summary><ul><li>Color: when a window first arrived; blue early, red late.</li><li>Gold: best so far, replayed from the run&apos;s start.</li><li>Green boxes: <code>at:</code> goals; red: avoid boxes.</li><li>Avoid boxes come from forced-paths.json rules naming this run.</li><li>Draw avoid drags a box; Move goals drags goal boxes.</li><li>Wheel zooms, drag pans; coordinates match forced-paths.json and <code>at:</code>.</li></ul></details></>
       : <><p className="lede">The solver&apos;s level, explored area, saved routes and forced-path boxes.</p><details className="howTo"><summary>How it works</summary><ul><li>Color: fastest time reaching each spot; blue early, red late.</li><li>Grey: reached only with the timer off.</li><li>Gold: fastest offline best. Ring: a route&apos;s timer start.</li><li>Red boxes cut runs; dashed boxes are optional and off.</li><li>Numbered green boxes: Improve&apos;s waypoints; gold: the picked ones.</li><li>Draw avoid drags a cut box; name it for a block.</li><li>Ghost compare shows two routes&apos; divergence and arrival deltas.</li></ul></details></>}
@@ -1079,7 +1094,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       </>}
       <button className="secondary" disabled={saving} onClick={() => setSketch(null)}>Discard</button></div>}
     {moved && <div className="buttonRow">
-      <span className="hint">Goal {moved.goal.index} <code>{moved.goal.label}</code>: centre {center(moved.goal.box).x}, {center(moved.goal.box).y} to</span>
+      <span className="hint">Goal {moved.goal.index - 1} <code>{moved.goal.label}</code>: centre {center(moved.goal.box).x}, {center(moved.goal.box).y} to</span>
       <Field label="x"><input type="number" step="0.1" value={center(moved.box).x} onChange={e => placeMoved(Number(e.target.value), center(moved.box).y)}/></Field>
       <Field label="y"><input type="number" step="0.1" value={center(moved.box).y} onChange={e => placeMoved(center(moved.box).x, Number(e.target.value))}/></Field>
       <button className="primary" disabled={saving || busy} title={busy ? "Stop solving or playing first." : "Saves the goal in fulltas.json."} onClick={saveMoved}>Save goal</button>
@@ -1192,14 +1207,14 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const pickedSeconds = picked && complete ? liveSeconds(splits[picked[1] - 1]) - (picked[0] > 1 ? liveSeconds(splits[picked[0] - 2]) : 0) : null;
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className={`offlineStatus ${busy?"running":""}`}>{solve.running?"Improving":running?"Playing":"Idle"}</span></div>
     <p className="lede">The whole game as one input stream, timed to the last goal.</p><details className="howTo"><summary>Goal syntax</summary><ul><li>One goal per line; reached in order.</li><li><code>start:1</code> · <code>finish:1</code></li><li><code>buy:&lt;box&gt;</code> · <code>reward:bonusN</code></li><li><code>at:x,y,w,h</code> area goal, any entry side.</li><li><code>at:x,y,w,h,from=left+bottom</code> limits entry sides.</li><li><code>"start": "vman"</code> in fulltas.json: Vman world.</li></ul></details><details className="howTo"><summary>How improving works</summary><ol><li><b>Improve</b> searches offline from the run&apos;s record and picks where to look itself.</li><li>Think a stretch is slow? Click its goals or segment bar (shift-click extends), then Improve.</li><li>Improve also edits the economy goals itself: it drops laps the Cash no longer needs, laps where the route stood waiting, and swaps in a record lap when that pays; an edit stays only when the whole run is faster. The game saves the new goal list with the record (fulltas.json backed up first).</li><li>The game replays every faster route in turbo from its start.</li><li>Runs save only when complete, held up and faster.</li><li>Goals split the run; nothing restarts between them.</li><li>A quick restart after an area goal takes it back.</li></ol></details>
-    <div className="fullTasRuns">
-      {runs.map(r => <button key={r.name} className={`fullTasRun ${r.name===name?"selected":""}`} onClick={() => setSelected(r.name)}>
+    {([["complete", "Complete"], ["wip", "WIP"], ["test", "Tests"]] as const).map(([section, title]) => <div key={section}><h3 className="fullTasSection">{title}</h3><div className="fullTasRuns">
+      {runs.filter(r => r.section === section).map(r => <button key={r.name} className={`fullTasRun ${r.name===name?"selected":""}`} onClick={() => setSelected(r.name)}>
         <strong>{r.name}</strong><small>{r.start === "vman" ? "Vman · " : ""}{r.savestate ? "Savestate · " : ""}{r.goals.length} goal{r.goals.length===1?"":"s"}</small>
         {r.best?<b>{liveText(r.best.time, r.best.splits[r.best.splits.length - 1]?.ticks ?? 0)}</b>:r.offline?<b className="none">offline {r.offline.reached}/{r.goals.length} · {runTime(r.offline.time)}</b>:<b className="none">no route yet</b>}
         {!r.traceReady && <span className="badge missing">No trace</span>}
       </button>)}
-      {name && !run && <div className="fullTasRun selected unsaved"><strong>{name}</strong><small>New · save its goals to create it</small></div>}
-    </div>
+      {section === "wip" && name && !run && <div className="fullTasRun selected unsaved"><strong>{name}</strong><small>New · save its goals to create it</small></div>}
+    </div></div>)}
     {!name && <p className="offlineConfirmation">No Full-TAS run yet: name a new one.</p>}
     <div className="fullTasInline">
       <Field label="New run (letters, digits, %, -)"><input value={newName} placeholder="main" onChange={e => setNewName(e.target.value)}/></Field>
@@ -1207,7 +1222,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
     </div>
     {name && <div className="fullTasGrid">
       <div className="fullTasGoals">
-        <div className="panelTitle"><div><p className="eyebrow">{run?.best?run.best.name:run?.offline?`OFFLINE BEST · ${run.offline.reached}/${run.goals.length} GOALS · UNSAVED`:"NO ROUTE YET"}</p><h2>{name}{run?.best?` · ${liveText(run.best.time, run.best.splits[run.best.splits.length - 1]?.ticks ?? 0)} live`:run?.offline?` · ${runTime(run.offline.time)} to goal ${run.offline.reached}`:""}</h2></div></div>
+        <div className="panelTitle"><div><p className="eyebrow">{run?.best?run.best.name:run?.offline?`OFFLINE BEST · ${run.offline.reached}/${run.goals.length} GOALS · UNSAVED`:"NO ROUTE YET"}</p><h2>{name}{run?.best?` · ${liveText(run.best.time, run.best.splits[run.best.splits.length - 1]?.ticks ?? 0)} live`:run?.offline?` · ${runTime(run.offline.time)} to goal ${run.offline.reached - 1}`:""}</h2></div></div>
         <div className="fullTasSolve">
           {complete && <div className={`ftFocus ${picked ? "on" : ""}`}>
             {picked
@@ -1243,7 +1258,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
               const title = [b!=null&&i===b?"Trips the breaker: the lights go out":"", goalTitle(label) ?? "", complete ? "Click to improve just this goal; shift-click to extend" : ""].filter(Boolean).join("\n");
               return <div className={`tableRow ${s?"":"pending"} ${b==null||i<b?"":i===b?"breakerTrip":"breakerOut"} ${complete ? "pickable" : ""} ${inPick ? "picked" : ""}`} key={i} title={title || undefined}
                 onClick={complete ? e => pick(i + 1, i + 1, e.shiftKey) : undefined}>
-              <span>{i + 1}</span><span>{label}</span>
+              <span>{i}</span><span>{label}</span>
               <span>{s ? liveText(liveSeconds(s) - (i > 0 ? liveSeconds(splits[i - 1]) : 0), s.ticks - (i > 0 ? splits[i - 1].ticks : 0)) : "—"}</span>
               <span>{s ? liveText(liveSeconds(s), s.ticks) : "—"}</span>
             </div>; };

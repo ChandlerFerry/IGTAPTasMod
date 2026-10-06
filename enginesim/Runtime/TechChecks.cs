@@ -85,7 +85,7 @@ namespace IGTAP.EngineSim
             "GcWallClip", "CoyoteJump", "WallCoyoteJump", "SuperJump", "ReversedSuper", "BackwardsDashJump", "Wavedash", "Ultra", "DashBounce",
             "WaveBounce", "Superbounce", "WallBounce", "SpringDash", "SpikeGrace", "UltraBonus", "SuperGroundBounce", "WallDash", "InwallWallBounce",
             "FloatUltra", "FreezeAim", "StoredWallJump", "HighSuper", "SuperbounceDoubleJump", "BoostedDoubleJump", "Pauselift", "DashCoyoteJump",
-            "CheckpointCoyoteJump", "ZipIntangible", "KbWallClip", "FinalClingFloat",
+            "CheckpointCoyoteJump", "ZipIntangible", "KbWallClip", "FinalClingFloat", "ReverseWallJump",
         };
 
         const int FlipWindowTicks = 4, InwallChainTicks = 6, MaxSpan = 60;
@@ -182,6 +182,7 @@ namespace IGTAP.EngineSim
                                 {
                                     if (!input.Wall && input.WallCoyote > 0f) pending.Add(("StoredWallJump", lastWall + 1));
                                     else if (input.WallCoyote < run.MaxWallCoyote) pending.Add(("WallCoyoteJump", lastWall + 1));
+                                    else if (input.Wall && Math.Sign(m.Vx) == Math.Sign(input.RaysX)) pending.Add(("ReverseWallJump", tick));
                                 }
                                 else if (m.AirJumps < input.AirJumps)
                                 {

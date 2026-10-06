@@ -8,8 +8,11 @@ description: Use when asked to change where a course, bonus or transition starts
 `courses.json` is not in the repo: it lives in the game's config folder (`tools/gamepaths.py` `CONFIG`). A target's
 start is its `x`, `y` (the checkpoint's own position, which the respawn uses).
 
-1. Map the user's name to a token. "Secret N" / a bonus by description: `BONUS_WHERE` in `web/app/page.tsx` (search the
-   description, e.g. `bonus8: "Far above Course 4 ..."`). Otherwise the token is the courses.json `name` or `id`.
+1. Map the user's name to a token. "Secret N" is NOT `bonusN`: it is the game's secret box number. Secrets 1-17 are
+   bonus4, bonus22, (3: none), bonus1, bonus2, bonus5, bonus3, bonus6, bonus7, (10: none), bonus8, bonus9, bonus10,
+   bonus11, bonus12, bonus13, bonus14 (the cached map's box markers' `box.number`, matched to the bonus ending there).
+   A bonus by description: `BONUS_WHERE` in `web/app/page.tsx` (e.g. `bonus8: "Far above Course 4 ..."`). Otherwise the
+   token is the courses.json `name` or `id`.
 2. Dry run, then write:
    ```
    python tools/move-start.py <token> <x> <y>

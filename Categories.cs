@@ -132,9 +132,15 @@ namespace IGTAPTasMod
         public bool RunsOn(string token, int minStep, int maxStep)
         {
             if (Scope == CategoryScope.All) return true;
-            if (Scope == CategoryScope.Targets) return Array.IndexOf(Targets, token) >= 0;
+            if (Scope == CategoryScope.Targets) return Listed(Targets, token);
             int step = Categories.LadderStep(Id);
             return step >= minStep && step <= maxStep;
+        }
+
+        /// <summary>The token is in the list; "tree*" stands for every tree transition (tree&lt;L&gt;to&lt;C&gt;).</summary>
+        static bool Listed(string[] targets, string token)
+        {
+            return Array.IndexOf(targets, token) >= 0 || token.StartsWith("tree") && Array.IndexOf(targets, "tree*") >= 0;
         }
     }
 
@@ -151,18 +157,19 @@ namespace IGTAPTasMod
         /// <summary>Targets with refill orbs in reach, and with zip movers (README ### Rules 19): the game's own grouping (an orb
         /// or mover under <c>Courses/course N</c>, <c>OvergrowthStuff/cN</c>) or the target's searched runs and routes (enginesim
         /// <c>map</c>) coming within 150 u of one; a target never searched keeps one only if a straight-line visit at 3000 u/s
-        /// fits inside its ladder record. Courses 11-15 count their base course's maps, with the overgrown objects.</summary>
+        /// fits inside its ladder record. Courses 11-15 count their base course's maps, with the overgrown objects. The tree
+        /// transitions start at bonus11's checkpoint and count as it does.</summary>
         static readonly string[] OrbTargets =
         {
             "4", "6", "7", "8", "9", "10", "12", "14", "15",
-            "bonus7", "bonus8", "bonus9", "bonus10", "bonus11", "bonus12", "bonus14", "bonus16",
+            "bonus7", "bonus8", "bonus9", "bonus10", "bonus11", "bonus12", "bonus14", "bonus16", "tree*",
         };
         static readonly string[] ZipTargets =
         {
-            "4", "7", "8", "10", "14", "15", "bonus4", "bonus9", "bonus10", "bonus11", "bonus12", "bonus13", "bonus14",
+            "4", "7", "8", "10", "14", "15", "bonus4", "bonus9", "bonus10", "bonus11", "bonus12", "bonus13", "bonus14", "tree*",
         };
         /// <summary>Targets whose end needs the zip movers: they run only the categories with them, whatever their ladder range.</summary>
-        static readonly string[] ZipOnlyTargets = { "bonus4" };
+        static readonly string[] ZipOnlyTargets = { "bonus4", "bonus12" };
 
         /// <summary>courses.json bonuses that run no category (the batch solver has no row for them): their end is an unlock
         /// box, not a bonus stretch (bonus17 refill orbs, bonus18 clone dust, bonus19 buy max, bonus20/21 the 1x and ∞x

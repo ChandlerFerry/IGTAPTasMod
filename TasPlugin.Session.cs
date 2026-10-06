@@ -306,18 +306,19 @@ namespace IGTAPTasMod
             return null;
         }
 
-        void StartNewGame(WebStudioRequest request, bool vman, string savestate, Vector2? rebaseAt = null)
+        void StartNewGame(WebStudioRequest request, bool vman, string savestate, Vector2? rebaseAt = null, int? tree = null)
         {
             if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
             if (_solverRunning) throw new InvalidOperationException("Stop the solver first.");
-            LoadNewGame(request, vman, savestate, rebaseAt);
+            LoadNewGame(request, vman, savestate, rebaseAt, tree);
         }
 
-        void LoadNewGame(WebStudioRequest request, bool vman, string savestate, Vector2? rebaseAt = null)
+        void LoadNewGame(WebStudioRequest request, bool vman, string savestate, Vector2? rebaseAt = null, int? tree = null)
         {
             if (_newGamePhase != 0) throw new InvalidOperationException("A new game is already loading.");
             if (_bootstrapRequest != null) throw new InvalidOperationException("A bootstrap is in progress.");
-            if (savestate != null && _savestates.Find(s => s.id == savestate) == null) throw new InvalidOperationException("No savestate " + savestate + ".");
+            Savestate state = savestate == null ? null : _savestates.Find(s => s.id == savestate);
+            if (savestate != null && state == null) throw new InvalidOperationException("No savestate " + savestate + ".");
             if (!_newGameSession)
             {
                 Movement saved = FindWorldMovement();
@@ -331,6 +332,9 @@ namespace IGTAPTasMod
             VmanScript.vmanScore = 0.0;
             VmanScript.vmanTimeLeft = 0.0;
             VmanScript.VmanStatingUpgrades = null;
+            // A fresh install has no PlayerPrefs "OpenA2Door" (a savestate start: the savestate's), so the load's atom box Start
+            // leaves the atom room's door shut as a new player finds it (README ### Rules, exception 13).
+            SavestateService.SetAtomDoorKey(state?.openA2Door == true);
             SceneManager.LoadScene("Overworld");
             _newGameStart = null;
             _newGamePlayer = null;
@@ -340,6 +344,7 @@ namespace IGTAPTasMod
             _newGameAirStart = null;
             _newGameRebaseAt = savestate == null ? null : rebaseAt;
             _newGameRebased = false;
+            _newGameTree = savestate == null ? null : tree;
             _newGameUnlocks = default;
             _vmanSetupPlayer = null;
             _newGameSpawn = null;
@@ -497,7 +502,7 @@ namespace IGTAPTasMod
             request.Completed.Set();
         }
 
-        bool NewGameIs(FullTasRunDef run) { return _newGameVman == run.Vman && _newGameSavestate == run.savestate && _newGameRebaseAt == run.RebaseAt; }
+        bool NewGameIs(FullTasRunDef run) { return _newGameVman == run.Vman && _newGameSavestate == run.savestate && _newGameRebaseAt == run.RebaseAt && _newGameTree == run.tree; }
 
         TurboRunner.Snapshot NewGameStart(FullTasRunDef run)
         {
@@ -592,9 +597,10 @@ namespace IGTAPTasMod
                 if (MoverBody.GetValue(mover) is Rigidbody2D body && body != null) body.linearVelocity = Vector2.zero;
             }
             upgradeBox[] boxes = FindObjectsByType<upgradeBox>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            bool assumed = course != null && !course.IsBonus && !course.IsTransition && CourseStart.AssumesAtomDoor(course.id);
+            bool assumed = course != null && (!course.IsTransition || course.tree != null) && CourseStart.AssumesAtomDoor(course.id);
             if (assumed || PlayerPrefs.HasKey("OpenA2Door") || Array.Exists(boxes, b => CourseStart.IsAtomBox(b) && b.TimesUsed != 0))
                 CourseStart.OpenAtomDoor(boxes);
+            if (course?.tree >= 8) CourseStart.OpenArea2Door(boxes);
             Physics2D.SyncTransforms();
         }
 

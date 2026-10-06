@@ -59,7 +59,7 @@ namespace IGTAPTasMod
             if (!fresh && _newGamePhase == 0)
             {
                 if (_solverRunning) throw new InvalidOperationException("A Full-TAS run needs a fresh new game: stop the Optimize run first.");
-                LoadNewGame(null, run.Vman, run.savestate, run.RebaseAt);
+                LoadNewGame(null, run.Vman, run.savestate, run.RebaseAt, run.tree);
                 pending.loaded = true;
             }
             _fullTasPending = pending;
@@ -84,7 +84,7 @@ namespace IGTAPTasMod
                     CompleteFullTasPending(500, new { ok = false, error = pending.what + ": no fresh " + (pending.run.Vman ? "Vman speedrun" : "new game") + (pending.run.savestate == null ? "" : " from savestate " + pending.run.savestate) + " in the world." });
                     return;
                 }
-                LoadNewGame(null, pending.run.Vman, pending.run.savestate, pending.run.RebaseAt);
+                LoadNewGame(null, pending.run.Vman, pending.run.savestate, pending.run.RebaseAt, pending.run.tree);
                 pending.loaded = true;
                 return;
             }
@@ -249,10 +249,11 @@ namespace IGTAPTasMod
                         return new { ok = false, error = "No trace for " + run.name + " yet: capture its start or improve it once first." };
                     }
                     string output = Path.Combine(EngineSimDir, "map-fulltas-" + run.name + ".json");
+                    if (MapInFlight(output, body)) return RunEngineSimMap(request, null, output, true);
                     // The run's goals as they are now: the trace holds the goals it was captured with, older after a goals edit.
                     string goalsFile = Path.Combine(EngineSimDir, "map-fulltas-" + run.name + ".goals.json");
                     File.WriteAllText(goalsFile, JsonConvert.SerializeObject(ResolveFullTasGoals(run).Select(g => g.label)));
-                    return RunEngineSimMap(request, "map " + Quote(trace) + " --goals " + Quote(goalsFile) + " --out " + Quote(output), output);
+                    return RunEngineSimMap(request, "map " + Quote(trace) + " --goals " + Quote(goalsFile) + " --out " + Quote(output), output, true);
                 }
             }
             request.StatusCode = 404;
@@ -276,7 +277,7 @@ namespace IGTAPTasMod
                 splits = splits.TakeWhile((s, i) => i < labels.Length && s.label == labels[i]).ToList();
                 FullTasOffline offline = FullTasOfflineBest(r.name, labels);
                 FullTasClosest closest = FullTasClosestAttempt(r.name, labels);
-                return new { name = r.name, start = r.start, savestate = r.savestate, goals = labels, error = error,
+                return new { name = r.name, start = r.start, savestate = r.savestate, section = r.Section, goals = labels, error = error,
                     breaker = FullTasBreakerGoal(labels),
                     best = best == null ? null : new { routeId = best.id, name = best.name, time = float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture), splits = splits },
                     offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits, segments = offline.segments },

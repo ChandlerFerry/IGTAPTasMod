@@ -890,7 +890,7 @@ namespace IGTAPTasMod
                 try { _goalOverlayGoals = ResolveFullTasGoals(run); }
                 catch (System.InvalidOperationException) { _goalOverlayGoals = new FullTasGoal[0]; }
                 _goalOverlayLabels = new string[_goalOverlayGoals.Length];
-                for (int i = 0; i < _goalOverlayGoals.Length; i++) _goalOverlayLabels[i] = (i + 1) + "  " + _goalOverlayGoals[i].label;
+                for (int i = 0; i < _goalOverlayGoals.Length; i++) _goalOverlayLabels[i] = i + "  " + _goalOverlayGoals[i].label;
             }
             FullTasTracker tracker = _fullTasPlay != null && _fullTasPlay.run.name == run.name ? _fullTasPlay.tracker : null;
             Vector2 origin = CurrentOrigin();

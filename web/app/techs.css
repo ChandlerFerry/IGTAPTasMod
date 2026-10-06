@@ -36,16 +36,11 @@
 .techCard.focused { box-shadow: 0 0 0 2px var(--cyan); }
 .techHead { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .techHead strong { font-size: 15px; }
-.originBadge { padding: 1px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: .05em; background: #1c304b; color: var(--muted); }
-.originBadge.ours { background: var(--amber); color: #2a1a02; }
-.originBadge.game { background: #12344f; color: var(--cyan); }
 .detectorChip { padding: 1px 7px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: .05em; background: #12352a; color: var(--green); }
 .techDescription { margin: 0; color: #c9d8ea; font-size: 13px; line-height: 1.45; white-space: pre-wrap; }
 .techNote { margin: 0; padding: 7px 10px; border-radius: 6px; background: #0b192b; color: #aac0d7; font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
 .techRelated { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
-.techRelated.merge > span:first-child { color: var(--amber); font-weight: 700; }
 .relatedChip { display: inline-flex; gap: 4px; align-items: center; padding: 2px 8px; border: 1px solid #294563; border-radius: 999px; background: #0d2036; color: var(--text); font-size: 12px; cursor: pointer; }
-.relatedChip.ours { border-color: var(--amber); }
 .relatedChip button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 0; }
 .techHead .techEditButton { margin-left: auto; }
 .techEditor .buttonRow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }

@@ -5,12 +5,11 @@ import "./techs.css";
 import { SPRING_COLOR } from "./ultra-level";
 
 export type TechCategory = "glitchless" | "nmg" | "major";
-export type TechOrigin = "community" | "game" | "ours";
 export type TechRequires = "NONE" | "WJ" | "WJ_DS" | "WJ_DS_DJ" | "WJ_DS_DJ_BS" | "DS_OM";
 // One of a tech's labs: the lab map's id, the demo the tech plays there (labmaps/<id>.<demo>.demo.json; none: <id>.demo.json)
 // and that demo's length (physics ticks to the finish, input ticks); no inputTicks: the demo isn't there yet.
 export type TechLabRef = { id: string; demo?: string | null; ticks?: number | null; inputTicks?: number | null };
-export type Tech = { id: string; name: string; category: TechCategory; requires: TechRequires; origin: TechOrigin; floatingOrigin?: boolean;
+export type Tech = { id: string; name: string; category: TechCategory; requires: TechRequires; floatingOrigin?: boolean;
   description: string; note?: string | null; detector?: string | null; related: string[]; labmap?: string | null; labDemo?: string | null; graft?: string | null;
   labs: TechLabRef[] };
 export type LabShape = { kind: string; at?: number[] | null; size?: number[] | null; points?: number[][] | null; layer: string; tag: string; trigger: boolean; spike: boolean;
@@ -34,17 +33,11 @@ const REQUIRES: [TechRequires, string][] = [
   ["NONE", "No unlocks"], ["WJ", "WJ"], ["WJ_DS", "WJ + DS"], ["WJ_DS_DJ", "WJ + DS + DJ"], ["WJ_DS_DJ_BS", "WJ + DS + DJ + BS"],
   ["DS_OM", "Omnidash (DS + OM)"],
 ];
-const ORIGINS: [TechOrigin, string, string][] = [
-  ["community", "Community", "From the community's tech list"],
-  ["game", "Game", "Named in the game's own code"],
-  ["ours", "Ours", "Named in this repo: check it isn't a community tech renamed."],
-];
 const TICK_SECONDS = 0.02;
 const BUSY = "Finish playback or recording first";
 
 export function TechPanel({techs, running, onCommand}: {techs?: TechState; running: boolean; onCommand: Command}) {
   const [query, setQuery] = useState("");
-  const [oursOnly, setOursOnly] = useState(false);
   const [editing, setEditing] = useState("");
   const [focus, setFocus] = useState("");
   useEffect(() => { if (!focus) return; document.getElementById(`tech-${focus}`)?.scrollIntoView({ behavior: "smooth", block: "center" }); const t = window.setTimeout(() => setFocus(""), 1600); return () => window.clearTimeout(t); }, [focus]);
@@ -58,7 +51,7 @@ export function TechPanel({techs, running, onCommand}: {techs?: TechState; runni
   const missing = techs.list.filter(t => t.labs.length === 0);
   const byDetector = new Map(reproduced.filter(t => t.detector).map(t => [t.detector as string, t]));
   const q = query.trim().toLowerCase();
-  const matches = (t: Tech) => (!oursOnly || t.origin === "ours") && (!q || `${t.name} ${t.description} ${t.note ?? ""}`.toLowerCase().includes(q));
+  const matches = (t: Tech) => (!q || `${t.name} ${t.description} ${t.note ?? ""}`.toLowerCase().includes(q));
   const shown = reproduced.filter(matches);
   const tiers: [string, string][] = [...REQUIRES, ...[...new Set(shown.map(t => t.requires as string))].filter(r => !REQUIRES.some(([id]) => id === r)).map(r => [r, r.split("_").join(" + ")] as [string, string])];
   const labCount = new Set(reproduced.flatMap(t => t.labs.map(l => l.id))).size;
@@ -83,7 +76,6 @@ export function TechPanel({techs, running, onCommand}: {techs?: TechState; runni
 
     <div className="techToolbar">
       <input className="techSearch" value={query} placeholder="Search techs" onChange={e => setQuery(e.target.value)} />
-      <label className={`capabilityLock executable ${oursOnly ? "on" : ""}`}><input type="checkbox" checked={oursOnly} onChange={e => setOursOnly(e.target.checked)} /><strong>Only ours</strong></label>
     </div>
     <div className="techLegend">{CATEGORIES.map(([id, label, blurb]) => <span key={id} className={`legendItem ${id}`} title={blurb}>{label}</span>)}</div>
 
@@ -107,7 +99,7 @@ export function TechPanel({techs, running, onCommand}: {techs?: TechState; runni
         </div>
       </section>;
     })}
-    {!shown.length && <p className="muted">No techs{q || oursOnly ? " match" : ""}.</p>}
+    {!shown.length && <p className="muted">No techs{q ? " match" : ""}.</p>}
 
     {missing.length > 0 && <details className="techMissing">
       <summary>Not reproduced yet: {missing.length} {missing.length === 1 ? "tech" : "techs"}</summary>
@@ -123,11 +115,10 @@ function TechCard({tech, byId, techs, running, editing, focused, onEdit, onFocus
   const relatedBy = techs.list.filter(t => t.id !== tech.id && t.related.includes(tech.id) && !tech.related.includes(t.id));
   // First sentence stays visible; the rest of the description folds under More.
   const [lead, rest] = /^([\s\S]+?[.!?])\s+([\s\S]+)$/.exec(tech.description ?? "")?.slice(1) ?? [tech.description ?? "", ""];
-  return <article id={`tech-${tech.id}`} className={`techCard ${tech.category} ${tech.origin} ${focused ? "focused" : ""}`}
+  return <article id={`tech-${tech.id}`} className={`techCard ${tech.category} ${focused ? "focused" : ""}`}
     title={CATEGORIES.find(c => c[0] === tech.category)?.[1]}>
     <div className="techHead">
       <strong>{tech.name}</strong>
-      <span className={`originBadge ${tech.origin}`} title={ORIGINS.find(o => o[0] === tech.origin)?.[2]}>{ORIGINS.find(o => o[0] === tech.origin)?.[1].toUpperCase()}</span>
       {detectorLabel && <span className="detectorChip" title={`Detected in playback; overlay label ${tech.name.toUpperCase()}`}>detected</span>}
       <button className="secondary techEditButton" onClick={onEdit}>{editing ? "Close" : "Edit"}</button>
     </div>
@@ -136,9 +127,9 @@ function TechCard({tech, byId, techs, running, editing, focused, onEdit, onFocus
       {rest && <p className="techDescription">{rest}</p>}
       {tech.note && <p className="techNote">{tech.note}</p>}
     </details>}
-    {(related.length > 0 || relatedBy.length > 0) && <div className={`techRelated ${tech.origin === "ours" ? "merge" : ""}`}>
-      <span>{tech.origin === "ours" ? "Same as?" : "Related"}</span>
-      {[...related, ...relatedBy].map(r => <button key={r.id} className={`relatedChip ${r.origin}`} onClick={() => onFocus(r.id)} title={`${r.name} (${r.origin})`}>{r.name}</button>)}
+    {(related.length > 0 || relatedBy.length > 0) && <div className="techRelated">
+      <span>Related</span>
+      {[...related, ...relatedBy].map(r => <button key={r.id} className="relatedChip" onClick={() => onFocus(r.id)} title={r.name}>{r.name}</button>)}
     </div>}
     {tech.labs.map(ref => <TechLab key={ref.id} tech={tech} lab={ref} info={techs.labs?.find(l => l.id === ref.id)} techs={techs} running={running} onCommand={onCommand} />)}
     {editing && <TechEditor tech={tech} techs={techs} running={running} onCommand={onCommand} onClose={onEdit} />}
@@ -232,7 +223,7 @@ function LabPreview({lab}: {lab: LabInfo}) {
 }
 
 function TechEditor({tech, techs, running, onCommand, onClose}: {tech: Tech; techs: TechState; running: boolean; onCommand: Command; onClose: () => void}) {
-  const [draft, setDraft] = useState({ name: tech.name, category: tech.category, requires: tech.requires, origin: tech.origin, detector: tech.detector ?? "",
+  const [draft, setDraft] = useState({ name: tech.name, category: tech.category, requires: tech.requires, detector: tech.detector ?? "",
     labmap: tech.labmap ?? "", labDemo: tech.labDemo ?? "", floatingOrigin: !!tech.floatingOrigin, description: tech.description, note: tech.note ?? "", related: tech.related });
   const [into, setInto] = useState("");
   const set = (u: Partial<typeof draft>) => setDraft(d => ({ ...d, ...u }));
@@ -243,7 +234,6 @@ function TechEditor({tech, techs, running, onCommand, onClose}: {tech: Tech; tec
       <label className="field"><span>Name</span><input value={draft.name} onChange={e => set({ name: e.target.value })} /></label>
       <label className="field"><span>Category</span><select value={draft.category} onChange={e => set({ category: e.target.value as TechCategory })}>{CATEGORIES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
       <label className="field"><span>Requires</span><select value={draft.requires} onChange={e => set({ requires: e.target.value as TechRequires })}>{REQUIRES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
-      <label className="field"><span>Named by</span><select value={draft.origin} onChange={e => set({ origin: e.target.value as TechOrigin })}>{ORIGINS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
       <label className="field"><span>Detector (in-game overlay)</span><select value={draft.detector} onChange={e => set({ detector: e.target.value })}>
         <option value="">None</option>
         {techs.detectors.map(d => <option key={d.id} value={d.id} disabled={taken.has(d.id)}>{d.label}{taken.has(d.id) ? ` (${taken.get(d.id)})` : ""}</option>)}</select></label>

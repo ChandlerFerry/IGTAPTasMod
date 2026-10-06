@@ -291,6 +291,7 @@ namespace IGTAPTasMod
         Savestate _newGameAirStart;
         Vector2? _newGameRebaseAt;
         bool _newGameRebased;
+        int? _newGameTree;
         FullTasUnlocks _newGameUnlocks;
         Movement _vmanSetupPlayer;
         bool _vmanSetupQuiet;

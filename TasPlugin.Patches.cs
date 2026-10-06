@@ -21,11 +21,13 @@ namespace IGTAPTasMod
         {
             if (Instance == null) return true;
             if (Instance._playbackSavedAbilities.Count != 0 || Instance._silentEvaluation || TurboRunner.Active || Instance._newGameSession || Instance.LabInjected) return false;
-            if (Instance.SavedArea1State == null) return true;
+            if (Instance.SavedArea1State == null && !Instance.TreeSaved) return true;
             if (Instance._solverRunning || Instance.PlaybackActive || Instance._recorder.IsRecording) return false;
             Movement player = FindWorldMovement();
-            if (player != null && player.courseResetPoint != Vector2.zero) return true;
+            // TreeController.save writes the grown segments and the boxes: a tree level waits for the save's tree.
+            if (player != null && player.courseResetPoint != Vector2.zero) return !Instance.TreeSaved;
             Instance.RestoreArea1State();
+            Instance.RestoreTree();
             return true;
         }
 
@@ -176,6 +178,7 @@ namespace IGTAPTasMod
             }
             if (Instance._pendingSilentMacro != null && !Instance._engine.IsRunning)
             {
+                if (!Instance.TreeStartReady(Instance._pendingSilentMacro)) return true;
                 MacroDefinition macro = Instance._pendingSilentMacro;
                 Instance._pendingSilentMacro = null;
                 bool savestateRestored = Instance.RestoreRouteStart(macro);
@@ -199,6 +202,7 @@ namespace IGTAPTasMod
             // frame would otherwise play its first ticks back to back with no Update between them (a dash freeze's turn lost).
             if (Instance._pendingReplay != null && !Instance._engine.IsRunning && Instance._playbackPaced)
             {
+                if (!Instance.TreeStartReady(Instance._pendingReplay)) return true;
                 MacroDefinition macro = Instance._pendingReplay;
                 int startDelayTicks = Instance._pendingReplayStartDelayTicks;
                 Instance._pendingReplay = null;

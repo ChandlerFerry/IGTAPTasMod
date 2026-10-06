@@ -895,7 +895,7 @@ namespace IGTAP.EngineSim
                 };
             else UnityEngine.Random.InitState(0);
             if (canonical && _categoryTrace) IGTAPTasMod.CourseStart.Apply(Player, World.All<clonesScript>());
-            // Courses 6-15 start with the atom room's door open (README ### Rules 21), as the plugin's category start sets it:
+            // Courses 6-15 and bonus 11 start with the atom room's door open (README ### Rules 21), as the plugin's category start sets it:
             // a trace captured before that rule searches from the start the game now judges.
             if (_categoryTrace && IGTAPTasMod.CourseStart.AssumesAtomDoor(_traceCourse)) IGTAPTasMod.CourseStart.OpenAtomDoor(World.All<upgradeBox>());
             MaterializeRebases(Array.Empty<Vector3>());

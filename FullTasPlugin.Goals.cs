@@ -61,7 +61,7 @@ namespace IGTAPTasMod
 
         bool FullTasRunChanged(FullTasRunDef old, FullTasRunDef run)
         {
-            return old == null || old.start != run.start || old.savestate != run.savestate || old.RebaseAt != run.RebaseAt
+            return old == null || old.start != run.start || old.savestate != run.savestate || old.RebaseAt != run.RebaseAt || old.tree != run.tree
                 || !FullTasLabels(old).SequenceEqual(FullTasLabels(run));
         }
 
@@ -98,6 +98,8 @@ namespace IGTAPTasMod
                 throw new InvalidOperationException("Full-TAS run " + run.name + ": no savestate " + run.savestate + ".");
             if (run.rebaseAt != null && (run.savestate == null || run.rebaseAt.Length != 2))
                 throw new InvalidOperationException("Full-TAS run " + run.name + ": rebaseAt is a world [x, y] and needs a savestate start.");
+            if (run.tree != null && (run.savestate == null || run.tree < 0 || run.tree > 27))
+                throw new InvalidOperationException("Full-TAS run " + run.name + ": tree is a level 0-27 and needs a savestate start.");
             if (run.buys != null && run.buys != "strict" && run.buys != "loose")
                 throw new InvalidOperationException("Full-TAS run " + run.name + ": buys is \"strict\" or \"loose\", not \"" + run.buys + "\".");
             return run.goals.Select(ResolveFullTasGoal).ToArray();
@@ -174,7 +176,7 @@ namespace IGTAPTasMod
         {
             string trimmed = (name ?? "").Trim();
             FullTasRunDef old = _fullTasRuns.Find(r => string.Equals(r.name, trimmed, StringComparison.OrdinalIgnoreCase));
-            var run = new FullTasRunDef { name = trimmed, start = start == null ? old?.start : start.Length == 0 ? null : start, savestate = old?.savestate, rebaseAt = old?.rebaseAt, seeds = old?.seeds, buys = old?.buys, human = old?.human, goals = tokens.ToList() };
+            var run = new FullTasRunDef { name = trimmed, start = start == null ? old?.start : start.Length == 0 ? null : start, savestate = old?.savestate, rebaseAt = old?.rebaseAt, tree = old?.tree, seeds = old?.seeds, buys = old?.buys, human = old?.human, goals = tokens.ToList() };
             run.goals = ResolveFullTasGoals(run).Select(g => g.label).ToList();
             int at = _fullTasRuns.FindIndex(r => string.Equals(r.name, run.name, StringComparison.OrdinalIgnoreCase));
             if (at >= 0) _fullTasRuns[at] = run;

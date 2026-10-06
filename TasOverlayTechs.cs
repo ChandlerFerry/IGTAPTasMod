@@ -39,6 +39,7 @@ namespace IGTAPTasMod
             ZipIntangible,
             KbWallClip,
             FinalClingFloat,
+            ReverseWallJump,
         }
 
         static readonly string[] TechNames =
@@ -47,6 +48,7 @@ namespace IGTAPTasMod
             "GROUND BOUNCE", "HYPER GROUND BOUNCE", "SUPERBOUNCE", "WALL BOUNCE", "SPRING DASH", "SPIKE GRACE", "ULTRA", "SUPER GROUND BOUNCE", "WALL DASH",
             "INWALL WALLBOUNCE", "FLOAT ULTRA", "FREEZE AIM", "STORED WALL JUMP", "HIGH SUPER", "SUPERBOUNCE DOUBLE JUMP", "BOOSTED DOUBLE JUMP",
             "PAUSELIFT", "DASH COYOTE JUMP", "CHECKPOINT COYOTE JUMP", "ZIP INTANGIBLE", "KB WALL CLIP", "FINAL-CLING FLOAT",
+            "REVERSE WALL JUMP",
         };
 
         static readonly Color[] TechColors =
@@ -55,7 +57,7 @@ namespace IGTAPTasMod
             Hex(0xfb923c, 1f), Hex(0xfde68a, 1f), Hex(0xe879f9, 1f), Hex(0x10b981, 1f), Hex(0x2dd4bf, 1f), Hex(0x60a5fa, 1f), Hex(0xd4a373, 1f),
             Hex(0x86efac, 1f), Hex(0xf43f5e, 1f), Hex(0xfacc15, 1f), Hex(0x94a3b8, 1f), Hex(0x22d3ee, 1f), Hex(0xa78bfa, 1f), Hex(0x84cc16, 1f),
             Hex(0x7dd3fc, 1f), Hex(0x34d399, 1f), Hex(0xf9a8d4, 1f), Hex(0xef4444, 1f), Hex(0xfcd34d, 1f), Hex(0xbef264, 1f), Hex(0x818cf8, 1f),
-            Hex(0xfb7185, 1f), Hex(0x67e8f9, 1f),
+            Hex(0xfb7185, 1f), Hex(0x67e8f9, 1f), Hex(0xfdba74, 1f),
         };
 
         sealed class TechSpan
@@ -92,7 +94,7 @@ namespace IGTAPTasMod
         long _techWaveStart = NoTick, _techSuperStart = NoTick;
         long _techInwallStart = NoTick, _techInwallLast = NoTick;
         bool _techInputJumpBuffer, _techInputGround, _techInputOnWall, _techWallKick;
-        float _techInputCoyote, _techInputWallCoyote, _techInputVelocityY;
+        float _techInputCoyote, _techInputWallCoyote, _techInputVelocityY, _techInputRaysX;
         int _techInputAirJumps, _techInputWallJumps, _techInputDashBounce;
         bool _techSuperJumpBuffer, _techSuperHyper, _techSuperUltra, _techSuperFloat;
         // lastHyperY is in the scene frame, which a FloatingOrigin rebase moves: the origin's y when it was last written.
@@ -129,6 +131,7 @@ namespace IGTAPTasMod
             p._techInputWallJumps = __instance.wallJumpsLeft;
             p._techInputDashBounce = DebugFields.DashBounce(__instance);
             p._techInputVelocityY = __instance.Velocity.y;
+            p._techInputRaysX = DebugFields.WallJumpFacing(__instance).x;
             p._techWallKick = false;
         }
 
@@ -148,6 +151,9 @@ namespace IGTAPTasMod
                 // this tick) is the wall coyote jump.
                 if (!p._techInputOnWall && p._techInputWallCoyote > 0f) p.PendTech(Tech.StoredWallJump, p._techLastWall + 1);
                 else if (p._techInputWallCoyote < __instance.maxWallCoyoteFrames) p.PendTech(Tech.WallCoyoteJump, p._techLastWall + 1);
+                // Off a wall the rays hit this tick, kicked toward it: the cling came over from the other wall with OnWall
+                // never off, so wallCoyoteDir (the side the jump goes against) is still that first wall's.
+                else if (p._techInputOnWall && Mathf.Sign(__instance.Velocity.x) == Mathf.Sign(p._techInputRaysX)) p.PendTech(Tech.ReverseWallJump, tick);
             }
             else if (__instance.airJumpsLeft < p._techInputAirJumps)
             {

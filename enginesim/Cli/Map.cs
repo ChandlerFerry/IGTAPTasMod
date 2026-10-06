@@ -62,13 +62,15 @@ namespace IGTAP.EngineSim.Cli
             List<string> seedFiles = Solve.Args(args, "--seed").ToList();
 
             string engine = EngineStamp();
-            string simKey = engine + "|" + Stamp(trace) + "|" + Stamp(worldPath);
+            // The explore cells' cache is the simulation's (not the CLI's, rebuilt with every map or solve edit).
+            string simKey = string.Join(";", engine.Split(';').Where(d => !d.StartsWith("IGTAP.EngineSim.dll=", StringComparison.OrdinalIgnoreCase)))
+                + "|" + Stamp(trace) + "|" + Stamp(worldPath);
             string human = best == null ? null : HumanFile(dir, best);
-            string outputKey = string.Join("\n", new[] { simKey, Stamp(archivePath), best ?? "-", Stamp(best), Stamp(human),
+            string outputKey = string.Join("\n", new[] { engine, simKey, Stamp(archivePath), best ?? "-", Stamp(best), Stamp(human),
                 Stamp(System.IO.Path.Combine(AppContext.BaseDirectory, "forced-paths.json")), string.Join("+", optional) }
                 .Concat(seedFiles.Select(f => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(f))))));
             string keyPath = output + ".key";
-            if (File.Exists(output) && File.Exists(keyPath) && File.ReadAllText(keyPath) == outputKey)
+            if (!args.Contains("--closest") && File.Exists(output) && File.Exists(keyPath) && File.ReadAllText(keyPath) == outputKey)
             {
                 Console.WriteLine($"map {label}: inputs unchanged -> {output}");
                 return 0;
@@ -96,33 +98,64 @@ namespace IGTAP.EngineSim.Cli
 
             List<InputRuns> sources = memory?.Sources.Select(s => s.Inputs).ToList() ?? new List<InputRuns>();
             string cellsPath = System.IO.Path.ChangeExtension(archivePath, ".mapcells.bin");
-            Dictionary<Hash, SourceCells> cached = ReadCells(cellsPath, simKey);
+            // The cache is every cell the prefixes replayed so far reached (its earliest time) and their hashes: only new
+            // prefixes replay, and a prefix the archive has dropped since keeps its cells (the map is where the search went).
+            var (seen, reached) = memory == null ? (new HashSet<Hash>(), new Dictionary<long, float>()) : ReadCells(cellsPath, simKey);
             var hashes = new Hash[sources.Count];
-            var cells = new SourceCells[sources.Count];
-            Parallel.For(0, sources.Count, k =>
-            {
-                hashes[k] = HashInputs(sources[k]);
-                if (cached.TryGetValue(hashes[k], out SourceCells hit)) cells[k] = hit;
-            });
-            int[] missing = Enumerable.Range(0, sources.Count).Where(k => cells[k] == null).ToArray();
+            Parallel.For(0, sources.Count, k => hashes[k] = HashInputs(sources[k]));
+            var current = new HashSet<Hash>();
+            // --closest: every prefix replays (not only new ones), and the one whose player came nearest the finish box (straight
+            // line, capture frame) is drawn as a route and written beside the map (<map>.closest.json), for a target no run finishes.
+            bool closest = args.Contains("--closest");
+            int[] missing = Enumerable.Range(0, sources.Count).Where(k => current.Add(hashes[k]) && (closest || !seen.Contains(hashes[k]))).ToArray();
+            int replayed = 0;
+            float closestDistance = float.PositiveInfinity;
+            int closestSource = -1;
+            object closestLock = new object();
             Action workers = Solve.Workers(threads, missing.Length, () => (sim: create(), local: new Dictionary<long, float>()), (w, m) =>
             {
                 var (sim, local) = w;
                 local.Clear();
+                float nearest = float.PositiveInfinity;
                 sim.Run(sources[missing[m]], extraTicks: 0, onStep: _ =>
                 {
                     WorldPos p = sim.PlayerWorld;
                     long key = ((long)Mathf.FloorToInt(p.x / Cell) << 32) | (uint)Mathf.FloorToInt(p.y / Cell);
                     float t = sim.Elapsed(sim.TimingCourse());
                     local[key] = local.TryGetValue(key, out float earliest) ? Earlier(earliest, t) : t;
+                    if (closest) nearest = Math.Min(nearest, FinishDistance(sim));
                 });
-                cells[missing[m]] = new SourceCells(local.Keys.ToArray(), local.Values.ToArray());
+                if (nearest < closestDistance)
+                    lock (closestLock)
+                        if (nearest < closestDistance) { closestDistance = nearest; closestSource = missing[m]; }
+                lock (reached)
+                    foreach (var (key, t) in local) reached[key] = reached.TryGetValue(key, out float earliest) ? Earlier(earliest, t) : t;
+                Interlocked.Increment(ref replayed);
             });
             var paths = new List<Path>();
             CapturePos origin;
+            // Nothing run yet (a new target's first map, before a solve keeps an archive): the frame is the start and the
+            // gates it finishes at (a transition's next course's start gate, a course's end gate) and a bonus's finish rect,
+            // so avoid boxes can be placed before the first solve.
+            var frame = new List<float[]>();
             {
                 Simulation sim = create();
                 origin = sim.WorldOriginInCapture;
+                WorldPos at = sim.PlayerWorld;
+                frame.Add(new[] { at.x, at.y, at.x, at.y });
+                foreach (MonoBehaviour gate in sim.World.All<startGate>().Cast<MonoBehaviour>().Concat(sim.World.All<endGate>()))
+                {
+                    courseScript c = gate.GetComponentInParent<courseScript>();
+                    int want = gate is startGate ? sim.TargetStart : sim.TargetCourse;
+                    if (c == null || want == 0 || c.courseNumber != want) continue;
+                    WorldPos g = sim.ToWorld(new ScenePos(gate.transform.position.x, gate.transform.position.y));
+                    frame.Add(new[] { g.x, g.y, g.x, g.y });
+                }
+                if (sim.TargetFinish.W > 0f)
+                {
+                    WorldPos f = sim.ToWorld(sim.TargetFinish.At);
+                    frame.Add(new[] { f.x, f.y, f.x, f.y });
+                }
                 foreach (var (name, kind, inputs) in routes)
                 {
                     var path = new Path { Name = name, Kind = kind };
@@ -136,46 +169,84 @@ namespace IGTAP.EngineSim.Cli
                     paths.Add(path);
                 }
             }
-            workers();
-            var reached = new Dictionary<long, float>();
-            foreach (SourceCells s in cells)
-                for (int i = 0; i < s.Keys.Length; i++)
-                    reached[s.Keys[i]] = reached.TryGetValue(s.Keys[i], out float t) ? Earlier(t, s.Times[i]) : s.Times[i];
-            if (missing.Length > 0 || cached.Count != sources.Count) WriteCells(cellsPath, simKey, hashes, cells);
-
-            var (x0, y0, x1, y1) = Bounds(paths, reached.Keys, Cell, Enumerable.Empty<float[]>())
-                ?? throw new InvalidOperationException("Nothing to draw: no routes and no archive for " + label);
-            var forced = new OfflineSolver.ForcedPath();
-            List<Solve.OptionalBlock> blocks = Solve.OptionalBlocks(course, caps, forced);
+            // The map is written as soon as the routes are run, with the cells cached so far, and again every few seconds
+            // while the explore prefixes replay (`explored.replayed` of `toReplay`), so the studio draws it a bit at a time.
+            // The level is clipped to the first write's bounds until the last write.
             using JsonDocument world = JsonDocument.Parse(File.ReadAllText(worldPath), new JsonDocumentOptions { MaxDepth = 256 });
-
-            TreeGround tree = Grown(world.RootElement, origin, x0, y0, x1, y1);
-            var result = new
+            var states = WorldStates(world.RootElement).states;
+            List<Zip> allZips = Zips(world.RootElement, origin);
+            List<Marker> allMarkers = Markers(world.RootElement, origin);
+            (float x0, float y0, float x1, float y1) drawn = default;
+            List<object> solids = null;
+            TreeGround tree = null;
+            string Json(bool last)
             {
-                course, capabilities = caps, label,
-                bounds = new[] { x0, y0, x1, y1 },
-                // The world states the level is drawn in (solids' and markers' `when`); `current`: the capture's.
-                states = WorldStates(world.RootElement).states,
-                solids = Solids(world.RootElement, origin, x0, y0, x1, y1),
-                zips = Zips(world.RootElement, origin).Where(z => z.box[2] >= x0 && z.box[0] <= x1 && z.box[3] >= y0 && z.box[1] <= y1),
-                grown = tree.Shapes, treeSteps = tree.Steps,
-                markers = Markers(world.RootElement, origin).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1),
-                avoid = forced.Avoid.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
-                via = forced.Via.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
-                optional = blocks.Select(b => new
+                KeyValuePair<long, float>[] now;
+                lock (reached) now = reached.ToArray();
+                int done = Volatile.Read(ref replayed);
+                var bounds = Bounds(paths, now.Select(v => v.Key), Cell, paths.Count == 0 && now.Length == 0 ? frame : Enumerable.Empty<float[]>()).Value;
+                if (solids == null || last && drawn != bounds)
                 {
-                    name = b.Name, note = b.Note, on = optional.Contains(b.Name),
-                    avoid = b.Boxes.Avoid.Select(x => new[] { x.X0, x.Y0, x.X1, x.Y1 }),
-                    via = b.Boxes.Via.Select(x => new[] { x.X0, x.Y0, x.X1, x.Y1 }),
-                }),
-                routes = paths.Select(p => RouteJson(p, p.TimerStart)),
-                explored = new
+                    drawn = bounds;
+                    solids = Solids(world.RootElement, origin, drawn.x0, drawn.y0, drawn.x1, drawn.y1);
+                    tree = Grown(world.RootElement, origin, drawn.x0, drawn.y0, drawn.x1, drawn.y1);
+                }
+                var (x0, y0, x1, y1) = drawn;
+                // Read again each write: the studio adds avoid boxes while the map draws.
+                var forced = new OfflineSolver.ForcedPath();
+                List<Solve.OptionalBlock> blocks = Solve.OptionalBlocks(course, caps, forced);
+                return JsonSerializer.Serialize(new
                 {
-                    cell = Cell, runs = memory?.Runs ?? 0, prefixes = sources.Count,
-                    cells = reached.Select(v => new[] { (int)(v.Key >> 32), (int)v.Key, v.Value < 0f ? -1f : (float)Math.Round(v.Value, 2) }),
-                },
-            };
-            Solve.WriteShared(output, JsonSerializer.Serialize(result));
+                    course, capabilities = caps, label,
+                    bounds = new[] { bounds.x0, bounds.y0, bounds.x1, bounds.y1 },
+                    // The world states the level is drawn in (solids' and markers' `when`); `current`: the capture's.
+                    states,
+                    solids,
+                    zips = allZips.Where(z => z.box[2] >= x0 && z.box[0] <= x1 && z.box[3] >= y0 && z.box[1] <= y1),
+                    grown = tree.Shapes, treeSteps = tree.Steps,
+                    markers = allMarkers.Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1),
+                    avoid = forced.Avoid.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
+                    via = forced.Via.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
+                    optional = blocks.Select(b => new
+                    {
+                        name = b.Name, note = b.Note, on = optional.Contains(b.Name),
+                        avoid = b.Boxes.Avoid.Select(x => new[] { x.X0, x.Y0, x.X1, x.Y1 }),
+                        via = b.Boxes.Via.Select(x => new[] { x.X0, x.Y0, x.X1, x.Y1 }),
+                    }),
+                    routes = paths.Select(p => RouteJson(p, p.TimerStart)),
+                    explored = new
+                    {
+                        cell = Cell, runs = memory?.Runs ?? 0, prefixes = sources.Count,
+                        replayed = done, toReplay = missing.Length,
+                        cells = now.Select(v => new[] { (int)(v.Key >> 32), (int)v.Key, v.Value < 0f ? -1f : (float)Math.Round(v.Value, 2) }),
+                    },
+                });
+            }
+            if (missing.Length > 0)
+            {
+                Task replay = Task.Run(workers);
+                do Solve.WriteShared(output, Json(false));
+                while (!replay.Wait(3000));
+                replay.GetAwaiter().GetResult();
+            }
+            else workers();
+            if (closestSource >= 0)
+            {
+                List<InputTick> inputs = sources[closestSource].ToList();
+                var path = new Path { Name = $"closest: {closestDistance:0} u from the finish", Kind = "closest" };
+                Simulation sim = create();
+                RunResult r = sim.Run(inputs, extraTicks: 0, onStep: _ => Step(path, sim, sim.Elapsed(sim.TimingCourse())));
+                path.Finished = r.Finished;
+                path.Time = r.Time;
+                paths.Add(path);
+                string file = System.IO.Path.ChangeExtension(output, ".closest.json");
+                Solve.WriteShared(file, JsonSerializer.Serialize(new { name = label + " closest", distance = Math.Round(closestDistance, 1),
+                    inputs = inputs.Select(t => t.ToJson()) }));
+                Console.WriteLine($"map {label}: closest run {closestDistance:0} u from the finish, {inputs.Count} inputs -> {file}");
+            }
+            else if (closest) Console.WriteLine($"map {label}: --closest needs a finish box and an archive");
+            if (memory != null && (missing.Length > 0 || !seen.SetEquals(current))) WriteCells(cellsPath, simKey, current, reached);
+            Solve.WriteShared(output, Json(true));
             File.WriteAllText(keyPath, outputKey);
             Console.WriteLine($"map {label}: {paths.Count} routes, {sources.Count} explore prefixes ({missing.Length} replayed), {reached.Count} cells ({reached.Count(v => v.Value >= 0f)} timed) -> {output}");
             return 0;
@@ -251,7 +322,7 @@ namespace IGTAP.EngineSim.Cli
                 zips = Zips(world.RootElement, origin).Where(z => z.box[2] >= x0 && z.box[0] <= x1 && z.box[3] >= y0 && z.box[1] <= y1),
                 grown = tree.Shapes, treeSteps = tree.Steps,
                 markers = Markers(world.RootElement, origin).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1)
-                    .Concat(goals.Select(g => new Marker("goal", "goal " + g.index + " " + g.label, Round((g.box[0] + g.box[2]) / 2), Round((g.box[1] + g.box[3]) / 2)))),
+                    .Concat(goals.Select(g => new Marker("goal", "goal " + (g.index - 1) + " " + g.label, Round((g.box[0] + g.box[2]) / 2), Round((g.box[1] + g.box[3]) / 2)))),
                 avoid = avoid.Avoid.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
                 via = goals.Select(g => g.box),
                 goals = goals.Select(g => new { index = g.index, label = g.label, box = g.box }),
@@ -293,9 +364,8 @@ namespace IGTAP.EngineSim.Cli
 
         readonly record struct Hash(ulong A, ulong B);
 
-        sealed record SourceCells(long[] Keys, float[] Times);
 
-        const int CellsVersion = 2;
+        const int CellsVersion = 3;
 
         internal static string Stamp(string path)
         {
@@ -347,50 +417,48 @@ namespace IGTAP.EngineSim.Cli
             return new Hash(BinaryPrimitives.ReadUInt64LittleEndian(digest), BinaryPrimitives.ReadUInt64LittleEndian(digest[8..]));
         }
 
-        static Dictionary<Hash, SourceCells> ReadCells(string path, string simKey)
+        static (HashSet<Hash> seen, Dictionary<long, float> reached) ReadCells(string path, string simKey)
         {
-            var cells = new Dictionary<Hash, SourceCells>();
-            if (!File.Exists(path)) return cells;
+            var seen = new HashSet<Hash>();
+            var reached = new Dictionary<long, float>();
+            if (!File.Exists(path)) return (seen, reached);
             try
             {
                 using var reader = new BinaryReader(new BufferedStream(File.OpenRead(path), 1 << 20));
-                if (reader.ReadInt32() != CellsVersion || reader.ReadString() != simKey) return cells;
-                for (int n = reader.ReadInt32(); n > 0; n--)
-                {
-                    var hash = new Hash(reader.ReadUInt64(), reader.ReadUInt64());
-                    int count = reader.ReadInt32();
-                    var keys = new long[count];
-                    var times = new float[count];
-                    for (int i = 0; i < count; i++) { keys[i] = reader.ReadInt64(); times[i] = reader.ReadSingle(); }
-                    cells[hash] = new SourceCells(keys, times);
-                }
+                if (reader.ReadInt32() != CellsVersion || reader.ReadString() != simKey) return (seen, reached);
+                for (int n = reader.ReadInt32(); n > 0; n--) seen.Add(new Hash(reader.ReadUInt64(), reader.ReadUInt64()));
+                for (int n = reader.ReadInt32(); n > 0; n--) reached[reader.ReadInt64()] = reader.ReadSingle();
             }
-            catch (EndOfStreamException) { cells.Clear(); }
-            return cells;
+            catch (EndOfStreamException) { seen.Clear(); reached.Clear(); }
+            return (seen, reached);
         }
 
-        static void WriteCells(string path, string simKey, Hash[] hashes, SourceCells[] cells)
+        static void WriteCells(string path, string simKey, HashSet<Hash> hashes, Dictionary<long, float> reached)
         {
             string temp = path + ".tmp";
-            var written = new HashSet<Hash>();
             using (var writer = new BinaryWriter(new BufferedStream(File.Create(temp), 1 << 20)))
             {
                 writer.Write(CellsVersion);
                 writer.Write(simKey);
-                writer.Write(hashes.Distinct().Count());
-                for (int k = 0; k < hashes.Length; k++)
-                {
-                    if (!written.Add(hashes[k])) continue;
-                    writer.Write(hashes[k].A);
-                    writer.Write(hashes[k].B);
-                    writer.Write(cells[k].Keys.Length);
-                    for (int i = 0; i < cells[k].Keys.Length; i++) { writer.Write(cells[k].Keys[i]); writer.Write(cells[k].Times[i]); }
-                }
+                writer.Write(hashes.Count);
+                foreach (Hash h in hashes) { writer.Write(h.A); writer.Write(h.B); }
+                writer.Write(reached.Count);
+                foreach (var (key, t) in reached) { writer.Write(key); writer.Write(t); }
             }
             File.Move(temp, path, true);
         }
 
         static float Round(float v) { return (float)Math.Round(v, 1); }
+
+        /// <summary>The player's straight-line distance to the finish box, capture frame; infinite without one.</summary>
+        static float FinishDistance(Simulation sim)
+        {
+            CaptureRect f = sim.TargetFinish;
+            if (f.W <= 0f) return float.PositiveInfinity;
+            CapturePos p = sim.PlayerAtCapture;
+            float dx = Math.Max(0f, Math.Abs(p.x - f.At.x) - f.W / 2f), dy = Math.Max(0f, Math.Abs(p.y - f.At.y) - f.H / 2f);
+            return MathF.Sqrt(dx * dx + dy * dy);
+        }
 
         static float Earlier(float a, float b) { return a < 0f ? b : b < 0f ? a : Math.Min(a, b); }
 

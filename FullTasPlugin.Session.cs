@@ -110,6 +110,27 @@ namespace IGTAPTasMod
             return null;
         }
 
+        /// <summary>
+        /// A savestate start's tree level, right after the restore: Area 1 overgrown from 23, The Tree at the level and the zone
+        /// at the player loaded (its floor with it), as a tree transition's start sets them (Solver EnsureArea1State,
+        /// EnsureTree, EnsureZone); the player then settles and rests, every box the tree woke has run its Start, and the start
+        /// is taken. False when it failed the new game.
+        /// </summary>
+        bool ApplyNewGameTree(Movement player)
+        {
+            int level = _newGameTree.Value;
+            TreeController tree = TreeLevel.TheTree();
+            if (tree == null) { FailNewGame("No tree to set at level " + level + "."); return false; }
+            if (level >= 23) SetArea1State(Singleton<globalStats>.Instance, globalStats.area1states.Overgrown, "the tree at level " + level);
+            TreeLevel.Apply(tree, level);
+            SetPath(level >= 23);
+            ZoneLoader loader = FindAnyObjectByType<ZoneLoader>();
+            int zone = ZoneAt(player.transform.position, loader);
+            if (zone != 0 && (zone != loader.activeZone || !ZonesSettled())) LoadZoneNow.Invoke(loader, new object[] { zone });
+            _newGameNotes.Add("the tree at level " + level + (zone == 0 ? "" : ", zone " + zone + " loaded"));
+            return true;
+        }
+
         void ApplyNewGameSavestate(Movement player)
         {
             // Reread the file: a hand edit (the unlocks a savestate start carries) applies without a relaunch.
@@ -131,6 +152,7 @@ namespace IGTAPTasMod
             _newGameAirStart = state.movementFields.TryGetValue("onGround", out SnapshotValue ground)
                 && string.Equals(ground?.value, "false", StringComparison.OrdinalIgnoreCase) ? state : null;
             _newGameNotes.Add("restored savestate " + state.name + (_newGameAirStart != null ? " (in the air: held there until the start)" : ""));
+            if (_newGameTree.HasValue && !ApplyNewGameTree(player)) return;
             _newGameSpawn = null;
             _newGamePhase = 2;
             _newGameFrame = Time.frameCount;

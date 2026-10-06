@@ -225,7 +225,7 @@ export function FullTasClasses({ run, queue, difficulty, busy, complete, onComma
             <span>{c.major ?? "—"}</span><span>{c.nmg ?? "—"}</span><span>{c.graceTicks ?? "—"}</span>
             <span className={map && !map.finished ? "bad" : ""} title={d ? framePerfectText(d, map) : undefined}>{d ? d.framePerfect : "—"}</span>
             <span title={d ? pairsText(d, map) : undefined}>{d ? d.backToBack : "—"}</span>
-            <span className={playing || !r ? "" : r.finished ? "good" : "bad"} title={r?.reason ?? undefined}>{playing ? "playing" : !r ? "" : r.finished ? `✓ ${r.time == null ? "" : runTime(r.time)}` : `✗ goal ${r.reached}/${c.goals}`}</span>
+            <span className={playing || !r ? "" : r.finished ? "good" : "bad"} title={r?.reason ?? undefined}>{playing ? "playing" : !r ? "" : r.finished ? `✓ ${r.time == null ? "" : runTime(r.time)}` : `✗ ${r.reached}/${c.goals} goals`}</span>
             {map && <DifficultyStrip d={map} spans={c.spans}/>}
           </label>;
         })}

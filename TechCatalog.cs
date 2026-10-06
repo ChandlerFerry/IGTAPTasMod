@@ -20,7 +20,6 @@ namespace IGTAPTasMod
             /// <summary>The fewest unlocks the tech needs: a category's label (WJ_DS) or another set's (DS_OM: the omnidirectional
             /// dash, the statue's or Vman's free box, whatever else the run has).</summary>
             public string requires = "NONE";
-            public string origin;
             public string description = "";
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string note;
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string detector;
@@ -60,7 +59,6 @@ namespace IGTAPTasMod
         }
 
         static readonly string[] TechCategories = { "glitchless", "nmg", "major" };
-        static readonly string[] TechOrigins = { "community", "game", "ours" };
         /// <summary>techs.json "requires" (<see cref="TechDef.requires"/>): a set of unlocks as its label.</summary>
         static bool IsTechRequires(string requires) { return Caps.TryParse(requires, out _); }
 
@@ -200,7 +198,6 @@ namespace IGTAPTasMod
                 if (!TechCategories.Contains(t.category)) throw new InvalidDataException("tech " + t.id + ": category is one of " + string.Join(", ", TechCategories) + ".");
                 if (string.IsNullOrEmpty(t.requires)) t.requires = "NONE";
                 if (!IsTechRequires(t.requires)) throw new InvalidDataException("tech " + t.id + ": requires is a set of unlocks as its label (WJ_DS, DS_OM).");
-                if (!TechOrigins.Contains(t.origin)) throw new InvalidDataException("tech " + t.id + ": origin is one of " + string.Join(", ", TechOrigins) + ".");
                 if (t.detector != null && !Enum.IsDefined(typeof(Tech), t.detector)) throw new InvalidDataException("tech " + t.id + ": no detector " + t.detector + ".");
                 if (t.labmap != null && (t.labmap.Length == 0 || t.labmap.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
                     throw new InvalidDataException("tech " + t.id + ": labmap is a lab map's id (labmaps/<id>.json).");
@@ -370,7 +367,7 @@ namespace IGTAPTasMod
             JObject demo = CachedLabJson(demoFile) ?? throw new InvalidOperationException("Lab map " + lab.id + " has no demo " + demoFile + " yet.");
             inputs = demo["inputs"]?.ToObject<List<SolverTick>>();
             if (inputs == null || inputs.Count == 0) throw new InvalidOperationException(demoFile + " has no inputs.");
-            return new TechDef { id = tech.id, name = tech.name, category = tech.category, requires = tech.requires, origin = tech.origin,
+            return new TechDef { id = tech.id, name = tech.name, category = tech.category, requires = tech.requires,
                 labmap = lab.id, labDemo = chosen.demo, start = start, floatingOrigin = tech.floatingOrigin };
         }
 
@@ -411,7 +408,6 @@ namespace IGTAPTasMod
                         if (route != null) { NameTechRoute(route, name); SaveLibrary(); }
                     }
                     if (body["category"] != null) tech.category = OneOf(body, "category", TechCategories);
-                    if (body["origin"] != null) tech.origin = OneOf(body, "origin", TechOrigins);
                     if (body["requires"] != null) tech.requires = RequiredUnlocks(body);
                     if (body["description"] != null) tech.description = Text(body, "description").Trim();
                     if (body["note"] != null)
@@ -525,7 +521,7 @@ namespace IGTAPTasMod
             {
                 list = techs.Select(e => new
                 {
-                    e.tech.id, e.tech.name, e.tech.category, e.tech.requires, e.tech.origin, e.tech.floatingOrigin, e.tech.description,
+                    e.tech.id, e.tech.name, e.tech.category, e.tech.requires, e.tech.floatingOrigin, e.tech.description,
                     e.tech.note, e.tech.detector, e.tech.related, e.tech.labmap, e.tech.labDemo, e.tech.graft,
                     labs = e.labs.Select(l =>
                     {

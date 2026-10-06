@@ -20,8 +20,9 @@ Vman speedrun's start, split by area goals: [`docs/fulltas.md`](docs/fulltas.md#
   Outside the ladder every course (1–15), bonus and transition runs `WJ_DS_BS_ZIP_OM`, `WJ_DS2_BS_ZIP_OM` and
   `WJ_DS_DJ_BS_ORB_ZIP_OM` (the old omnidash top category of the ladder, every refill orb and the zip movers included;
   renamed, no alias); `WJ_DS_DJ_BS_ORB` and `WJ_DS_DJ_BS_ZIP_OM` run only on the targets with refill orbs in reach and
-  `WJ_DS_DJ_BS_ZIP` only on those with zip movers (`Categories.cs` lists them; README `### Rules` 19); bonus4 needs the zip
-  movers, so it runs only the `ZIP` categories. Bonuses 17–21
+  `WJ_DS_DJ_BS_ZIP` only on those with zip movers (`Categories.cs` lists them; README `### Rules` 19); bonus4 and bonus12 need the zip
+  movers, so they run only the `ZIP` categories. The tree transitions `tree<L>to<C>` (README `### Rules` 21) run
+  `WJ_DS_DJ_BS` and every outside-ladder category. Bonuses 17–21
   and 23 (unlock boxes, the Start a VMAN speedrun boxes among them) run no category.
 - Direction record (two-way courses: both `avoid-forwards` and `avoid-backwards` in `forced-paths.json`, Courses 1-3):
   `<course>_<CAT> forwards <time>` and `<course>_<CAT> backwards <time>`, the category's best by the game timer of a

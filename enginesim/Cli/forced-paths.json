@@ -146,15 +146,24 @@
       "course": 9,
       "capabilities": ["wjdsdjbs", "wjdsdjbsorbzipom", "wjdsdjbsorb", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom"],
       "note": "x 17436 to 17577, y 6575 to 7130; x 16448 to 16895, y 6910 to 7144; and x 16703 to 17404, y 3138 to 3784, are cut.",
-      "avoid": [[17435.6, 6574.57, 17576.6, 7129.57], [16447.6, 6909.57, 16894.6, 7143.57], [16703, 3137.97, 17404, 3783.97], [15021.1, 4100.9, 16227.2, 4229.2], [18819.7, -29.8, 21525.4, 104.4], [15162.6, 1955.7, 15504.6, 2133.2]],
+      "avoid": [[17435.6, 6574.57, 17576.6, 7129.57], [16447.6, 6909.57, 16894.6, 7143.57], [16703, 3137.97, 17404, 3783.97], [15021.1, 4100.9, 16227.2, 4229.2], [18819.7, -29.8, 21525.4, 104.4], [15162.6, 1955.7, 15504.6, 2133.2], [13782.7, 4023.0, 16288.2, 4673.9], [11386.2, 3821.4, 12899.0, 4464.0], [24026.3, -753.7, 25033.8, 7632.1], [21355.5, 4231.6, 24230.6, 7696.7], [18735.4, -22.9, 21518.1, 1207.1], [15752.3, 2127.4, 18799.3, 2653.8], [13304.3, 7879.4, 23325.2, 13063.6], [16053.6, 7130.4, 16910.1, 8078.7], [24953.3, -854.5, 29452.8, 2834.8], [11604.4, 9914.4, 14184.5, 12830.9], [18696.4, 12668.9, 20603.4, 14426.3]],
       "via": []
     },
     {
       "course": 10,
       "capabilities": ["wjdsdjbs", "wjdsdjbsorbzipom", "wjdsdjbsorb", "wjdsdjbszip", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom"],
       "note": "x 29520 to 29761, y 5709 to 7448, is cut.",
-      "avoid": [[29519.6, 5708.57, 29760.6, 7447.57]],
-      "via": []
+      "avoid": [[29519.6, 5708.57, 29760.6, 7447.57], [29718.8, 6370.8, 29856.8, 6858.7], [28388.6, 7462.8, 33846.1, 8730.4], [32588.0, 5732.4, 33490.5, 7429.7], [29741.8, 6970.2, 30422.7, 7458.0]],
+      "via": [],
+      "optional": [
+        {
+          "name": "avoid-backwards",
+          "note": "x 29850.5 to 29931.1, y 6431 to 6765.4. On unless turned off.",
+          "default": true,
+          "avoid": [[29850.5, 6431.0, 29931.1, 6765.4]],
+          "via": []
+        }
+      ]
     },
     {
       "course": 11,
@@ -351,6 +360,92 @@
       "note": "Drawn on the course map.",
       "drawn": true,
       "avoid": [[9593.6, 12251.6, 10361.6, 14037.8], [8938.8, 13561.6, 9594.5, 14379.7], [5118.3, 12450.3, 8548.1, 12960.5]],
+      "via": []
+    },
+    {
+      "course": 208,
+      "capabilities": ["wjdsdjbs", "wjdsbszipom", "wjds2bszipom", "wjdsdjbsorbzipom"],
+      "note": "Drawn on the course map.",
+      "drawn": true,
+      "avoid": [[26264.4, -584.6, 26554.0, -210.7], [25978.5, 16.5, 26440.4, 155.8], [20766.9, -908.2, 24782.8, 4203.0], [21047.3, 4044.6, 24794.1, 8031.8], [24412.8, 1075.5, 25206.2, 1841.8], [24146.3, 2193.8, 25658.2, 4211.5], [24398.4, 6556.5, 25940.1, 7854.7], [23686.2, 4257.6, 24903.3, 6457.3], [27215.1, 1075.7, 27490.8, 1359.0]],
+      "via": []
+    },
+    {
+      "course": 111,
+      "capabilities": ["wjdsdjbs", "wjdsdjbsorb", "wjdsdjbszip", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom", "wjdsdjbsorbzipom"],
+      "note": "Drawn on the course map.",
+      "drawn": true,
+      "avoid": [[21596.7, -134.8, 24605.2, 272.8], [22804.6, -690.5, 23849.4, 28.3], [18410.4, -757.2, 18803.1, -53.3], [18671.2, -693.1, 19997.8, 1303.2]],
+      "via": []
+    },
+    {
+      "course": 113,
+      "capabilities": ["wjdsdjbs", "wjdsdjbszip", "wjdsbszipom", "wjds2bszipom", "wjdsdjbsorbzipom"],
+      "note": "Drawn on the course map.",
+      "drawn": true,
+      "avoid": [[24093.8, -945.7, 24844.7, -778.9], [21283.3, 1937.6, 26900.8, 2901.7], [25964.1, -616.6, 26265.6, 129.7], [21674.9, -626.6, 23700.7, 2092.9]],
+      "via": []
+    },
+    {
+      "course": 114,
+      "capabilities": ["wjdsdjbs", "wjdsdjbsorb", "wjdsdjbszip", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom", "wjdsdjbsorbzipom"],
+      "note": "Drawn on the course map.",
+      "drawn": true,
+      "avoid": [[28073.1, 7466.4, 34795.6, 9542.7], [27881.5, 5442.7, 29356.7, 7452.9], [30380.6, 5643.3, 30460.0, 6282.7], [30898.8, 5885.7, 32591.3, 6491.7], [29373.9, 6931.4, 30438.1, 7454.3], [30418.8, 5140.7, 30903.9, 6026.4]],
+      "via": []
+    },
+    {
+      "course": 110,
+      "capabilities": ["wjdsdjbs", "wjdsdjbsorb", "wjdsdjbszip", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom", "wjdsdjbsorbzipom"],
+      "note": "Drawn on the course map.",
+      "drawn": true,
+      "avoid": [[15418.5, 927.0, 15698.1, 1803.9], [12520.8, 1149.4, 12857.6, 1886.5]],
+      "via": []
+    },
+    {
+      "course": 109,
+      "capabilities": ["wjdsdjbs", "wjdsdjbsorb", "wjdsdjbszip", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom", "wjdsdjbsorbzipom"],
+      "note": "Drawn on the course map.",
+      "drawn": true,
+      "avoid": [[14654.2, 3275.2, 15440.0, 3641.1], [16295.9, 3783.7, 17102.3, 4764.5], [16884.4, 3034.4, 17570.2, 4011.2]],
+      "via": []
+    },
+    {
+      "course": 112,
+      "capabilities": ["wjdsdjbszip", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom", "wjdsdjbsorbzipom"],
+      "note": "Drawn on the course map.",
+      "drawn": true,
+      "avoid": [[20115.6, 3000.0, 21317.2, 5482.7], [19418.3, 2939.1, 19703.9, 3448.7], [18582.3, 5538.1, 19578.0, 6004.2]],
+      "via": []
+    },
+    {
+      "course": 1280,
+      "capabilities": ["wjdsdjbs", "wjdsdjbsorb", "wjdsdjbszip", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom", "wjdsdjbsorbzipom"],
+      "note": "Drawn on the course map.",
+      "drawn": true,
+      "avoid": [[21263.2, -652.9, 21726.8, 294.9], [24168.3, -900.1, 24765.8, -591.1], [25878.5, -745.6, 26311.1, 119.8], [27228.0, 954.2, 27609.2, 1438.4], [19636.3, 2946.4, 20048.3, 3904.5], [19842.3, 6438.8, 20120.5, 7180.5], [25798.4, 7441.5, 26782.6, 7796.2], [29951.8, 6407.1, 30505.8, 6927.3], [30380.4, 5653.7, 30563.5, 6097.5], [26785.7, 7462.9, 34676.7, 7784.4]],
+      "via": []
+    },
+    {
+      "fulltas": ["test-c10-zip-skip"],
+      "note": "Drawn on the Full-TAS map.",
+      "drawn": true,
+      "avoid": [[24868.2, 4588.4, 26686.9, 5186.6], [24330.4, 4957.0, 24850.0, 6141.3], [23623.5, 6062.7, 24511.7, 7488.7], [25726.2, 7446.4, 26940.6, 7766.6]]
+    },
+    {
+      "course": 1006,
+      "capabilities": ["wjdsdjbs", "wjdsdjbsorb", "wjdsdjbszip", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom", "wjdsdjbsorbzipom"],
+      "note": "Drawn on the course map.",
+      "drawn": true,
+      "avoid": [[21443.9, -615.4, 21688.4, -6.9], [21756.7, 812.0, 25845.6, 1619.6], [24305.9, -733.9, 24706.9, -577.6]],
+      "via": []
+    },
+    {
+      "course": 1200,
+      "capabilities": ["wjdsdjbs", "wjdsdjbsorb", "wjdsdjbszip", "wjdsbszipom", "wjdsdjbszipom", "wjds2bszipom", "wjdsdjbsorbzipom"],
+      "note": "Drawn on the course map.",
+      "drawn": true,
+      "avoid": [[21333.0, -675.7, 21800.6, 370.4], [24209.8, -945.2, 25065.7, -596.5], [27023.2, 1028.2, 29107.5, 2026.8], [25961.3, -675.7, 27118.3, 330.8], [19343.8, 2763.8, 20112.5, 3754.4], [18388.6, 6266.3, 19475.2, 7684.3]],
       "via": []
     }
   ]

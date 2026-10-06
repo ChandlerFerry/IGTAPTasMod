@@ -30,6 +30,12 @@ namespace IGTAPTasMod
             /// </summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public float[] rebaseAt;
             [JsonIgnore] public Vector2? RebaseAt { get { return rebaseAt == null || rebaseAt.Length < 2 ? (Vector2?)null : new Vector2(rebaseAt[0], rebaseAt[1]); } }
+            /// <summary>
+            /// A savestate start's tree level (README ### Rules 21, <see cref="TreeLevel"/>): after the restore the zone at the
+            /// player is loaded and The Tree set to it as a tree transition's start sets it. Test runs only
+            /// (docs/fulltas.md#savestate-starts).
+            /// </summary>
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public int? tree;
             /// <summary>Other runs whose offline bests seed this run's solve: from each of their goals on, their inputs are tried where this run reaches that goal.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public List<string> seeds;
             /// <summary>
@@ -40,7 +46,10 @@ namespace IGTAPTasMod
             /// <summary>The human classes' score weights (README ### Rules 54): seconds a spike-grace tick, a frame-perfect input
             /// and a forced back-to-back pair add to the live time. Unset: 2, 5 and 20.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public FullTasHumanWeights human;
+            /// <summary>The studio's run list section: "complete", "wip" or "test". Unset: "test" with a savestate, else "wip".</summary>
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string section;
             public List<string> goals = new List<string>();
+            [JsonIgnore] public string Section { get { return section ?? (savestate != null ? "test" : "wip"); } }
             [JsonIgnore] public bool LooseBuys { get { return buys == "loose"; } }
             [JsonIgnore] public bool Vman { get { return start == VmanStart; } }
             [JsonIgnore] public FullTasHumanWeights Human { get { return human ?? new FullTasHumanWeights(); } }

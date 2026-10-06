@@ -105,6 +105,19 @@ the saved route (its category, then the course's other categories), and the grou
 studio Optimize run holds the queue only while it starts each target, and its running target's own files until that
 `solve` ends), and moves them to `offline-best\judged\`.
 
+**First finish along another category's way.** When none of the seeds finishes in the trace's category (on its forced
+path), `solve` first takes the fastest seed of another category that finishes in that category's own trace (the newest
+`*-<caps>.json` of the course beside it: an omnidash route, say) as the way: 12 stretches of waypoints along its path
+(`CourseWaypoints`, carried to this trace's frame), and the reach windows (`fulltas --unsolved`, the target's forced
+path) take that seed's inputs on from where they break here, waypoint to waypoint, to the finish; a waypoint they don't
+get to is dropped and they go on from the one before (`FullTas.FirstFinish`, `Cli\CourseAuto.cs`; up to half of
+`--minutes`, `--no-first-finish` skips it). The route that finishes is a seed. Aimed at the finish, a search spreads over
+whatever is open toward it: tree27to10 `WJ_DS_DJ_BS` climbs the left side to y 6400-7300 first, away from Course 10, and
+the plain solve found no finish in an hour (its runs piled up on the open floor to the right, and under the checkpoint at
+(25844, 6264), a dead end); along `ORB_ZIP_OM 16.40`'s way it finished in 5 minutes on 12 threads (43.62 s, the hops 1-17
+s each, one 3 minutes). It is only a first finish: the search improves from it, and `--other-ways` (Course --auto)
+looks for different ones. Without a seed of another category that finishes, the plain solve alone.
+
 Splicing joins explored segments onto the best (`splices` in the progress line). The best's replay records the course
 time and input tick of its first arrival in each map cell. An explore run that reaches one of those cells at least a
 tick sooner runs on with the best's inputs from that cell (`Splice`). The jump button's press and release flags are
@@ -145,12 +158,12 @@ contacts, and the demos whose key windows graft there (`techgrafts` ends with th
 
 | Contact | Grafted from |
 |---|---|
-| leaves the ground (a ledge) | coyote jump (`coyote-ledge.graft`, −4..+3, x6), super (`coyote-ledge.super`/`.primed`, x3), backwards dash-jump; omnidash: hyper, ultra, wavejump (`high-super`), aimed dash (`wall-dash`), freeze aim |
+| leaves the ground (a ledge) | coyote jump (`coyote-ledge.graft`, −4..+3, x6), super (`coyote-ledge.super`/`.primed`, x3), backwards dash-jump; omnidash: hyper, ultra, up super (`high-super`: up-diagonal, `.straight` straight up), aimed dash (`wall-dash`), freeze aim |
 | lands | buffered jump (`landing-tick-jump.graft`, −4..+1, x6), super; omnidash: ground bounce, wave bounce, hyper |
-| touches a wall | wall jump (`wall-coyote-window.graft`, −3..+3, x6), up-diagonal turned dash climb (`updiag-wall-climb` and `.lean`, 0..+2, x4, chained), superbounce, wall dash, ground bounce |
-| leaves a wall | wall coyote jump (0..+4, x6), super, wavejump, wall dash |
+| touches a wall | wall jump (`wall-coyote-window.graft`, −3..+3, x6), reverse walljump (`reverse-walljump.graft`: the cling, a 3-9 tick push away and a jump later, +2..+10, x4), up-diagonal turned dash climb (`updiag-wall-climb` and `.lean`, 0..+2, x4, chained), superbounce, wall dash, ground bounce |
+| leaves a wall | wall coyote jump (0..+4, x6), super, up super, wall dash |
 | dies (mostly spikes past their grace) | spike grace jump (`spike-grace.graft`, 1–7 ticks before, x6), super, superbounce, the omnidash `.graft` demos |
-| a hyper's flat dash slides off a floor's edge (`CornerHyper`, omnidash only) | corner hyper and corner ultra (`corner-boost.graft`) |
+| a hyper's flat dash slides off a floor's edge (`CornerHyper`, omnidash only) | none: the planner's corner hyper and corner ultra moves only |
 | a wall behind (in the air, not dashing, `Velocity.y` under 580, a wall within 12 u of the back at the ground rays' height) | the GC wall clip (`wall-clip.graft`, 0..+24, x12), chained |
 | a wall ahead (in the air, not dashing, a wall within 12 u of the front edge at y − 18, y + 19 or y + 45) | the turn away that sets a clip up (`wall-clip.graft`, −2..+10, x12), then clips |
 | a wall above the back (the back ray at y + 19 or y + 45 hits it, the one at y − 18 not yet) | the rest that rises to it clip-ready (`wall-clip.graft`, x12), then clips |
@@ -159,9 +172,9 @@ contacts, and the demos whose key windows graft there (`techgrafts` ends with th
 
 The corner hyper contact is seen on every physics step, not only on input ticks, because a dash's ticks consume no input
 (`ContactLog.Slide`). It fires when a down-diagonal dash has landed (`canHyper`, flat) and is still dashing with
-`onGround` held up by coyote frames only. `corner-boost.graft` presses that dash again a few ticks either way with a late
-jump (dash frame 4–12), so the landing moves along the corner and the hyper jumps in coyote time past the edge; its corner
-ultra also puts a wavedash 8–16 ticks before it, so the corner hyper carries a hyper's momentum as `preDashMomentum`.
+`onGround` held up by coyote frames only. No demo grafts there (the corner boost tech is gone); the planner's corner hyper
+presses that dash again a few ticks either way with a late jump, so the hyper jumps in coyote time past the edge, and its
+corner ultra puts a wavedash before it, so the corner hyper carries a hyper's momentum as `preDashMomentum`.
 
 Why corners: a dash lands as soon as a ground ray touches the floor. The rays start 18 below the player and reach 22
 further, so past an outer corner (the body beyond the edge, a rear ray still over the floor) nothing stops the body. The
@@ -248,8 +261,8 @@ hold 1–40), `landing-tick-jump.graft` (the buffered jump −4..+1 of a landing
 0..+4 after leaving a wall, −3..+3 of a touch), `spike-grace.graft` (the jump 1–7 ticks before a death), `coyote-ledge.super`
 (tech `super`: the dash with its jump on frame 1–4, or none, at a ledge, landing, wall or death, the jump held 0–40 ticks
 after), `coyote-ledge.primed` (`super`: the jump held into a dash 1–6 ticks later, and 2–40 after it), `backwards-dash-jump.graft`, `superbounce-wall.graft`, and for the
-omnidash `wavedash`, `ultra`, `dash-bounce`, `wave-bounce`, `high-super` (the wavejump), `wall-dash` (the eight aims),
-`freeze-aim` and `corner-boost` (the corner hyper, frame 4–12, and the corner ultra) `.graft` demos, and `updiag-wall-climb`
+omnidash `wavedash`, `ultra`, `dash-bounce`, `wave-bounce`, `high-super` (the up super; its `.straight` demo, straight up, carries the same spec), `wall-dash` (the eight aims) and
+`freeze-aim` `.graft` demos, and `updiag-wall-climb`
 (at `TouchedWall`, 0..+2: the dash at rest turned up-diagonally toward the wall and two rests, weight 4, chained 8 deep on the
 next `TouchedWall` while the run clings again where the demo did) with its `.lean` (the same at (0.35, 1), which needs a cling
 dash and an air dash to reach the next cling, so its window holds both).
@@ -302,7 +315,11 @@ controller makes them).
 
 Before the timer, a course cell also keeps where the player is going (`OfflineSolver.Motion`, key bits 47–49: vertical
 speed below −200, under 200, under 580 or above, and the facing). An untimed set-up is slow on purpose, and without
-these bits every state of it lost its square to an earlier arrival going the other way.
+these bits every state of it lost its square to an earlier arrival going the other way. A set-up stays within 2500 u
+(x or y) of the target's start gate (`OfflineSolver.SetupReach`; no saved route's goes past 1626, 3_WJ_DS_DJ 2.76's
+flying start): an untimed run past it is cut. Without it an unseeded search wandered the world: Course 7 WJ_DS_DJ_BS
+filed 131k of its 158k untimed cells past it, out to 8600 u, at 361 runs/s and no finish; with it, a finish in 20 s and
+12.08 in 2 minutes at 8–11k runs/s.
 
 How far this gets on Course 1 NONE (seeded with the old 1.62 and a prefix of the 1.40's inputs, 6 threads each): from
 the first left-face clip (tick 32) on, the late-gate route comes back in under a minute (1.44); from the second
@@ -439,10 +456,18 @@ visits).
 & $exe solve $traces\start-c3-wjds.json --via 10180,7100,10330,7600 --via 9900,7890,10040,7990 --path-name tophole
 ```
 
-`map` replays each archive prefix to shade the cells it explored, and caches what it got per prefix (by a hash of its
-inputs) in `archive\<archive name>.mapcells.bin`, so a redraw replays only prefixes that are new since the last map. It
-also skips the whole redraw when nothing it reads has changed since the last map (the `--out` file's `.key` records
-them). Either cache resets when the start trace, its world or the engine build changes. For every route it replays (the
+`map` replays each archive prefix to shade the cells it explored, and caches every cell reached so far (its earliest
+time) with the hashes of the prefixes replayed in `archive\<archive name>.mapcells.bin`, so a redraw replays only
+prefixes that are new since the last map; a prefix the archive has dropped since keeps its cells (the map is where the
+search went). It writes the `--out` file as soon as the routes are run and again every 3 s while prefixes replay
+(`explored.replayed` of `toReplay`; the level clipped to the first write's bounds until the last), and the plugin answers
+a map request within 1.5 s with the file as it stands (`pending`), so the studio draws the map a bit at a time. It also
+skips the whole redraw when nothing it reads has changed since the last map (the `--out` file's `.key` records them).
+`--closest` (for a target no run finishes yet, with a finish box: a bonus or transition) replays every prefix, not only
+new ones, and adds the one whose player came nearest the finish box (straight line) as a `closest` route, drawn red,
+also written as `<out>.closest.json` (`name`, `distance`, `inputs`: a route file `path` reads).
+The cell cache resets when the start trace, its world or the simulation's build (any engine DLL but the CLI's) changes;
+the `.key` also with the CLI. For every route it replays (the
 trace's own inputs, `--seed` routes, the fastest offline best and its human version, the archive's plateau) it also
 writes the route's per-tick positions, the first arrival time in each 16-unit cell along it (`cells`, timed like the
 explored cells) and the player's physical state fingerprint per tick (`state`: position, `Velocity`, `momentum`, body
@@ -549,7 +574,15 @@ momentum carries through them, and a window is scored on its arrival.
 - **Start.** The fastest finishing route (on the timing) of the trace's own, each `--seed` and the last `--auto` best
   that keeps the rules (no avoid box, every via box): the waypoints follow it, so a route through a picked direction
   block can't be it. The others that keep them are the loop's `--ref` routes (combine splices their goal runs in). None:
-  the plain solve finds a first finish under the rules.
+  the plain solve finds a first finish under the rules, along another category's way first (below).
+- **Other ways** (`--other-ways`, off by default). The loop's waypoints follow its best's way, so a different way (a
+  pauselift up a wall instead of a climb) is never tried. With it, before the loop, the reach windows (`fulltas
+  --unsolved`) run from the start to the finish with the known route's corridor discouraged (`ForcedPath.Discourage`:
+  320-unit boxes on its path every 10 physics ticks, none within 600 of the start or the finish; an explore cell filed
+  inside one is picked a fiftieth as often, never cut), then with each way found discouraged too, until one finds none,
+  for up to a quarter of `--minutes`. A way that finishes on the forced path is a candidate like a seed. Once per known
+  route (`course-auto\course<N>_<caps>-ways.json` holds the routes done). Tree27to10 `WJ_DS_DJ_BS` from the 23.16 route,
+  2026-10-05: none in 15 minutes (the search climbed the right side to (26300, 5122), under the checkpoint pocket).
 - **Directions.** Courses 1-3 go either way from the start (`avoid-forwards` and `avoid-backwards` in
   `forced-paths.json`; backwards usually for the record, forwards for the farm). A job that picks neither runs each
   direction in turn, half the minutes each (farm forwards first, record backwards first), each with its own run and

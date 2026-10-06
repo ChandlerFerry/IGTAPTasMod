@@ -480,6 +480,128 @@ namespace IGTAP.EngineSim.Cli
         }
 
 
+        readonly HashSet<(int, long)> _transplantedFrontiers = new HashSet<(int, long)>();
+        const int TransplantStarts = 4;
+
+        /// <summary>
+        /// Reach: the frontier goal's saved course routes (a seed with a category start trace) followed along their own path from the
+        /// best's state, repaired where they leave it (<see cref="Follow"/>), from the frontier and from up to two area goals before
+        /// it (a restart there takes them back). A saved route rarely replays from a run as from its category start: the start's
+        /// sub-unit height, its facing and the 280 fps grid's phase differ, and a trick hangs on them (TrueEnding%'s bonus 8,
+        /// 2026-10-05: its category start stands 0.52 u lower than the run's restart there, and its two pauselifts miss from the
+        /// run, where 2.3 M runs of reach windows found neither). Once per frontier; true when the best got further.
+        /// </summary>
+        bool TransplantFrontier()
+        {
+            Route best = _best;
+            int reached = best.Progress;
+            if (reached == _goals || !_transplantedFrontiers.Add((reached, reached == 0 ? 0L : best.GoalPhysics[reached - 1]))) return false;
+            string dir = Path.GetDirectoryName(Path.GetFullPath(_trace));
+            var paths = new Dictionary<Seed, Reference>();
+            foreach (Seed s in _seeds.Where(s => s.Standing && s.At == null && s.Goals.Contains(_labels[reached])))
+                if (TechGrafts.CategoryStart(dir, s.Name.Split('_')[0].ToLowerInvariant(), s.Caps.Id) is string trace && CategoryPath(trace, s.Inputs) is Reference path)
+                    paths[s] = path;
+            if (paths.Count == 0) return false;
+            var tries = new List<(Seed seed, Graft graft, int from, int based)>();
+            for (int i = reached; i >= Math.Max(0, reached - 2); i--)
+            {
+                if (i < reached && !_labels[i].StartsWith("at:", StringComparison.Ordinal)) break;
+                int prefixLength = i == 0 ? 0 : (int)Math.Min(best.GoalInput[i - 1], best.Inputs.Count);
+                List<InputTick> prefix = best.Inputs.GetRange(0, prefixLength);
+                SimSnapshot at = AdvanceFrom(_origin, 0, prefix);
+                if (at == null) continue;
+                var labels = new HashSet<string>(_labels.Skip(i).Take(reached + 1 - i));
+                // A restart after an area goal takes it back (FullTasTracker.QuickRestarted): the route touches it again on its way.
+                bool restart = prefix.Count == 0 || !prefix[prefix.Count - 1].reset;
+                foreach (var (how, inputs) in SeedStarts(at, prefix, labels, restart, WindowCaps(_runGoals.Goals.Skip(i).Take(reached + 1 - i))))
+                {
+                    Seed seed = paths.Keys.FirstOrDefault(s => how.StartsWith(s.Name + ",", StringComparison.Ordinal));
+                    int lead = seed == null ? -1 : inputs.Count - seed.Inputs.Count;
+                    if (lead < 0) continue;
+                    SimSnapshot ready = AdvanceFrom(at, prefixLength, inputs.GetRange(0, lead));
+                    if (ready == null) continue;
+                    // The path's ticks count from its start: this run's tick there lines them up.
+                    _eval.Restore(ready);
+                    tries.Add((seed, new Graft { Inputs = prefix.Concat(inputs).ToList(), How = $"{how}, from goal {i}", Shift = (int)_eval.Engine.PhysicsTicks,
+                        PathFrom = prefixLength + lead }, prefixLength, i));
+                }
+            }
+            if (tries.Count == 0) return false;
+            Log($"transplant: goal {reached + 1} ({_labels[reached]}): {tries.Count} saved-route starts, followed along their own paths");
+            using var lanes = new Lanes(Math.Max(1, _threads), _create, _goals);
+            Graft top = null;
+            Route topRun = null;
+            Reference saved = _reference;
+            try
+            {
+                foreach (var group in tries.GroupBy(t => t.seed))
+                {
+                    _reference = paths[group.Key];
+                    var list = group.ToList();
+                    Score[] scores = lanes.Map(list.Select(t => (Func<Lanes.Lane, Score>)(l =>
+                        Play(l, t.graft.Inputs, t.from, t.based, Math.Min(_goals, reached + 1), t.graft.Inputs.Count - t.from + RepairHorizon, _reference, t.graft.Shift))).ToList());
+                    // The starts that follow the path furthest (their goals count from different goals: not compared).
+                    foreach (int pick in Enumerable.Range(0, list.Count).Where(k => scores[k].Progress >= 0)
+                        .OrderByDescending(k => scores[k].Followed).ThenByDescending(k => scores[k].Gained).Take(TransplantStarts))
+                    {
+                        Graft g = list[pick].graft;
+                        (Route r0, int fail, string why) = Diagnose(g);
+                        Log($"transplant: goal {reached + 1}: {g.How}: {scores[pick]}; fails at input {fail}: {why}");
+                        (Graft followed, Route run) = Follow(lanes, g, r0, fail);
+                        if (topRun == null || run.Progress > topRun.Progress) { top = followed; topRun = run; }
+                        if (TimeUp || topRun.Progress > reached) break;
+                    }
+                }
+            }
+            finally { _reference = saved; }
+            if (topRun == null || topRun.Progress <= reached) return false;
+            Route spliced = Splice(new Route { Inputs = top.Inputs }, top.Inputs.Count, new List<InputTick>(), topRun.Progress, best);
+            if (spliced == null || !Better(spliced, _best))
+            {
+                Log($"transplant: goal {reached + 1}: the followed route reaches goal {topRun.Progress}, but the whole run with it does no better; dropped");
+                return false;
+            }
+            Commit(spliced, $"goal {reached + 1} from a saved route followed along its own path ({top.How})");
+            return true;
+        }
+
+        /// <summary>A saved route's own path from its category start (canonical, as a solve loads it), per physics tick from the start;
+        /// null when it can't be loaded. On a thread of its own: the game's statics are per thread, and this thread's are the run's.</summary>
+        static Reference CategoryPath(string trace, List<InputTick> inputs)
+        {
+            Reference path = null;
+            var thread = new Thread(() => path = CategoryPathHere(trace, inputs), 256 * 1024 * 1024);
+            thread.Start();
+            thread.Join();
+            return path;
+        }
+
+        static Reference CategoryPathHere(string trace, List<InputTick> inputs)
+        {
+            try
+            {
+                var (sim, _, _) = Program.Open(trace, true);
+                long start = sim.Engine.PhysicsTicks;
+                var rows = new List<(long t, WorldPos p, UnityEngine.Vector2 v, bool right, int input)>();
+                sim.Run(inputs, null, null, 0, _ => rows.Add((sim.Engine.PhysicsTicks - start, sim.PlayerWorld, sim.Player.Velocity + sim.Player.momentum,
+                    sim.Player.facingRight, (int)sim.Engine.RunTicks - 1)));
+                if (rows.Count == 0) return null;
+                int count = (int)rows.Max(r => r.t) + 1;
+                var reference = new Reference { X = new float[count], Y = new float[count], VX = new float[count], VY = new float[count], Right = new bool[count],
+                    FirstTick = Enumerable.Repeat(-1, inputs.Count + 1).ToArray(), InputAt = Enumerable.Repeat(-1, count).ToArray() };
+                foreach (var r in rows)
+                {
+                    int t = (int)r.t;
+                    reference.X[t] = r.p.x; reference.Y[t] = r.p.y; reference.VX[t] = r.v.x; reference.VY[t] = r.v.y; reference.Right[t] = r.right;
+                    int input = Math.Min(r.input, inputs.Count - 1);
+                    reference.InputAt[t] = input;
+                    if (input >= 0 && reference.FirstTick[input] < 0) reference.FirstTick[input] = t;
+                }
+                return reference;
+            }
+            catch (Exception) { return null; }
+        }
+
         /// <summary>
         /// Repairs the graft where it fails, over and over, while it gets further (a local repair); returns the furthest graft and its
         /// replay from the run's start.

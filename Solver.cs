@@ -29,6 +29,8 @@ namespace IGTAPTasMod
             public string minCapabilities;
             public string maxCapabilities;
             public bool overgrown;
+            /// <summary>The Tree's level on this target (README ### Rules 21: the tree transitions); null: the save's own.</summary>
+            public int? tree;
             [JsonIgnore] public int GameCourse { get { return overgrown ? id - 10 : id; } }
             [JsonIgnore] public bool HasFinish { get { return endW > 0f && endH > 0f; } }
             [JsonIgnore] public bool IsTransition { get { return !string.IsNullOrEmpty(to); } }
@@ -292,6 +294,7 @@ namespace IGTAPTasMod
             int zone = TargetZone(def, out ZoneLoader loader);
             if (zone == 0 || zone == loader.activeZone && ZonesSettled()) return;
             LoadZoneNow.Invoke(loader, new object[] { zone });
+            _treeChangedFrame = Time.frameCount;
             Logger.LogInfo("Loaded zone " + zone + " for " + def.Token + ".");
         }
 
@@ -310,9 +313,14 @@ namespace IGTAPTasMod
         int TargetZone(CourseDef def, out ZoneLoader loader)
         {
             loader = FindAnyObjectByType<ZoneLoader>();
-            if (def == null || loader == null || !(AllZonesField?.GetValue(loader) is GameObject[] zones)) return 0;
+            return def == null ? 0 : ZoneAt(new Vector2(def.x, def.y) + CurrentOrigin(), loader);
+        }
+
+        /// <summary>The zone of the start gate or checkpoint nearest a scene point; 0 when there is none within 1000 u.</summary>
+        int ZoneAt(Vector2 start, ZoneLoader loader)
+        {
+            if (loader == null || !(AllZonesField?.GetValue(loader) is GameObject[] zones)) return 0;
             if (_zoneMarkers.Count == 0 || _zoneMarkers.Exists(m => m.marker == null)) _zoneMarkers = ZoneMarkers(zones);
-            Vector2 start = new Vector2(def.x, def.y) + CurrentOrigin();
             int zone = 0;
             float nearest = 1000f * 1000f;
             foreach (var (marker, markerZone) in _zoneMarkers)
@@ -347,6 +355,7 @@ namespace IGTAPTasMod
         {
             own = SavedArea1State ?? stats.currentA1State;
             if (def.overgrown) return globalStats.area1states.Overgrown;
+            if (def.tree >= 23) return globalStats.area1states.Overgrown;
             if (!def.IsBonus && !def.IsTransition && def.GameCourse >= 1 && def.GameCourse <= 5 && own == globalStats.area1states.Overgrown)
                 return globalStats.area1states.normal;
             return own;
@@ -364,6 +373,76 @@ namespace IGTAPTasMod
             if (SavedArea1State is globalStats.area1states own && stats.currentA1State != own) SetArea1State(stats, own, "the save");
             _savedArea1StateValue = null;
             _savedArea1StateOwner = null;
+        }
+
+        TreeLevel.Saved _savedTree;
+        TreeController _savedTreeOwner;
+        bool _savedPathOpen;
+        int _treeChangedFrame = -1;
+
+        /// <summary>The Tree at the target's level (<see cref="TreeLevel"/>), the save's kept first; a target without one
+        /// puts the save's back. From level 23 the OmniDash box's buy has opened the Zone 2→1 path (upgradeBox.cs:825-830).</summary>
+        void EnsureTree(CourseDef def)
+        {
+            TreeController tree = TreeLevel.TheTree();
+            if (def == null || tree == null) return;
+            if (def.tree == null) { RestoreTree(); return; }
+            if (_savedTreeOwner != tree)
+            {
+                _savedTree = TreeLevel.Keep(tree);
+                _savedPathOpen = Singleton<globalStats>.Instance.Zone2toZone1PathOpen;
+                _savedTreeOwner = tree;
+            }
+            if (TreeLevel.Apply(tree, def.tree.Value))
+            {
+                _treeChangedFrame = Time.frameCount;
+                Logger.LogInfo("The Tree at level " + def.tree + " for " + def.Token + ".");
+            }
+            SetPath(def.tree.Value >= 23);
+        }
+
+        static void SetPath(bool open)
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            if (stats == null || stats.Zone2toZone1PathOpen == open) return;
+            stats.Zone2toZone1PathOpen = open;
+            foreach (Zone2to1TransitionController path in FindObjectsByType<Zone2to1TransitionController>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+                path.updateState(open);
+        }
+
+        /// <summary>The tree is at the target's level, in its loaded zone, and a frame has passed since either changed, so every
+        /// box they woke has run its Start (the Area 2 door box's toggles the door, upgradeBox.cs:260) before a start sets the door.</summary>
+        bool TreeReady(CourseDef def)
+        {
+            TreeController tree = TreeLevel.TheTree();
+            return def?.tree == null || tree == null
+                || tree.gameObject.activeInHierarchy && TreeLevel.At(tree, def.tree.Value) && Time.frameCount > _treeChangedFrame;
+        }
+
+        /// <summary>A 1x start of a tree target waits until <see cref="TreeReady"/>: its zone and tree set a step early, as
+        /// RestoreRouteStart and the start's door come in one step.</summary>
+        bool TreeStartReady(MacroDefinition macro)
+        {
+            CourseDef def = CourseOfRoute(macro.name);
+            if (def?.tree == null) return true;
+            EnsureZone(def);
+            EnsureTree(def);
+            return TreeReady(def);
+        }
+
+        bool TreeSaved { get { return _savedTreeOwner != null && _savedTreeOwner == TreeLevel.TheTree(); } }
+
+        void RestoreTree()
+        {
+            if (TreeSaved)
+            {
+                TreeLevel.Restore(_savedTreeOwner, _savedTree);
+                SetPath(_savedPathOpen);
+                _treeChangedFrame = Time.frameCount;
+                Logger.LogInfo("The Tree back to the save's.");
+            }
+            _savedTree = null;
+            _savedTreeOwner = null;
         }
 
         void SetArea1State(globalStats stats, globalStats.area1states state, string reason)
@@ -559,6 +638,7 @@ namespace IGTAPTasMod
             if (focus != null && (focus[0] < 1 || focus[1] < focus[0]))
                 throw new InvalidOperationException("focus: a waypoint range [first, last], 1-based.");
             string cls = Text(item, "class");
+            if (cls == "") cls = null;
             if (cls != null)
             {
                 if (!HumanCourseClasses.Contains(cls)) throw new InvalidOperationException("class: human-major or human-nmg.");
@@ -769,7 +849,7 @@ namespace IGTAPTasMod
             // switch zones back after RestoreRouteStart loaded the course's, and a start captured then has the course's
             // DisableBits (its start gate, zip movers) off: no run from it starts the timer.
             bool parked = player != null && ((Vector2)player.transform.position - start).sqrMagnitude < 64f * 64f && Area1StateReady(target)
-                && ZoneReady(target);
+                && ZoneReady(target) && TreeReady(target);
             // respawn keeps coyoteFrames and the stable-tick wait pins the player at the reset point (Course 7's is 42 u over its
             // floor), where only coyote time holds onGround: restart from standing (full coyote), or a run that ended airborne
             // never gets 3 stable ticks, or starts with other coyote frames than the trace. Starts that never land: 600 frames.
@@ -873,7 +953,8 @@ namespace IGTAPTasMod
         {
             return _courses.Select(c => (object)new { id = c.id, token = c.Token, bonus = c.IsBonus,
                 categories = c.CategoryIds, @from = c.from, to = c.to,
-                hint = c.IsBonus ? BonusHint(c) : c.overgrown ? "Course " + c.GameCourse + " with Area 1 overgrown (overgrowth spikes, moss, zip movers)." : null,
+                hint = c.tree != null ? "From the checkpoint " + (c.from == "tree" + c.tree ? "by the atom room" : "at " + c.x.ToString("0") + ", " + c.y.ToString("0")) + " to Course " + c.to + "'s start checkpoint, The Tree at level " + c.tree + "."
+                    : c.IsBonus ? BonusHint(c) : c.overgrown ? "Course " + c.GameCourse + " with Area 1 overgrown (overgrowth spikes, moss, zip movers)." : null,
                 optional = OptionalBlocks(c.id).Select(b => new { name = b.name, note = b.note, on = b.on, capabilities = b.caps }).ToArray() }).ToArray();
         }
 
@@ -978,8 +1059,12 @@ namespace IGTAPTasMod
             var args = new StringBuilder();
             foreach (string old in Directory.GetFiles(EngineSimDir, name + "-seed*.json")) File.Delete(old);
             seeds = 0;
+            // A tree target also takes the other levels' routes to its course (same start and end; the engine drops what
+            // doesn't finish in this level's world).
+            string[] prefixes = (course.tree == null ? new[] { course }
+                : _courses.Where(c => c.tree != null && c.to == course.to).ToArray()).Select(c => c.Token + "_").ToArray();
             foreach (MacroDefinition route in _library.macros.Where(m => m.name != null
-                && m.name.StartsWith(course.Token + "_", StringComparison.OrdinalIgnoreCase)
+                && prefixes.Any(p => m.name.StartsWith(p, StringComparison.OrdinalIgnoreCase))
                 && m.steps.All(s => s.type == MacroStepType.RawInput)))
             {
                 string seed = Path.Combine(EngineSimDir, name + "-seed" + seeds++ + ".json");
@@ -992,19 +1077,25 @@ namespace IGTAPTasMod
         static string Quote(string path) { return "\"" + path + "\""; }
 
         // One job per map file: a request for a map already being drawn (a second click, a page's second mount) waits for
-        // that job's result instead of failing, and different maps queue, one engine process at a time.
+        // that job's result instead of failing, and different maps queue, one engine process at a time. A search map
+        // (`progressive`) answers within MapPollMs while its job runs: the file as the engine last wrote it, `pending`, and
+        // the studio asks again (`poll`), joining the job or, once it's done, taking its result (`_mapDone`).
         sealed class MapJob
         {
             public readonly System.Threading.ManualResetEvent Done = new System.Threading.ManualResetEvent(false);
             public int Status = 200;
             public string Response;
+            // Out of the queue: its engine process started (a job waits for the map drawing before it).
+            public volatile bool Started;
         }
         readonly Dictionary<string, MapJob> _mapJobs = new Dictionary<string, MapJob>(StringComparer.OrdinalIgnoreCase);
+        readonly Dictionary<string, MapJob> _mapDone = new Dictionary<string, MapJob>(StringComparer.OrdinalIgnoreCase);
+        const int MapPollMs = 1500;
         readonly object _mapQueue = new object();
 
-        bool MapInFlight(string output)
+        bool MapInFlight(string output, JObject body = null)
         {
-            lock (_mapJobs) return _mapJobs.ContainsKey(output);
+            lock (_mapJobs) return _mapJobs.ContainsKey(output) || body != null && Truthy(body, "poll") && _mapDone.ContainsKey(output);
         }
 
         object EngineSimMap(WebStudioRequest request, JObject body)
@@ -1026,10 +1117,10 @@ namespace IGTAPTasMod
             string name = "map-c" + course.Token + "-" + caps;
             string output = Path.Combine(EngineSimDir, name + ".json");
             // This map's job is running or queued: join it, leaving its seed files alone.
-            if (MapInFlight(output)) return RunEngineSimMap(request, null, output);
+            if (MapInFlight(output, body)) return RunEngineSimMap(request, null, output, true);
             var args = new StringBuilder("map ").Append(Quote(trace)).Append(" --out ").Append(Quote(output)).Append(CourseSeedArgs(course, name, out _));
             AppendOptional(args, id, caps, OptionalNames(body, id, caps));
-            return RunEngineSimMap(request, args.ToString(), output);
+            return RunEngineSimMap(request, args.ToString(), output, true);
         }
 
         /// <summary>The course's last start capture (the solve's, else the studio's), or null before its first solve.</summary>
@@ -1116,14 +1207,15 @@ namespace IGTAPTasMod
             return RunEngineSimMap(request, "ultras " + Quote(trace) + " --courses " + Quote(CoursesPath) + " --out " + Quote(output), output);
         }
 
-        // Draws `output` with the engine (`args`), or joins the job already drawing it (`args` unused then).
-        object RunEngineSimMap(WebStudioRequest request, string args, string output)
+        // Draws `output` with the engine (`args`), or joins the job already drawing it (`args` null), or the one that
+        // last finished it (a progressive map's poll).
+        object RunEngineSimMap(WebStudioRequest request, string args, string output, bool progressive = false)
         {
             MapJob job;
             bool owner;
             lock (_mapJobs)
             {
-                owner = !_mapJobs.TryGetValue(output, out job);
+                owner = !_mapJobs.TryGetValue(output, out job) && !(args == null && _mapDone.TryGetValue(output, out job));
                 if (owner) _mapJobs[output] = job = new MapJob();
             }
             request.AsyncHandling = true;
@@ -1131,16 +1223,34 @@ namespace IGTAPTasMod
             {
                 if (owner)
                 {
-                    try { lock (_mapQueue) RunMapProcess(job, args, output); }
-                    finally
+                    System.Threading.ThreadPool.QueueUserWorkItem(__ =>
                     {
-                        lock (_mapJobs) _mapJobs.Remove(output);
-                        job.Done.Set();
-                    }
+                        try { lock (_mapQueue) { job.Started = true; RunMapProcess(job, args, output); } }
+                        finally
+                        {
+                            lock (_mapJobs)
+                            {
+                                _mapJobs.Remove(output);
+                                if (progressive) _mapDone[output] = job;
+                            }
+                            job.Done.Set();
+                        }
+                    });
                 }
-                else job.Done.WaitOne();
-                request.StatusCode = job.Status;
-                request.Response = job.Response;
+                if (job.Done.WaitOne(progressive ? MapPollMs : System.Threading.Timeout.Infinite))
+                {
+                    request.StatusCode = job.Status;
+                    request.Response = job.Response;
+                }
+                else
+                {
+                    // Still drawing: what the engine wrote so far (an earlier draw's, before its first write), marked pending.
+                    string partial = null;
+                    try { if (File.Exists(output)) partial = File.ReadAllText(output); }
+                    catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { }
+                    request.Response = partial != null && partial.StartsWith("{", StringComparison.Ordinal) && partial.Length > 2
+                        ? "{\"pending\":true,\"queued\":" + (job.Started ? "false," : "true,") + partial.Substring(1) : "{\"ok\":true,\"pending\":true}";
+                }
                 request.Completed.Set();
             });
             return null;

@@ -336,7 +336,37 @@ namespace IGTAP.EngineSim.Cli
                 foreach (Piece p in filed) Try(pre.Concat(p.Inputs).ToList());
                 if (fastest < direct) break;
             }
+            if (steps.Count == 0)
+                foreach (List<InputTick> inputs in SettledWays(at, route, reached, target.Key))
+                {
+                    Try(inputs);
+                    if (steps.Count > 0) break;
+                }
             return steps;
+        }
+
+        /// <summary>
+        /// After a quick restart: a tap either way, then 0 to 9 idle ticks. The restart keeps the player's facing (a dash at rest
+        /// takes it) and the 280 fps grid's phase moves a lap's dashes, so a piece filed after another restart can need these to
+        /// start as that one did (TrueEnding%'s Cash lap of Course 5 before goal 355, 2026-10-05: the library's lap, filed facing
+        /// right, falls out of the course after a restart facing left, and replays after a tap right and 2 idle ticks).
+        /// </summary>
+        static readonly List<InputTick>[] Settles = new[] { 1f, -1f }
+            .SelectMany(tap => Enumerable.Range(0, 10).Select(k => Enumerable.Repeat(new InputTick { x = tap }, 1).Concat(Enumerable.Repeat(new InputTick(), k)).ToList()))
+            .ToArray();
+
+        /// <summary>The library's pieces for key after each restart pad and each of <see cref="Settles"/>, the pads' order.</summary>
+        IEnumerable<List<InputTick>> SettledWays(SimSnapshot at, List<InputTick> route, int reached, string key)
+        {
+            foreach (var (pre, state) in Restarts(at, route, reached))
+            {
+                (Vector3 there, int after) = Where(state);
+                List<Piece> filed = Near(key, after, there).ToList();
+                if (filed.Count == 0) yield break;
+                foreach (List<InputTick> settle in Settles)
+                    foreach (Piece p in filed)
+                        if (!p.Inputs[0].reset) yield return pre.Concat(settle).Concat(p.Inputs).ToList();
+            }
         }
 
         FullTasGoal RunGoal(string label, string kind, int course)
@@ -371,20 +401,22 @@ namespace IGTAP.EngineSim.Cli
             }
             // The search's goals: every goal from reached through the scored one (a buy table set is several).
             int last = (then ?? target).Goal, first = Math.Min(reached, target.Goal);
-            FullTasGoal[] goals = target.Extra ?? _runGoals.Goals.Skip(first).Take(last + 1 - first).ToArray();
+            // An extra lap's then is the lap's next part (its finish after its gate): the lap's own goals, both searched.
+            FullTasGoal[] goals = target.Extra != null ? target.Extra.Concat(then?.Extra ?? new FullTasGoal[0]).ToArray()
+                : _runGoals.Goals.Skip(first).Take(last + 1 - first).ToArray();
             _eval.Restore(at);
             string caps = WindowCaps(goals);
             foreach (var s in SeedStarts(at, prefix, new HashSet<string>(goals.Select(g => g.label)), restarts.Count > 0, caps)) Seed(s.inputs);
             foreach (List<InputTick> s in extraSeeds) Seed(s);
-            string span = target.Extra != null ? target.Key + " (an extra lap for Cash before " + _labels[target.Goal] + ")"
+            string span = target.Extra != null ? string.Join(" + ", goals.Select(g => g.label)) + " (an extra lap for Cash before " + _labels[target.Goal] + ")"
                 : then != null ? _labels[target.Goal] + " + " + _labels[then.Goal] : _labels[target.Goal];
-            string title = "piece for goal " + (target.Goal + 1) + (then != null ? "-" + (then.Goal + 1) : "") + "/" + _goals;
+            string title = "piece for goal " + (target.Goal + 1) + (then != null && then.Extra == null ? "-" + (then.Goal + 1) : "") + "/" + _goals;
             Func<Simulation> create = () =>
             {
                 (Simulation sim, SimSnapshot state) = Prefixed(prefix, title);
                 if (target.Extra != null)
                 {
-                    FullTasTracker lap = sim.Goals.For(target.Extra);
+                    FullTasTracker lap = sim.Goals.For(goals);
                     sim.UseGoals(lap);
                     sim.SetStart(state.WithGoal(lap.Capture()), prefix.Count);
                 }
@@ -545,20 +577,100 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// Puts one step toward target on the build: a library piece (unless <paramref name="searchOnly"/>: the caller found none), else a
-        /// searched one, filed for reuse. Null, or why not.
+        /// searched one, filed for reuse. Null, or why not. With <paramref name="lapEnd"/> (a course's start gate followed by its
+        /// finish), the gate's way is the one the finish comes soonest after (<see cref="KnownLap"/>), else one searched through the
+        /// finish: the gate's fastest way can leave the player where no finish is found (TrueEnding%'s goal 355, 2026-10-05: a Cash
+        /// lap's gate crossed mid-air after three dashes, and 2.2 M runs found no finish from there).
         /// </summary>
-        string BuildStep(Built built, ref SimSnapshot at, Target target, List<List<InputTick>> extraSeeds, bool searchOnly)
+        string BuildStep(Built built, ref SimSnapshot at, Target target, List<List<InputTick>> extraSeeds, bool searchOnly, Target lapEnd = null)
         {
-            Step step = searchOnly ? null : BestKnown(at, built.Inputs, built.Reached, target);
+            Step step = searchOnly ? null : lapEnd != null ? KnownLap(at, built.Inputs, built.Reached, target, lapEnd) : BestKnown(at, built.Inputs, built.Reached, target);
             if (step == null)
             {
+                if (lapEnd != null) extraSeeds = extraSeeds.Concat(LapSeeds(at, built.Inputs, built.Reached, target, lapEnd)).ToList();
                 // The build takes the first way found (and a quarter minute's betterment); polish searches the pieces it plays.
-                step = SolvePiece(at, built.Inputs, built.Reached, target, _pieceMinutes, BuildStall, extraSeeds);
+                step = SolvePiece(at, built.Inputs, built.Reached, target, _pieceMinutes, BuildStall, extraSeeds, lapEnd);
                 if (step == null) return target.Extra != null ? $"no way found to {target.Key} (an extra lap for Cash) before goal {target.Goal + 1} ({_labels[target.Goal]})"
                     : $"no way found to goal {target.Goal + 1} ({_labels[target.Goal]}) from goal {built.Reached}";
                 Keep(step, at, built.Inputs, target);
+                if (step.Then != null) Keep(step.Then, step.Next, built.Inputs.Concat(step.Inputs).ToList(), lapEnd);
             }
             return Append(built, ref at, step, target) ? null : $"the way to goal {target.Goal + 1} ({_labels[target.Goal]}) would quick restart twice in a row";
+        }
+
+        /// <summary>
+        /// The library's way through a course lap's start gate whose finish comes soonest, carrying the finish in Then: a gate's way
+        /// followed by a finish piece, or a finish piece played as it is or after a restart pad (its way crosses the gate: a finish
+        /// is filed where the restart and the end gate's drop leave the player, short of the gate). Null when none reaches both.
+        /// </summary>
+        Step KnownLap(SimSnapshot at, List<InputTick> route, int reached, Target start, Target finish)
+        {
+            Step best = null;
+            void Take(Step s)
+            {
+                if (s != null && (best == null || s.Then.Physics < best.Then.Physics)) best = s;
+            }
+            foreach (Step s in KnownSteps(at, route, reached, start))
+            {
+                List<InputTick> after = route.Concat(s.Inputs).ToList();
+                Step f = BestKnown(s.Next, after, s.Next.Goal.Next, finish);
+                if (f == null || after[after.Count - 1].reset && f.Inputs[0].reset) continue;
+                s.Then = f;
+                Take(s);
+            }
+            void Lap(List<InputTick> inputs)
+            {
+                Step s = Reaches(at, route.Count, inputs, start);
+                if (s != null) Take(Continued(s, route.Count, inputs, finish));
+            }
+            foreach (List<InputTick> inputs in NearWays(at, route, reached, finish.Key)) Lap(inputs);
+            if (best == null)
+                foreach (List<InputTick> inputs in SettledWays(at, route, reached, finish.Key))
+                {
+                    Lap(inputs);
+                    if (best != null) break;
+                }
+            return best;
+        }
+
+        /// <summary>
+        /// The library's pieces for key from at, as they are and after the restart pads up to the first whose spot has any (the pad
+        /// their dash timing needs isn't known, so each up to there).
+        /// </summary>
+        IEnumerable<List<InputTick>> NearWays(SimSnapshot at, List<InputTick> route, int reached, string key)
+        {
+            (Vector3 here, int unlocks) = Where(at);
+            foreach (Piece p in Near(key, unlocks, here).ToList())
+                if (!(route.Count > 0 && route[route.Count - 1].reset && p.Inputs[0].reset)) yield return p.Inputs;
+            foreach (var (pre, state) in Restarts(at, route, reached))
+            {
+                (Vector3 there, int after) = Where(state);
+                List<Piece> filed = Near(key, after, there).ToList();
+                foreach (Piece p in filed)
+                    if (!p.Inputs[0].reset) yield return pre.Concat(p.Inputs).ToList();
+                if (filed.Count > 0) yield break;
+            }
+        }
+
+        /// <summary>
+        /// A lap search's seeds: the finish's library pieces nearest here, played as they are and after restart pads (the gate on their
+        /// way), and after each of the gate's fastest library ways.
+        /// </summary>
+        IEnumerable<List<InputTick>> LapSeeds(SimSnapshot at, List<InputTick> route, int reached, Target start, Target finish)
+        {
+            IEnumerable<List<InputTick>> Finishes(SimSnapshot from) =>
+                _pieces.Where(p => p.Target == finish.Key).OrderBy(p => Distance(p, Where(from).at)).Take(PieceVariants).Select(p => p.Inputs);
+            foreach (List<InputTick> f in Finishes(at)) yield return f;
+            foreach (var (pre, state) in Restarts(at, route, reached).Take(PieceVariants))
+                foreach (List<InputTick> f in Finishes(state))
+                    if (!f[0].reset)
+                    {
+                        yield return pre.Concat(f).ToList();
+                        foreach (List<InputTick> settle in Settles) yield return pre.Concat(settle).Concat(f).ToList();
+                    }
+            foreach (Step s in KnownSteps(at, route, reached, start).OrderBy(s => s.Physics).Take(PieceVariants))
+                foreach (List<InputTick> f in Finishes(s.Next))
+                    if (!(s.Inputs[s.Inputs.Count - 1].reset && f[0].reset)) yield return s.Inputs.Concat(f).ToList();
         }
 
         /// <summary>
@@ -577,9 +689,10 @@ namespace IGTAP.EngineSim.Cli
             List<List<InputTick>> oldSeeds = old != null && old.Progress > goal && goal > 0
                 ? new List<List<InputTick>> { old.Inputs.Skip((int)old.GoalInput[goal - 1]).Take((int)(old.GoalInput[goal] - old.GoalInput[goal - 1]) + 2).ToList() }
                 : new List<List<InputTick>>();
+            Target lapEnd = LapEnd(goal);
             for (int laps = 0; ; laps++)
             {
-                Step known = BestKnown(at, built.Inputs, goal, target);
+                Step known = lapEnd != null ? KnownLap(at, built.Inputs, goal, target, lapEnd) : BestKnown(at, built.Inputs, goal, target);
                 if (laps == 0 && mine != null) known = known == null ? mine : Pick(known, mine, built.Inputs, old, goal);
                 if (known != null) return Append(built, ref at, known, target) ? Advanced(built) : $"the way to goal {goal + 1} ({g.label}) would quick restart twice in a row";
                 _eval.Restore(at);
@@ -602,13 +715,8 @@ namespace IGTAP.EngineSim.Cli
                 int course = LoopCourse(goal);
                 if (course == 0) return $"goal {goal + 1} ({g.label}): short of Cash, and no course to lap for it";
                 if (laps == MaxExtraLaps) return $"goal {goal + 1} ({g.label}): still short of Cash after {MaxExtraLaps} extra laps";
-                // The lap's gate and finish are pieces of their own, filed under the same labels as the run's own laps: each
-                // reuses the other's.
-                foreach (FullTasGoal part in new[] { RunGoal("start:" + course, FullTasGoal.Start, course), RunGoal("finish:" + course, FullTasGoal.Finish, course) })
-                {
-                    string stuck = BuildStep(built, ref at, new Target { Goal = goal, Extra = new[] { part }, Key = part.label }, new List<List<InputTick>>(), false);
-                    if (stuck != null) return stuck;
-                }
+                string stuck = ExtraLap(built, ref at, goal, course);
+                if (stuck != null) return stuck;
                 Log($"build: extra lap of Course {course} before goal {goal + 1} ({g.label}): short of Cash");
             }
             if (g.boxes != null)
@@ -619,11 +727,32 @@ namespace IGTAP.EngineSim.Cli
                 if (g.kind == FullTasGoal.Buy && _eval.Shop.Affordable(g.boxes) == null) return $"goal {goal + 1} ({g.label}) can't be bought: {state}";
                 Log($"build: searching goal {goal + 1} ({g.label}): {state}");
             }
-            string why = BuildStep(built, ref at, target, oldSeeds, true);
+            string why = BuildStep(built, ref at, target, oldSeeds, true, lapEnd);
             return why ?? Advanced(built);
         }
 
         static string Advanced(Built built) { built.Reached++; return null; }
+
+        /// <summary>
+        /// An extra lap of course before goal onto the build: its gate and finish, pieces of their own filed under the same labels
+        /// as the run's own laps (each reuses the other's), the gate's way picked by the finish. Null, or why not.
+        /// </summary>
+        string ExtraLap(Built built, ref SimSnapshot at, int goal, int course)
+        {
+            Target Part(string label, string kind) => new Target { Goal = goal, Extra = new[] { RunGoal(label, kind, course) }, Key = label };
+            Target start = Part("start:" + course, FullTasGoal.Start), finish = Part("finish:" + course, FullTasGoal.Finish);
+            return BuildStep(built, ref at, start, new List<List<InputTick>>(), false, finish)
+                ?? BuildStep(built, ref at, finish, new List<List<InputTick>>(), false);
+        }
+
+        /// <summary>The run's goal after goal when goal is a course's start gate and that is its finish (a lap); else null.</summary>
+        Target LapEnd(int goal)
+        {
+            FullTasGoal g = _runGoals.Goals[goal];
+            if (g.kind != FullTasGoal.Start || goal + 1 >= _goals) return null;
+            FullTasGoal f = _runGoals.Goals[goal + 1];
+            return f.kind == FullTasGoal.Finish && f.course == g.course ? new Target { Goal = goal + 1, Key = f.label } : null;
+        }
 
         /// <summary>
         /// --reach-polish: whether an extra lap, then the buy, buys target sooner than standing under its box for the clones' income
@@ -637,8 +766,7 @@ namespace IGTAP.EngineSim.Cli
             // No hop under the box buys it: the lap, not a search for a wait (minutes, at buy:buystatue).
             if (stand == null) return true;
             var trial = new Built { Inputs = built.Inputs.ToList(), Reached = built.Reached };
-            foreach (FullTasGoal part in new[] { RunGoal("start:" + course, FullTasGoal.Start, course), RunGoal("finish:" + course, FullTasGoal.Finish, course) })
-                if (BuildStep(trial, ref at, new Target { Goal = goal, Extra = new[] { part }, Key = part.label }, new List<List<InputTick>>(), false) != null) return false;
+            if (ExtraLap(trial, ref at, goal, course) != null) return false;
             Step buy = BestKnown(at, trial.Inputs, goal, target);
             if (buy == null || stand.Physics <= buy.Physics) return false;
             Log($"build: goal {goal + 1} ({_labels[goal]}): a lap of Course {course} first buys it at tick {buy.Physics}, standing at {stand.Physics}");

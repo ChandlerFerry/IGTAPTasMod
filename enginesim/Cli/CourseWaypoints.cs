@@ -516,7 +516,7 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>The course's finish as a goal: a transition's next course start, a bonus's finish rect (an area goal), else
         /// the course's finish.</summary>
-        static FullTasGoal Finish(Simulation sim, JsonElement header)
+        internal static FullTasGoal Finish(Simulation sim, JsonElement header)
         {
             if (header.TryGetProperty("finishStart", out JsonElement next))
                 return new FullTasGoal { kind = FullTasGoal.Start, course = next.GetInt32(), label = "start:" + next.GetInt32() };

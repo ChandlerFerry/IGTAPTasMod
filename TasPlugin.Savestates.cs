@@ -80,6 +80,7 @@ namespace IGTAPTasMod
             CourseDef named = CourseOfRoute(route.name);
             _runCourse = named;
             EnsureArea1State(named);
+            EnsureTree(named);
             EnsureZone(named);
             if (movement != null && labTech != null)
             {

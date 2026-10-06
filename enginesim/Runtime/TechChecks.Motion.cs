@@ -6,7 +6,7 @@ using IGTAPTasMod;
 namespace IGTAP.EngineSim
 {
     /// <summary>
-    /// Tech checks for how the dot moves along the ground and through tight spaces: corner boosts, ground bounce pumping, the step-up
+    /// Tech checks for how the dot moves along the ground and through tight spaces: ground bounce pumping, the step-up
     /// techs (Movement.Update's step-up teleports the dot onto a ground top 13-44 u above its feet), the roof squeeze, gap stick and
     /// edge stop. Each reads the player's own state (Movement's fields, recorded per step) and never the geometry around it: a step-up
     /// is told from a landing's tiny correction by how far it lifted the dot, a squeeze by the dot stalling against something its
@@ -19,40 +19,6 @@ namespace IGTAP.EngineSim
 
         /// <summary>A step-up that is a climb lifts the dot at least this much (a landing's correction is under 11).</summary>
         const float MotionClimbRise = 13f;
-
-        /// <summary>
-        /// Pixel perfect corner boost: a hyper off a floor's corner chained into the ultra bonus. The flat hyper dash slides past the
-        /// floor's edge with onGround held on the coyote ticks (Coyote under its maximum while Ground is still set), and the jump
-        /// pressed there is the hyper (CheckForSuperJump: buffered press spent, canHyper) whose ultra check passes and adds
-        /// preDashMomentum.x to its momentum: the overlay's <c>UltraBonus</c> span, on a jump taken with the floor already gone. A
-        /// plain ultra bonus jumps with the coyote full.
-        /// </summary>
-        [TechCheck("corner-boost")]
-        static int MotionCornerBoost(TechSteps run, int from, int to)
-        {
-            List<TechStep> steps = run.Steps;
-            foreach (Span span in run.Spans)
-            {
-                if (span.Tech != "UltraBonus" || span.End < from || span.End > to) continue;
-                MoveState sup = default;
-                bool open = false;
-                foreach (TechEvent e in steps[span.End].Calls)
-                {
-                    if (e.Call == TechCall.Super)
-                    {
-                        sup = e.State;
-                        open = true;
-                    }
-                    else if (e.Call == TechCall.Input) open = false;
-                    else if (e.Call == TechCall.Sprite && open)
-                    {
-                        open = false;
-                        if (sup.Buffer && !e.State.Buffer && sup.CanHyper && sup.Ground && sup.Coyote < run.MaxCoyote) return span.End;
-                    }
-                }
-            }
-            return -1;
-        }
 
         /// <summary>Each ground bounce has to beat the last one's momentum by this much (the pump's +11 % a cycle, with room).</summary>
         const float MotionPumpGrowth = 1.05f;
