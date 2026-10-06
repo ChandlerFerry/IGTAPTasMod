@@ -93,6 +93,9 @@ namespace IGTAP.EngineSim
         // The loaded archive (Memory) is not kept: its runs count and plateau routes are, and its sources only until each
         // worker has restored its share (a resident 150k-cell archive held 3 GB of inputs after its cells were replaced).
         readonly long _priorRuns;
+        // No route yet: a plain solve's cells also key the air dashes, air jumps and wall jumps left, so an arrival that kept
+        // them (a super off a ledge, its dash and air jump still to come) isn't replaced by an earlier one that spent them.
+        readonly bool _fresh;
         readonly List<List<InputTick>> _plateaus;
         List<Memory.Source> _loaded;
         readonly ForcedPath _path;
@@ -189,6 +192,7 @@ namespace IGTAP.EngineSim
             _path = path != null && !path.IsEmpty ? path : null;
             VisitCell = visitCell;
             GuideWeight = guide;
+            _fresh = seeds.Count == 0;
             Rng = rng;
             Mined = mined;
             Mined?.Prepare(capabilities);
@@ -1733,8 +1737,8 @@ namespace IGTAP.EngineSim
                 }
                 courseScript active = _sim.TimingCourse();
                 bool timing = _sim.TimedFromRunStart || active != null;
-                long key = _goalMode ? GoalCellKey(Place(_sim, _swapper, true, ref behind), _sim.Progress)
-                    : CellKey(Place(_sim, _swapper, false, ref behind) | (timing ? 0L : Motion(_sim.Player)), timing, _waypoints);
+                long key = _goalMode ? GoalCellKey(Place(_sim, _swapper, true, ref behind, false), _sim.Progress)
+                    : CellKey(Place(_sim, _swapper, false, ref behind, _owner._fresh) | (timing ? 0L : Motion(_sim.Player)), timing, _waypoints);
                 bool losing = false;
                 float elapsed = _sim.Elapsed(active);
                 int filed = Math.Min(tick, inputs.Count);
@@ -1790,7 +1794,7 @@ namespace IGTAP.EngineSim
             internal const int ProgressShift = 51;
             const float MomentumStep = 250f;
 
-            static long Place(Simulation sim, colouredBlockSwapper swapper, bool resources, ref float behind)
+            static long Place(Simulation sim, colouredBlockSwapper swapper, bool resources, ref float behind, bool spent)
             {
                 Movement player = sim.Player;
                 CapturePos position = sim.PlayerAtCapture;
@@ -1801,7 +1805,7 @@ namespace IGTAP.EngineSim
                 // square is seldom the slow one that stopped next to the wall, and only that one clips.
                 if (!resources) key |= Behind(player, ref behind) switch { < 0f => 1L << 45, > 0f => 1L << 46, _ => 0L };
                 bool moss = GroundType(player) != 0;
-                if (!moss && !resources) return key;
+                if (!moss && !resources && !spent) return key;
                 long wall = Math.Clamp(player.wallJumpsLeft + 1, 0, 15), air = Math.Clamp(player.airJumpsLeft, 0, 15), dash = Math.Clamp(player.airDashesLeft, 0, 15);
                 key |= (moss ? 1L << 44 : 0L) | (wall << 40) | (air << 36) | (dash << 32);
                 if (!resources) return key;
