@@ -81,6 +81,8 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>The most ticks the economy can go paying nothing while it still earns (a clone's lap: its payouts come once a
         /// lap), 0 where income comes every tick or not at all.</summary>
         int Quiet();
+        /// <summary>The most of each currency waiting can bring (NP: its cap while nothing can raise it), else infinity.</summary>
+        double[] Ceiling();
     }
 
     /// <summary>A step out of a place as the search plays it: Ticks less its events standing at End, then each Buys box a tick
@@ -151,7 +153,8 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>No currency the box (its next <paramref name="levels"/> levels) still lacks has risen since <paramref name="was"/>
         /// (null: the stand's first look, never stalled); a box that can't be bought stalls when it couldn't at the last look either
-        /// (one growing on a tree segment comes on within a look).</summary>
+        /// (one growing on a tree segment comes on within a look). A price over what waiting can hold (IEconomy.Ceiling: NP's cap)
+        /// stalls at once: the stand would fill the cap and wait out a look for nothing.</summary>
         static bool Stalled<TSnap>(IEconomy<TSnap> economy, string box, int levels, ref double[] was)
         {
             double[] price = economy.Price(box, levels), held = economy.Holds();
@@ -161,6 +164,9 @@ namespace IGTAP.EngineSim.Cli
                 was = Array.Empty<double>();
                 return still;
             }
+            double[] ceiling = economy.Ceiling();
+            for (int c = 0; c < price.Length; c++)
+                if (price[c] > ceiling[c]) return true;
             bool rose = was == null || was.Length == 0;
             for (int c = 0; c < price.Length && !rose; c++)
                 if (price[c] > held[c] && held[c] > was[c]) rose = true;
@@ -456,7 +462,8 @@ namespace IGTAP.EngineSim.Cli
                 return wait + ticks;
             }
             // The buy pre-check, with the economy at n: the option's boxes cost more than n holds plus PrecheckMargin times n's
-            // income over the step's ticks (a stand: and BeamStand more, a patient one StandCap; atoms:N: its N levels). A buy right after a buy is always played
+            // income over the step's ticks (a stand: and BeamStand more, a patient one StandCap; atoms:N: its N levels, an atom
+            // touch's stand over BeamStand, as the beam plays it). A buy right after a buy is always played
             // (what it bought, a clone, may pay before the window shows it); a stand always checked; no income over the window
             // (Estimate's fallbacks) never pre-checks.
             bool Short(Node<TSnap> n, PlanOption o)
@@ -472,7 +479,7 @@ namespace IGTAP.EngineSim.Cli
                     need ??= new double[p.Length];
                     for (int c = 0; c < p.Length; c++) need[c] += p[c];
                 }
-                double ticks = o.Step.Ticks + (o.Patient ? StandCap : o.Stand ? BeamStand : 0);
+                double ticks = o.Step.Ticks + (o.Step.Kind == "atoms" ? BeamStand : o.Patient ? StandCap : o.Stand ? BeamStand : 0);
                 for (int c = 0; c < need.Length; c++)
                 {
                     double missing = need[c] - n.Holds[c];
@@ -510,7 +517,7 @@ namespace IGTAP.EngineSim.Cli
                             if (last) e.parent.Snap = default;
                             continue;
                         }
-                        long? end = Played(e.parent, e.via, out _, out int extra, e.via.Stand && !e.via.Patient ? e.parent.Tick + e.via.Step.Ticks + BeamStand : long.MaxValue);
+                        long? end = Played(e.parent, e.via, out _, out int extra, e.via.Stand && (!e.via.Patient || e.via.Step.Kind == "atoms") ? e.parent.Tick + e.via.Step.Ticks + BeamStand : long.MaxValue);
                         if (last) e.parent.Snap = default;
                         if (end == null) continue;
                         n = Made(e.parent, e.via, end.Value, e.via.End, extra);
@@ -878,6 +885,14 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>Twice the longest clone path of a course with clones (a clone pays at its path's end, the next one spawns an
         /// interval later, at most a path), in ticks.</summary>
+        public double[] Ceiling()
+        {
+            var ceiling = new double[7];
+            Array.Fill(ceiling, double.PositiveInfinity);
+            if (_sim.Shop.Economy?.NpCapped == true) ceiling[(int)globalStats.Currencies.AtomicPower] = Singleton<globalStats>.Instance.NPrewardCap;
+            return ceiling;
+        }
+
         public int Quiet()
         {
             double longest = 0;

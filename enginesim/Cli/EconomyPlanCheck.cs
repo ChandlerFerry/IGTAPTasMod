@@ -65,6 +65,7 @@ namespace IGTAP.EngineSim.Cli
                     if (++Played > 0 && place != "c1" && (Lump == 0 || Played % Lump == 0)) Gain(_clones * Math.Max(1, Lump));
             }
             public int Quiet() => Lump;
+            public double[] Ceiling() => new[] { double.PositiveInfinity, double.PositiveInfinity };
             void Gain(double cash) { _cash += cash; _earned += cash; }
             public bool Buy(string box)
             {

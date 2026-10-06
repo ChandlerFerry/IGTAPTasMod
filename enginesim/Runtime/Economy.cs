@@ -394,6 +394,18 @@ namespace IGTAP.EngineSim
         /// <summary>The atom collider's atoms per tier (contents[i].Count) and its waiting atoms (--ticks-out).</summary>
         internal int[] AtomCounts => (int[])_atoms.Clone();
         internal int WaitingAtoms => _waitingAtoms;
+        /// <summary>NP can't rise past its cap by waiting: no softcap, and no atom waiting, crafting or ready to craft (each raises the
+        /// rate, and the cap with it).</summary>
+        internal bool NpCapped
+        {
+            get
+            {
+                if (Global(globalStats.globalUpgradeSet.NpCapIsSoftcap) != 0.0 || _waitingAtoms > 0 || _isCrafting) return false;
+                for (int t = 0; t < _atoms.Length; t++)
+                    if (_atoms[t] >= 3 + t) return false;
+                return true;
+            }
+        }
         /// <summary>The grid's callAddNewAtom calls so far (--ticks-out, a diagnostic: not in snapshots).</summary>
         internal int GridCalls;
         /// <summary>globalStats.CloneDustGpCdMult as the run has it (--ticks-out).</summary>
