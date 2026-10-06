@@ -374,13 +374,21 @@ namespace IGTAP.EngineSim
             return new Quaternion(ReadFloat(e.GetProperty("x")), ReadFloat(e.GetProperty("y")), ReadFloat(e.GetProperty("z")), ReadFloat(e.GetProperty("w")));
         }
 
+        readonly Dictionary<Type, (int objects, int attached, Array all)> _all = new Dictionary<Type, (int, int, Array)>();
+
+        /// <summary>Every component of type T in the world, in object order (a copy: callers may keep or reorder it). Cached per
+        /// type while no object or component has been added: the economy asks every few ticks (MacroEngine.RefreshRewards' courses).</summary>
         public T[] All<T>() where T : class
         {
-            var result = new List<T>();
-            foreach (GameObject go in GameObjects)
-                foreach (Component c in go.m_Components)
-                    if (c is T match) result.Add(match);
-            return result.ToArray();
+            if (!_all.TryGetValue(typeof(T), out var hit) || hit.objects != GameObjects.Count || hit.attached != GameObject.Attached)
+            {
+                var result = new List<T>();
+                foreach (GameObject go in GameObjects)
+                    foreach (Component c in go.m_Components)
+                        if (c is T match) result.Add(match);
+                _all[typeof(T)] = hit = (GameObjects.Count, GameObject.Attached, result.ToArray());
+            }
+            return (T[])hit.all.Clone();
         }
     }
 }

@@ -641,6 +641,8 @@ namespace IGTAP.EngineSim.Cli
                     }
                     if (to.StartsWith("restart@", StringComparison.Ordinal))
                     {
+                        // Standing at a landing, a quick restart lands there again: no tick, no change, and the gate refuses two in a row.
+                        if (place.StartsWith("restart@", StringComparison.Ordinal)) continue;
                         list.Add((new PlanOption(new Step("restart", to, m.Ticks), to, Array.Empty<string>(), null, false, Array.Empty<string>(), estimated.ToArray()), null));
                         continue;
                     }
