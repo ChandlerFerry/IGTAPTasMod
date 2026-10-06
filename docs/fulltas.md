@@ -2212,6 +2212,20 @@ the tree, `buytree2`, then `buytree1` on tick 40312 (goal 592; there NP 98.8, 0.
 (22,500 NP) needs about 3.75 NP a tick, a tier-2 atom; its plan alone (width 8, about 13,000 ticks of economy) takes half an
 hour, the stretch's pace now.
 
+Stage 3 (2026-10-06 afternoon): goal 630 on tick 42017 (895.39 s live); `buytree5` not reached. With the planner faster
+(the plan from goal 630 to `buytree5`: 116 s at width 4, tick 54087 with Course 6 only, 50883 with Courses 7 and 9),
+realize stalls on its first lap from the tree. A quick restart from the atom box lands at bonus 11's checkpoint, and
+every way from there to Course 6 or 9 dies on a **stray buy**: the run now holds the NP for `buytree0`'s next level, and the
+saved transitions (recorded with no tree, so nothing to buy on the way) and the searches walk through its trigger. A
+strict run buys a box it touches and ends; nothing told the search where those boxes were, so it kept sending runs into
+them (20+ minute piece searches, none found). Strict buys stay. Each search window (`FullTas.Explore`: reach windows and
+the builder's piece searches) now adds an avoid box for each box the run can buy at the window's start that its goals
+don't name: only its trigger, the thin buy area under the box, grown by the player's body box (`Simulation.StrayTriggers`,
+`FullTas.WithStrays`), logged as `avoid: N boxes this window could buy by stray (...)`. A run is cut on entering one
+and the guide treats it as a wall. Not yet run: the next stage from goal 630 is the test. A box that becomes affordable
+during the window still ends a run that touches it. A plain lap (`lap:N`) also tries the saved course routes, a tree
+transition's chain among them, before a piece search (`FullTas.Lap`).
+
 ## When a game update breaks a route
 
 A Steam update can move the Cash, the RNG or a collider, and a route that played through stops short. In order:

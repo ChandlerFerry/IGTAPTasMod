@@ -674,6 +674,30 @@ namespace IGTAP.EngineSim.Cli
             Emit(new { type = "note", level = "info", text = $"Avoid boxes now {path.Avoid.Count} (forced-paths.json)." });
         }
 
+        /// <summary>
+        /// The window's avoid boxes plus a stray-buy avoid for each box the run can buy at the window's start that its goals don't
+        /// name (<see cref="Simulation.StrayTriggers"/>): a strict run that touches one buys it and ends, and the guide treats
+        /// avoids as walls, so the search goes round them instead of dying in them. A box that becomes affordable during the
+        /// window still ends a run that touches it.
+        /// </summary>
+        OfflineSolver.ForcedPath WithStrays(Func<Simulation> create, ICollection<string> goals)
+        {
+            if (goals == null || _runGoals == null || _runGoals.Loose) return _path;
+            var named = new HashSet<string>(_runGoals.Goals.Where(g => goals.Contains(g.label)).SelectMany(g => g.boxes ?? Array.Empty<string>()));
+            var strays = create().StrayTriggers(named);
+            if (strays.Count == 0) return _path;
+            var path = new OfflineSolver.ForcedPath { Guide = _path?.Guide ?? false };
+            if (_path != null)
+            {
+                path.Via.AddRange(_path.Via);
+                path.Avoid.AddRange(_path.Avoid);
+                path.Discourage.AddRange(_path.Discourage);
+            }
+            foreach (var (a, b, _) in strays) path.Avoid.Add(new OfflineSolver.Box(a, b));
+            Log($"avoid: {strays.Select(s => s.box).Distinct().Count()} boxes this window could buy by stray ({string.Join(", ", strays.Select(s => FullTasGoal.TokenOf(s.box) ?? s.box).Distinct())})");
+            return path;
+        }
+
         string Describe(Route r)
         {
             if (r.Progress == _goals) return r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture) + "s" + ClassNote(r);
@@ -814,12 +838,13 @@ namespace IGTAP.EngineSim.Cli
         {
             var found = new List<List<InputTick>>();
             ReloadAvoids(goals);
+            OfflineSolver.ForcedPath path = WithStrays(create, goals);
             OfflineSolver.Memory memory = _fresh ? null : Solve.LoadMemory(archiveFile);
             if (memory != null)
                 Log($"Resuming from {Path.GetFileName(archiveFile)}: {memory.Sources.Sum(s => s.Cells.Count)} cells over {memory.Sources.Count} prefixes, "
                     + $"{memory.Plateau.Count} plateau routes, {memory.Runs} runs before");
             // --parts grafts: the tech library in every window (FullTasAutoWaste.cs), unless a part set its own.
-            var solver = new OfflineSolver(create, caps, seeds, memory, _path, VisitCell, _mined ?? AutoGrafts(caps), rng: _rng);
+            var solver = new OfflineSolver(create, caps, seeds, memory, path, VisitCell, _mined ?? AutoGrafts(caps), rng: _rng);
             if (_mined == null) TuneGrafts(solver, 0, 0, 0);
             bool ownModes = _findModes == null && solver.Mined != null;
             if (ownModes) _findModes = new HashSet<string>();

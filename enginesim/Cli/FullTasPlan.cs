@@ -707,6 +707,9 @@ namespace IGTAP.EngineSim.Cli
                 if (played != null) return played;
                 Log($"lap after a restart (pad {pre.Count - 1}) at {Where(state.WithGoal(Fresh(_goals, 0))).at}: none either ({_whyNot})");
             }
+            // The saved course routes (a tree transition's chain to the course among them) before a piece search: from a place
+            // the library never lapped from, a search can take minutes to find the course at all.
+            if (RecordLap(at, route, planned, lap, lap[0].course, improve: false) is var saved && saved != null) return saved;
             return Play(at, route, planned, lap, true);
         }
 

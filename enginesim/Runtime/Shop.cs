@@ -103,6 +103,13 @@ namespace IGTAP.EngineSim
         /// <summary>The box's id (FullTasGoal.BoxId).</summary>
         internal string Id(upgradeBox box) => _ids[box];
 
+        /// <summary>The boxes a touch would buy now: active, on, and paid for.</summary>
+        internal IEnumerable<upgradeBox> PaidFor()
+        {
+            foreach (upgradeBox b in _boxes)
+                if (Affordable(new[] { _ids[b] }) == true) yield return b;
+        }
+
         /// <summary>What the run holds of a currency now (the start's, less spent, plus awarded and, for Cash, the economy's income).</summary>
         internal double Holds(globalStats.Currencies currency) { return Available((int)currency); }
 

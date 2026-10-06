@@ -128,6 +128,14 @@ namespace IGTAPTasMod
             return path + "#" + sibling.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
+        /// <summary>The goal token (buy:token) of a box id, null for a box no token names.</summary>
+        public static string TokenOf(string id)
+        {
+            foreach (var (token, path, sibling) in Boxes)
+                if (BoxId(path, sibling) == id) return token;
+            return null;
+        }
+
         /// <summary>
         /// The economy boxes: a course's repeatable income boxes (reward, clones, clone multiplier, global reward, fast, big and
         /// max-size clone chances, green reward). `fulltas --auto`'s goals part may drop, add, regroup or reorder these buy goals and

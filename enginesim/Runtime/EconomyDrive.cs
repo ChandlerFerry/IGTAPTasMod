@@ -100,6 +100,34 @@ namespace IGTAP.EngineSim
             return null;
         }
 
+        /// <summary>
+        /// The player positions (world frame) whose body overlaps the trigger of a box a touch would buy now that
+        /// <paramref name="named"/> doesn't name (box ids): a strict run's stray buys. Only the trigger (the thin buy area under a
+        /// box), grown by the player's body box, and not the box's solid body: a run may stand on or bump a box it can't buy.
+        /// </summary>
+        internal List<(WorldPos a, WorldPos b, string box)> StrayTriggers(ICollection<string> named)
+        {
+            var strays = new List<(WorldPos, WorldPos, string)>();
+            BoxCollider2D body = _playerColliders[0];
+            Vector3 own = Player.transform.lossyScale;
+            float ox = body.offset.x * own.x, oy = body.offset.y * own.y;
+            float hx = Math.Abs(body.size.x * own.x) / 2f, hy = Math.Abs(body.size.y * own.y) / 2f;
+            foreach (upgradeBox box in Shop.PaidFor())
+            {
+                string id = Shop.Id(box);
+                if (named.Contains(id)) continue;
+                Vector3 scale = box.transform.lossyScale, p = box.transform.position;
+                foreach (Collider2D c in box.GetComponents<Collider2D>())
+                {
+                    if (!c.isTrigger || c is not BoxCollider2D trigger) continue;
+                    float cx = p.x + trigger.offset.x * scale.x - ox, cy = p.y + trigger.offset.y * scale.y - oy;
+                    float ex = Math.Abs(trigger.size.x * scale.x) / 2f + hx, ey = Math.Abs(trigger.size.y * scale.y) / 2f + hy;
+                    strays.Add((ToWorld(new ScenePos(cx - ex, cy - ey)), ToWorld(new ScenePos(cx + ex, cy + ey)), id));
+                }
+            }
+            return strays;
+        }
+
         /// <summary>One of the box's own trigger colliders, on and where it is now, overlaps the player's boxes, its body standing at
         /// <paramref name="at"/> (PhysicsWorld.PlayerOverlaps, as the clonesLoD triggers are tested).</summary>
         internal bool Reaches(upgradeBox box, Vector2 at)
