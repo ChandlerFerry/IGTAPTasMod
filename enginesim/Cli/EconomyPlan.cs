@@ -543,12 +543,28 @@ namespace IGTAP.EngineSim.Cli
                         lastBeamLog = clock.Elapsed.TotalSeconds;
                         log?.Invoke($"beam: tick {n.Tick}, Cash {n.Holds[0]:0}, {result.States} states played, {result.Nodes} let in, {result.Pruned} cut, {result.Dropped} dominated, "
                             + $"{result.Prechecked} pre-checked out, {queue.Count} queued, {GC.GetTotalMemory(false) / 1e9:0.00} GB; "
-                            + string.Join(", ", result.Profile.Select(p => $"{p.Key} {p.Value.played}/{p.Value.failed}/{p.Value.dominated}")));
+                            + string.Join(", ", result.Profile.Select(p => $"{p.Key} {p.Value.played}/{p.Value.failed}/{p.Value.dominated}"))
+                            + $"; GP {n.Holds[1]:G3}, NP {n.Holds[2]:G3}; its steps: {Trail(n)}");
                     }
                 }
                 result.Exhausted = why == null;
                 return Finish(start, false, $"beam {width}: " + (why ?? "the queue ran out") + "; no plan reached the target");
             }
+        }
+
+        /// <summary>A node's steps from the start, runs of one step as "step xN" (the beam's progress line).</summary>
+        static string Trail<TSnap>(Node<TSnap> n)
+        {
+            var steps = new List<string>();
+            for (; n?.Via != null; n = n.Parent) steps.Add(n.Via.Step.Arg);
+            steps.Reverse();
+            var runs = new List<string>();
+            for (int i = 0, j; i < steps.Count; i = j)
+            {
+                for (j = i + 1; j < steps.Count && steps[j] == steps[i]; j++) { }
+                runs.Add(j - i > 1 ? $"{steps[i]} x{j - i}" : steps[i]);
+            }
+            return string.Join(", ", runs);
         }
 
         static bool AtLeast(double[] a, double[] b)
@@ -958,6 +974,10 @@ namespace IGTAP.EngineSim.Cli
             string bestTick = targetGoal > 0 && targetGoal <= _best.Progress ? _best.GoalPhysics[targetGoal - 1].ToString(CultureInfo.InvariantCulture) : "-";
             Log($"plan from goal {kept} {place} (tick {_best.GoalPhysics[kept - 1]}) to {string.Join(", then ", targets)} (the best's: tick {bestTick}); bonuses {string.Join(" ", bonuses)}; "
                 + $"{moves.Count} moves");
+            _eval.Restore(at);
+            globalStats start = Singleton<globalStats>.Instance;
+            Log("plan start holds " + string.Join(", ", Enum.GetValues<globalStats.Currencies>().Select(cur => $"{cur} {_eval.Shop.Holds(cur):G4}"))
+                + (start == null ? "" : $"; NP {start.NPrewardPerTick:G4} a tick, cap {start.NPrewardCap:G4}"));
 
             // --mode exact: Dijkstra (proven under the state key); beam: the beam of --beam W; auto: exact, then the beam where
             // the exact search is capped. --stand on|off: the target stands at its box for its last Cash (default: the beam's on).
@@ -1019,12 +1039,15 @@ namespace IGTAP.EngineSim.Cli
             PlanSettings settings, Func<string, FullTasGoal> goalOf, string outFile)
         {
             if (targetIndex < 0) throw new ArgumentException("the target is no goal of the run after --from: realize joins the best's way on after it");
-            foreach (string path in _seedFiles) _seeds.Add(ReadSeed(path));
+            _maxRounds = Solve.Option(args, "--rounds", _maxRounds);
+            _offTicks = Solve.Option(args, "--off-ticks", _offTicks);
+            LoadSeeds();
             _planBase = _runGoals;
             FullTasGoal[] all = _runGoals.Goals;
             var (start, route) = BuildFrom(all, kept, targetIndex);
             long startTick = _best.GoalPhysics[kept - 1];
             var realized = new List<(string name, Realization z, Route run, string[] goals)>();
+            var partials = new List<(string name, Route run, string[] goals)>();
             foreach (var (name, plan) in rows)
             {
                 IReadOnlyList<string> prefix = name == "free search" ? null : EconomyPlan.StepIds(name);
@@ -1033,6 +1056,14 @@ namespace IGTAP.EngineSim.Cli
                 moves.Save(movesFile);
                 var (run, goals, _) = z.Done ? Join(z.Planned, z.Inputs, all, kept, targetIndex) : (null, null, null);
                 realized.Add((name, z, run, goals ?? all.Take(kept).Concat(z.Planned).Select(g => g.label).ToArray()));
+                if (run == null && z.Inputs != null)
+                {
+                    // The build so far (or one past the target that the best's way on doesn't join), its steps' goals then the
+                    // run's after them: the next stretch starts from it.
+                    var list = all.Take(kept).Concat(z.Planned).Concat(all.Skip(z.Done ? targetIndex + 1 : targetIndex)).ToList();
+                    Track(list);
+                    partials.Add((name, Evaluate(z.Inputs), list.Select(g => g.label).ToArray()));
+                }
             }
             string best = targetIndex < _best.Progress ? _best.GoalPhysics[targetIndex].ToString(CultureInfo.InvariantCulture) : "-";
             Console.WriteLine();
@@ -1058,7 +1089,8 @@ namespace IGTAP.EngineSim.Cli
             }
             // With no whole route, the one that gets furthest (its goals so far, total -1): the next stretch is planned or solved from it.
             string routeFile = Solve.Option<string>(args, "--route", null);
-            var written = whole.run != null ? whole : realized.Where(r => r.run != null).OrderByDescending(r => r.run.Progress).ThenBy(r => r.z.Tick).FirstOrDefault();
+            var written = whole.run != null ? (whole.name, whole.run, whole.goals)
+                : realized.Where(r => r.run != null).Select(r => (r.name, r.run, r.goals)).Concat(partials).OrderByDescending(r => r.run.Progress).FirstOrDefault();
             if (routeFile != null && written.run != null)
             {
                 Route r = written.run;
@@ -1078,7 +1110,7 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         int ReplanCheck(string[] args, int kept, string[] targets, int targetIndex)
         {
-            foreach (string path in _seedFiles) _seeds.Add(ReadSeed(path));
+            LoadSeeds();
             double seconds = Solve.Option(args, "--replan-seconds", 300.0);
             long cap = Solve.Option(args, "--replan-cap", targetIndex >= 0 && targetIndex < _best.Progress ? _best.GoalPhysics[targetIndex] : _best.Last);
             FullTasGoal[] all = _runGoals.Goals;
@@ -1113,7 +1145,7 @@ namespace IGTAP.EngineSim.Cli
             string target = _labels[targetIndex];
             int end = Array.IndexOf(labels, target, kept);
             if (end < 0 || end >= goalInput.Length || goalInput[end] < 0) throw new ArgumentException($"{file} doesn't reach {target} after goal {kept}");
-            foreach (string path in _seedFiles) _seeds.Add(ReadSeed(path));
+            LoadSeeds();
             _planBase = _runGoals;
             FullTasGoal[] all = _runGoals.Goals;
             BuildFrom(all, kept, targetIndex);
@@ -1172,8 +1204,9 @@ namespace IGTAP.EngineSim.Cli
             public readonly List<object> Log = new List<object>();
         }
 
-        /// <summary>Realize plans again at most this many times; a step built more than OffTicks from its plan's tick is planned again from.</summary>
-        const int MaxRounds = 3, OffTicks = 10;
+        /// <summary>Realize plans again at most this many times (--rounds); a step built more than this many ticks from its plan's tick
+        /// (--off-ticks: a long stretch's plan takes minutes to make again, worth it only for a larger drift) is planned again from.</summary>
+        int _maxRounds = 3, _offTicks = 10;
         /// <summary>The target's wait for its last Cash (the plan's stand) is at most this many ticks.</summary>
         const int TargetWait = 3000;
         /// <summary>A step the plan stood for where no lap earns (Area 2's NP waits) waits at most this many ticks.</summary>
@@ -1190,9 +1223,9 @@ namespace IGTAP.EngineSim.Cli
         /// take their own restarts (after a pad, onto a lap, before a record lap). Every step played is measured into
         /// <paramref name="moves"/> with the unlocks it started with: its place before (before any restart it took in) to its end, a
         /// lap's or record lap's walk to the gate, a lap's course run, a record lap's new best time. When a step ends more than
-        /// OffTicks from the plan's tick for it, or doesn't play (a strict buy strays, the Cash isn't there on arrival, no way), the
+        /// --off-ticks from the plan's tick for it, or doesn't play (a strict buy strays, the Cash isn't there on arrival, no way), the
         /// rest is planned again from the build's real state on the measured moves (<paramref name="replan"/>: its place, and the
-        /// <paramref name="prefix"/> steps not played yet), at most MaxRounds times; after that, or when a re-plan finds none, the plan plays on as it is, and a step
+        /// <paramref name="prefix"/> steps not played yet), at most _maxRounds times (--rounds); after that, or when a re-plan finds none, the plan plays on as it is, and a step
         /// that doesn't play stops it. The target short of Cash waits where the step before left the player (the plan's stand),
         /// then takes the builder's way to its box.
         /// </summary>
@@ -1210,7 +1243,7 @@ namespace IGTAP.EngineSim.Cli
             Log($"realize: round 0, the plan's target on tick {plan.Tick}");
             bool Again(string why)
             {
-                if (z.Rounds == MaxRounds) return false;
+                if (z.Rounds == _maxRounds) return false;
                 z.Rounds++;
                 var list = _kept.Concat(z.Planned).ToList();
                 Track(list);
@@ -1218,7 +1251,7 @@ namespace IGTAP.EngineSim.Cli
                 z.PlanTicks.Add(next.Done ? next.Tick : -1);
                 Log($"realize: round {z.Rounds}, planned again from {from} on tick {z.Tick} ({why}): " + (next.Done ? $"the target on tick {next.Tick}" : "no plan (" + next.Why + ")"));
                 z.Log.Add(new { round = z.Rounds, from, tick = z.Tick, why, plan = next.Done ? next.Tick : -1, estimated = next.Estimated });
-                // No plan (a search out of time): the plan plays on as it is, as after MaxRounds; a step that doesn't play stops it.
+                // No plan (a search out of time): the plan plays on as it is, as after _maxRounds; a step that doesn't play stops it.
                 if (!next.Done) return false;
                 if (next.Tick > tickCap) { z.Why = $"round {z.Rounds}: the plan's target on tick {next.Tick} comes after the cap, tick {tickCap}"; return false; }
                 plan = next;
@@ -1302,7 +1335,7 @@ namespace IGTAP.EngineSim.Cli
                 restarts.Clear();
                 i++;
                 if (s.Kind == "target") { z.Done = true; break; }
-                if (Math.Abs(off) > OffTicks) Again($"built {off:+0;-0} ticks off the plan");
+                if (Math.Abs(off) > _offTicks) Again($"built {off:+0;-0} ticks off the plan");
             }
             return z;
         }
@@ -1358,8 +1391,7 @@ namespace IGTAP.EngineSim.Cli
                 played = Waited(z, goals, s.Ticks, StandWait);
                 if (played == null) { played = Play(z.State, z.Inputs, z.Planned, goals, true); searched = true; }
             }
-            else if (played == null && affordable == false && s.Kind == "target") played = Waited(z, goals, s.Ticks);
-            else if (played == null && affordable == false) _whyNot += ", short of Cash";
+            else if (played == null && affordable == false && (played = Waited(z, goals, s.Ticks)) == null) _whyNot += ", short of Cash";
             if (played != null) walked = searched ? -1 : played.Value.tick - z.Tick - _waited;
             if (played == null || s.Kind != "all") return played;
             var all = goals.ToList();
@@ -1373,7 +1405,7 @@ namespace IGTAP.EngineSim.Cli
             return (inputs, state, tick);
         }
 
-        /// <summary>The target short of Cash on arrival (the plan's stand): the fewest idle ticks where the step before left the
+        /// <summary>A buy short of Cash on arrival (the target's stand, or any buy the build reaches before its Cash): the fewest idle ticks where the step before left the
         /// player (5 at a time from the first standing pays for it less the walk, <paramref name="walk"/>), after which the builder's
         /// way buys it.</summary>
         (List<InputTick> inputs, SimSnapshot state, long tick)? Waited(Realization z, FullTasGoal[] goals, int walk, int most = TargetWait)

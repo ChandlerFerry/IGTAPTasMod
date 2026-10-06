@@ -7,7 +7,8 @@ Current targets: `bonus1` (`WJ`), Course 4 (`WJ_DS` and `WJ_DS_DJ`), Course 5 (`
 Vman speedrun's start, split by area goals: [`docs/fulltas.md`](docs/fulltas.md#vman-speedrun-runs)), and the
 `FalseEnding%-280` Full-TAS run (notes and open ideas from its predecessor, the deleted `FalseEnding-Any%`, in
 [`docs/fulltas.md`](docs/fulltas.md#falseending-any-and-falseending2-any-2026-09-28); unattended improvement:
-`fulltas --auto`, [`docs/fulltas.md`](docs/fulltas.md#auto)). How to search:
+`fulltas --auto`, [`docs/fulltas.md`](docs/fulltas.md#auto)), and the `Zip%` Full-TAS run (`Tree%` on to the zip
+movers, [`docs/fulltas.md`](docs/fulltas.md#touchgrass-any-tree-and-zip-2026-10-03)). How to search:
 [`enginesim/README.md`](enginesim/README.md#use).
 
 ## Route names

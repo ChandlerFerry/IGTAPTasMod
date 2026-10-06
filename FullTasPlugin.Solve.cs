@@ -186,7 +186,8 @@ namespace IGTAPTasMod
                     if (target.IsBonus) goals.Add("reward:" + token);
                     else { goals.Add("start:" + target.id); goals.Add("finish:" + target.id); course = target.id; }
                 }
-                goals.RemoveAll(g => !labels.Contains(g));
+                // A course's gates stay whether or not the run's goals have them: the economy planner laps any course it can reach.
+                goals.RemoveAll(g => !labels.Contains(g) && !g.StartsWith("start:", StringComparison.Ordinal) && !g.StartsWith("finish:", StringComparison.Ordinal));
                 if (goals.Count == 0) continue;
                 bool stale = route.name.EndsWith(" stale", StringComparison.Ordinal);
                 string plain = stale ? route.name.Substring(0, route.name.Length - " stale".Length) : route.name;

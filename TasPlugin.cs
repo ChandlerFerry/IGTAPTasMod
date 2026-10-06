@@ -82,6 +82,7 @@ namespace IGTAPTasMod
             LoadCourses();
             LoadFullTas();
             LoadTechs();
+            UnityEngine.SceneManagement.SceneManager.sceneLoaded += (scene, mode) => EngineSimExport.RememberCompositePaths();
             _engine.AttemptEnded += OnAttemptEnded;
             _engine.RefreshRewards = RefreshFullTasRewards;
             Application.runInBackground = true;

@@ -363,7 +363,7 @@ namespace IGTAPTasMod
             .Select(n => AccessTools.Method(typeof(FloatingOrigin), n)).ToArray();
 
         static readonly Regex FullTasSeedRoute = new Regex(@"^([A-Za-z0-9]+)_");
-        static readonly Regex FullTasSeedTransition = new Regex(@"^(bonus\d+|\d+)to(bonus\d+|\d+)$", RegexOptions.IgnoreCase);
+        static readonly Regex FullTasSeedTransition = new Regex(@"^(bonus\d+|\d+|tree\d+)to(bonus\d+|\d+)$", RegexOptions.IgnoreCase);
 
         readonly Dictionary<string, List<float[]>> _fullTasAvoids = new Dictionary<string, List<float[]>>(StringComparer.OrdinalIgnoreCase);
         JObject _fullTasAvoidsOf;

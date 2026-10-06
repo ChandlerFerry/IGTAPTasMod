@@ -1940,7 +1940,9 @@ start) is ranked by the table's ticks alone. Before a buy is queued the pre-chec
 drops it when its price is more than the state holds plus twice its income over the walk (`PrecheckMargin`; a buy right
 after a buy is always queued, since a clone it bought can pay before the window shows it; the target's stand is always
 checked, over its walk and 2000 ticks; a state with no income over its window is never pre-checked). A state is let
-in before it is kept for dominance, so one the width turns away never drops a same-tick rival. The first plan off the queue is the beam's, reported "not proven optimal".
+in before it is kept for dominance, so one the width turns away never drops a same-tick rival. The first plan off the queue is the beam's, reported "not proven optimal". Its progress line (every
+15 s) shows the state it last let in: its tick, Cash, GP and NP, and its steps from the start (a run of one step as `step
+xN`); the plan's first line its start's currencies and NP a tick.
 Each bucket compares states at about the same tick, so h ranks them by how soon their income pays the rest; ranked per
 step depth instead (states at one depth can be thousands of ticks apart), no h tried came near on `buy:buyds`: each
 state's own income cut the restarts toward Course 2 and the buys whose clones pay later (21704 to 39466 in 10 minutes
@@ -2018,7 +2020,8 @@ drive's state is never played on). First the best's own steps in the stretch are
 saved course routes (`--seed`, `--seed-list`) as lap pieces where a quick restart lands (`SeedLaps`). Each step is
 played the builder's way:
 
-- `lap:N`: `Lap`, the library's pieces for the gate and the finish (the gate piece after which the finish comes
+- `lap:N`: `Lap` (on any course: a gate goal the run's goals don't have is made as the plugin makes one, its kind and
+  course), the library's pieces for the gate and the finish (the gate piece after which the finish comes
   soonest), else after a quick restart, else a piece search (`--piece-minutes`);
 - `record:N`: `RecordLap`. Each saved course route that runs Course N from standing at its reset point is played to
   the finish from two starts: the gate crossed with the library's piece, then a quick restart (the course running, it
@@ -2029,9 +2032,9 @@ played the builder's way:
   same ways. A route that misses from every start is searched once per course from the restart; where none plays, a
   lap;
 - a buy, a reward box and the target: `Play`, the library's pieces, the best's own ways (`Borrowed`), and a piece
-  search only when the Cash is there now. The target short of Cash on arrival (the plan's stand) waits where the step
-  before left the player: the fewest idle ticks after which the way to its box buys it, at most 3000 ticks
-  (`TargetWait`). Any step the plan stood for (a buy where no lap is offered, the target there too: for its Cash or for a
+  search only when the Cash is there now. A buy short of Cash on arrival (the target's stand, or any buy the build
+  reaches before the plan's Cash is in) waits where the step before left the player: the fewest idle ticks after which
+  the way to its box buys it, at most 3000 ticks (`TargetWait`). Any step the plan stood for (a buy where no lap is offered, the target there too: for its Cash or for a
   box still growing) waits so for at most 10000 (`StandWait`), then, where standing still buys the box the player stands
   in again (a strict stray), takes a piece search instead;
 - `atoms:N`: the atom box's goal (one touch, its buy-max buying what the GP pays for); `all:box`: its box's goal, then the
@@ -2065,7 +2068,8 @@ part's stray fit does (that box's next buy goal moved up to the stray, else its 
 plan it prints each round's target tick, the built one and the whole route's live time; `--out` adds `goals` (the
 fastest whole route's goal list) and `realized` (per plan: its rounds, each step's planned and built ticks and Cash, the
 estimates it used, its goals); `--route` writes that route under those goals, as `fulltas/<run>.json` holds a run's
-best (none whole: the one that gets furthest, `total` -1). `--join FILE` joins such a route file again (its goals and
+best (none whole: the build that got furthest, its steps' goals and then the run's own from the target on, `total` -1,
+so the next stretch is planned or searched from it). `--join FILE` joins such a route file again (its goals and
 inputs through the target), no search. `fulltas <trace> --check <route> --goals <file>` replays it under them. To use
 one: save the goals (**Save goals**, which marks the run's saved routes stale), put the route in `fulltas/<run>.json`,
 submit it (`/api/fulltas/submit`) and **Capture start** again.
@@ -2171,6 +2175,42 @@ found no way in their searches. No plan reaches the zip movers. Three things sto
   (`--only lap:6,record:6,buy:buygreen6,buy:buyclone6,buy:buyatomlevel9,buy:buyatomlevel10,buy:buynp10,buy:buyatom`
   and the tree's NP boxes) ran 40 minutes to tick 48910 with no plan. Their `atoms:N` stands made up nearly all of the
   run time, and nearly all failed.
+
+**Zip% (2026-10-06).** Tree%'s 512 goals, then the tree's way to the zip movers as goals (`buy:buytree0`, `1`, `5`, `6`,
+`7`, `12`, `13`, `16`). After the plant (goal 512, tick 36202) the run holds no Cash or GP and 1.2 NP: 0.001 NP a tick,
+capped at 6.1 (the cap is 6000 ticks of the rate, so the zip box's 625,000,000 NP needs about 104,000 a tick). The atom
+reset every course's upgrades, Area 1's too, and Area 1 can't be walked to from here (Courses 6, 7 and 9 can; Course 8
+and 10 need tree upgrades), so Area 2's economy starts from Course 6's 1 Cash a lap. What the stretch needs and what was
+missing:
+
+- **`buytree0` first.** The beam never bought it early (spending NP, the target's currency, only looks worse to its
+  income estimate), so no clone turned green, GP stayed 0 and no atom was ever bought: every beam to `buytree16` stalled
+  for hours. With `--compare "buy:buytree0"` (and `buy:buytree0` in `--only`, so its levels, the green clone chance, are
+  offered) the beam buys atoms within 2,000 ticks. Width matters and isn't monotonic: at 2 hours, width 4 had bought
+  `buytree5` and `buytree6` (tick 81823, 1e5 NP) where 12 and 20 hadn't bought `buytree1`.
+- **Laps on courses the run never ran** made no gate goal (`NewGoal` knew buys and rewards only): fixed. Course 6 laps from
+  the tree play through a saved-route chain, `tree0to6` then a quick restart then `6_WJ_DS_DJ_BS 1.20` (the restart lands
+  at bonus 11's checkpoint, where the transition starts): the engine chains each tree transition seed to each of its
+  course's standing routes (0-6 idle ticks after the restart) as a restart seed (`FullTas.LoadSeeds`). The plugin writes
+  seeds for every course's routes, the run's goals or not, and for the tree transitions (`FullTasSeedTransition`).
+- **Realize** now waits at any buy reached before its Cash (the build ahead of the plan), writes the furthest build when
+  it stops (its goals, then the run's from the target on) and takes `--rounds N` re-plans and `--off-ticks N`, the drift
+  from the plan that makes one (10 by default; a long stretch's plan takes half an hour to make again, so 300 there). A stretch is then built a
+  target at a time, each install splicing the route's goals into the trace's header, with no capture.
+- **The tree's ground in a capture's world export:** each capture replays the route in turbo, the plant grows the tree in
+  the live scene, and turbo's restore doesn't put `Tree1Ground`'s composite geometry back: the next capture of the
+  session exports it with no paths, and the engine stops at the first step after the plant ("composite geometry with
+  its sources toggled is not in this world export"). The export now writes a switched-off composite's paths as the scene
+  loaded them when it reports none (`EngineSimExport.RememberCompositePaths`, at each scene load). Not reproduced since
+  (captures of Tree%, Test-Tree and Zip% in one session all exported the live paths), so that fallback is untested; what
+  emptied the composite is not known.
+
+Stage 1 (`--from 512 --target buy:buytree1`): the plant, `buytree0`, 20 Course 6 laps and buys, one atom touch, goal 554
+on tick 38348. Stage 2: 23 more Course 6 goals, goal 577 on tick 39435 (837.59 s live). `buytree1` (35 NP) didn't play
+in either: the atom touch bought fewer atoms than the plan had, so its NP wasn't there. Stage 3: an atom touch and a restart to
+the tree, `buytree2`, then `buytree1` on tick 40312 (goal 592; there NP 98.8, 0.12 a tick: one tier-1 atom). `buytree5`
+(22,500 NP) needs about 3.75 NP a tick, a tier-2 atom; its plan alone (width 8, about 13,000 ticks of economy) takes half an
+hour, the stretch's pace now.
 
 ## When a game update breaks a route
 
@@ -2468,7 +2508,7 @@ a 1x probe hasn't confirmed that count yet. L levels in about L−1 ticks. The s
 5 ticks to about 28, `buyclonemult2` (9) from 2 to about 8. The coroutine buys on after the player leaves the box, but
 the boosts come up to 0.5 s later.
 
-## TouchGrass-ANY% and TrueEnding% (2026-10-03)
+## TouchGrass-ANY%, Tree% and Zip% (2026-10-03)
 
 `TouchGrass-ANY%` ends at the checkpoint (16669, 3212.8) below Course 4 (`at:16669,3574.8,400,800`, its trigger), after
 the block-swap box (`buy:buyblockswap5`, 9.49e34 W) and the drop through the hole left of Course 4. The fall from the hole
@@ -2504,6 +2544,12 @@ goals) the same route plus the fall is **704.67 s** (33,332 ticks; score 948.67,
 **`TrueEnding%`** has the same goals with every bonus taken by the block swap: bonus 22 inside the Course 5 farm, and
 `buyglobalreward4` and bonus 8 above Course 4 after the boost. The model puts these at +3 s and +9 s against
 TouchGrass's own list. It ends at `buy:buyblockswap5` for now, the start of a True Ending route.
+
+**`Tree%`** (2026-10-06) is `TrueEnding%` renamed and complete: its 512 goals add TouchGrass's touch-grass goals and,
+after them, Course 6's free boxes (`buyfree6d`, `buyfree6c`, `buyfree6a`), the free atom (`buy:buyatom`, Cash to 0, the
+atom room's door open) and the tree (`buy:buyplant`). Record **763.73 s** (36,202 ticks). Its files (trace, seeds, best,
+archive) were renamed with it; notes above dated before 2026-10-06 say `TrueEnding%`. **`Zip%`** (wip) is its copy with
+`buy:buytree16`, the zip movers, as goal 513: it starts from Tree%'s best (Tree%'s record, then its own seeds).
 
 ## FalseEnding-Any% and FalseEnding2-Any% (2026-09-28)
 

@@ -340,7 +340,7 @@ namespace IGTAP.EngineSim.Cli
             }
             Emit(new { type = "session", run = _name, goals = _labels, window = _window, threads = _threads, minutes = _minutes, windowMinutes = _windowMinutes,
                 from, best = RouteJson(_best) });
-            foreach (string path in _seedFiles) _seeds.Add(ReadSeed(path));
+            LoadSeeds();
             AddHumanSeeds();
             if (_seeds.Count > 0)
                 Console.WriteLine($"Seeds: {_seeds.Count} saved routes for " + string.Join(", ", _seeds.SelectMany(s => s.Goals).Distinct()
@@ -1452,6 +1452,23 @@ namespace IGTAP.EngineSim.Cli
                     _seeds.Add(human);
                 }
             }
+        }
+
+        /// <summary>The --seed files, then each tree transition (`tree<L>to<C>`, goal start:C) chained to each of Course C's saved
+        /// routes from standing: the transition from bonus 11's checkpoint (where a quick restart from the tree lands) to Course C's
+        /// start checkpoint, a quick restart onto it (its reset point), 0-6 idle ticks, then the course. A restart seed, so a lap
+        /// from the tree area finds it (a restart seed's first input is its reset).</summary>
+        void LoadSeeds()
+        {
+            foreach (string path in _seedFiles) _seeds.Add(ReadSeed(path));
+            var chains = new List<Seed>();
+            foreach (Seed t in _seeds.Where(s => s.Name.StartsWith("tree", StringComparison.Ordinal) && s.Goals is [string g] && g.StartsWith("start:", StringComparison.Ordinal)))
+                foreach (Seed c in _seeds.Where(s => s.Standing && s.Goals is [string a, string b] && a == t.Goals[0] && b == "finish:" + a.Substring(6)))
+                    for (int pad = 0; pad <= 6; pad += 2)
+                        chains.Add(new Seed { Name = $"{t.Name} then {c.Name} after a restart, pad {pad}", Goals = c.Goals, Restart = true, Caps = c.Caps,
+                            Inputs = new[] { new InputTick { reset = true } }.Concat(t.Inputs).Append(new InputTick { reset = true })
+                                .Concat(Enumerable.Repeat(new InputTick(), pad)).Concat(c.Inputs).ToList() });
+            _seeds.AddRange(chains);
         }
 
         static Seed ReadSeed(string path)

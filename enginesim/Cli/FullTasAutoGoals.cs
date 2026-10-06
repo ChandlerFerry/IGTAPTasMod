@@ -273,7 +273,7 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>A goal the trace's header doesn't have, its entry and goal as the game resolves the label: reward:&lt;bonus&gt;'s
         /// box the one nearest the bonus's end rect in the config folder's courses.json, buy:token's the token's box
-        /// (FullTasGoal.Boxes). Null when there is no such bonus, box or token.</summary>
+        /// (FullTasGoal.Boxes), start:N's and finish:N's Course N's gates. Null when there is no such bonus, box, token or course.</summary>
         (JsonNode header, FullTasGoal goal)? NewGoal(string label)
         {
             if (label.StartsWith("buy:", StringComparison.Ordinal))
@@ -284,6 +284,11 @@ namespace IGTAP.EngineSim.Cli
                 return (new JsonObject { ["label"] = label, ["kind"] = FullTasGoal.Buy, ["course"] = 0, ["boxes"] = new JsonArray(id) },
                     new FullTasGoal { label = label, kind = FullTasGoal.Buy, boxes = new[] { id } });
             }
+            // As the plugin's ResolveFullTasGoal: a gate goal is its kind and course only.
+            foreach (string kind in new[] { FullTasGoal.Start, FullTasGoal.Finish })
+                if (label.StartsWith(kind + ":", StringComparison.Ordinal) && int.TryParse(label.AsSpan(kind.Length + 1), NumberStyles.None, CultureInfo.InvariantCulture, out int n)
+                    && _eval.Courses.Any(c => c.courseNumber == n))
+                    return (new JsonObject { ["label"] = label, ["kind"] = kind, ["course"] = n }, new FullTasGoal { label = label, kind = kind, course = n });
             if (!label.StartsWith("reward:", StringComparison.Ordinal)) return null;
             string token = label.Substring("reward:".Length);
             JsonElement c = Bonuses().FirstOrDefault(e => string.Equals(e.GetProperty("name").GetString(), token, StringComparison.OrdinalIgnoreCase));

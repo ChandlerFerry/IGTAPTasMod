@@ -1463,6 +1463,25 @@ namespace IGTAPTasMod
             w.WriteEndObject();
         }
 
+        /// <summary>Each composite switched off at its scene's load, its paths then (the scene's baked geometry, every source on).
+        /// Switched on and off again (a replay growing the tree, then restored) it reports no paths until Unity regenerates it on
+        /// enable, so an export after that writes these (docs/fulltas.md, "Area 2: the zip movers").</summary>
+        static readonly Dictionary<int, List<Vector2[]>> LoadedPaths = new Dictionary<int, List<Vector2[]>>();
+
+        /// <summary>SceneManager.sceneLoaded: remembers the paths of the scene's switched-off composites.</summary>
+        public static void RememberCompositePaths()
+        {
+            LoadedPaths.Clear();
+            var points = new List<Vector2>();
+            foreach (CompositeCollider2D c in UnityEngine.Object.FindObjectsByType<CompositeCollider2D>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            {
+                if (c.isActiveAndEnabled || c.pathCount == 0) continue;
+                var paths = new List<Vector2[]>();
+                for (int p = 0; p < c.pathCount; p++) { points.Clear(); c.GetPath(p, points); paths.Add(points.ToArray()); }
+                LoadedPaths[c.GetInstanceID()] = paths;
+            }
+        }
+
         static void WriteColliderPaths(EngineSimJson json, Collider2D collider)
         {
             JsonTextWriter w = json.W;
@@ -1471,6 +1490,13 @@ namespace IGTAPTasMod
             {
                 w.WritePropertyName("paths");
                 w.WriteStartArray();
+                if (composite.pathCount == 0 && !composite.isActiveAndEnabled && LoadedPaths.TryGetValue(composite.GetInstanceID(), out List<Vector2[]> loaded))
+                    foreach (Vector2[] path in loaded)
+                    {
+                        w.WriteStartArray();
+                        foreach (Vector2 v in path) { json.Float(v.x); json.Float(v.y); }
+                        w.WriteEndArray();
+                    }
                 for (int p = 0; p < composite.pathCount; p++)
                 {
                     points.Clear();

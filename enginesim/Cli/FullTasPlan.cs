@@ -237,7 +237,7 @@ namespace IGTAP.EngineSim.Cli
                 {
                     int old = at == reached ? targetIndex : oldOf[at - 1];
                     int oldCut = old < 0 ? -1 : (int)Math.Min(_best.GoalInput[old], _best.Inputs.Count);
-                    int oldRestart = old < 0 || old + 1 >= all.Length ? -1 : _best.Inputs.FindIndex(oldCut, k => k.reset);
+                    int oldRestart = oldCut < 0 || old + 1 >= all.Length ? -1 : _best.Inputs.FindIndex(oldCut, k => k.reset);
                     RunResult b = Replay(basis);
                     if (oldRestart < 0 || b.Progress < at) break;
                     // Cut where goal at - 1 is reached by the cut's own inputs: its input tick, or a few after (with no input after
