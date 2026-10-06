@@ -119,6 +119,8 @@ namespace IGTAPTasMod
             ("buytree25", "zone 2/TreeArea/The Tree/TreePart25/BuyMaxC6", 0),
             ("buytree26", "zone 2/TreeArea/The Tree/TreePart26/BuyMaxBox", 0),
             ("buytree27", "zone 2/TreeArea/The Tree/TreePart27/MoreOrbs", 2),
+            // Despite its object name, Tree 2's PlantTreeBox is Course 10's buy max (makeCourseBuyMax), as TreePart27's
+            // "MoreOrbs" is Course 9's (TreePart20's is the refresh orbs one).
             ("buyplant2", "Zone 1/The Tree 2/PlantTreeBox", 0) };
 
         public static string BoxId(string path, int sibling)
