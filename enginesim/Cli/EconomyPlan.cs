@@ -1435,7 +1435,14 @@ namespace IGTAP.EngineSim.Cli
                 float record = course > 0 ? BestPath(z.State, course) : 0f;
                 _playedTicks = null;
                 string to = EconomyPlan.PlaceOf(s);
-                var played = PlayStep(s, z, goalOf, out FullTasGoal[] goals, out long walked, i < plan.Stands.Length && plan.Stands[i], i < plan.Levels.Length ? plan.Levels[i] : 1);
+                int bound = s.Ticks + restarts.Sum(r => r.Ticks);
+                // A stand's wait for its Cash is the economy's, not the walk's: no bound on its pieces.
+                _playBy = i < plan.Stands.Length && plan.Stands[i] ? long.MaxValue : z.Tick + Math.Max(3L * bound, bound + 500L);
+                (List<InputTick> inputs, SimSnapshot state, long tick)? played;
+                FullTasGoal[] goals;
+                long walked;
+                try { played = PlayStep(s, z, goalOf, out goals, out walked, i < plan.Stands.Length && plan.Stands[i], i < plan.Levels.Length ? plan.Levels[i] : 1); }
+                finally { _playBy = long.MaxValue; }
                 long planEnd = plan.Ends[i];
                 int planTicks = s.Ticks + restarts.Sum(r => r.Ticks);
                 string[] froms = restarts.Select(r => r.Arg).Prepend(from).ToArray();

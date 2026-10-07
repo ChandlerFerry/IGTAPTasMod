@@ -583,6 +583,10 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>The physics tick of each goal the last <see cref="Play"/> that played reached (realize measures a lap's walk to its gate).</summary>
         long[] _playedTicks;
+        /// <summary>The latest tick a library piece may reach its goal on and still be played (realize's step bound; long.MaxValue:
+        /// any): a later one is no way there, and with search on the goal is searched instead (Zip% after buytree0, 2026-10-07: the
+        /// only library walk to Course 6's gate took 4,884 ticks for the plan's 227, and every round played it again).</summary>
+        long _playBy = long.MaxValue;
 
         /// <summary>
         /// Plays goals one after another from at (after route and the plan so far), each with the fastest library piece (or a piece
@@ -605,6 +609,7 @@ namespace IGTAP.EngineSim.Cli
                 at = at.WithGoal(Fresh(list.Count, i));
                 var target = new Target { Goal = i, Key = g.label };
                 Step step = k + 1 < goals.Length ? Leading(at, inputs, list, goals[k + 1], target) : BestKnown(at, inputs, i, target);
+                if (step != null && step.Physics > _playBy) step = null;
                 if (step == null && search)
                 {
                     var borrowed = BorrowedInputs(at, target);
