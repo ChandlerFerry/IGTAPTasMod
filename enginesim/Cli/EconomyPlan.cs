@@ -156,6 +156,8 @@ namespace IGTAP.EngineSim.Cli
             ["buy:buynp10"] = "buy:buytree13", ["buy:buyatomlevel10"] = "buy:buytree13", ["buy:buygreen10"] = "buy:buytree13",
         };
         static readonly HashSet<string> Never = new HashSet<string> { "lap:10", "record:10" };
+        /// <summary>globalStats' NP cap is this many ticks of its NP a tick.</summary>
+        const double NpCapTicks = 6000;
 
         /// <summary>Where a step ends and what it buys, as a movement table To: atoms:N's the atom box, all:box's its box.</summary>
         internal static string PlaceOf(Step s) => s.Kind == "atoms" ? AtomBox : s.Kind == "all" ? "buy:" + s.Arg.Substring(4) : s.Arg;
@@ -473,16 +475,37 @@ namespace IGTAP.EngineSim.Cli
             {
                 var (price, ticks) = remaining(n.Place);
                 Node<TSnap> a = Window(n);
+                double[] ceiling = economy.Ceiling();
                 double wait = 0;
+                bool capped = false;
                 for (int c = 0; c < price.Length; c++)
                 {
                     double missing = price[c] - n.Holds[c];
                     if (missing <= 0 || n.Tick == a.Tick) continue;
                     double rate = Rate(n, a, c);
+                    // A price over the currency's cap (Area 2's NP, capped at NpCapTicks of its rate) is reached only by raising the
+                    // rate (atoms): ranked by that rate, the cap's. The window's earnings stop at the cap, so every state read as no
+                    // income and Cash broke the ties (Zip%'s plan to buytree5 laid up 3.3M Cash at NP's cap, 693, for 30 minutes).
+                    if (c < ceiling.Length && !double.IsPositiveInfinity(ceiling[c]) && price[c] > ceiling[c])
+                    {
+                        rate = ceiling[c] / NpCapTicks;
+                        capped = true;
+                    }
                     if (rate <= 0) rate = Rate(n, root, c);
                     if (rate <= 0) { result.NoIncome++; wait = Math.Max(wait, NoIncome); continue; }
                     wait = Math.Max(wait, missing / rate);
                 }
+                // Capped under the price, the rate rises only with atoms: the next atom's price still missing (GP) counts on top, so
+                // a state saving for it ranks over one laying up Cash.
+                if (capped && economy.Price(AtomBox) is double[] atom)
+                    for (int c = 0; c < atom.Length; c++)
+                    {
+                        double missing = atom[c] - n.Holds[c];
+                        if (missing <= 0 || n.Tick == a.Tick) continue;
+                        double rate = Rate(n, a, c);
+                        if (rate <= 0) rate = Rate(n, root, c);
+                        wait += rate > 0 ? missing / rate : NoIncome;
+                    }
                 return wait + ticks;
             }
             // The buy pre-check, with the economy at n: the option's boxes cost more than n holds plus PrecheckMargin times n's
