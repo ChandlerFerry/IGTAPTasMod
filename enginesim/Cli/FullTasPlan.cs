@@ -807,12 +807,13 @@ namespace IGTAP.EngineSim.Cli
             // start differs from its recording in the last hundredths) is searched once per course from the restart: seeded with
             // those routes, the search keeps the way that finishes soonest from standing there, which is the gate crossed at
             // speed. Its way is then tried with the saved routes at every later record lap.
-            if (!_recordSearched.Contains(course) && starts.Count > 0 && tried.Any(t => t.Contains(" misses ")))
+            // Only from past the gate (a restart onto the course): searched from before it, through gate and finish at once, it found
+            // nothing in 12 to 36 minutes from Zip%'s goals 513 and 810, where a plain lap (Lap: the gate, then the finish, each
+            // searched) took seconds; with no way to the gate the caller laps plainly, and a later record lap starts past its gate.
+            if (!_recordSearched.Contains(course) && starts.Count > 0 && starts[0].how == "" && tried.Any(t => t.Contains(" misses ")))
             {
                 _recordSearched.Add(course);
                 var (how, basis, pre, restarted) = starts[0];
-                // From its start's own goal: a restart start is before the gate, and searched as past it (its goals only the
-                // finish) it found nothing in 18 minutes (Zip% goal 810) where the gate and finish together take seconds.
                 Step found = SolvePiece(restarted, basis.Concat(pre).ToList(), restarted.Goal.Next, target, _pieceMinutes * 3, BuildStall, runs.Select(LapInputs).ToList());
                 if (found != null)
                 {
