@@ -1098,7 +1098,11 @@ namespace IGTAP.EngineSim
                 Engine.CountHeldFrames(repeats);
                 for (int repeat = repeats; repeat >= 0; repeat--)
                 {
-                    if (k > 0 || repeat < repeats) Scheduler.Frame++;
+                    if (k > 0 || repeat < repeats)
+                    {
+                        Scheduler.Frame++;
+                        Physics.FrameStart();
+                    }
                     // The frame's Start pass comes before its Updates (README ### Rules, exception 12).
                     Shop.Economy?.StartPass();
                     if (player)
@@ -1517,6 +1521,8 @@ namespace IGTAP.EngineSim
                     Shop.Economy?.FixedStep();
                     Engine.BeforeTick(Player);
                 }
+                // The tick's frame starts here at 1x (its FixedUpdate runs inside a rendered frame).
+                Physics.FrameStart();
                 _fixedUpdate();
                 Engine.CountPhysicsTick();
                 Engine.AfterFixedTick(Player);

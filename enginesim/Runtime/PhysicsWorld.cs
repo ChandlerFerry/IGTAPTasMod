@@ -665,6 +665,19 @@ namespace IGTAP.EngineSim
             if (_movedByScript.Count != 0) SyncMoved();
         }
 
+        /// <summary>
+        /// A rendered frame's start (Unity's Physics2DEarlyUpdate, before the frame's FixedUpdate and Update): the body-less
+        /// colliders a script moved since are where their transforms are now, so the frame's queries see them there. A tree box
+        /// falling onto its spot (IE_Grow, at each frame's end) is where the last frame left it for the next FixedUpdate's
+        /// wall rays (Zip% goal 513: the 1x player touched GreenCloneChanceBox's side a tick before this engine's). Bodies
+        /// sync at the step as before (the player's write in a tick's last frame isn't seen by the next FixedUpdate).
+        /// </summary>
+        public void FrameStart()
+        {
+            Settle();
+            if (_movedByScript.Count != 0) SyncMoved();
+        }
+
         /// <summary>The body-less colliders a script moved, rebuilt where their transforms are now, by collider id (the order the
         /// writes came in depends on what ran before a restore).</summary>
         void SyncMoved()

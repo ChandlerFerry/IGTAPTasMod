@@ -135,6 +135,16 @@ namespace IGTAPTasMod
                 if (Mathf.Abs(q.x - p.x) < 300f && Mathf.Abs(q.y - p.y) < 300f)
                     movers.Add(new { x = q.x - origin.x, y = q.y - origin.y, layer = mover.gameObject.layer });
             }
+            // Upgrade boxes within 300 u: the transform and the solid collider's bottom as physics has it (a tree box falling onto
+            // its spot, IE_Grow: which frame's pose a raycast in FixedUpdate sees).
+            var boxes = new List<object>();
+            foreach (upgradeBox box in FindObjectsByType<upgradeBox>(FindObjectsSortMode.None))
+            {
+                Vector3 q = box.transform.position;
+                if (Mathf.Abs(q.x - p.x) >= 300f || Mathf.Abs(q.y - p.y) >= 300f) continue;
+                Collider2D solid = box.GetComponents<Collider2D>().FirstOrDefault(c => !c.isTrigger);
+                boxes.Add(new { name = box.name, x = q.x - origin.x, y = q.y - origin.y, bottom = solid != null ? solid.bounds.min.y - origin.y : float.NaN });
+            }
             Camera cam = Camera.main;
             Vector3 camAt = cam != null ? cam.transform.position : Vector3.zero;
             _probe.rows.Add(new
@@ -152,7 +162,7 @@ namespace IGTAPTasMod
                 dash = ProbeDashActive.GetValue(movement), f = ProbeSinceDash.GetValue(movement), facingRight = ProbeFacing.GetValue(movement),
                 dashDir = new[] { d.x, d.y }, originX = origin.x, originY = origin.y,
                 lastHyperY = TechLastHyperYField == null ? (float?)null : (float)TechLastHyperYField.GetValue(movement),
-                fields, movers, econ = EconomyNow(), econPre = kind == "tick" ? _econPre : null,
+                fields, movers, boxes, econ = EconomyNow(), econPre = kind == "tick" ? _econPre : null,
             });
         }
 

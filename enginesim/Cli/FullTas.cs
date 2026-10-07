@@ -285,17 +285,23 @@ namespace IGTAP.EngineSim.Cli
                             random = new[] { s.s0, s.s1, s.s2, s.s3 } }));
                     };
                 UnityEngine.Random.Drawn = caller => w.WriteLine(JsonSerializer.Serialize(new { kind = "rng", physics = _eval.Engine.PhysicsTicks, input = _eval.Engine.RunTicks, caller }));
+                // --watch [PARENT/]NAME: an upgrade box's transform (scene frame) on each row (a tree box dropping onto its spot).
+                string watchName = Solve.Option(_args, "--watch", (string)null);
+                string[] watchPath = watchName?.Split('/');
+                upgradeBox[] watched = watchName == null ? null : _eval.World.All<upgradeBox>().Where(x => x.gameObject.name == watchPath[^1]
+                    && (watchPath.Length == 1 || x.transform.parent != null && x.transform.parent.gameObject.name == watchPath[0])).ToArray();
                 _eval.Run(inputs, null, null, 1000000, _ =>
                 {
                     WorldPos p = _eval.PlayerWorld;
                     UnityEngine.Random.State rng = UnityEngine.Random.state;
                     w.WriteLine(JsonSerializer.Serialize(new { physics = _eval.Engine.PhysicsTicks, input = _eval.Engine.RunTicks, goal = _eval.Progress, x = p.x, y = p.y,
                         vx = _eval.Player.Velocity.x, vy = _eval.Player.Velocity.y, mx = _eval.Player.momentum.x, my = _eval.Player.momentum.y,
-                        held = _eval.Engine.HeldFrames, ground = _eval.Player.onGround, dashes = _eval.Player.airDashesLeft, jumps = _eval.Player.airJumpsLeft, omni = _eval.Player.omniDashUnlocked, maxJumps = _eval.Player.maxAirJumps,
+                        held = _eval.Engine.HeldFrames, ground = _eval.Player.onGround, wall = _eval.Player.OnWall, respawn = new[] { _eval.Player.respawnPoint.x, _eval.Player.respawnPoint.y }, dashes = _eval.Player.airDashesLeft, jumps = _eval.Player.airJumpsLeft, omni = _eval.Player.omniDashUnlocked, maxJumps = _eval.Player.maxAirJumps,
                         cash = _eval.Shop.CashNow, npBoost = Singleton<globalStats>.Instance?.EffectOfNpCompBoost ?? 1.0,
                         rewards = _eval.Courses.Select(c => new[] { c.courseNumber, c.reward, c.rewardTier, c.gameObject.activeInHierarchy ? 1 : 0, c.compBoostTimeLeft }),
                         clones = _eval.Shop.Economy?.CloneStates(), econ = EconomyRow(_eval),
-                        random = new[] { rng.s0, rng.s1, rng.s2, rng.s3 } }));
+                        random = new[] { rng.s0, rng.s1, rng.s2, rng.s3 },
+                        watch = watched?.Select(x => new[] { x.transform.position.x, x.transform.position.y, x.gameObject.activeInHierarchy ? 1 : 0 }) }));
                 });
                 Console.WriteLine($"ticks -> {_args[ticksOut + 1]}");
             }

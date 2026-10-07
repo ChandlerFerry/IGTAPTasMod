@@ -1288,6 +1288,18 @@ namespace IGTAPTasMod
             }
         }
 
+        /// <summary>
+        /// A rendered frame's start, as Unity's Physics2DEarlyUpdate syncs it before the frame's FixedUpdate and Update: what
+        /// scripts moved since (a tree box falling onto its spot, IE_Grow at each frame's end) is where its transform is for the
+        /// frame's queries (the engine's PhysicsWorld.FrameStart). Turbo runs its frames inside one Unity frame, so it syncs
+        /// them itself; the player's transform holds turbo's blend, never the body's pose, so it is put on the body first.
+        /// </summary>
+        static void FrameStart(Transform player, Rigidbody2D body)
+        {
+            Place(player, body.position);
+            Physics2D.SyncTransforms();
+        }
+
         /// <summary>Puts the player's transform at a position (its z kept) and returns what it reads back, to tell a game write from it.</summary>
         static Vector3 Place(Transform t, Vector2 at)
         {
@@ -1342,6 +1354,7 @@ namespace IGTAPTasMod
                 {
                     KeepWindowAlive(clock, ref keepAliveAt);
                     _frame++;
+                    FrameStart(player, body);
                     // The tick's frame starts with the Start of what the last frame's end woke (IE_Grow's box), before its
                     // FixedUpdates, as Unity runs it (README ### Rules, exception 12); what the step wakes starts at the frame's pass.
                     if (StartWaiting.Count > 0) StartPass();
@@ -1413,7 +1426,11 @@ namespace IGTAPTasMod
                         TasPlugin.CountHeldFrames(repeats);
                         for (int repeat = repeats; repeat >= 0; repeat--)
                         {
-                            if (k > 0 || repeat < repeats) _frame++;
+                            if (k > 0 || repeat < repeats)
+                            {
+                                _frame++;
+                                FrameStart(player, body);
+                            }
                             // Every frame's Start pass, before its Updates, as the engine's (README ### Rules, exception 12).
                             if (StartWaiting.Count > 0) StartPass();
                             Vector3 at = Place(player, Vector2.Lerp(_stepFrom, _stepTo, alphas[k]));

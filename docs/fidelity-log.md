@@ -1185,3 +1185,17 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
 - **Where:** `WokenStarts.cs`, `TurboRunner` (`StartPass`, its tick loop, `BeforeDrawingStart`, `AfterDrawingStart`),
   `Economy.StartPass`, `EconomyTickStart`, `cuts.txt`, `Shim/Engine/Misc.cs`, `ProbeRunner.EconomyNow`,
   `FullTas.EconomyRow`, `Program.Compare`, `tools/economy-diff.py`.
+
+## 2026-10-07: a tree box falling onto its spot, seen a frame late (Zip% goal 513)
+
+Zip% played at 1x from tick 36150 restarted onto bonus 11's checkpoint at tick 36424 where the engine landed at the Course 6
+side's (24931, -488). Found by a 1x probe against `fulltas --check --ticks-out` (both now log `wall`, `respawn`; the probe
+logs the upgrade boxes within 300 u, the engine `--watch [PARENT/]NAME`): on tick 36328 the 1x `Movement.FixedUpdate` found
+a wall (momentum 297 to 0) and the engine didn't, which left the player 11 u short of the checkpoint's trigger 95 ticks later.
+The wall was `TreePart0/GreenCloneChanceBox`, still falling onto its spot after the plant (IE_Grow's box drop, a transform
+write at each frame's end): Unity's Physics2DEarlyUpdate syncs those writes at every rendered frame's start, so the
+FixedUpdate's wall rays saw the box where the last frame left it (bottom 489.2, under the ray at 491.3); the engine and turbo
+synced them only at the step (bottom 495). Both now sync script-moved colliders at each frame's start
+(`PhysicsWorld.FrameStart`, `TurboRunner.FrameStart`, the player's transform put on its body first in turbo). The engine then
+matches the 1x probe body for body through tick 36643 and turbo-then-1x from 36440 for 202 ticks; Tree%, TouchGrass-ANY% and
+FalseEnding%-280 replay unchanged.
