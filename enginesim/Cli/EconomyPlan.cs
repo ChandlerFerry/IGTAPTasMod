@@ -1458,6 +1458,17 @@ namespace IGTAP.EngineSim.Cli
                     moves.Measured(new Move(from, "start:" + course, (int)(_playedTicks[0] - z.Tick), "measured", false), caps);
                     if (s.Kind == "lap" && _playedTicks.Length == 2) moves.Measured(new Move("start:" + course, "finish:" + course, (int)(_playedTicks[1] - _playedTicks[0]), "measured", false), caps);
                 }
+                // A step built far slower than planned isn't kept: its walk is measured above, so the plan made again from here
+                // prices it as built and takes another way, or takes it knowingly (Zip% after buytree0, 2026-10-07: a library walk
+                // of 4,884 ticks for the plan's 227 was kept and set the whole build back 93 s).
+                if (walked > Math.Max(3L * planTicks, planTicks + 500L))
+                {
+                    string why = $"{s.Kind} {s.Arg} from {from} on tick {z.Tick} walked {walked} ticks for the plan's {planTicks}; not kept";
+                    Log("realize: " + why);
+                    z.Log.Add(new { round = z.Rounds, kind = s.Kind, step = s.Arg, from, planTicks, plan = planEnd, built = -1L, why, estimated });
+                    if (!Again(why)) z.Why ??= why;
+                    continue;
+                }
                 float after = course > 0 ? BestPath(state, course) : 0f;
                 if (s.Kind == "record" && after < record) moves.Measured(new Move("start:" + course, "record:" + course, (int)Math.Round(after / _dt), "measured", false), caps);
                 z.Inputs = inputs;
@@ -1509,7 +1520,7 @@ namespace IGTAP.EngineSim.Cli
                 int n = int.Parse(s.Arg.Substring(s.Arg.IndexOf(':') + 1), CultureInfo.InvariantCulture);
                 goals = new[] { goalOf("start:" + n), goalOf("finish:" + n) };
                 // A record lap's way may skip the gate's own piece (a restart onto the course): no walk to the gate to measure.
-                if (s.Kind == "record" && RecordLap(z.State, z.Inputs, z.Planned, goals, n, improve: false) is var (ri, rs, rt)) { _playedTicks = null; walked = rt - z.Tick; return (ri, rs, rt); }
+                if (s.Kind == "record" && RecordLap(z.State, z.Inputs, z.Planned, goals, n, improve: false, gateBy: z.Tick + Math.Max(3L * s.Ticks, s.Ticks + 500L)) is var (ri, rs, rt)) { _playedTicks = null; walked = rt - z.Tick; return (ri, rs, rt); }
                 if (s.Kind == "record") Log($"realize: {s.Arg}: no record lap plays from here (the saved course routes, --seed); a lap instead");
                 var lap = Lap(z.State, z.Inputs, z.Planned, goals);
                 walked = lap == null ? 0 : lap.Value.tick - z.Tick;

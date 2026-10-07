@@ -729,7 +729,7 @@ namespace IGTAP.EngineSim.Cli
         /// lower the best time.
         /// </summary>
         (List<InputTick> inputs, SimSnapshot state, long tick)? RecordLap(SimSnapshot at, List<InputTick> route, List<FullTasGoal> planned, FullTasGoal[] lap, int course,
-            bool improve = true)
+            bool improve = true, long gateBy = long.MaxValue)
         {
             var runs = _seeds.Where(s => (s.Standing || s.Restart) && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label)).ToList();
             if (runs.Count == 0) return null;
@@ -744,6 +744,13 @@ namespace IGTAP.EngineSim.Cli
             long[] gateTick = _playedTicks;
             Track(list);
             float before = BestPath(at, course);
+            // A library walk to the gate far slower than planned is no start (Zip% after buytree0, 2026-10-07: a piece that
+            // wandered 4,884 ticks to the gate for the plan's 227 made the whole lap's realization).
+            if (gate is var (_, _, crossedAt) && crossedAt > gateBy)
+            {
+                Log($"record lap: the library's walk to {lap[0].label} crosses it on tick {crossedAt}, past {gateBy}; not a start");
+                gate = null;
+            }
             if (gate is var (crossed, past, _))
                 foreach (var (pre, restarted) in Restarts(past.WithGoal(Fresh(list.Count, i)), crossed, i).Take(1)) starts.Add(("", crossed, pre, restarted));
             // Right after a quick restart (the plan's restart to the course's reset point) the routes play from where it landed.
