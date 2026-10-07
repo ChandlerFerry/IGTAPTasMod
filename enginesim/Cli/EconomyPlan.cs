@@ -1548,7 +1548,11 @@ namespace IGTAP.EngineSim.Cli
             bool searched = false;
             if (played == null && stood && affordable != true)
             {
-                played = Waited(z, goals, s.Ticks, StandWait, need);
+                // An atom touch short of the plan's atoms stands at most --off-ticks past the plan's step, then goes back to the plan,
+                // which sees what the run holds (Zip% after buytree0: 1,225 ticks standing for the plan's 139); a search would touch
+                // the box with fewer.
+                played = Waited(z, goals, s.Ticks, need > 1 ? Math.Max(25, Math.Min(StandWait, s.Ticks + _offTicks)) : StandWait, need);
+                if (played == null && need > 1) { _whyNot = $"{goals[^1].label}: the plan's {need} atoms not paid for by {s.Ticks + _offTicks} ticks"; return null; }
                 if (played == null) { played = Play(z.State, z.Inputs, z.Planned, goals, true); searched = true; }
             }
             else if (played == null && affordable == false && (played = Waited(z, goals, s.Ticks)) == null) _whyNot += ", short of Cash";
