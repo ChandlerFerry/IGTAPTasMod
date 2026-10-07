@@ -142,6 +142,21 @@ namespace IGTAP.EngineSim.Cli
         /// MaxAtoms.</summary>
         internal const string AtomBox = "buy:buyatom";
 
+        /// <summary>
+        /// Area 2's ways that open with a box (the planner's table doesn't see doors): Course 8 behind the Area 2 door
+        /// (`buytree7`), Course 10's boxes behind CompBoostStrength (`buytree13`). Course 10 itself isn't lapped before the zip
+        /// movers (its routes all take them): <see cref="Never"/>.
+        /// </summary>
+        static readonly Dictionary<string, string> Gates = new Dictionary<string, string>
+        {
+            ["lap:8"] = "buy:buytree7", ["record:8"] = "buy:buytree7", ["buy:buyclonecd8"] = "buy:buytree7", ["buy:buyclonegp8"] = "buy:buytree7",
+            ["buy:buycd8"] = "buy:buytree7", ["buy:buycddigits8"] = "buy:buytree7",
+            ["buy:buyreward10"] = "buy:buytree13", ["buy:buyfree10a"] = "buy:buytree13", ["buy:buyfree10b"] = "buy:buytree13",
+            ["buy:buyclone10"] = "buy:buytree13", ["buy:buyclonemult10"] = "buy:buytree13", ["buy:buywatts10"] = "buy:buytree13",
+            ["buy:buynp10"] = "buy:buytree13", ["buy:buyatomlevel10"] = "buy:buytree13", ["buy:buygreen10"] = "buy:buytree13",
+        };
+        static readonly HashSet<string> Never = new HashSet<string> { "lap:10", "record:10" };
+
         /// <summary>Where a step ends and what it buys, as a movement table To: atoms:N's the atom box, all:box's its box.</summary>
         internal static string PlaceOf(Step s) => s.Kind == "atoms" ? AtomBox : s.Kind == "all" ? "buy:" + s.Arg.Substring(4) : s.Arg;
         const int MaxAtoms = 512;
@@ -707,6 +722,8 @@ namespace IGTAP.EngineSim.Cli
                 {
                     // A patient stand waits for a box still growing on its tree segment too.
                     if (standOnly && !o.Target || boxes != null && !economy.Active(boxes) && !(o.Patient && economy.Growing(boxes))) continue;
+                    if (Never.Contains(o.Step.Arg) || Gates.TryGetValue(o.Step.Arg, out string door) && economy.Level(door) == 0
+                        || boxes != null && boxes.Any(b => Gates.TryGetValue(b, out string boxDoor) && economy.Level(boxDoor) == 0)) continue;
                     if (o.Target && before.Any(t => economy.Level(t) == bought[t])) continue;
                     // An earlier target (a tree box on the way) is a step until it's bought; again only if it's a box the search offers
                     // anyway (an economy box, or one --only names).
@@ -1235,7 +1252,8 @@ namespace IGTAP.EngineSim.Cli
             }
             if (args.Contains("--install") || args.Contains("--stages"))
             {
-                if (written.run != null && written.run.Progress > _best.Progress) Install(written.run, written.goals);
+                // --replace: a plan made again from an earlier goal (a better way up) is installed as the best however far it gets.
+                if (written.run != null && (written.run.Progress > _best.Progress || args.Contains("--replace"))) Install(written.run, written.goals);
                 else Log($"install: no route reaches further than the best's goal {_best.Progress}");
             }
             return realized.All(r => r.z.Done) ? 0 : 3;
