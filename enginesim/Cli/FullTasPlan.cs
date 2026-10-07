@@ -804,7 +804,9 @@ namespace IGTAP.EngineSim.Cli
             {
                 _recordSearched.Add(course);
                 var (how, basis, pre, restarted) = starts[0];
-                Step found = SolvePiece(restarted, basis.Concat(pre).ToList(), i, target, _pieceMinutes * 3, BuildStall, runs.Select(LapInputs).ToList());
+                // From its start's own goal: a restart start is before the gate, and searched as past it (its goals only the
+                // finish) it found nothing in 18 minutes (Zip% goal 810) where the gate and finish together take seconds.
+                Step found = SolvePiece(restarted, basis.Concat(pre).ToList(), restarted.Goal.Next, target, _pieceMinutes * 3, BuildStall, runs.Select(LapInputs).ToList());
                 if (found != null)
                 {
                     Log($"record lap: searched from the restart, a lap sets the best time to {BestPath(found.Next, course):0.00}s (finish at tick {found.Physics})");

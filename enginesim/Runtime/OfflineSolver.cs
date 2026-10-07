@@ -176,12 +176,19 @@ namespace IGTAP.EngineSim
         /// <summary>The ticks of <see cref="Penalty"/> in a reported best's runTicks (0 without one).</summary>
         public long PenaltyTicks(List<InputTick> inputs) => _penaltyTicks.TryGetValue(inputs, out long ticks) ? ticks : 0;
 
+        /// <summary>How the search's runs ended, by reason with its numbers cut (the status line's top three): why a window finds nothing.</summary>
+        readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> _ends = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
+
+        static string EndKey(string why) => why == null ? "inputs out"
+            : System.Text.RegularExpressions.Regex.Replace(why.Length > 70 ? why.Substring(0, 70) : why, @"-?\d[\d.,]*", "#");
+
         public string ArchiveStatus()
         {
             long hits = Interlocked.Read(ref StateHits), replays = Interlocked.Read(ref StateReplays), goals = Interlocked.Read(ref GoalResumes);
             return $"archive {_cells} cells ({Interlocked.Read(ref _archiveBytes) >> 20} MB" + (_evictions == 0 ? "" : $", {Interlocked.Read(ref EvictedCells)} evicted") + "), "
                 + $"states {(hits + replays == 0 ? 100 : 100 * hits / (hits + replays))}% cached ({StatesPerWorker} per worker), "
-                + $"{Interlocked.Read(ref ReplayTicks)} replay ticks" + (goals == 0 ? "" : $", {goals} from stored goal states");
+                + $"{Interlocked.Read(ref ReplayTicks)} replay ticks" + (goals == 0 ? "" : $", {goals} from stored goal states")
+                + "; ends: " + string.Join("; ", _ends.OrderByDescending(e => e.Value).Take(3).Select(e => $"{e.Value} {e.Key}"));
         }
 
         /// <summary>How much less often a cell in a <see cref="ForcedPath.Discourage"/> box is picked.</summary>
@@ -1742,6 +1749,7 @@ namespace IGTAP.EngineSim
                 {
                     Interlocked.Increment(ref _owner.Runs);
                     Interlocked.Add(ref _owner.Ticks, result.Stepped);
+                    _owner._ends.AddOrUpdate(EndKey(result.EndReason), 1, (_, n) => n + 1);
                 }
                 _died = result.EndReason != null && result.EndReason.StartsWith("Player death", StringComparison.Ordinal);
                 time = result.Time;
