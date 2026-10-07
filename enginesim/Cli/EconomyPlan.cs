@@ -1252,8 +1252,9 @@ namespace IGTAP.EngineSim.Cli
             }
             if (args.Contains("--install") || args.Contains("--stages"))
             {
-                // --replace: a plan made again from an earlier goal (a better way up) is installed as the best however far it gets.
-                if (written.run != null && (written.run.Progress > _best.Progress || args.Contains("--replace"))) Install(written.run, written.goals);
+                // --replace: a plan made again from an earlier goal (a better way up) is installed as the best however far past --from
+                // it gets (not one that got nowhere: its goals would be --from's and the target alone, the run's targets between lost).
+                if (written.run != null && (written.run.Progress > _best.Progress || args.Contains("--replace") && written.run.Progress > kept)) Install(written.run, written.goals);
                 else Log($"install: no route reaches further than the best's goal {_best.Progress}");
             }
             return realized.All(r => r.z.Done) ? 0 : 3;
