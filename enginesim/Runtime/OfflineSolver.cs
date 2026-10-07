@@ -59,7 +59,7 @@ namespace IGTAP.EngineSim
             public bool Step(WorldPos prev, WorldPos p, int progress, ref int waypoints)
             {
                 if (waypoints < Via.Count && Via[waypoints].Contains(p)) waypoints++;
-                foreach (Box box in Avoid) if (box.Cuts(prev, p) && (box.After == 0 || progress >= box.After)) return true;
+                foreach (Box box in Avoid) if (box.Cuts(prev, p) && box.Live(progress)) return true;
                 return false;
             }
         }
@@ -72,7 +72,12 @@ namespace IGTAP.EngineSim
             /// <summary>One-way (forced-paths.json's block "from", <see cref="FullTasGoal.SideNames"/>): the box cuts only a move across
             /// that edge into it, so a direction gate cuts leaving the start its way and not a farm lap's drop back through it (0: any tick inside).</summary>
             public readonly int From;
-            public Box(WorldPos a, WorldPos b, int after = 0, int from = 0) { X0 = Math.Min(a.x, b.x); Y0 = Math.Min(a.y, b.y); X1 = Math.Max(a.x, b.x); Y1 = Math.Max(a.y, b.y); After = after; From = from; }
+            /// <summary>Goal mode: the box cuts a run only until it has reached this many goals (0: no end). With After, a box for
+            /// one goal (forced-paths.json's block "for"): After its goals before it, Until one more.</summary>
+            public readonly int Until;
+            public Box(WorldPos a, WorldPos b, int after = 0, int from = 0, int until = 0) { X0 = Math.Min(a.x, b.x); Y0 = Math.Min(a.y, b.y); X1 = Math.Max(a.x, b.x); Y1 = Math.Max(a.y, b.y); After = after; From = from; Until = until; }
+            /// <summary>The box cuts at <paramref name="progress"/> goals reached (After, Until).</summary>
+            public bool Live(int progress) { return (After == 0 || progress >= After) && (Until == 0 || progress < Until); }
             public bool Contains(WorldPos p) { return p.x >= X0 && p.x <= X1 && p.y >= Y0 && p.y <= Y1; }
 
             /// <summary>The step from <paramref name="prev"/> to <paramref name="p"/> is cut: it ends inside, or for a one-way box it
@@ -85,7 +90,7 @@ namespace IGTAP.EngineSim
             public override string ToString()
             {
                 int from = From;
-                return $"{X0:0},{Y0:0}..{X1:0},{Y1:0}" + (After > 0 ? " after goal " + After : "")
+                return $"{X0:0},{Y0:0}..{X1:0},{Y1:0}" + (After > 0 ? " after goal " + After : "") + (Until > 0 ? " until goal " + Until : "")
                     + (from != 0 ? " from " + string.Join("+", FullTasGoal.SideNames.Where((s, i) => (from & 1 << i) != 0)) : "");
             }
         }
@@ -156,6 +161,15 @@ namespace IGTAP.EngineSim
         /// and is played whole and priced before it is kept. Set before the search starts.
         /// </summary>
         public Func<Simulation, Func<List<InputTick>, RunResult, double>> Penalty;
+        /// <summary>The inputs a candidate must have to be played at all (null: any): a human search's digital stick and spaced
+        /// inputs, so no other run is filed, kept or bred from. Called on the workers' threads. Set before the search starts.</summary>
+        public Func<List<InputTick>, bool> Accept;
+        /// <summary>Every finished run (its inputs, which may run past the finish, and its time), not only the bests (null: none
+        /// reported): a search for other ways than the fastest. Called on the workers' threads. Set before the search starts.</summary>
+        public Action<List<InputTick>, float> FinishedRun;
+        /// <summary>Seconds a run may fall behind the best, overall and to a cell, before it is cut as losing (0: none), so the
+        /// slower ways <see cref="FinishedRun"/> collects get to the finish. Set before the search starts.</summary>
+        public float LosingSlack;
         readonly System.Collections.Concurrent.ConcurrentDictionary<List<InputTick>, long> _penaltyTicks
             = new System.Collections.Concurrent.ConcurrentDictionary<List<InputTick>, long>(ReferenceEqualityComparer.Instance);
 
@@ -1658,6 +1672,7 @@ namespace IGTAP.EngineSim
             void Try(List<InputTick> inputs, string mode, SimSnapshot from = null, int converge = int.MaxValue)
             {
                 if (inputs.Count == 0) inputs.Add(new InputTick());
+                if (_owner.Accept != null && !_owner.Accept(inputs)) return;
                 if (from != null && from.Tick >= inputs.Count) from = null;
                 // A priced window keeps a run slower to a cell than the best: it may be cleaner (the segment cut compares times alone).
                 bool finished = Evaluate(inputs, from, null, mode == "optimize" && _penalty == null, out float time, out _, out long runTicks, converge: converge);
@@ -1671,7 +1686,11 @@ namespace IGTAP.EngineSim
                     if (again == branch && Math.Abs(replay - branchTime) < .0001f && (end - _sim.Player.transform.m_Position).sqrMagnitude < .01f)
                         Interlocked.Increment(ref _owner.BranchMatches);
                 }
-                if (finished) Interlocked.Increment(ref _owner.Finishes);
+                if (finished)
+                {
+                    Interlocked.Increment(ref _owner.Finishes);
+                    _owner.FinishedRun?.Invoke(new List<InputTick>(inputs), time);
+                }
                 bool drift = (mode == "optimize" && converged) || ((mode == "optimize" || mode == "plateau") && finished && !_owner.Ranks(_best, _bestRunTicks, time, runTicks));
                 if (!drift && (!finished || !_owner.Ranks(time, runTicks, _best, _bestRunTicks))) return;
                 // An optimize run starts from a state of the best with the best's inputs before it, so its replay starts there too;
@@ -1813,8 +1832,8 @@ namespace IGTAP.EngineSim
                 replay?.Record(filed, key, elapsed);
                 if (elapsed >= 0f)
                 {
-                    if (tick > _runJudgeAfter && elapsed > _best) losing = true;
-                    if (_runCut && tick > _runJudgeAfter && _bestRun.Arrival.TryGetValue(key, out float bestAt) && elapsed > bestAt + SegmentSlack) losing = true;
+                    if (tick > _runJudgeAfter && elapsed > _best + _owner.LosingSlack) losing = true;
+                    if (_runCut && tick > _runJudgeAfter && _bestRun.Arrival.TryGetValue(key, out float bestAt) && elapsed > bestAt + SegmentSlack + _owner.LosingSlack) losing = true;
                     if (_splicing && _spliceAt < 0 && _runFrom != null && tick > _runFrom.Tick && tick < inputs.Count && !_sim.Engine.InputsExhausted
                         && _bestRun.First.TryGetValue(key, out (float time, int tick) first) && elapsed < first.time - SpliceGain)
                     {

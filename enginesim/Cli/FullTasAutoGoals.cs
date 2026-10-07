@@ -17,7 +17,7 @@ namespace IGTAP.EngineSim.Cli
     // with the economy planner (FullTasPlan.cs, Replan: search, realize, join), and adopts the planned list only when the whole
     // run is strictly faster and reaches every goal. The run's end goal, its area and reward goals and every unlock buy stay
     // (FullTasGoal.EditRefused), but for the cash goals (GLOBAL cashPerLoop boxes, GoalsRefused); an adopted list goes with the
-    // route (the run file's goals, the offline best's and the gate's), and the game updates fulltas.json when it judges that route
+    // route (the run file's goals, the offline best's and the gate's), and the game updates runs/<run>.json when it judges that route
     // a record. The edits a pull played before the planner (drops, adds, record laps, ...) are no longer played.
     sealed partial class FullTas
     {
@@ -340,7 +340,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>
         /// <see cref="FullTasGoal.EditRefused"/> as the goals part holds its edits to it: the cash goals and
         /// the reward goals the planner took aren't the skeleton here, so they may be added, dropped and moved. The game still holds them to
-        /// it: it won't adopt a list that adds, drops or moves a reward goal from a judged route (put it in fulltas.json by hand).
+        /// it: it won't adopt a list that adds, drops or moves a reward goal from a judged route (put it in runs/&lt;run&gt;.json by hand).
         /// </summary>
         string GoalsRefused(IList<string> from, IList<string> to)
         {

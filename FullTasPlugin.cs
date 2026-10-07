@@ -195,6 +195,8 @@ namespace IGTAPTasMod
             /// begins), a play from a frame in game frames (physics ticks, as the splits count them: <see cref="fastForwardFrames"/>).</summary>
             public int fastForward;
             public bool fastForwardFrames;
+            /// <summary>The offline best's idles when this is its route (the overlay's IDLE banner); null otherwise.</summary>
+            public List<FullTasIdle> idles;
         }
 
         sealed class FullTasPending
@@ -332,6 +334,14 @@ namespace IGTAPTasMod
             public List<string> goals;
             public List<long> ticks, held, inputTicks;
             public List<SolverTick> inputs;
+            public List<FullTasIdle> idles;
+        }
+        /// <summary>A buy goal's wait for its Cash, standing at its box (enginesim FullTasIdles.cs): [physics tick, held frames] when
+        /// the player was first at the box and when the Cash was there. Not a goal: goal is the buy's number (1-based).</summary>
+        sealed class FullTasIdle
+        {
+            public int goal;
+            public long[] arrive, afford;
         }
         sealed class FullTasOffline
         {
@@ -341,6 +351,8 @@ namespace IGTAPTasMod
             public float time;
             /// <summary>The route cut at its Quick Restarts, [goals before, goals by its Quick Restart, inputs, first input] per segment.</summary>
             public List<int[]> segments;
+            /// <summary>Its idles at the goals it reaches.</summary>
+            public List<FullTasIdle> idles;
         }
         readonly CachedFiles<FullTasOfflineFile> _fullTasOffline = new CachedFiles<FullTasOfflineFile>(StringComparer.OrdinalIgnoreCase);
 

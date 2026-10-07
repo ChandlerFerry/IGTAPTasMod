@@ -21,6 +21,7 @@
 .fullTasGoals .tableRow.pickable { cursor: pointer; user-select: none; }
 .fullTasGoals .tableRow.pickable:hover { background: #10263d; }
 .fullTasGoals .tableRow.picked { background: #0f2c46; box-shadow: inset 3px 0 0 var(--cyan); }
+.fullTasGoals .tableRow.idleRow { color: #8fb4e8; font-style: italic; background: #0c1a2c; }
 .ftFocus { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-top: 12px; padding: 10px 14px; border-radius: 8px; background: #0f1d31; color: var(--muted); font-size: 13px; box-shadow: inset 3px 0 0 #294563; }
 .ftFocus.on { background: #0f2c46; color: var(--text); box-shadow: inset 3px 0 0 var(--cyan); }
 .ftFocus b { color: var(--cyan); }

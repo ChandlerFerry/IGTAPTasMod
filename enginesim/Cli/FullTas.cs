@@ -377,6 +377,53 @@ namespace IGTAP.EngineSim.Cli
                 Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
                 return 0;
             }
+            // --dump a-b: the best's ticks from goal a-1's to goal b's, one line each (input, place, speed, Cash against the next
+            // goal's price): what a stretch spends its time on; then stops.
+            string dump = Solve.Option(_args, "--dump", (string)null);
+            if (dump != null)
+            {
+                // --boxes a,b: those boxes' triggers (world frame) first, by token.
+                foreach (string token in (Solve.Option(_args, "--boxes", "") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var box = FullTasGoal.Boxes.FirstOrDefault(x => x.token == token);
+                    Zone z = box.path == null ? new Zone { x0 = float.NaN } : BoxZone(new FullTasGoal { boxes = new[] { box.path, FullTasGoal.BoxId(box.path, box.sibling) } });
+                    Console.WriteLine($"box {token}: x {z.x0:0}-{z.x1:0} y {z.y0:0}-{z.y1:0}");
+                }
+                string[] ends = dump.Split('-');
+                int a = int.Parse(ends[0]), b = int.Parse(ends[ends.Length - 1]);
+                long dumpFrom = a <= 1 ? 0 : _best.GoalPhysics[a - 2], dumpTo = b > _best.Progress ? long.MaxValue - 2 : _best.GoalPhysics[b - 1];
+                var vel = typeof(Movement).GetField("Velocity", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+                var ground = typeof(Movement).GetField("onGround", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+                _eval.SetStart(_origin, 0);
+                _eval.Goals.Limit = _goals;
+                if (_eval.Run(_best.Inputs, null, i =>
+                {
+                    long t = _eval.Engine.PhysicsTicks;
+                    if (t < dumpFrom) return true;
+                    if (t > dumpTo + 2) return false;
+                    InputTick k = i > 0 && i <= _best.Inputs.Count ? _best.Inputs[i - 1] : default;
+                    WorldPos at = _eval.PlayerWorld;
+                    FullTasGoal next = _eval.Progress < _goals ? _runGoals.Goals[_eval.Progress] : null;
+                    string price = next?.boxes == null ? "" : $" next {next.label} affordable {_eval.Shop.Affordable(next.boxes)} cash {_eval.Shop.CashNow:G4}";
+                    Console.WriteLine($"in {i} t {t} held {_eval.Engine.HeldFrames} goal {_eval.Progress} at {at.x:0.0},{at.y:0.0} v {vel?.GetValue(_eval.Player)} ground {ground?.GetValue(_eval.Player)}"
+                        + $" | x {k.x:0.##} y {k.y:0.##}{(k.held ? " J" : "")}{(k.press ? " press" : "")}{(k.release ? " rel" : "")}{(k.dash ? " DASH" : "")}{(k.reset ? " RESET" : "")}{price}");
+                    return true;
+                }, 1000000) is var ended && b > _best.Progress)
+                    Console.WriteLine($"ended: goal {ended.Progress}, {ended.EndReason ?? "inputs done"}");
+                return 0;
+            }
+            // --idles: the best's idles (FullTasIdles.cs) printed, and its run file written again with them; then stops.
+            if (_args.Contains("--idles"))
+            {
+                List<IdleSpan> idles = Idles(_best);
+                foreach (IdleSpan i in idles)
+                    Console.WriteLine($"idle before goal {i.Goal} ({_labels[i.Goal - 1]}): ticks {i.ArrivePhysics}-{i.AffordPhysics}, "
+                        + $"{MacroEngine.LiveSeconds(i.AffordPhysics, i.AffordHeld) - MacroEngine.LiveSeconds(i.ArrivePhysics, i.ArriveHeld):0.00}s");
+                Console.WriteLine($"{idles.Count} idles, {idles.Sum(i => MacroEngine.LiveSeconds(i.AffordPhysics, i.AffordHeld) - MacroEngine.LiveSeconds(i.ArrivePhysics, i.ArriveHeld)):0.00}s "
+                    + $"of {Describe(_best)}; idle ticks by the inputs {IdleTicks(_best)}");
+                WriteRunFile(_best);
+                return 0;
+            }
             // --rng-study: the best's waits for Cash, what draws the RNG in them, and the RNG classes a wait's hops reach
             // (FullTasAutoIdleRng.cs); then stops.
             if (_args.Contains("--rng-study"))
@@ -442,6 +489,8 @@ namespace IGTAP.EngineSim.Cli
                     int prefixLength = i == 0 ? 0 : (int)Math.Min(best.GoalInput[i - 1], best.Inputs.Count);
                     var seeds = new List<List<InputTick>> { best.Inputs.Skip(prefixLength).ToList() };
                     List<List<InputTick>> found = SearchWindow("polish", best, prefixLength, limit, seeds, best.GoalPhysics[limit - 1], _windowMinutes, 0);
+                    // --goal searches this one window over and over: a skipped one would skip forever.
+                    if (_onlyGoal > 0 && _windowSkipped) { stopped = $"the best doesn't replay to goal {i} ({_labels[Math.Max(0, i - 1)]})"; break; }
                     if (found.Count > 0) Merge("faster through goals " + (i + 1) + "-" + limit, best, prefixLength, limit, found);
                 }
             }
@@ -600,6 +649,8 @@ namespace IGTAP.EngineSim.Cli
         const int MaxReachBack = 3, MaxReachRounds = 3;
         string _phase;
         int _windowId;
+        /// <summary>The last SearchWindow's replay to its start ended early (its window skipped).</summary>
+        bool _windowSkipped;
 
         void Phase(string phase)
         {
@@ -675,16 +726,23 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// The window's avoid boxes plus a stray-buy avoid for each box the run can buy at the window's start that its goals don't
-        /// name (<see cref="Simulation.StrayTriggers"/>): a strict run that touches one buys it and ends, and the guide treats
-        /// avoids as walls, so the search goes round them instead of dying in them. A box that becomes affordable during the
-        /// window still ends a run that touches it.
+        /// The window's avoid boxes plus a stray-buy discourage box for each box the run can buy at the window's start that its
+        /// goals don't name (<see cref="Simulation.StrayTriggers"/>): a strict run that stays in one's trigger buys it and ends, so
+        /// the search is steered round them; a graze (one step in the trigger) buys nothing and stays open.
         /// </summary>
         OfflineSolver.ForcedPath WithStrays(Func<Simulation> create, ICollection<string> goals)
         {
             if (goals == null || _runGoals == null || _runGoals.Loose) return _path;
             var named = new HashSet<string>(_runGoals.Goals.Where(g => goals.Contains(g.label)).SelectMany(g => g.boxes ?? Array.Empty<string>()));
-            var strays = create().StrayTriggers(named);
+            // On its own thread: a Simulation built here would take over the thread-static engine hooks and statics _eval plays
+            // with (its next run would end at once, "Solver run ended"). Restored to its start first: create only sets the start, and
+            // one from a stored goal state leaves the world as loaded (the new game's boxes, not the window's).
+            var strays = Solve.OnThread(() =>
+            {
+                Simulation sim = create();
+                sim.Restore(sim.Start);
+                return sim.StrayTriggers(named);
+            });
             if (strays.Count == 0) return _path;
             var path = new OfflineSolver.ForcedPath { Guide = _path?.Guide ?? false };
             if (_path != null)
@@ -693,10 +751,18 @@ namespace IGTAP.EngineSim.Cli
                 path.Avoid.AddRange(_path.Avoid);
                 path.Discourage.AddRange(_path.Discourage);
             }
-            foreach (var (a, b, _) in strays) path.Avoid.Add(new OfflineSolver.Box(a, b));
-            Log($"avoid: {strays.Select(s => s.box).Distinct().Count()} boxes this window could buy by stray ({string.Join(", ", strays.Select(s => FullTasGoal.TokenOf(s.box) ?? s.box).Distinct())})");
+            // Steered away from, never cut: a touch buys only once the player stays in the trigger past the box's cooldown (a
+            // trigger's first step is Enter, never a buy), and a strict run that does buy one ends there anyway. Cut, they barred
+            // every graze: Zip%'s walljump off the atom box into the pauselift up the wall above its door (bonus11_WJ_DS_DJ_BS 2.86's
+            // line) was never tried.
+            foreach (var (a, b, _) in strays) path.Discourage.Add(new OfflineSolver.Box(a, b));
+            Log($"discourage: {strays.Select(s => s.box).Distinct().Count()} boxes this window could buy by stray ({string.Join(", ", strays.Select(s => FullTasGoal.TokenOf(s.box) ?? s.box).Distinct())})");
             return path;
         }
+
+        /// <summary>Goal k (1-based) as the studio numbers it, from 0 (its goals table and feed, web/app/fulltas-solve.tsx): the
+        /// texts the studio shows use it; the console log keeps 1-based.</summary>
+        static int G(int k) => k - 1;
 
         string Describe(Route r)
         {
@@ -740,9 +806,10 @@ namespace IGTAP.EngineSim.Cli
             _eval.Goals.Limit = _goals;
             // The replay to the window's start also keeps every goal state along the way on disk (docs/fulltas.md).
             SimSnapshot at = _states.ReplayAndRecord(_eval, route.Inputs, prefixLength, new SnapshotStore(_eval));
+            _windowSkipped = at == null;
             if (at == null)
             {
-                Log(kind + ": the route ends before its first " + prefixLength + " inputs do; skipped");
+                Log(kind + ": the route ends before its first " + prefixLength + " inputs do (" + _eval.Engine.Status + " at input " + _eval.Engine.RunTicks + ", goal " + _eval.Progress + "); skipped");
                 Emit(new { type = "note", level = "warn", text = "Skipped a " + kind + " window: the route ends before its first " + prefixLength + " inputs do." });
                 return new List<List<InputTick>>();
             }
@@ -1341,7 +1408,7 @@ namespace IGTAP.EngineSim.Cli
             if (top == null)
             {
                 Log($"{title}: none of {starts.Count} starts from saved routes reaches it");
-                Emit(new { type = "note", level = "info", text = $"None of {starts.Count} saved-route starts reach goal {reached + 1}; searching for it instead." });
+                Emit(new { type = "note", level = "info", text = $"None of {starts.Count} saved-route starts reach goal {G(reached + 1)}; searching for it instead." });
                 return false;
             }
             Log($"{title}: {chosen.how} reaches goal {top.Progress}/{_goals} {_labels[top.Progress - 1]} at "
@@ -1350,7 +1417,7 @@ namespace IGTAP.EngineSim.Cli
             if (run == null || !Better(run, _best))
             {
                 Log(title + ": the whole run with it does no better; dropped");
-                Emit(new { type = "note", level = "info", text = $"A saved route reaches goal {top.Progress}, but the whole run with it does no better; dropped." });
+                Emit(new { type = "note", level = "info", text = $"A saved route reaches goal {G(top.Progress)}, but the whole run with it does no better; dropped." });
                 return false;
             }
             Commit(run, "from a saved route (" + chosen.how + ")");
@@ -1570,16 +1637,16 @@ namespace IGTAP.EngineSim.Cli
                 double gain = Seconds(best.Clock(limit) - broken.Clock(limit));
                 string tail = broken.Progress >= best.Progress
                     ? $"finishes {broken.LiveSeconds - best.LiveSeconds:+0.00;-0.00}s against the record"
-                    : $"stops at goal {broken.Progress} of {best.Progress}";
-                Emit(new { type = "note", level = "info", gain, text = $"Faster through goal {limit} by {gain:0.00}s, but the old route after it {tail}; "
-                    + $"re-finding goals {limit + 1}-{best.Progress}. Worth up to −{gain:0.00}s if they come back as fast as before." });
+                    : $"stops at goal {G(broken.Progress)} of {G(best.Progress)}";
+                Emit(new { type = "note", level = "info", gain, text = $"Faster through goal {G(limit)} by {gain:0.00}s, but the old route after it {tail}; "
+                    + $"re-finding goals {G(limit + 1)}-{G(best.Progress)}. Worth up to −{gain:0.00}s if they come back as fast as before." });
                 Repair(where, best, broken);
                 return;
             }
             Emit(new { type = "dropped", missed, slower, text = missed > 0 && slower == 0
-                ? $"The route found through goal {limit} didn't reproduce when replayed from the start; dropped."
-                : best.Progress < limit ? $"The route found to goal {limit} doesn't get there when replayed as part of the whole run; dropped."
-                : $"The route found through goal {limit} is faster there, but the whole run ends up slower; dropped." });
+                ? $"The route found through goal {G(limit)} didn't reproduce when replayed from the start; dropped."
+                : best.Progress < limit ? $"The route found to goal {G(limit)} doesn't get there when replayed as part of the whole run; dropped."
+                : $"The route found through goal {G(limit)} is faster there, but the whole run ends up slower; dropped." });
         }
 
         Route Splice(Route head, int prefixLength, List<InputTick> window, int limit, Route tail)
@@ -1669,7 +1736,7 @@ namespace IGTAP.EngineSim.Cli
             _repairBegin?.Invoke(run);
             int from = Enumerable.Range(1, Math.Min(run.Progress, old.Progress)).OrderByDescending(k => old.Clock(k) - run.Clock(k)).FirstOrDefault();
             string lost = from > 0 && old.Clock(from) > run.Clock(from)
-                ? $" (−{Seconds(old.Clock(from) - run.Clock(from)):0.00}s through goal {from} not kept)" : "";
+                ? $" (−{Seconds(old.Clock(from) - run.Clock(from)):0.00}s through goal {G(from)} not kept)" : "";
             int resynced = 0;
             while (!TimeUp)
             {
@@ -1694,7 +1761,7 @@ namespace IGTAP.EngineSim.Cli
                 if (run.Live >= Bar(_best, false))
                 {
                     Log($"repair dropped: goal {run.Progress}/{_goals} reached no sooner than the best's last goal");
-                    Emit(new { type = "dropped", text = $"Repair gave up: it reaches goal {run.Progress} no sooner than the record reaches goal {_best.Progress}." + lost });
+                    Emit(new { type = "dropped", text = $"Repair gave up: it reaches goal {G(run.Progress)} no sooner than the record reaches goal {G(_best.Progress)}." + lost });
                     return;
                 }
                 string hopeless = _hopeless?.Invoke(run);
@@ -1717,7 +1784,7 @@ namespace IGTAP.EngineSim.Cli
                 if (found.Count == 0)
                 {
                     Log($"repair dropped: no route to {_labels[reached]} from the new state");
-                    Emit(new { type = "dropped", text = $"Repair gave up: no way to goal {reached + 1} from the new state." + lost });
+                    Emit(new { type = "dropped", text = $"Repair gave up: no way to goal {G(reached + 1)} from the new state." + lost });
                     return;
                 }
                 Route next = Splice(run, prefixLength, found[found.Count - 1], limit, old);
@@ -1797,7 +1864,8 @@ namespace IGTAP.EngineSim.Cli
             _best = r;
             WriteRunFile(r);
             string file = _runFile;
-            if (r.Progress == _goals && Clean(r))
+            // A run --auto improves only through the goals its best reaches (_goals short of the list) is no record yet.
+            if (r.Progress == _labels.Length && Clean(r))
             {
                 float time = (float)r.LiveSeconds;
                 Directory.CreateDirectory(_outDir);
@@ -1810,13 +1878,14 @@ namespace IGTAP.EngineSim.Cli
                     ? JsonSerializer.Serialize(new { fulltas = _name, @class = Glitches.Key(_class), time, score = Human ? ScoreSeconds(r) : (double?)null, runTicks = r.Last, goals, goalsFrom,
                         ticks = r.Inputs.Select(t => t.ToJson()) })
                     : JsonSerializer.Serialize(new { fulltas = _name, time, runTicks = r.Last, goals, goalsFrom, ticks = r.Inputs.Select(t => t.ToJson()) }));
-                _pending?.Set(new Submission { Inputs = r.Inputs, Goals = goals, GoalsFrom = goalsFrom });
+                // The gate saves only a strictly faster time: a best kept on a tie (more idle at the same time, Ahead) isn't sent.
+                if (previous.Progress < r.Progress || r.Live < previous.Live) _pending?.Set(new Submission { Inputs = r.Inputs, Goals = goals, GoalsFrom = goalsFrom });
             }
             // An nmg class's route with a major span is the search's working route only: nothing of it is saved or submitted.
             GlitchSpan major = Clean(r) ? null : r.Report.Spans.First(s => s.Category == Glitches.MajorCategory);
             Log($"new best {Describe(r)} ({where}) -> " + (major == null ? Path.GetFileName(file) : $"not saved: it uses {major.Tech} (major) at input tick {major.Tick}"));
             Emit(new { type = "record", how = where, previous = RouteJson(previous), best = RouteJson(r), file = major == null ? Path.GetFileName(file) : null,
-                complete = r.Progress == _goals, firstComplete = r.Progress == _goals && previous.Progress < _goals, goalsEdit = _goalsEdit,
+                complete = r.Progress == _labels.Length, firstComplete = r.Progress == _labels.Length && previous.Progress < _labels.Length, goalsEdit = _goalsEdit,
                 goals = _goalsEdit == null ? null : _labels });
             _committed?.Invoke(r, where);
             // Every complete best has its waits re-timed to their Cash from the start: an edit (a goals adoption, a window)
@@ -1855,8 +1924,10 @@ namespace IGTAP.EngineSim.Cli
                 goalInputTicks = r.GoalInput,
                 goalPhysicsTicks = r.GoalPhysics,
                 goalHeldFrames = r.GoalHeld,
-                total = r.Progress == _goals ? r.Last : -1,
-                live = r.Progress == _goals ? r.LiveSeconds : -1,
+                total = r.Progress == _labels.Length ? r.Last : -1,
+                live = r.Progress == _labels.Length ? r.LiveSeconds : -1,
+                // Each buy's wait for its Cash, standing at its box (FullTasIdles.cs): the studio's idle rows, the overlay's banner.
+                idles = IdlesJson(r),
                 startAt = new { x = _startAt.x, y = _startAt.y, facingRight = _startAt.facingRight },
                 goalsFrom = _goalLineage.Count == 0 ? null : _goalLineage,
             };

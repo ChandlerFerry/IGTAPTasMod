@@ -438,9 +438,46 @@ namespace IGTAPTasMod
                 PerfSection(7);
             }
             DrawCachedPanels(scale);
+            if (_fullTasPlay?.idles != null && _fullTasPlay.started) DrawFullTasIdle(scale);
             PerfSection(8);
             if (_droppedFrames > 0 && (OverlayListsRun || Time.unscaledTime < _droppedFramesShownUntil)) DrawDroppedFrames(scale);
             PerfSection(9);
+        }
+
+        /// <summary>While a Full-TAS playback stands in one of its idles (the run waiting at a box for its Cash): a banner naming the
+        /// buy and the seconds left, so a viewer sees the run waiting, not dawdling.</summary>
+        void DrawFullTasIdle(float scale)
+        {
+            FullTasIdle idle = CurrentIdle(_fullTasPlay);
+            if (idle == null) return;
+            long tick = _engine.PhysicsTicks, held = _engine.HeldFrames;
+            string goal = idle.goal - 1 < _fullTasPlay.tracker.Goals.Length ? _fullTasPlay.tracker.Goals[idle.goal - 1].label : "the next buy";
+            double left = System.Math.Max(0.0, MacroEngine.LiveSeconds(idle.afford[0], idle.afford[1]) - MacroEngine.LiveSeconds(tick, held));
+            // Rebuilt only when the tenths change: a new string every frame is IMGUI garbage (README "Studio").
+            int tenths = (int)System.Math.Ceiling(left * 10);
+            if (_idleBanner == null || _idleBannerGoal != idle.goal || _idleBannerTenths != tenths)
+            {
+                _idleBanner = "IDLE · waiting for " + goal + " · " + (tenths / 10.0).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " s";
+                _idleBannerGoal = idle.goal;
+                _idleBannerTenths = tenths;
+            }
+            float width = 620 * scale, height = 40 * scale;
+            Rect box = new Rect((Screen.width - width) / 2f, 64 * scale, width, height);
+            Fill(box, new Color(0.1f, 0.25f, 0.55f, 0.85f));
+            Label(new Rect(box.x + 14 * scale, box.y, width - 28 * scale, height), _idleBanner, _overlayText, Color.white);
+        }
+
+        string _idleBanner;
+        int _idleBannerGoal, _idleBannerTenths;
+
+        /// <summary>The idle the playback stands in now (its tick between the player's arrival at the box and the Cash), or null.</summary>
+        FullTasIdle CurrentIdle(FullTasPlay play)
+        {
+            if (play?.idles == null || !play.started) return null;
+            long tick = _engine.PhysicsTicks;
+            foreach (FullTasIdle i in play.idles)
+                if (tick >= i.arrive[0] && tick < i.afford[0]) return i;
+            return null;
         }
 
         void DrawDroppedFrames(float scale)

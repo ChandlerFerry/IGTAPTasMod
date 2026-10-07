@@ -29,7 +29,17 @@ namespace IGTAPTasMod
             FullTasOffline offline = FullTasOfflineBest(run.name, tracker.Goals.Select(g => g.label).ToList());
             int expected = expectedGoals ?? (IsTechDemo(route) || route.id == ProbeRouteId ? 0 : FullTasSavedRoute(run.name, route) ? tracker.Goals.Length : offline?.reached ?? 0);
             TechDef tech = _techs.Find(t => t.routeId == route.id);
-            _fullTasPlay = new FullTasPlay { run = run, route = route, tracker = tracker, expected = expected, fastForward = fromTick > 0 ? fromTick : tech?.fastForward ?? 0, fastForwardFrames = fromTick > 0 };
+            _fullTasPlay = new FullTasPlay { run = run, route = route, tracker = tracker, expected = expected, fastForward = fromTick > 0 ? fromTick : tech?.fastForward ?? 0, fastForwardFrames = fromTick > 0,
+                idles = offline?.idles != null && offline.idles.Count > 0 && SameInputs(route, offline.inputs) ? offline.idles : null };
+        }
+
+        /// <summary>Whether the route plays these inputs first (the offline best's, cut at its last goal): its idles are then the
+        /// route's.</summary>
+        static bool SameInputs(MacroDefinition route, List<SolverTick> inputs)
+        {
+            // Both as a route plays them (ToSteps keeps a dash's turn and jump frame, a pause's tick, only where they apply).
+            List<SolverTick> ticks = ToTicks(route.steps), own = ToTicks(ToSteps(inputs));
+            return ticks.Count >= own.Count && JsonConvert.SerializeObject(ticks.GetRange(0, own.Count)) == JsonConvert.SerializeObject(own);
         }
 
         void BeginFullTasPlayback(Movement movement)

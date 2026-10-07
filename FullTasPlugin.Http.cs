@@ -113,19 +113,18 @@ namespace IGTAPTasMod
         void PumpFullTas()
         {
             bool idle = _fullTas == null && _fullTasPending == null && !_silentEvaluation;
-            long written = System.Threading.Interlocked.Exchange(ref _fullTasStat, -1);
-            if (written > 0 && idle && _fullTasWritten == _fullTasStatOf && written != _fullTasWritten.Ticks) LoadFullTas();
+            long written = System.Threading.Interlocked.Exchange(ref _fullTasStat, NoFullTasStat);
+            if (written != NoFullTasStat && idle && _fullTasWritten == _fullTasStatOf && written != _fullTasWritten) LoadFullTas();
             if (Time.unscaledTime >= _fullTasCheckAt && idle && System.Threading.Interlocked.CompareExchange(ref _fullTasStatBusy, 1, 0) == 0)
             {
                 _fullTasCheckAt = Time.unscaledTime + 1f;
                 _fullTasStatOf = _fullTasWritten;
-                string path = FullTasPath;
                 System.Threading.ThreadPool.QueueUserWorkItem(_ =>
                 {
-                    long ticks = 0;
-                    try { if (File.Exists(path)) ticks = File.GetLastWriteTimeUtc(path).Ticks; }
+                    long stamp = NoFullTasStat;
+                    try { stamp = FullTasRunsStamp(); }
                     catch (Exception) { }
-                    System.Threading.Interlocked.Exchange(ref _fullTasStat, ticks);
+                    System.Threading.Interlocked.Exchange(ref _fullTasStat, stamp);
                     System.Threading.Interlocked.Exchange(ref _fullTasStatBusy, 0);
                 });
             }
@@ -214,10 +213,32 @@ namespace IGTAPTasMod
                 {
                     if (!(body["box"] is JArray box) || box.Count != 4) throw new InvalidOperationException("box: [x0, y0, x1, y1] in game-world coordinates.");
                     float[] b = box.Select(v => (float)v).ToArray();
-                    string[] runs = (body["runs"] is JArray list ? list.Select(r => (string)r) : new[] { Text(body, "name") })
-                        .Select(r => FindFullTasRun(r).name).Distinct().OrderBy(r => r, StringComparer.Ordinal).ToArray();
+                    List<FullTasRunDef> defs = (body["runs"] is JArray list ? list.Select(r => (string)r) : new[] { Text(body, "name") })
+                        .Select(FindFullTasRun).GroupBy(r => r.name).Select(g => g.First()).ToList();
+                    string[] runs = defs.Select(r => r.name).OrderBy(r => r, StringComparer.Ordinal).ToArray();
                     if (runs.Length == 0) throw new InvalidOperationException("runs: the Full-TAS runs the box is for.");
-                    return new { ok = true, changed = EditFullTasAvoids(runs, b, Truthy(body, "remove")) };
+                    // A goal label, or its number as the studio shows it (from 0): the first run's label there.
+                    string Goal(string key)
+                    {
+                        string goal = Text(body, key).Trim();
+                        if (int.TryParse(goal, out int number))
+                            goal = number >= 0 && number < defs[0].goals.Count ? defs[0].goals[number]
+                                : throw new InvalidOperationException($"{key}: {defs[0].name} has goals 0 to {defs[0].goals.Count - 1}, not {number}.");
+                        if (goal.Length > 0 && defs.FirstOrDefault(r => !r.goals.Contains(goal)) is FullTasRunDef missing)
+                            throw new InvalidOperationException($"{key}: {missing.name} has no goal {goal}.");
+                        return goal.Length > 0 ? goal : null;
+                    }
+                    // "goal": the box cuts only while a run heads for that goal (forced-paths.json's block "for"); "after": once a run
+                    // has reached it (the block's "after", which the engine finds at the label's last place in the run).
+                    string forGoal = Goal("goal"), after = Goal("after");
+                    if (forGoal != null && after != null) throw new InvalidOperationException("goal or after, not both.");
+                    if (after != null && int.TryParse(Text(body, "after").Trim(), out int at) && defs[0].goals.LastIndexOf(after) != at)
+                        throw new InvalidOperationException($"after: goal {at}'s label {after} comes again at goal {defs[0].goals.LastIndexOf(after)}, where the box would start instead.");
+                    // "from": the sides ("left+bottom") the box cuts a move into it across (the block's "from"); none: any tick inside.
+                    string from = Text(body, "from").Trim();
+                    if (from.Split('+').Any(s => s.Length > 0 && !FullTasGoal.SideNames.Contains(s)))
+                        throw new InvalidOperationException($"from: sides {string.Join(", ", FullTasGoal.SideNames)} joined with +, not {from}.");
+                    return new { ok = true, changed = EditFullTasAvoids(runs, b, Truthy(body, "remove"), forGoal, after, from.Length > 0 ? from : null) };
                 }
                 case "/api/fulltas/move-goal":
                 {
@@ -280,7 +301,7 @@ namespace IGTAPTasMod
                 return new { name = r.name, start = r.start, savestate = r.savestate, section = r.Section, goals = labels, error = error,
                     breaker = FullTasBreakerGoal(labels),
                     best = best == null ? null : new { routeId = best.id, name = best.name, time = float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture), splits = splits },
-                    offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits, segments = offline.segments },
+                    offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits, segments = offline.segments, idles = offline.idles },
                     closest = closest == null ? null : new { reached = closest.reached, next = closest.next, distance = closest.distance, ticks = closest.inputs.Count },
                     classes = FullTasClassesWebState(r), human = r.Human, candidates = FullTasCandidatesWebState(r, labels),
                     playable = best != null || offline != null && offline.inputs.Count > 0,
@@ -304,7 +325,7 @@ namespace IGTAPTasMod
                 difficulty = _fullTasDifficultyRun == null ? null : new { name = _fullTasDifficultyRun, running = _fullTasDifficultyProcess != null,
                     done = _fullTasDifficultyDone, of = _fullTasDifficultyOf },
                 playing = play == null ? null : new { name = play.run.name, started = play.started, reached = play.tracker.Next, of = play.tracker.Goals.Length,
-                    next = play.tracker.Current?.label, droppedFrames = _droppedFrames, tick = _engine.PhysicsTicks,
+                    next = play.tracker.Current?.label, droppedFrames = _droppedFrames, tick = _engine.PhysicsTicks, idles = play.idles?.Count ?? 0, idle = CurrentIdle(play)?.goal,
                     cash = globalStats.currencyLookup != null && globalStats.currencyLookup.TryGetValue(globalStats.Currencies.Cash, out double cash) ? cash : 0.0 } };
         }
 

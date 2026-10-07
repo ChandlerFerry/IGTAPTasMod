@@ -394,7 +394,7 @@ namespace IGTAP.EngineSim
         /// <summary>
         /// A purchase that isn't the next goal's box ends the run (the Full-TAS loop builder's pieces: a walk that also buys another
         /// box spends Cash and levels the plan counted on, and can cap a box a later goal buys). Not on a loose-buys run
-        /// (fulltas.json "buys": "loose", <see cref="FullTasTracker.LooseBuys"/>): there any purchase stands.
+        /// (runs/&lt;run&gt;.json "buys": "loose", <see cref="FullTasTracker.LooseBuys"/>): there any purchase stands.
         /// </summary>
         internal bool StrictBuys;
         /// <summary>A course run's goals timed in physics ticks, as its record (`solve --auto`, FullTas.TickTiming): the frames it
@@ -1461,6 +1461,10 @@ namespace IGTAP.EngineSim
         public RunResult Run(IReadOnlyList<InputTick> inputs, SimSnapshot from = null, Func<int, bool> afterTick = null, int extraTicks = 400,
             Action<int> onStep = null)
         {
+            // The engine hooks and the game's statics are per thread, and the last Simulation built on it owns them: an older one
+            // would play nothing ("Solver run ended" at input 0). Build a throwaway Simulation on its own thread (Solve.OnThread).
+            if (IGTAP.EngineSim.Engine.Scheduler != Scheduler)
+                throw new InvalidOperationException("Another Simulation was built on this thread since this one; it owns the thread's engine hooks now");
             from ??= _start;
             if (from.Tick >= inputs.Count) from = _start;
             Restore(from);

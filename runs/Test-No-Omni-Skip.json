@@ -1,0 +1,12 @@
+{
+  "name": "Test-No-Omni-Skip",
+  "start": "vman",
+  "savestate": "c1382aa8df724bcc92c07a3cd8c577df",
+  "section": "test",
+  "goals": [
+    "at:20495,15785,130,30,from=bottom",
+    "at:21240,15925,480,350",
+    "at:22200,15900,500,500",
+    "at:24067,13456,1440,1080"
+  ]
+}

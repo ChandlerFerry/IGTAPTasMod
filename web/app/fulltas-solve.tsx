@@ -87,7 +87,7 @@ function asWindow(e: FullTasEvent): Window {
     start: num(e.start) ?? 0, target: num(e.target), savedStarts: num(e.savedStarts) ?? 0, piece: str(e.piece), at: e.at };
 }
 
-// Goals are 1-based in the engine's events and logs (a count of goals reached); the studio shows them 0-based, as fulltas.json
+// Goals are 1-based in the engine's events and logs (a count of goals reached); the studio shows them 0-based, as runs/<run>.json
 // indexes them: goal n (1-based) shows as n − 1.
 function span(w: Window) { return w.limit - w.first <= 1 ? `goal ${w.limit - 1}` : `goals ${w.first}–${w.limit - 1}`; }
 /** Where a window starts: after goal `first` (1-based), or the run's start. */
@@ -224,7 +224,7 @@ function feed(events: FullTasEvent[], goals: string[]): Item[] {
         push(w.kind === "piece"
           ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Found a piece for goal ${w.limit - 1}: ${w.piece}`, detail: "Filed for reuse; checking it in the run." }
           : w.kind === "polish" && w.target != null
-            ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Faster through ${span(w)}: ${s2(t)} vs ${s2(w.target)} (${delta((t ?? 0) - w.target)})`, detail: "Verifying in the whole run." }
+            ? { key: `f${e.at}`, at: e.at, tone: "progress", title: `Faster through ${span(w)} in game time: ${s2(t)} vs ${s2(w.target)} (${delta((t ?? 0) - w.target)})`, detail: "Game time is physics ticks, the time Cash comes in: it leaves out dash freezes, which the goals table and the run's time count. Verifying in the whole run." }
             : { key: `f${e.at}`, at: e.at, tone: "progress", title: `Found goal ${w.limit - 1}: ${goalName(goals[w.limit - 1])} at ${s2(t)}`, detail: "Verifying from the start." });
         break;
       }

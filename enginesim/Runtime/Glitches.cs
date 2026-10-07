@@ -11,7 +11,7 @@ namespace IGTAP.EngineSim
     /// live time; <c>nmg</c>: no major-glitch span, by live time; <c>human-major</c> and <c>human-nmg</c>: the same, by score.</summary>
     public enum RunClass { Major, Nmg, HumanMajor, HumanNmg }
 
-    /// <summary>A human class's score weights (fulltas.json's "human", a trace header's <c>fulltas.human</c>): seconds per
+    /// <summary>A human class's score weights (runs/&lt;run&gt;.json's "human", a trace header's <c>fulltas.human</c>): seconds per
     /// spike-grace tick, per frame-perfect input and per back-to-back pair of a whole route's difficulty (Cli Difficulty: its
     /// inputs' timing; both 0: unpriced). A major or nmg span adds nothing of its own: what makes it hard is the inputs in it.
     /// And a solve's own per-tech span weights (<c>--tech-weight</c>, <see cref="Techs"/>).</summary>
@@ -31,7 +31,7 @@ namespace IGTAP.EngineSim
         /// <summary>
         /// Applies a command line's <c>--tech-weight &lt;tech&gt;=&lt;seconds&gt;</c> options (repeatable, or comma-separated): techs.json
         /// ids, each span of one priced at its seconds in the human classes' score. A solve's
-        /// own experiment: the plugin's gate scores with the run's fulltas.json weights alone.
+        /// own experiment: the plugin's gate scores with the run's runs/&lt;run&gt;.json weights alone.
         /// </summary>
         public HumanWeights WithTechWeights(string[] args)
         {

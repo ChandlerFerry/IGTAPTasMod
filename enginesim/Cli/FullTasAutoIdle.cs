@@ -105,14 +105,14 @@ namespace IGTAP.EngineSim.Cli
             }
             for (int g = 0; g < _goals && !TimeUp; g++)
             {
-                if (_runGoals.Goals[g].kind != FullTasGoal.Buy) continue;
+                if (_runGoals.Goals[g].kind != FullTasGoal.Buy || !InIdleReach(g + 1)) continue;
                 List<InputTick> inputs = current.Inputs;
                 int from = g == 0 ? 0 : (int)Math.Min(current.GoalInput[g - 1], inputs.Count);
                 int buy = (int)Math.Min(current.GoalInput[g], inputs.Count);
                 // Standing under the box for the wait before a restart and dash in (the way on after the buy kept), or walking to the
                 // box and standing under it, when that beats the run's way there (a restart and dash to a far box, a loop, a jump
                 // that doesn't gain).
-                if (g > 0 && UnderBoxWait(current, g, from, buy, Snapshot) is (Route under, string underHow) && under != null && under.Live < current.Live)
+                if (g > 0 && UnderBoxWait(current, g, from, buy, Snapshot) is (Route under, string underHow) && under != null && LiveAhead(under, current))
                 {
                     tried++;
                     moved++;
@@ -125,7 +125,7 @@ namespace IGTAP.EngineSim.Cli
                 if (g > 0)
                 {
                     var (walked, walkHow) = WalkIn(current, g, from, buy, Snapshot(from));
-                    if (walked != null && walked.Live < current.Live)
+                    if (walked != null && LiveAhead(walked, current))
                     {
                         tried++;
                         moved++;
@@ -163,7 +163,7 @@ namespace IGTAP.EngineSim.Cli
                     SimSnapshot atWs = Snapshot(ws);
                     if (atWs == null || TimeUp) break;
                     (Route r, string rhow) = RngTickets(current, g, inputs, ws, at + length, atWs, ws, zone, current.GoalPhysics[g]);
-                    if (r != null && r.Live < current.Live && (pick == null || r.Live < pick.Live)) (pick, how) = (r, rhow);
+                    if (r != null && LiveAhead(r, current) && (pick == null || LiveAhead(r, pick))) (pick, how) = (r, rhow);
                 }
                 if (pick == null && far.Count == 0) continue;
                 tried++;
@@ -438,24 +438,25 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>
         /// Goal's box trigger in the world frame as the simulation stands (call it right after a run, in that run's frame): the
         /// union of the enabled trigger colliders of the goal's boxes (axis aligned, scaled by the transform); x0 is NaN when
-        /// there is none.
+        /// there is none. On <paramref name="sim"/>'s world (the loop's evaluator by default).
         /// </summary>
-        Zone BoxZone(FullTasGoal goal)
+        Zone BoxZone(FullTasGoal goal, Simulation sim = null)
         {
+            sim ??= _eval;
             var zone = new Zone { x0 = float.NaN };
             if (goal.boxes == null) return zone;
             float x0 = float.MaxValue, x1 = float.MinValue, y0 = float.MaxValue, y1 = float.MinValue;
-            foreach (upgradeBox b in _eval.World.All<upgradeBox>())
+            foreach (upgradeBox b in sim.World.All<upgradeBox>())
             {
                 string path = b.transform.name;
                 for (UnityEngine.Transform p = b.transform.parent; p != null; p = p.parent) path = p.name + "/" + path;
-                string id = FullTasGoal.BoxId(path, _eval.World.SiblingIndex[b.transform]);
+                string id = FullTasGoal.BoxId(path, sim.World.SiblingIndex[b.transform]);
                 if (!goal.boxes.Contains(id) && !goal.boxes.Contains(path)) continue;
                 foreach (UnityEngine.BoxCollider2D c in b.GetComponents<UnityEngine.BoxCollider2D>())
                 {
                     if (!c.isTrigger || !c.enabled) continue;
                     UnityEngine.Vector3 pos = b.transform.position, scale = b.transform.lossyScale;
-                    WorldPos middle = _eval.ToWorld(new ScenePos(pos.x + c.offset.x * scale.x, pos.y + c.offset.y * scale.y));
+                    WorldPos middle = sim.ToWorld(new ScenePos(pos.x + c.offset.x * scale.x, pos.y + c.offset.y * scale.y));
                     float hw = c.size.x * Math.Abs(scale.x) / 2f, hh = c.size.y * Math.Abs(scale.y) / 2f;
                     x0 = Math.Min(x0, middle.x - hw); x1 = Math.Max(x1, middle.x + hw);
                     y0 = Math.Min(y0, middle.y - hh); y1 = Math.Max(y1, middle.y + hh);
@@ -463,11 +464,11 @@ namespace IGTAP.EngineSim.Cli
             }
             if (x0 > x1) return zone;
             float half = 0f, tall = 0f;
-            foreach (UnityEngine.BoxCollider2D c in _eval.Player.GetComponents<UnityEngine.BoxCollider2D>())
+            foreach (UnityEngine.BoxCollider2D c in sim.Player.GetComponents<UnityEngine.BoxCollider2D>())
                 if (!c.isTrigger && c.enabled)
                 {
-                    half = Math.Max(half, c.size.x * Math.Abs(_eval.Player.transform.lossyScale.x) / 2f);
-                    tall = Math.Max(tall, c.size.y * Math.Abs(_eval.Player.transform.lossyScale.y));
+                    half = Math.Max(half, c.size.x * Math.Abs(sim.Player.transform.lossyScale.x) / 2f);
+                    tall = Math.Max(tall, c.size.y * Math.Abs(sim.Player.transform.lossyScale.y));
                 }
             return new Zone { x0 = x0, x1 = x1, y0 = y0, y1 = y1, playerHalf = half, playerTall = tall };
         }

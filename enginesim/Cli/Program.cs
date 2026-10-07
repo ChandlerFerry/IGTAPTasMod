@@ -37,6 +37,7 @@ namespace IGTAP.EngineSim.Cli
                     case "techs": return Techs.Run(args.Skip(1).ToArray());
                     case "techs-used": return TechsUsed.Run(args.Skip(1).ToArray());
                     case "difficulty": return Difficulty.Run(args.Skip(1).ToArray());
+                    case "ease": return Difficulty.Ease(args.Skip(1).ToArray());
                     case "timeloss": return TimeLoss.Run(args.Skip(1).ToArray());
                     case "map": return Map.Run(args.Skip(1).ToArray());
                     case "ultras": return Ultras.Run(args.Skip(1).ToArray());
@@ -227,10 +228,12 @@ namespace IGTAP.EngineSim.Cli
                             + "  macros [--tech-dir D] [--no-default] [--mine route.json]... [--measure route.json]... [--min-uses N] [--dump N]\n"
                             + "         [--samples N] [--out file]    mines --auto's macro seeds from the saved and judged records (--mine: more\n"
                             + "                                         routes) and measures how often one beats a held-out route's own next ticks\n"
-                            + "  fulltas-plan <trace.json> --from <goal> --target <buy:box>[,<buy:box>] [--bonuses bonus1,...] [--buytable FILE] [--moves FILE]\n"
+                            + "  fulltas-plan <trace.json> --from <goal>|furthest --target <buy:box>[,<buy:box>]|next [--bonuses bonus1,...] [--buytable FILE] [--moves FILE]\n"
                             + "               [--max-states N] [--minutes M] [--dominance key|levels] [--only ids] [--out file]\n"
                             + "               [--mode exact|beam|auto] [--beam W] [--stand on|off] [--compare \"order\" ...] [--skip-free]\n"
-                            + "               [--realize [--route file] [--seed-list file] [--piece-minutes p]] [--join route.json]\n"
+                            + "               [--realize [--route file] [--seed-list file] [--piece-minutes p] [--install]] [--join route.json]\n"
+                            + "               [--stages]  plan, realize and --install from the furthest goal to the next buy until the run's\n"
+                            + "                           last goal or three stages without progress (docs/fulltas.md \"Install and stages\")\n"
                             + "               [--replan [--replan-seconds S] [--replan-cap T]]\n"
                             + "                                         the economy planner (docs/fulltas.md \"Economy planner\"): Dijkstra over\n"
                             + "                                         schedules of laps, record laps, buys (all:box every level paid for now;\n"
@@ -520,6 +523,9 @@ namespace IGTAP.EngineSim.Cli
             Check(!box.Cuts(new WorldPos(9500, 6000), new WorldPos(9500, 7400)), "respawn inside");
             Check(right.Cuts(new WorldPos(9700, 7000), new WorldPos(9690, 7000)) && !right.Cuts(new WorldPos(9600, 7000), new WorldPos(9630, 7000)), "from right");
             Check(new OfflineSolver.Box(new WorldPos(0, 0), new WorldPos(10, 10)).Cuts(new WorldPos(5, 5), new WorldPos(5, 5)), "two-way box inside");
+            // A box for goal 6 (forced-paths.json's "for"): on from 5 goals reached until the 6th.
+            var only6 = new OfflineSolver.Box(new WorldPos(0, 0), new WorldPos(10, 10), 5, 0, 6);
+            Check(!only6.Live(4) && only6.Live(5) && !only6.Live(6) && new OfflineSolver.Box(default, default, 0, 0, 1).Live(0), "goal-scoped box");
             Console.WriteLine("oneway: ok");
             return 0;
         }

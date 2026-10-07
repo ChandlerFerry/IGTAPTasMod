@@ -24,7 +24,7 @@ namespace IGTAP.EngineSim.Cli
     /// <c>difficulty &lt;trace.json&gt; --candidates &lt;dir&gt;</c>: every *.json in dir into dir/difficulty/&lt;name&gt; (a sidecar newer than
     /// its candidate, made with the same parameters, is kept), an <c>@difficulty</c> progress line after each.
     /// </summary>
-    static class Difficulty
+    static partial class Difficulty
     {
         const string Usage = "usage: difficulty <trace.json> <route.json> [--json] [--radius R] [--pos U] [--vel F] [--raw] [--threads T]"
             + " | difficulty <trace.json> --candidates <dir> [same options]";
@@ -804,6 +804,43 @@ namespace IGTAP.EngineSim.Cli
                     outcome[i] = holds == null ? Limit.Blocked : holds.Value ? null : Limit.Fail;
                 });
                 return outcome;
+            }
+
+            /// <summary>Each route played whole from the start, as a human class plays it (MacroEngine.HumanClass: digital stick,
+            /// two jump buttons) with <paramref name="human"/>.</summary>
+            public RunResult[] Play(List<List<InputTick>> routes, bool human)
+            {
+                var results = new RunResult[routes.Count];
+                Each(routes.Count, (lane, i) =>
+                {
+                    lane.Sim.Engine.HumanClass = human;
+                    try { results[i] = lane.Sim.Run(routes[i], null, null, 400); }
+                    finally { lane.Sim.Engine.HumanClass = false; }
+                });
+                return results;
+            }
+
+            public List<Anchor>[] AnchorsOf(List<List<InputTick>> routes)
+            {
+                var anchors = new List<Anchor>[routes.Count];
+                Each(routes.Count, (lane, i) => anchors[i] = Difficulty.Anchors(lane.Sim, routes[i], null, false));
+                return anchors;
+            }
+
+            /// <summary>The route's spans and spike-grace ticks, as techs-used classifies them.</summary>
+            public GlitchReport Report(List<InputTick> inputs, HumanWeights weights)
+            {
+                GlitchReport report = null;
+                _lanes[0].Do(lane =>
+                {
+                    var record = new TechSteps(lane.Sim);
+                    record.Attach();
+                    record.Clear();
+                    try { record.End(lane.Sim.Run(inputs, null, null, 400, _ => record.Step())); }
+                    finally { record.Detach(); }
+                    report = Glitches.Classify(record, weights);
+                });
+                return report;
             }
 
             /// <summary>work(lane, i) for every i below count, on every lane.</summary>

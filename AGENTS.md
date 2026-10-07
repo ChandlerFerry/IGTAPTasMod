@@ -42,7 +42,7 @@ movers, [`docs/fulltas.md`](docs/fulltas.md#touchgrass-any-tree-and-zip-2026-10-
   (finish to finish, by a quick restart or the drop through the end gate) in live time, seconds to 4 places (README `###
   Rules` 30); the route is its lead and its loop (`loopFrom`, `loopLaps`). A bonus or transition is timed in ticks from
   its start already, so its record is its farm.
-- Full-TAS route: `fulltas/<run>_NONE <time>` (runs live in `fulltas.json`, [`docs/fulltas.md`](docs/fulltas.md)); `time`
+- Full-TAS route: `fulltas/<run>_NONE <time>` (runs are defined in `runs/<run>.json`, [`docs/fulltas.md`](docs/fulltas.md)); `time`
   is live time, physics ticks plus dash freezes and pauses (README `### Rules` 31), and its splits carry both the
   ticks and the held frames (`fulltas-splits.json`). A record saved when the time was ticks alone is re-timed on its
   next trace (`RememberBestSplits`). That is the run's `major` class; its other classes (README `### Rules` 54) are

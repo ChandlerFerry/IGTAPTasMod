@@ -303,7 +303,7 @@ namespace IGTAP.EngineSim.Cli
                 float[] v = labels[i].Substring(3).Split(',').Take(4).Select(s => float.Parse(s, CultureInfo.InvariantCulture)).ToArray();
                 goals.Add((i + 1, labels[i], new[] { v[0] - v[2] / 2, v[1] - v[3] / 2, v[0] + v[2] / 2, v[1] + v[3] / 2 }));
             }
-            OfflineSolver.ForcedPath avoid = Solve.FullTasPaths(name);
+            OfflineSolver.ForcedPath avoid = Solve.FullTasPaths(name, null, labels);
             Dictionary<long, float> visits = (FullTas.StartChanged(dir, name, FullTas.StartKey(header).ToString("x16")) ? null
                 : FullTas.ReadVisits(FullTas.VisitsFile(dir, name), labels)) ?? new Dictionary<long, float>();
             const float cell = FullTas.VisitCell;
@@ -323,7 +323,8 @@ namespace IGTAP.EngineSim.Cli
                 grown = tree.Shapes, treeSteps = tree.Steps,
                 markers = Markers(world.RootElement, origin).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1)
                     .Concat(goals.Select(g => new Marker("goal", "goal " + (g.index - 1) + " " + g.label, Round((g.box[0] + g.box[2]) / 2), Round((g.box[1] + g.box[3]) / 2)))),
-                avoid = avoid.Avoid.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1 }),
+                // Each box and when it cuts: from After goals reached until Until (0: no end), and its one-way sides (OfflineSolver.Box).
+                avoid = avoid.Avoid.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1, b.After, b.Until, b.From }),
                 via = goals.Select(g => g.box),
                 goals = goals.Select(g => new { index = g.index, label = g.label, box = g.box }),
                 routes = paths.Select(p => RouteJson(p, -1)),

@@ -1637,6 +1637,25 @@ options and JSON: [docs/fulltas.md](../docs/fulltas.md#difficulty). `Difficulty.
 its anchors and its same-state test for other commands, `Difficulty.Meter` its whole-route measure for `techs-used` and
 the human classes' score.
 
+`ease <course-trace.json> [route.json] [--seed route.json ...] [--minutes 10] [--search-minutes S] [--slack 1.5] [--max-time S]
+[--class human-nmg] [--rng N]` (`Cli\Ease.cs`) lists easier routes for a human class, slower ones included, to pick from;
+a human class's Improve (`solve --auto --class`, the Optimize tab) runs it with the studio's seeds and writes its lowest
+score to offline-best when it beats every seed's. The `--auto` loop couldn't trade time for ease: its windows rank finds
+by time, and difficulty only judges whole routes at the merge, so every find was cut as tight as the fastest. `ease`
+searches on the difficulty itself. Breadth: the offline solver, unseeded, with
+only digital sticks and inputs 3+ ticks apart (`OfflineSolver.Accept`), keeps every finish up to the slack behind its
+best (`FinishedRun`, `LosingSlack`), groups them by way (the walls and floors they settle on) and measures each way's
+fastest; with no finish after a quarter of its minutes it gives the rest to the depth. Depth: from every seed that
+finishes as a human class plays it (each also with its part tilts snapped) and those, edits near each route's frame-perfect inputs and back-to-back pairs
+(an input moved, a stick change dropped or changed, a press dropped, the rest of the route held later or brought
+sooner), each child that finishes as a human class under the time limit measured. The routes no other beats on time,
+frame-perfect inputs and back-to-back pairs at once are measured again as the gate does, listed and written to
+`human-finds\<course>_<caps>-<class>\`; a pick copied to `offline-best\<course>_<caps>-<class>-<score>.json` is judged by
+the plugin's gate. On 2026-10-06, Course 2 `WJ` in 12 minutes from `2_WJ human-nmg 51.78` (2.78 s, 5 frame-perfect, 1
+back-to-back): 2.84 s, 3 frame-perfect, 0 back-to-back, human-nmg 21.84 (saved for both human classes). The breadth
+found a million finishes on its first run (none easier) and none on any run since, unseeded and unfiltered alike: cause
+not found.
+
 ## Rules
 
 - Nothing here changes how the game or the plugin behave; the plugin only gained read-only export endpoints and

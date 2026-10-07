@@ -532,6 +532,27 @@
       "drawn": true,
       "avoid": [[2135.9, 1687.0, 4115.9, 3234.3], [4612.8, 2437.0, 4989.4, 2697.9], [5008.9, 1730.9, 5204.7, 2171.4]],
       "via": []
+    },
+    {
+      "fulltas": ["Zip%"],
+      "note": "Drawn on the Full-TAS map.",
+      "drawn": true,
+      "avoid": [[26776.8, -623.1, 28025.4, 845.6]],
+      "optional": [
+        {
+          "name": "for buy:buyfree6a",
+          "note": "Drawn on the Full-TAS map: cuts only while a run heads for buy:buyfree6a.",
+          "for": "buy:buyfree6a",
+          "avoid": [[18598.9, -633.4, 20070.4, 1171.9], [21524.2, -633.0, 21776.8, 99.5]]
+        },
+        {
+          "name": "after buy:buyfree6d from left+right+bottom",
+          "note": "Drawn on the Full-TAS map: cuts once a run has reached buy:buyfree6d (goal 507; heading for buy:buyfree6c, goal 508, and on), only a move into it across its left+right+bottom side: entered from the top only.",
+          "after": "buy:buyfree6d",
+          "from": "left+right+bottom",
+          "avoid": [[18096.7, -162.9, 18599.9, 144.6]]
+        }
+      ]
     }
   ]
 }

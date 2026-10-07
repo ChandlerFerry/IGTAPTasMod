@@ -107,7 +107,7 @@ namespace IGTAP.EngineSim.Cli
             public bool Buying;
         }
 
-        static readonly string[] AutoLevers = { "polish", "window", "lookahead", "span", "dropreset", "graft", "plan", "waste" };
+        static readonly string[] AutoLevers = { "polish", "window", "lookahead", "span", "dropreset", "graft", "plan", "waste", "place" };
         // A lever's share of a goal's expected headroom it is credited with before it has run there (the bandit's prior).
         static readonly Dictionary<string, double> LeverPrior = new Dictionary<string, double>
         {
@@ -116,6 +116,8 @@ namespace IGTAP.EngineSim.Cli
             ["polish"] = .15, ["window"] = .2, ["lookahead"] = .3, ["span"] = .45, ["dropreset"] = .15, ["graft"] = .6, ["plan"] = .3,
             // Of the waste audit's ticks at the goal (FullTasAutoWaste.cs), not of the expected headroom.
             ["waste"] = .5,
+            // Zip%'s goal 511 (2026-10-06): bonus 11's route spliced in by place and a pauselift on the find's climb dash.
+            ["place"] = .2,
         };
         // Expected headroom from each signal: another known route did it (proven), the best's own slow stretches, the bound.
         const double ProvenWeight = .6, DeficitWeight = .3, GapWeight = .05;
@@ -144,8 +146,20 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>--focus a-b: the scheduler's regions and every lever's arms are goals a..b only (a pull's window starts there);
         /// combine still splices known routes anywhere. Default: every goal.</summary>
         int _focusFrom = 1, _focusTo = int.MaxValue;
+        /// <summary>--focus was given: the same few windows come round again and again, so each resumes its search (RunWindows).</summary>
+        bool _focused;
 
         bool InFocus(int k) { return k >= _focusFrom && k <= _focusTo; }
+
+        /// <summary>The goals after a focus whose waits its changes move: a faster focus arrives sooner, and the time comes back as
+        /// a wait for the Cash at the buys after it, which the idle passes move under the box and re-time.</summary>
+        // ponytail: a fixed reach; measure where the Cash the focus moves is next waited for if 10 goals cut a wait short.
+        const int IdleReach = 10;
+
+        /// <summary>The goals the idle passes (--parts idle) walk: the focus and the IdleReach goals after it, every goal without one.
+        /// IdlePull walks its buys one by one on one thread: over Zip%'s whole 630-goal run it was still going after 7 minutes,
+        /// before any focused window ran.</summary>
+        bool InIdleReach(int k) { return k >= _focusFrom && k <= (long)_focusTo + IdleReach; }
 
         /// <summary>--focus a-b (or a): the goals --auto and --reset-study work on; every goal without it. Whether it was given.</summary>
         bool ReadFocus(string[] args)
@@ -190,6 +204,8 @@ namespace IGTAP.EngineSim.Cli
             if (_course != null) _parts.Remove("goals");
             // A class keeps the run's goals: only the major record adopts other goals (the gate refuses a class route with them).
             if (Classed && _parts.Remove("goals")) Log($"auto: {Glitches.Key(_class)}: the goals part is off (a class keeps the run's goals)");
+            // A best that misses goals is improved through the goals it reaches (below): the goals part edits the list it counts.
+            if (_best.Progress < _goals && _parts.Remove("goals")) Log("auto: the best misses goals: the goals part is off");
             // --parts goals: a run file whose goals an earlier --auto adopted from this trace's goals runs on them.
             if (Part("goals")) ResumeAdoptedGoals();
             // The cash goals GoalsRefused lets a goal list add, drop or move (a planned list that skips bonus 1, a stray fit).
@@ -203,8 +219,15 @@ namespace IGTAP.EngineSim.Cli
                     _best = r;
                     WriteRunFile(r);
                 }
+            if (_best.Progress == 0)
+                throw new InvalidOperationException($"--auto improves a route; the best reaches none of the {_goals} goals (run the solve with --unsolved first)");
+            // A best that misses goals is improved through the goals it reaches, as if they were the run: every lever, wait and repair
+            // works there as on a complete route, and no record is written or submitted (Commit).
             if (_best.Progress < _goals)
-                throw new InvalidOperationException($"--auto improves a complete route; the best reaches {_best.Progress} of {_goals} goals (run the solve with --unsolved first)");
+            {
+                Log($"auto: the best reaches {_best.Progress} of {_goals} goals: improving those (the rest are the reach search's)");
+                _goals = _best.Progress;
+            }
             // A course class's start is a kept best too (CourseAuto writes it for the class's record): the gate knows only offline-best files.
             if (_course?.Human != null) _committed?.Invoke(_best, "start");
             // A repair chases the lead its window found: it gets --repair-cpu-per-tick CPU seconds per tick of that lead and is dropped
@@ -220,7 +243,7 @@ namespace IGTAP.EngineSim.Cli
             _combineRepairMinutes = Solve.Option(args, "--combine-repair-minutes", _tailMinutes / 3);
             _stretchMinutes = Solve.Option(args, "--stretch-minutes", _stretchMinutes);
             // A focus is goals picked by number: the goals part, which renumbers them, stays off.
-            bool focused = ReadFocus(args);
+            bool focused = _focused = ReadFocus(args);
             if (focused && _parts.Remove("goals")) Log("auto: --focus: the goals part is off (it edits the goal list the focus numbers)");
             string dir = Path.GetDirectoryName(Path.GetFullPath(_trace));
             _autoLog = Path.Combine(dir, "fulltas", _runKey + ".auto.jsonl");
@@ -233,6 +256,14 @@ namespace IGTAP.EngineSim.Cli
             _hopeless = Hopeless;
             _repairBegin = RepairBegin;
             _collect = (r, how) => Collect(r, $"{how} #{_pullNo}");
+            // --pull lever@k: one pull of a lever at goal k with the loop's budgets (a new best is merged, repaired and written); then stops.
+            string pull = Solve.Option(args, "--pull", (string)null);
+            if (pull != null)
+            {
+                string[] arm = pull.Split('@');
+                Log($"auto: pull {pull}: {Pull(new Arm { Lever = arm[0], Goal = int.Parse(arm[1]) }, _windowMinutes)}; best {Describe(_best)}");
+                return;
+            }
             _autoCpu0 = CpuSeconds();
             _autoWall0 = _clock.Elapsed;
             Route start = _best;
@@ -279,6 +310,16 @@ namespace IGTAP.EngineSim.Cli
                     .OrderByDescending(r => r.Expected).Select(r => r.K));
             }
             Probe();
+            // --place-idles: the idle part once over every goal the focus reaches (the waits re-timed, filler made standing, every wait
+            // for Cash stood under its box; a route as fast and standing more is kept), the run file written with its idles; then stops.
+            if (args.Contains("--place-idles"))
+            {
+                Route before = _best;
+                IdlePull();
+                WriteRunFile(_best);
+                Log($"auto: --place-idles: {Describe(before)} -> {Describe(_best)}, idle ticks {IdleTicks(before)} -> {IdleTicks(_best)}");
+                return;
+            }
             double probeMinutes = Solve.Option(args, "--probe-minutes", _windowMinutes / 2);
             while (!TimeUp)
             {
@@ -707,8 +748,9 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// Window arms side by side from the same best, each an OfflineSolver on its share of the threads (no archive: a short search
-        /// from the goal state), then merged one at a time, the latest window first so each later gain lands on an unchanged prefix;
+        /// Window arms side by side from the same best, each an OfflineSolver on its share of the threads (a short search from the
+        /// goal state, its workers restoring the stored state there rather than replaying the run; under a --focus it resumes and
+        /// saves its archive, as a solve's window does), then merged one at a time, the latest window first so each later gain lands on an unchanged prefix;
         /// an earlier window's merge replays the tail with those gains in it, and re-finds it (Repair) where it no longer follows.
         /// </summary>
         void RunWindows(List<(Arm arm, double budget, double score)> batch)
@@ -718,7 +760,7 @@ namespace IGTAP.EngineSim.Cli
             int per = Math.Max(1, _threads / batch.Count);
             double c0 = CpuSeconds();
             TimeSpan w0 = _clock.Elapsed;
-            var jobs = new List<(Arm arm, int pull, double budget, double score, int k, int limit, int prefixLength, long baseline, OfflineSolver solver, Thread[] threads, List<List<InputTick>> found, long[] bestAt)>();
+            var jobs = new List<(Arm arm, int pull, double budget, double score, int k, int limit, int prefixLength, long baseline, OfflineSolver solver, Thread[] threads, List<List<InputTick>> found, long[] bestAt, string archive)>();
             foreach (var (arm, budget, score) in batch)
             {
                 StartPull(arm, budget, score);
@@ -726,22 +768,36 @@ namespace IGTAP.EngineSim.Cli
                 List<InputTick> prefix = best.Inputs.GetRange(0, prefixLength);
                 // A class's baseline is the best's score inside the window, which its solver's finds are priced against (Allowance).
                 long baseline = Allowance(best, k - 1, limit, best.GoalPhysics[limit - 1]);
+                // The state at the window's start, stored once: each worker restores it (a replay of Zip%'s 30,000-input prefix per
+                // worker took a 3 s probe's whole budget).
+                ulong prefixHash = SnapshotIndex.Hash(prefix, prefix.Count);
+                if (prefix.Count > 0 && !_states.Index.TryGet(prefixHash, out _))
+                {
+                    _eval.SetStart(_origin, 0);
+                    _eval.Goals.Limit = _goals;
+                    try { _states.ReplayAndRecord(_eval, best.Inputs, prefixLength, new SnapshotStore(_eval)); }
+                    catch (NotSupportedException) { }   // a state that can't be stored: the workers replay to it
+                }
                 Func<Simulation> create = () =>
                 {
                     Simulation s = _create();
                     s.Goals.Limit = limit;
                     if (prefix.Count == 0) return s;
-                    SimSnapshot at = s.Advance(prefix) ?? throw new InvalidOperationException("the prefix ended before its last input");
+                    SimSnapshot at = _states.Load(new SnapshotStore(s), prefixHash, 0)
+                        ?? s.Advance(prefix) ?? throw new InvalidOperationException("the prefix ended before its last input");
                     s.SetStart(at, prefix.Count);
                     return s;
                 };
                 var labels = _labels.Skip(k - 1).Take(limit - k + 1).ToList();
+                string archiveFile = _focused ? Path.Combine(_archiveDir, k + "-" + limit + "-" + ArchiveHash(prefix, labels).ToString("x16") + (_noResets ? "-noreset" : "") + ".json") : null;
+                OfflineSolver.Memory memory = archiveFile == null || _fresh ? null : Solve.LoadMemory(archiveFile);
                 var windowSeeds = new List<List<InputTick>> { best.Inputs.Skip(prefixLength).ToList() };
                 windowSeeds.AddRange(MacroSeeds(best, k, prefixLength));
                 // --parts waste and grafts (FullTasAutoWaste.cs): the undone findings at goal k as seeds; the tech grafts.
                 windowSeeds.AddRange(WasteSeeds(best, k, prefixLength));
                 var solver = new OfflineSolver(create, WindowCaps(_runGoals.Goals.Skip(k - 1).Take(limit - k + 1)), windowSeeds,
-                    null, Solve.FullTasPaths(_name, labels, _labels), VisitCell, WindowGrafts(k, limit));
+                    memory, Solve.FullTasPaths(_name, labels, _labels), VisitCell, WindowGrafts(k, limit));
+                if (memory != null) Log($"auto: window {k}-{limit} resumes {Path.GetFileName(archiveFile)}: {memory.Sources.Sum(m => m.Cells.Count)} cells, {memory.Runs} runs before");
                 TuneGrafts(solver, k, limit, prefixLength);
                 solver.Penalty = WindowPenalty(k - 1);
                 var found = new List<List<InputTick>>();
@@ -758,14 +814,19 @@ namespace IGTAP.EngineSim.Cli
                             Log($"auto: window {k}-{limit} find {FindText(solver, inputs, atGoal)} against the best's {(baseline == long.MaxValue ? "(any: it has a major span here)" : baseline.ToString())}");
                     }
                 };
-                jobs.Add((arm, _pullNo, budget, score, k, limit, prefixLength, baseline, solver, solver.Start(per), found, bestAt));
+                jobs.Add((arm, _pullNo, budget, score, k, limit, prefixLength, baseline, solver, solver.Start(per), found, bestAt, archiveFile));
             }
             var stopped = new bool[jobs.Count];
             while (stopped.Any(x => !x))
             {
                 Thread.Sleep(250);
                 for (int i = 0; i < jobs.Count; i++)
-                    if (!stopped[i] && (TimeUp || (_clock.Elapsed - w0).TotalMinutes >= jobs[i].budget)) { jobs[i].solver.Stop(); stopped[i] = true; }
+                    if (!stopped[i] && (TimeUp || (_clock.Elapsed - w0).TotalMinutes >= jobs[i].budget))
+                    {
+                        if (jobs[i].archive != null) Solve.SaveMemory(jobs[i].archive, jobs[i].solver.Export(10000));
+                        jobs[i].solver.Stop();
+                        stopped[i] = true;
+                    }
             }
             foreach (var j in jobs) foreach (Thread t in j.threads) t.Join(60000);
             foreach (var j in jobs) GraftTally(j.solver);
@@ -896,6 +957,7 @@ namespace IGTAP.EngineSim.Cli
                 case "plan": return !_planDead.Contains(k);
                 case "polish": return !Polished(k);
                 case "waste": return WasteAt(k) > 0;
+                case "place": return !PlaceDone(k);
                 default: return true;
             }
         }
@@ -921,6 +983,7 @@ namespace IGTAP.EngineSim.Cli
                 case "graft": return PullGraft(k);
                 case "plan": return PullPlan(k, budget);
                 case "waste": return PullWindow(k, WindowLimit(arm), budget);
+                case "place": return PullPlace(k, budget);
             }
             return "unknown lever";
         }

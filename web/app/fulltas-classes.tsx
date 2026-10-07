@@ -7,7 +7,7 @@ import { request } from "./studio-socket";
 /** A Full-TAS run class: the techs its routes may use and how its best is ranked (enginesim Glitches.RunClass). */
 export type FullTasClass = "major" | "nmg" | "human-major" | "human-nmg";
 /** The human score's weights: seconds added per spike-grace tick, per frame-perfect input and per forced back-to-back pair
- *  of a whole route's difficulty (fulltas.json `human`); 0 for both of the last two: difficulty isn't scored. */
+ *  of a whole route's difficulty (runs/<run>.json `human`); 0 for both of the last two: difficulty isn't scored. */
 export type HumanWeights = { grace: number; framePerfect: number; backToBack: number };
 /** One occurrence of an nmg or major tech in a route: its techs.json id and category, and the tick it starts on. */
 export type GlitchSpan = { tech: string; category: string; tick: number; physics: number };
@@ -164,7 +164,7 @@ export function FullTasClasses({ run, queue, difficulty, busy, complete, onComma
     });
   return <div className="ftClasses">
     <div className="panelTitle"><div><p className="eyebrow">CLASSES</p><h2>Bests by class</h2></div></div>
-    <p className="hint">Score = live s + {w.grace} × spike-grace ticks + {w.framePerfect} × frame-perfect inputs + {w.backToBack} × back-to-back pairs (humanize&apos;s version of the route). A run&apos;s own weights: <code>&quot;human&quot;</code> in fulltas.json.</p>
+    <p className="hint">Score = live s + {w.grace} × spike-grace ticks + {w.framePerfect} × frame-perfect inputs + {w.backToBack} × back-to-back pairs (humanize&apos;s version of the route). A run&apos;s own weights: <code>&quot;human&quot;</code> in runs/&lt;run&gt;.json.</p>
     <div className="resultTable ftClassTable">
       <div className="tableHead"><span>Class</span><span>Time</span><span>Score</span><span title="Inputs that work on one tick only.">Frame-perfect</span><span title="Actions fewer than 3 ticks apart however the inputs are timed inside their windows.">Back-to-back</span><span>Major</span><span>NMG</span><span>Grace</span><span/></div>
       {CLASSES.map(c => {

@@ -219,7 +219,7 @@ namespace IGTAPTasMod
         public int Next;
         public int Limit;
         int _bought;
-        // Loose buys (fulltas.json "buys": "loose"; null when strict): every box a buy or reward goal names, the last goal that
+        // Loose buys (runs/<run>.json "buys": "loose"; null when strict): every box a buy or reward goal names, the last goal that
         // names it, and the boxes bought before their goal came up (bit per box), which count toward it once it's current.
         string[] _named;
         int[] _lastNaming;

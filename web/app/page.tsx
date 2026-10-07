@@ -55,8 +55,10 @@ type Direction = "forwards" | "backwards";
 type HumanCourseClass = "human-major" | "human-nmg";
 const HUMAN_LABEL: Record<HumanCourseClass, string> = { "human-major": "Human major", "human-nmg": "Human NMG" };
 type CourseTarget = { course: number; capabilities: string; farm: boolean; direction?: Direction; class?: HumanCourseClass };
+/** A buy goal's wait for its Cash at its box (enginesim FullTasIdles.cs): [physics tick, held frames] at arrival and when the Cash is there. */
+type FullTasIdle = { goal: number; arrive: [number, number]; afford: [number, number] };
 type FullTasRun = { name: string; start?: string | null; savestate?: string | null; section: "complete" | "wip" | "test"; goals: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
-  offline?: { reached: number; time: number; splits: FullTasSplit[]; segments?: number[][] } | null; closest?: { reached: number; next: string | null; distance: number | null; ticks: number } | null; playable?: boolean; traceReady: boolean }
+  offline?: { reached: number; time: number; splits: FullTasSplit[]; segments?: number[][]; idles?: FullTasIdle[] | null } | null; closest?: { reached: number; next: string | null; distance: number | null; ticks: number } | null; playable?: boolean; traceReady: boolean }
   & Partial<Omit<FullTasClassRun, "name">>;
 type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string; queue?: FullTasQueue | null; difficulty?: FullTasDifficultyJob | null };
 type StudioState = {
@@ -160,7 +162,7 @@ export default function Studio() {
 
         {tab === "recordings" && <div className="panel"><div className="panelTitle"><div><p className="eyebrow">RAW FIXED-FRAME CAPTURES</p><h2>Recordings</h2></div><span className="buttonRow"><span className="hint">{state.recording ? "Recording now…" : `${state.recordings.length} saved`}</span><button className="record" disabled={state.running} onClick={() => command(state.recording ? "/record/stop" : "/record/start")}>{state.recording ? "■ Stop recording" : "● Record"}</button></span></div>{state.recording&&<p className="recordingActive">● Recording is active. Finishing the course saves it automatically.</p>}<div className="recordingList">{state.recordings.map(recording=><div className="recordingCard" key={recording.id}><div className="recordingTitle"><div><strong>{recording.name}</strong><small>{new Date(recording.createdUtc).toLocaleString()} · {recording.sampleCount} physics frames · {recording.actionCount} actions</small></div>{recording.courseTimeSeconds>0&&<b>{recording.courseTimeSeconds.toFixed(3)}s</b>}</div><p>{recording.actions.map(action=>`${action.label.replace(/^Exact /,"")} ${action.durationTicks}f`).join(" → ")}</p><div className="buttonRow"><button className="primary" onClick={()=>command("/recordings/create-route",{recordingId:recording.id})}>Create route</button><button title="Name it Course1_To_Course2 or Course2_To_Bonus2: a transition route." onClick={()=>command("/recordings/create-transition",{recordingId:recording.id})}>Create transition</button><button onClick={()=>{const name=window.prompt("Rename recording",recording.name);if(name?.trim())command("/recordings/rename",{recordingId:recording.id,name:name.trim()});}}>Rename</button><button className="danger" onClick={()=>{if(window.confirm(`Delete recording “${recording.name}”?`)) command("/recordings/delete",{recordingId:recording.id});}}>Delete</button></div></div>)}</div>{!state.recordings.length&&!state.recording&&<div className="emptyState"><span className="orbit">●</span><h2>No recordings yet</h2><p>Press Record, play the route, and finish the course.</p></div>}</div>}
 
-        {tab === "fulltas" && <><FullTas fullTas={state.fullTas} running={state.running} onCommand={command} onMap={name => setMapTarget({ course: 0, capabilities: "", optional: [], fulltas: name })}/>{mapTarget?.fulltas && <SolveMap key={`fulltas_${mapTarget.fulltas}`} target={mapTarget} courses={state.courses ?? []} runs={(state.fullTas?.runs ?? []).map(r => r.name)} busy={state.running || !!state.fullTas?.solve.running} onClose={() => setMapTarget(null)}/>}</>}
+        {tab === "fulltas" && <><FullTas fullTas={state.fullTas} running={state.running} onCommand={command} onMap={name => setMapTarget({ course: 0, capabilities: "", optional: [], fulltas: name })}/>{mapTarget?.fulltas && <SolveMap key={`fulltas_${mapTarget.fulltas}`} target={mapTarget} courses={state.courses ?? []} runs={(state.fullTas?.runs ?? []).map(r => r.name)} goals={state.fullTas?.runs.find(r => r.name === mapTarget.fulltas)?.goals} busy={state.running || !!state.fullTas?.solve.running} onClose={() => setMapTarget(null)}/>}</>}
 
         {tab === "tas" && <TasEditor tas={state.tas} routes={state.routes} courses={state.courses ?? []} categories={state.categories} savestates={state.savestates} onCommand={command}
           onImprove={(course, capabilities) => { setCourseTarget({ course, capabilities, farm: false }); setTab("optimize"); }} onPlace={p => { setPlacePrefill(p); setTab("savestates"); }}/>}
@@ -570,9 +572,15 @@ type MapData = { course: number; capabilities: string; label: string; fulltas?: 
 // A Full-TAS run's at: goal: its number in the run's goal list (1-based, as the goals table), its label and its rect (x0, y0, x1, y1).
 type MapGoal = { index: number; label: string; box: number[] };
 type MapLayers = { art: boolean; background: boolean; tree: boolean; shapes: boolean; explored: boolean; boxes: boolean; markers: boolean } & Record<`box:${BoxCategory}`, boolean>;
+// A Full-TAS avoid box (the map's x0, y0, x1, y1, after, until, from; OfflineSolver.Box): it cuts at g goals reached (heading
+// for goal g as the studio numbers them) from After until Until (0: no end), entering across From's sides (bits in SIDES' order).
+const SIDES = ["left", "right", "bottom", "top"];
+const avoidLive = (b: number[], g: number) => (!b[4] || g >= b[4]) && (!b[5] || g < b[5]);
+const avoidText = (b: number[]) => (b[5] ? `goal ${b[4]}` : b[4] ? `goals ${b[4]}+` : "every goal")
+  + (b[6] ? ` · enter from ${SIDES.filter((_, i) => !(b[6] & 1 << i)).join("/") || "inside only"}` : "");
 const ROUTE_COLORS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#81c784", "#f06292", "#fff176", "#4db6ac", "#9575cd"];
 
-function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:Course[];runs?:string[];busy?:boolean;onClose:()=>void}) {
+function SolveMap({target,courses,runs,goals,busy,onClose}:{target:MapTarget;courses:Course[];runs?:string[];goals?:string[];busy?:boolean;onClose:()=>void}) {
   const [data, setData] = useState<MapData | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState("");
@@ -639,6 +647,16 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   const [drawing, setDrawing] = useState(false);
   const [sketch, setSketch] = useState<number[] | null>(null);
   const [sketchRuns, setSketchRuns] = useState<string[]>(target.fulltas ? [target.fulltas] : []);
+  // Full-TAS: drawing stays on and each box goes in as drawn, cutting for every goal, only while heading for goal
+  // `avoidGoal` or from it on, entered across any side but the open ones (none: any tick inside). The goal also fades
+  // the boxes that don't cut there.
+  const [avoidScope, setAvoidScope] = useState<"every" | "only" | "from">("every");
+  const [avoidGoal, setAvoidGoal] = useState("");
+  const [avoidOpen, setAvoidOpen] = useState<string[]>([]);
+  const [hotAvoid, setHotAvoid] = useState(-1);
+  const focus = target.fulltas && avoidGoal.trim() !== "" && Number.isInteger(Number(avoidGoal)) ? Number(avoidGoal) : null;
+  const drawBlock = !sketchRuns.length ? "Pick a run for the boxes." : avoidScope !== "every" && focus == null ? "Type a goal number, or click a goal's green box while drawing."
+    : avoidOpen.length === SIDES.length ? "A box open on every side cuts nothing." : "";
   // Course maps: the avoid box's optional block name (empty: cut for every solve) and whether that block starts on.
   const [sketchName, setSketchName] = useState("");
   const [sketchOn, setSketchOn] = useState(false);
@@ -780,11 +798,23 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       g.lineWidth = 3 * dpr; g.strokeStyle = "#07111f"; g.strokeText(String(t.step || "?"), sx, sy); g.fillStyle = GROWN_COLOR; g.fillText(String(t.step || "?"), sx, sy);
       g.restore();
     }
-    if (layers.boxes) for (const [boxes, color] of [[data.avoid, "#ff3030"], [data.via, "#3ddc97"]] as [number[][], string][])
-      for (const [x0, y0, x1, y1] of boxes) {
-        g.fillStyle = color; g.globalAlpha = .16; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1;
-        g.strokeStyle = color; g.lineWidth = 2 * px; g.strokeRect(x0, y0, x1 - x0, y1 - y0);
-      }
+    if (layers.boxes) for (const [x0, y0, x1, y1] of data.via) {
+      g.fillStyle = "#3ddc97"; g.globalAlpha = .16; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1;
+      g.strokeStyle = "#3ddc97"; g.lineWidth = 2 * px; g.strokeRect(x0, y0, x1 - x0, y1 - y0);
+    }
+    // Avoid boxes; one not cutting at the picked goal faded, a one-way box's open sides dashed green.
+    if (layers.boxes) for (const b of data.avoid) {
+      const [x0, y0, x1, y1] = b, from = b[6] ?? 0, a = focus != null && !avoidLive(b, focus) ? .25 : 1;
+      g.fillStyle = "#ff3030"; g.globalAlpha = .16 * a; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = a; g.lineWidth = 2 * px;
+      [[x0, y0, x0, y1], [x1, y0, x1, y1], [x0, y0, x1, y0], [x0, y1, x1, y1]].forEach(([ax, ay, bx, by], i) => {
+        const open = from !== 0 && !(from & 1 << i);
+        g.strokeStyle = open ? "#3ddc97" : "#ff3030"; g.setLineDash(open ? [6 * px, 4 * px] : []);
+        g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx, by); g.stroke();
+      });
+      g.setLineDash([]); g.globalAlpha = 1;
+    }
+    const picked = focus == null ? undefined : data.goals?.find(goal => goal.index - 1 === focus);
+    if (picked) { const [x0, y0, x1, y1] = picked.box; g.strokeStyle = "#ffd54f"; g.lineWidth = 3 * px; g.strokeRect(x0, y0, x1 - x0, y1 - y0); }
     if (layers.boxes) for (const block of data.optional ?? [])
       for (const [boxes, color] of [[block.avoid, "#ff3030"], [block.via, "#3ddc97"]] as [number[][], string][])
         for (const [x0, y0, x1, y1] of boxes) {
@@ -889,7 +919,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       else if (look?.shape === "diamond") { g.beginPath(); g.moveTo(m.x, m.y + s * 1.3); g.lineTo(m.x + s, m.y); g.lineTo(m.x, m.y - s * 1.3); g.lineTo(m.x - s, m.y); g.closePath(); g.fill(); }
       else g.fillRect(m.x - s, m.y - s, 2 * s, 2 * s);
     }
-  }, [data, layers, worldState, markers, art, artLoads, hidden, colors, latest, ghost, ghostCells, target.waypoints, target.picked]);
+  }, [data, layers, worldState, markers, art, artLoads, hidden, colors, latest, ghost, ghostCells, target.waypoints, target.picked, focus]);
   const baseCache = useRef<{ key: string; paint: typeof paintBase; canvas: HTMLCanvasElement } | null>(null);
   const draw = useCallback(() => {
     const c = canvas.current; if (!c || !data) return;
@@ -921,6 +951,8 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       g.fillStyle = "#3ddc97"; g.globalAlpha = .35; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1;
       g.strokeStyle = "#ffffff"; g.lineWidth = 2 * px; g.setLineDash([6 * px, 4 * px]); g.strokeRect(x0, y0, x1 - x0, y1 - y0); g.setLineDash([]);
     }
+    const hot = hotAvoid >= 0 ? data.avoid[hotAvoid] : undefined;
+    if (hot) { g.strokeStyle = "#ffffff"; g.lineWidth = 3 * px; g.strokeRect(hot[0], hot[1], hot[2] - hot[0], hot[3] - hot[1]); }
     const z = hotZip >= 0 ? data.zips?.[hotZip] : undefined;
     if (z) {
       g.fillStyle = "#ffb74d"; g.globalAlpha = .18;
@@ -934,7 +966,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       g.strokeStyle = "#ffb74d"; g.lineWidth = 1.5 * px;
       for (const [x, y] of z.path.slice(1)) g.strokeRect(x - bw / 2, y - bh / 2, bw, bh);
     }
-  }, [data, paintBase, sketch, moved, hotZip]);
+  }, [data, paintBase, sketch, moved, hotZip, hotAvoid]);
   useEffect(() => { draw(); }, [draw]);
   useEffect(() => { window.addEventListener("resize", draw); return () => window.removeEventListener("resize", draw); }, [draw]);
   useEffect(() => {
@@ -954,14 +986,16 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     const v = view.current, rect = e.currentTarget.getBoundingClientRect();
     return { x: v.ox + (e.clientX - rect.left) / v.scale, y: v.oy - (e.clientY - rect.top) / v.scale };
   };
+  // The goal under the pointer: the smallest rect holding it.
+  const goalAt = (p: { x: number; y: number }, boxOf = (goal: MapGoal) => goal.box) => (data?.goals ?? [])
+    .map(goal => ({ goal, box: boxOf(goal) }))
+    .filter(({ box }) => p.x >= box[0] && p.x <= box[2] && p.y >= box[1] && p.y <= box[3])
+    .sort((a, b) => (a.box[2] - a.box[0]) * (a.box[3] - a.box[1]) - (b.box[2] - b.box[0]) * (b.box[3] - b.box[1]))[0];
   const onDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     panned.current = false;
     if (moving) {
-      // The goal under the pointer: the smallest rect holding it (a goal being moved is where it was dragged to).
-      const p = world(e), hit = (data?.goals ?? [])
-        .map(goal => ({ goal, box: moved?.goal.index === goal.index ? moved.box : goal.box }))
-        .filter(({ box }) => p.x >= box[0] && p.x <= box[2] && p.y >= box[1] && p.y <= box[3])
-        .sort((a, b) => (a.box[2] - a.box[0]) * (a.box[3] - a.box[1]) - (b.box[2] - b.box[0]) * (b.box[3] - b.box[1]))[0];
+      // A goal being moved is where it was dragged to.
+      const p = world(e), hit = goalAt(p, goal => moved?.goal.index === goal.index ? moved.box : goal.box);
       if (hit) { grab.current = { goal: hit.goal, box: hit.box, x: p.x, y: p.y }; setMoved({ goal: hit.goal, box: hit.box }); return; }
     }
     if (!drawing) { drag.current = { x: e.clientX, y: e.clientY }; return; }
@@ -972,10 +1006,16 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   const onUp = () => {
     drag.current = null;
     grab.current = null;
-    if (!sketchStart.current) return;
+    const start = sketchStart.current;
+    if (!start) return;
     sketchStart.current = null;
-    setDrawing(false);
-    setSketch(s => s && Math.abs(s[2] - s[0]) > 1 && Math.abs(s[3] - s[1]) > 1 ? s : null);
+    const s = sketch && Math.abs(sketch[2] - sketch[0]) > 1 && Math.abs(sketch[3] - sketch[1]) > 1 ? sketch : null;
+    if (!data?.fulltas) { setDrawing(false); setSketch(s); return; }
+    // Full-TAS: drawing stays on; a box goes in at once, a tap on a goal's box picks its number.
+    if (!s) { setSketch(null); const hit = goalAt(start); if (hit) setAvoidGoal(String(hit.goal.index - 1)); return; }
+    if (drawBlock) { setSketch(null); setFailure(drawBlock); return; }
+    editAvoid(s, sketchRuns, false, { goal: avoidScope === "only" ? String(focus) : "", after: avoidScope === "from" && focus ? String(focus - 1) : "",
+      from: avoidOpen.length ? SIDES.filter(side => !avoidOpen.includes(side)).join("+") : "" });
   };
   const onMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const v = view.current;
@@ -1003,9 +1043,9 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
     }
     if (near) { setBoxTip(near); setCursor({ x: p.x, y: p.y, marker: boxTitle(near) }); }
   };
-  const editAvoid = async (box: number[], names: string[], remove: boolean) => {
+  const editAvoid = async (box: number[], names: string[], remove: boolean, when: { goal?: string; after?: string; from?: string } = {}) => {
     setSaving(true); setFailure("");
-    try { await request("/fulltas/avoid", { box, runs: names, remove }); if (!remove) setSketch(null); await load(); }
+    try { await request("/fulltas/avoid", { box: box.slice(0, 4), runs: names, remove, ...when }); if (!remove) setSketch(null); await load(); }
     catch (e) { setFailure(e instanceof Error ? e.message : String(e)); }
     finally { setSaving(false); }
   };
@@ -1033,7 +1073,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
   return <div className="panel offlinePanel solveMap"><div className="panelTitle"><div><p className="eyebrow">SEARCH MAP</p><h2>{target.fulltas ? `Full-TAS · ${target.fulltas}` : <>{courseLabel(courses.find(c => c.id === target.course), target.course)} · {target.capabilities}{target.optional.map(n => ` +${n}`).join("")}</>}</h2></div>
     <div className="buttonRow"><button className="secondary" disabled={loading} onClick={() => load()}>{loading ? `Drawing…${progress}` : "Redraw"}</button><button className="secondary" disabled={!data} onClick={() => { if (data) { fit(data); draw(); } }}>Fit</button><button className="secondary" onClick={onClose}>Close</button></div></div>
     {target.fulltas
-      ? <><p className="lede">Shows this run&apos;s search windows, best route, goals and avoid boxes.</p><details className="howTo"><summary>How it works</summary><ul><li>Color: when a window first arrived; blue early, red late.</li><li>Gold: best so far, replayed from the run&apos;s start.</li><li>Green boxes: <code>at:</code> goals; red: avoid boxes.</li><li>Avoid boxes come from forced-paths.json rules naming this run.</li><li>Draw avoid drags a box; Move goals drags goal boxes.</li><li>Wheel zooms, drag pans; coordinates match forced-paths.json and <code>at:</code>.</li></ul></details></>
+      ? <><p className="lede">Shows this run&apos;s search windows, best route, goals and avoid boxes.</p><details className="howTo"><summary>How it works</summary><ul><li>Color: when a window first arrived; blue early, red late.</li><li>Gold: best so far, replayed from the run&apos;s start.</li><li>Green boxes: <code>at:</code> goals; red: avoid boxes.</li><li>Avoid boxes come from forced-paths.json rules naming this run.</li><li>Draw avoid: set when a box cuts and its open sides, then drag boxes; each is saved as drawn. Click a goal&apos;s box to pick its number.</li><li>A one-way box&apos;s open sides are dashed green: runs may enter there.</li><li>Boxes that don&apos;t cut at the picked goal are faded; the gold box is that goal.</li><li>Move goals drags goal boxes.</li><li>Wheel zooms, drag pans; coordinates match forced-paths.json and <code>at:</code>.</li></ul></details></>
       : <><p className="lede">The solver&apos;s level, explored area, saved routes and forced-path boxes.</p><details className="howTo"><summary>How it works</summary><ul><li>Color: fastest time reaching each spot; blue early, red late.</li><li>Grey: reached only with the timer off.</li><li>Gold: fastest offline best. Ring: a route&apos;s timer start.</li><li>Red boxes cut runs; dashed boxes are optional and off.</li><li>Numbered green boxes: Improve&apos;s waypoints; gold: the picked ones.</li><li>Draw avoid drags a cut box; name it for a block.</li><li>Ghost compare shows two routes&apos; divergence and arrival deltas.</li></ul></details></>}
     {failure && <p className="mapFailure">{failure}</p>}
     <div className="mapLayers">
@@ -1043,7 +1083,7 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       {data?.states && <StatePicker states={data.states} pick={worldState} onPick={setWorldState} className="passLoop"/>}
       {data && <span className="hint">{data.fulltas ? `${data.explored.cells.length.toLocaleString()} explored cells` : `${data.explored.prefixes.toLocaleString()} explore prefixes · ${data.explored.runs.toLocaleString()} runs`}</span>}
       {data && <span className="hint">{data.fulltas ? "run time" : "timer"} at first arrival: <span style={{ display: "inline-block", width: 90, height: 8, verticalAlign: "middle", background: "linear-gradient(90deg,hsl(230,90%,55%),hsl(172,90%,55%),hsl(115,90%,55%),hsl(57,90%,55%),hsl(0,90%,55%))" }}/> 0–{latest.toFixed(1)}s{!data.fulltas && <> · <span style={{ display: "inline-block", width: 8, height: 8, background: "#34383f", verticalAlign: "middle" }}/> timer off</>}</span>}
-      {data && <button className={drawing ? "primary" : "secondary"} disabled={saving} title="Drag a box: search runs entering it are cut." onClick={() => { setDrawing(d => !d); setSketch(null); setMoving(false); }}>{drawing ? "Drag a box…" : "Draw avoid"}</button>}
+      {data && !data.fulltas && <button className={drawing ? "primary" : "secondary"} disabled={saving} title="Drag a box: search runs entering it are cut." onClick={() => { setDrawing(d => !d); setSketch(null); setMoving(false); }}>{drawing ? "Drag a box…" : "Draw avoid"}</button>}
       {data?.fulltas && <button className={moving ? "primary" : "secondary"} disabled={saving} title="Drag a goal's green box; it keeps its size." onClick={() => { setMoving(m => !m); setMoved(null); setDrawing(false); setSketch(null); }}>{moving ? "Drag a goal…" : "Move goals"}</button>}
     </div>
     <div className="ghostBar">
@@ -1073,29 +1113,49 @@ function SolveMap({target,courses,runs,busy,onClose}:{target:MapTarget;courses:C
       </span>}
     </div>
     {ghostError && <p className="mapFailure">{ghostError}</p>}
+    {data?.fulltas && <div className="ghostBar">
+      <strong>Avoid boxes</strong>
+      <button className={drawing ? "primary" : "secondary"} title="Drag boxes on the map: each is saved as drawn, with these settings." onClick={() => { setDrawing(d => !d); setSketch(null); setMoving(false); setMoved(null); }}>{drawing ? "Stop drawing" : "Draw avoid"}</button>
+      <label className="ghostPick">Cuts
+        <select value={avoidScope} onChange={e => setAvoidScope(e.target.value as typeof avoidScope)}>
+          <option value="every">for every goal</option>
+          <option value="only">only heading for goal</option>
+          <option value="from">from goal on</option>
+        </select>
+      </label>
+      <label className="ghostPick" title="Its number as the goals table shows it. Also fades the boxes that don't cut there.">Goal
+        <input type="number" min={0} style={{ width: 80 }} placeholder="any" value={avoidGoal} onChange={e => setAvoidGoal(e.target.value)}/>
+      </label>
+      {focus != null && <code className="hint">{goals?.[focus] ?? "no such goal"}</code>}
+      <span className="ghostPick" title="Runs may enter the box across these sides; it cuts entering across the rest. None: any tick inside is cut.">Open sides
+        {SIDES.map(side => <label key={side} className="passLoop"><input type="checkbox" checked={avoidOpen.includes(side)} onChange={() => setAvoidOpen(o => o.includes(side) ? o.filter(k => k !== side) : [...o, side])}/>{side}</label>)}
+      </span>
+      {(runs?.length ?? 0) > 1 && <span className="ghostPick">Runs
+        {runs!.map(n => <label key={n} className="passLoop"><input type="checkbox" checked={sketchRuns.includes(n)} onChange={() => setSketchRuns(r => r.includes(n) ? r.filter(k => k !== n) : [...r, n])}/>{n}</label>)}
+      </span>}
+      {drawing && drawBlock && <span className="hint">{drawBlock}</span>}
+    </div>}
     <canvas ref={canvas} className="mapCanvas" style={drawing ? { cursor: "crosshair" } : moving ? { cursor: "move" } : undefined} onMouseDown={onDown} onMouseUp={onUp} onMouseLeave={() => { onUp(); setCursor(null); }} onMouseMove={onMove} onClick={onClick}/>
     {boxTip?.box && <div className="mapReadout"><strong>{boxTip.name}</strong> · {BOX_KINDS[boxTip.box.category].text} · gives {boxTip.box.gives} · {boxTip.box.upgrade} · {boxCost(boxTip.box)} · {boxTip.box.cap === 1 ? "one-off" : `repeatable ×${boxTip.box.cap}`} · {boxTip.box.secret ? `secret${boxTip.box.number ? ` #${boxTip.box.number}` : ""} · ` : ""}{boxTip.box.ach ? `${boxTip.box.ach} · ` : ""}{boxTip.box.tree ? "tree upgrade · " : ""}{boxTip.box.fresh ? "in the fresh world" : "only later"}
       <button className="secondary" onClick={() => setBoxTip(null)}>×</button></div>}
     <div className="mapReadout">{cursor ? <>world {cursor.x.toFixed(1)}, {cursor.y.toFixed(1)}{cursor.reached != null && <> · {cursor.reached < 0 ? "reached only with the timer off" : `first reach ${cursor.reached.toFixed(2)}s`}</>}{cursor.delta != null && <> · Δ {cursor.delta > 0 ? "+" : ""}{cursor.delta.toFixed(2)}s (B − A)</>}{cursor.marker && <> · <strong>{cursor.marker}</strong></>}</> : "Point at the map for coordinates."}</div>
-    {sketch && !sketchStart.current && <div className="buttonRow">
+    {sketch && !sketchStart.current && !data?.fulltas && <div className="buttonRow">
       <span className="hint">Avoid {boxText(sketch)} for</span>
-      {data?.fulltas ? <>
-        {(runs?.length ? runs : sketchRuns).map(n => <label key={n} className="passLoop"><input type="checkbox" checked={sketchRuns.includes(n)} onChange={() => setSketchRuns(r => r.includes(n) ? r.filter(k => k !== n) : [...r, n])}/>{n}</label>)}
-        <button className="primary" disabled={saving || !sketchRuns.length} onClick={() => editAvoid(sketch, sketchRuns, false)}>Add avoid</button>
-      </> : <>
-        <input placeholder="block name (optional)" value={sketchName} onChange={e => setSketchName(e.target.value)} title="Empty: cut for every solve. Named: a pickable optional block."/>
-        <label className="passLoop" title="Starts on for solves that pick no blocks."><input type="checkbox" disabled={!sketchName.trim()} checked={sketchOn} onChange={e => setSketchOn(e.target.checked)}/>on by default</label>
-        <button className="primary" disabled={saving} onClick={() => editCourseAvoid(sketch, sketchName.trim(), sketchOn, false)}>Add avoid</button>
-      </>}
+      <input placeholder="block name (optional)" value={sketchName} onChange={e => setSketchName(e.target.value)} title="Empty: cut for every solve. Named: a pickable optional block."/>
+      <label className="passLoop" title="Starts on for solves that pick no blocks."><input type="checkbox" disabled={!sketchName.trim()} checked={sketchOn} onChange={e => setSketchOn(e.target.checked)}/>on by default</label>
+      <button className="primary" disabled={saving} onClick={() => editCourseAvoid(sketch, sketchName.trim(), sketchOn, false)}>Add avoid</button>
       <button className="secondary" disabled={saving} onClick={() => setSketch(null)}>Discard</button></div>}
     {moved && <div className="buttonRow">
       <span className="hint">Goal {moved.goal.index - 1} <code>{moved.goal.label}</code>: centre {center(moved.goal.box).x}, {center(moved.goal.box).y} to</span>
       <Field label="x"><input type="number" step="0.1" value={center(moved.box).x} onChange={e => placeMoved(Number(e.target.value), center(moved.box).y)}/></Field>
       <Field label="y"><input type="number" step="0.1" value={center(moved.box).y} onChange={e => placeMoved(center(moved.box).x, Number(e.target.value))}/></Field>
-      <button className="primary" disabled={saving || busy} title={busy ? "Stop solving or playing first." : "Saves the goal in fulltas.json."} onClick={saveMoved}>Save goal</button>
+      <button className="primary" disabled={saving || busy} title={busy ? "Stop solving or playing first." : "Saves the goal in runs/<run>.json."} onClick={saveMoved}>Save goal</button>
       <button className="secondary" disabled={saving} onClick={() => setMoved(null)}>Discard</button></div>}
-    {data?.fulltas && data.avoid.length > 0 && <ul className="mapRoutes">{data.avoid.map((b, i) => <li key={i}><span className="mapSwatch" style={{ background: "#ff3030" }}/>avoid {boxText(b)}
-      <button className="secondary" disabled={saving} title="Removes this box; shared boxes go for other runs too." onClick={() => editAvoid(b, [data.fulltas!], true)}>Remove</button></li>)}</ul>}
+    {data?.fulltas && data.avoid.length > 0 && <><span className="hint">{data.avoid.length} avoid boxes{focus != null && ` · ${data.avoid.filter(b => avoidLive(b, focus)).length} cut at goal ${focus}, listed first`} · hover one to find it</span>
+      <ul className="mapRoutes" style={{ maxHeight: 220, overflowY: "auto" }}>{data.avoid.map((b, i) => ({ b, i, live: focus == null || avoidLive(b, focus) }))
+        .sort((p, q) => Number(q.live) - Number(p.live) || (p.b[4] ?? 0) - (q.b[4] ?? 0)).map(({ b, i, live }) =>
+        <li key={i} style={live ? undefined : { opacity: .45 }} onMouseEnter={() => setHotAvoid(i)} onMouseLeave={() => setHotAvoid(-1)}><span className="mapSwatch" style={{ background: "#ff3030" }}/>{avoidText(b)} · {boxText(b)}
+          <button className="secondary" disabled={saving} title="Removes this box; shared boxes go for other runs too." onClick={() => { setHotAvoid(-1); editAvoid(b, [data.fulltas!], true); }}>Remove</button></li>)}</ul></>}
     {data && !data.fulltas && (data.avoid.length > 0 || (data.optional ?? []).some(b => b.avoid.length + b.via.length > 0)) && <ul className="mapRoutes">
       {data.avoid.map((b, i) => <li key={`standing${i}`}><span className="mapSwatch" style={{ background: "#ff3030" }}/>avoid {boxText(b)}
         <button className="secondary" disabled={saving} title="Removes this box; shared boxes go for other maps too." onClick={() => editCourseAvoid(b, "", false, true)}>Remove</button></li>)}
@@ -1194,7 +1254,9 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const splits = run?.best?.splits ?? run?.offline?.splits ?? [];
   const labels = run?.goals ?? [];
   const segments = resetSegments(run?.offline?.segments);
-  // --auto improves a complete route only; a run that misses goals gets the reach search instead.
+  // The offline best's idles (each buy's wait for its Cash at its box), when the splits shown are its own.
+  const idleAt = new Map((run?.offline?.idles && (!run.best || run.best.splits.every((s, i) => run.offline?.splits[i]?.ticks === s.ticks)) ? run.offline.idles : []).map(d => [d.goal, d]));
+  // Improve searches a complete route; a run that misses goals gets the reach search, and Improve on picked goals it reaches.
   const complete = labels.length > 0 && splits.length === labels.length;
   // Picked goals can be improved on a best that misses later goals too, up to the goals it reaches.
   const reached = splits.length;
@@ -1203,7 +1265,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
     : p && p[0] === first && p[1] === last ? null : [first, last]);
   const pickedSeconds = picked && picked[1] <= reached ? liveSeconds(splits[picked[1] - 1]) - (picked[0] > 1 ? liveSeconds(splits[picked[0] - 2]) : 0) : null;
   return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className={`offlineStatus ${busy?"running":""}`}>{solve.running?"Improving":running?"Playing":"Idle"}</span></div>
-    <p className="lede">The whole game as one input stream, timed to the last goal.</p><details className="howTo"><summary>Goal syntax</summary><ul><li>One goal per line; reached in order.</li><li><code>start:1</code> · <code>finish:1</code></li><li><code>buy:&lt;box&gt;</code> · <code>reward:bonusN</code> · <code>reward:&lt;name&gt;</code> (a named courses.json bonus)</li><li><code>at:x,y,w,h</code> area goal, any entry side.</li><li><code>at:x,y,w,h,from=left+bottom</code> limits entry sides.</li><li><code>"start": "vman"</code> in fulltas.json: Vman world.</li></ul></details><details className="howTo"><summary>How improving works</summary><ol><li><b>Improve</b> searches offline from the run&apos;s record and picks where to look itself.</li><li>Think a stretch is slow? Click its goals or segment bar (shift-click extends), then Improve.</li><li>Improve also edits the economy goals itself: it drops laps the Cash no longer needs, laps where the route stood waiting, and swaps in a record lap when that pays; an edit stays only when the whole run is faster. The game saves the new goal list with the record (fulltas.json backed up first).</li><li>The game replays every faster route in turbo from its start.</li><li>Runs save only when complete, held up and faster.</li><li>Goals split the run; nothing restarts between them.</li><li>A quick restart after an area goal takes it back.</li></ol></details>
+    <p className="lede">The whole game as one input stream, timed to the last goal.</p><details className="howTo"><summary>Goal syntax</summary><ul><li>One goal per line; reached in order.</li><li><code>start:1</code> · <code>finish:1</code></li><li><code>buy:&lt;box&gt;</code> · <code>reward:bonusN</code> · <code>reward:&lt;name&gt;</code> (a named courses.json bonus)</li><li><code>at:x,y,w,h</code> area goal, any entry side.</li><li><code>at:x,y,w,h,from=left+bottom</code> limits entry sides.</li><li><code>"start": "vman"</code> in runs/&lt;run&gt;.json: Vman world.</li></ul></details><details className="howTo"><summary>How improving works</summary><ol><li><b>Improve</b> searches offline from the run&apos;s record and picks where to look itself.</li><li>Think a stretch is slow? Click its goals or segment bar (shift-click extends), then Improve.</li><li>Improve also edits the economy goals itself: it drops laps the Cash no longer needs, laps where the route stood waiting, and swaps in a record lap when that pays; an edit stays only when the whole run is faster. The game saves the new goal list with the record (runs/&lt;run&gt;.json backed up first).</li><li>The game replays every faster route in turbo from its start.</li><li>Runs save only when complete, held up and faster.</li><li>Goals split the run; nothing restarts between them.</li><li>A quick restart after an area goal takes it back.</li></ol></details>
     {([["complete", "Complete"], ["wip", "WIP"], ["test", "Tests"]] as const).map(([section, title]) => <div key={section}><h3 className="fullTasSection">{title}</h3><div className="fullTasRuns">
       {runs.filter(r => r.section === section).map(r => <button key={r.name} className={`fullTasRun ${r.name===name?"selected":""}`} onClick={() => setSelected(r.name)}>
         <strong>{r.name}</strong><small>{r.start === "vman" ? "Vman · " : ""}{r.savestate ? "Savestate · " : ""}{r.goals.length} goal{r.goals.length===1?"":"s"}</small>
@@ -1253,12 +1315,18 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
           {(() => {
             const goalRow = (i: number) => { const label = labels[i]; const s = splits[i]; const b = run?.breaker; const inPick = picked != null && i + 1 >= picked[0] && i + 1 <= picked[1];
               const title = [b!=null&&i===b?"Trips the breaker: the lights go out":"", goalTitle(label) ?? "", i < reached ? "Click to improve just this goal; shift-click to extend" : ""].filter(Boolean).join("\n");
-              return <div className={`tableRow ${s?"":"pending"} ${b==null||i<b?"":i===b?"breakerTrip":"breakerOut"} ${i < reached ? "pickable" : ""} ${inPick ? "picked" : ""}`} key={i} title={title || undefined}
+              const idle = idleAt.get(i + 1);
+              return <Fragment key={i}>
+              {idle && <div className="tableRow idleRow" title={`The run waits at the box for ${label}'s Cash (part of goal ${i}'s split): standing there from frame ${idle.arrive[0]} until the Cash is there at frame ${idle.afford[0]}.`}>
+                <span></span><span>idle · waiting for {label}</span>
+                <span>{liveText(idle.afford[0] * 0.02 + idle.afford[1] / 280 - (idle.arrive[0] * 0.02 + idle.arrive[1] / 280), idle.afford[0] - idle.arrive[0])}</span><span></span>
+              </div>}
+              <div className={`tableRow ${s?"":"pending"} ${b==null||i<b?"":i===b?"breakerTrip":"breakerOut"} ${i < reached ? "pickable" : ""} ${inPick ? "picked" : ""}`} title={title || undefined}
                 onClick={i < reached ? e => pick(i + 1, i + 1, e.shiftKey) : undefined}>
               <span>{i}</span><span>{label}</span>
               <span>{s ? liveText(liveSeconds(s) - (i > 0 ? liveSeconds(splits[i - 1]) : 0), s.ticks - (i > 0 ? splits[i - 1].ticks : 0)) : "—"}</span>
               <span>{s ? liveText(liveSeconds(s), s.ticks) : "—"}</span>
-            </div>; };
+            </div></Fragment>; };
             if (segments.length <= 1) return labels.map((_, i) => goalRow(i));
             // The best cut at its Quick Restarts: a bar down each segment's goals; goals the best doesn't reach come last. A
             // segment is safe when no buy goal comes from its first goal on: time saved there reaches no Cash check.

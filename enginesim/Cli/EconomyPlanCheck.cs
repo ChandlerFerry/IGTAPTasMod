@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using UnityEngine;
 using FullTasGoal = IGTAPTasMod.FullTasGoal;
@@ -270,6 +271,13 @@ namespace IGTAP.EngineSim.Cli
                 "buy:buyds", "at:1", "reward:bonus2", "at:2", "reward:bonus3", "start:3", "buy:buyreward3", "buy:buystatue", "buy:buyclone2", "buy:buydj", "at:3" })
                 .Select(s => $"{s.kept}-{s.target}" + string.Concat(s.bonuses.Select(b => " " + b))));
             Check(stretches == "4-7 reward:bonus1; 12-14; 15-16", $"goals stretches: {stretches} (4-7 reward:bonus1; 12-14; 15-16)");
+            // fulltas-plan --install's header splice: the goals replaced (brackets and quotes in labels too), the rest byte for byte.
+            string trace = Path.Combine(Path.GetTempPath(), $"plan-selftest-{Environment.ProcessId}.json");
+            string Header(string goals) => "{\"course\":0,\"fulltas\":{\"name\":\"T\",\"goals\":" + goals + ",\"buys\":\"strict\"},\"ticks\":[{\"goals\":[1]}]}";
+            File.WriteAllText(trace, Header("[{\"label\":\"at:1,2,3,4\",\"rect\":[1,2,3,4]},{\"label\":\"a]\\\"[\"}]"));
+            FullTas.SpliceHeaderGoals(trace, "[{\"label\":\"buy:x\"}]");
+            Check(File.ReadAllText(trace) == Header("[{\"label\":\"buy:x\"}]"), "install's header splice replaces the goals alone");
+            File.Delete(trace);
             Console.WriteLine(fails == 0 ? "plan-selftest: PASS" : $"plan-selftest: {fails} FAIL");
             return fails == 0 ? 0 : 1;
         }

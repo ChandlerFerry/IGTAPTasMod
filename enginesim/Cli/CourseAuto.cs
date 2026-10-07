@@ -110,6 +110,9 @@ namespace IGTAP.EngineSim.Cli
                 if (!Glitches.Human(Glitches.Parse(cls))) throw new ArgumentException("solve --auto --class: human-major or human-nmg (a course keeps nmg and major routes by time)");
                 if (run.Timing == "farm") throw new ArgumentException("--class " + cls + " improves the record: a human class has no farm");
                 run.Human = cls;
+                // A human class trades time for ease, which the loop's windows can't (they rank finds by time): ease searches
+                // on the difficulty itself, from every seed (the class's record among them), and writes its lowest score.
+                if (run.WaypointsFile == null) return Difficulty.Ease(args);
             }
             List<string> optional = Solve.Optional(args, course, caps);
             // Both directions open (neither direction block picked): the waypoints follow one route, so one loop would only ever
@@ -262,7 +265,7 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>The route's sticks as a human class holds them: a part tilt snapped to full (half or more) or to rest. The
         /// vertical is the game's own snap already (MacroEngine.ControllerAxis).</summary>
-        static List<InputTick> Digital(List<InputTick> inputs)
+        internal static List<InputTick> Digital(List<InputTick> inputs)
         {
             static float Snap(float v) => Math.Abs(v) >= .5f ? Math.Sign(v) : 0f;
             static float? SnapOr(float? v) => v.HasValue ? Snap(v.Value) : (float?)null;

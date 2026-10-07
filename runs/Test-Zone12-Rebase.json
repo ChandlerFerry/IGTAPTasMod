@@ -1,0 +1,12 @@
+{
+  "name": "Test-Zone12-Rebase",
+  "savestate": "7d000be05b2b4af6abe0b79830288695",
+  "rebaseAt": [
+    16682.0,
+    26090.0
+  ],
+  "section": "test",
+  "goals": [
+    "at:0,-50000,10,10"
+  ]
+}

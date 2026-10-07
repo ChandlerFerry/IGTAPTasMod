@@ -28,29 +28,51 @@ namespace IGTAPTasMod
             }
             catch (Exception ex) { Logger.LogWarning("fulltas-splits.json rejected: " + ex.Message); }
             LoadFullTasClasses();
-            try
+            _fullTasWritten = FullTasRunsStamp();
+            List<FullTasRunDef> previous = _fullTasRuns;
+            var runs = new List<FullTasRunDef>();
+            string[] files = Directory.Exists(FullTasRunsDir) ? Directory.GetFiles(FullTasRunsDir, "*.json") : new string[0];
+            foreach (string file in files.OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
             {
-                string text = File.Exists(FullTasPath) ? File.ReadAllText(FullTasPath) : "";
-                if (!string.IsNullOrWhiteSpace(text))
+                try
                 {
-                    _fullTasWritten = File.GetLastWriteTimeUtc(FullTasPath);
-                    List<FullTasRunDef> previous = _fullTasRuns;
-                    _fullTasRuns = JsonConvert.DeserializeObject<List<FullTasRunDef>>(text) ?? new List<FullTasRunDef>();
-                    foreach (FullTasRunDef run in _fullTasRuns)
-                        RetireOutdatedFullTasRoutes(run, previous != null
-                            && FullTasRunChanged(previous.Find(r => string.Equals(r.name, run.name, StringComparison.OrdinalIgnoreCase)), run));
-                    return;
+                    FullTasRunDef run = JsonConvert.DeserializeObject<FullTasRunDef>(File.ReadAllText(file));
+                    // The file is named for its run, so a save never makes a second file for one.
+                    if (run == null || !string.Equals(run.name + ".json", Path.GetFileName(file), StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException("its \"name\" is \"" + run?.name + "\", not its file's");
+                    runs.Add(run);
                 }
+                catch (Exception ex) { Logger.LogWarning("runs\\" + Path.GetFileName(file) + " rejected: " + ex.Message); }
             }
-            catch (Exception ex) { Logger.LogWarning("fulltas.json rejected: " + ex.Message); return; }
-            _fullTasRuns = new List<FullTasRunDef>();
-            SaveFullTasRuns();
+            _fullTasRuns = runs;
+            foreach (FullTasRunDef run in _fullTasRuns)
+                RetireOutdatedFullTasRoutes(run, previous != null
+                    && FullTasRunChanged(previous.Find(r => string.Equals(r.name, run.name, StringComparison.OrdinalIgnoreCase)), run));
         }
 
-        void SaveFullTasRuns()
+        /// <summary>A run's definition to its file (runs\&lt;run&gt;.json; LF line ends, as the repo keeps its JSON).</summary>
+        void SaveFullTasRun(FullTasRunDef run)
         {
-            WriteJsonAtomic(FullTasPath, _fullTasRuns, false);
-            _fullTasWritten = File.GetLastWriteTimeUtc(FullTasPath);
+            BumpWebState();
+            string path = FullTasRunFile(run.name);
+            try
+            {
+                Directory.CreateDirectory(FullTasRunsDir);
+                File.WriteAllText(path + ".tmp", JsonConvert.SerializeObject(run, Formatting.Indented).Replace("\r\n", "\n") + "\n");
+                ReplaceAtomic(path + ".tmp", path);
+            }
+            catch (Exception ex) { Logger.LogError("Could not save " + path + ": " + ex); }
+            _fullTasWritten = FullTasRunsStamp();
+        }
+
+        /// <summary>The run files' names and write times hashed (0: none): a file edited, added or removed changes it.</summary>
+        static long FullTasRunsStamp()
+        {
+            if (!Directory.Exists(FullTasRunsDir)) return 0;
+            long h = 17;
+            foreach (FileInfo f in new DirectoryInfo(FullTasRunsDir).GetFiles("*.json").OrderBy(f => f.Name, StringComparer.Ordinal))
+                h = (h * 31 + f.Name.GetHashCode()) * 31 + f.LastWriteTimeUtc.Ticks;
+            return h;
         }
 
         string[] FullTasLabels(FullTasRunDef run)
@@ -85,7 +107,7 @@ namespace IGTAPTasMod
         FullTasRunDef FindFullTasRun(string name)
         {
             return _fullTasRuns.Find(r => string.Equals(r.name, name, StringComparison.OrdinalIgnoreCase))
-                ?? throw new InvalidOperationException("No Full-TAS run named \"" + name + "\" in fulltas.json.");
+                ?? throw new InvalidOperationException("No Full-TAS run named \"" + name + "\" in runs\\.");
         }
 
         FullTasGoal[] ResolveFullTasGoals(FullTasRunDef run)
@@ -181,7 +203,7 @@ namespace IGTAPTasMod
             int at = _fullTasRuns.FindIndex(r => string.Equals(r.name, run.name, StringComparison.OrdinalIgnoreCase));
             if (at >= 0) _fullTasRuns[at] = run;
             else _fullTasRuns.Add(run);
-            SaveFullTasRuns();
+            SaveFullTasRun(run);
             RetireOutdatedFullTasRoutes(run, FullTasRunChanged(old, run));
             return run;
         }
@@ -480,15 +502,16 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// A record of other goals was saved: they become the run's in fulltas.json (kept first as
-        /// fulltas.json.&lt;yyyyMMdd-HHmmss&gt;.bak beside it), which retires the routes of the old goals as a goals edit does; the
+        /// A record of other goals was saved: they become the run's in runs\&lt;run&gt;.json (kept first as the config folder's
+        /// runs-backup\&lt;run&gt;.&lt;yyyyMMdd-HHmmss&gt;.json), which retires the routes of the old goals as a goals edit does; the
         /// next Improve captures the start again with them.
         /// </summary>
         string AdoptFullTasGoals(FullTasRunDef run, List<string> goals)
         {
             int was = run.goals.Count;
-            string backup = FullTasPath + "." + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".bak";
-            if (File.Exists(FullTasPath)) File.Copy(FullTasPath, backup, true);
+            string backup = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "runs-backup", run.name + "." + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".json");
+            Directory.CreateDirectory(Path.GetDirectoryName(backup));
+            if (File.Exists(FullTasRunFile(run.name))) File.Copy(FullTasRunFile(run.name), backup, true);
             FullTasRunDef adopted = SetFullTasGoals(run.name, goals, null);
             string text = "the run's goals are now its " + adopted.goals.Count + " (were " + was + "; " + Path.GetFileName(backup) + " kept)";
             FullTasLog("Full-TAS " + run.name + ": " + text);

@@ -112,7 +112,7 @@
 36. Off a course both go to that checkpoint.
 37. Area goals (`at:`) are not checkpoints.
 38. Purchases count only when the game itself buys the box. A Full-TAS run buys only its next goal's box unless its
-    `fulltas.json` entry sets `"buys": "loose"` (`VMAN`): then other purchases stand, and a box a later `buy:` goal names,
+    `runs/<run>.json` sets `"buys": "loose"` (`VMAN`): then other purchases stand, and a box a later `buy:` goal names,
     bought early, counts for that goal ([`docs/fulltas.md`](docs/fulltas.md#loose-buys)).
 39. Never replace game logic; patches only read, input, skip saves (and playback's wall-clock reads, exception 2).
 40. Never change Unity's clock or fixed timestep.
@@ -136,7 +136,7 @@
 53. Trace every new best and name its trick.
 54. A Full-TAS run keeps four bests, its classes: `major` (any tech) and `nmg` (no major tech) by live time, `human-major`
     and `human-nmg` the same two by score. Score: live time plus 2 s a spike-grace tick, 5 s a frame-perfect input and
-    20 s a back-to-back pair of the whole route's difficulty (per run, `fulltas.json` `"human": {"grace", "framePerfect",
+    20 s a back-to-back pair of the whole route's difficulty (per run, `runs/<run>.json` `"human": {"grace", "framePerfect",
     "backToBack"}`). A major or nmg span adds nothing of its own: what makes a glitch hard is the inputs in it. The
     difficulty is the engine's count over humanize's version of the route (`difficulty`): each input (a stick change, a
     jump press or release, a dash, a jump on a dash frame) moved alone a tick at a time; frame-perfect: it works on one
@@ -241,6 +241,7 @@ Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run wit
 | `EngineSimBridge.cs` | Trace, submit and raycast endpoints for the offline engine; read-only ghost-compare and humanize-slack endpoints for the studio. |
 | `enginesim/` | The game's own code running offline for search. See [`enginesim/README.md`](enginesim/README.md). |
 | `FullTas.cs`, `FullTasPlugin.cs`, `FullTasPlugin.*.cs` | Full-TAS: goals (shared with `enginesim`), gate, trace, playback, solve. `FullTasPlugin.cs` holds the model & state; `FullTasPlugin.Goals.cs`, `FullTasPlugin.Trace.cs`, `FullTasPlugin.Playback.cs`, `FullTasPlugin.Solve.cs`, `FullTasPlugin.Session.cs`, `FullTasPlugin.Http.cs` the rest. |
+| `runs/` | The Full-TAS run definitions, one `<run>.json` each (goals, start, buy rule, section; [`docs/fulltas.md`](docs/fulltas.md#run-definitions)). The plugin reads and writes them here; `fulltas-plan --install` and `--stages` update them as a route gets further ([`docs/fulltas.md`](docs/fulltas.md#install-and-stages)). |
 | `TechCatalog.cs`, `techs.json` | The studio's Tech tab: every named tech (glitchless, NMG, major) and its labs (`labmaps/`), each with a demo to play or walk and the lab to load by hand. `techs.json` seeds the config folder's `techs.json`, which the tab edits. |
 | `ProbeRunner.cs` | 1x probes: exact inputs at normal speed from a category start or savestate, logged every tick and rendered frame (`enginesim/README.md#probe`). |
 | `TasPlugin.Editor.cs`, `TasPlugin.Share.cs`, `TasMarkup.cs` | The TAS editor (studio **TAS** tab, `/api/tas/*`): frame advance, rewind and tick editing on the live game, re-recording, suggestions, sharing, and routes as text ([`docs/tas-markup.md`](docs/tas-markup.md)). |

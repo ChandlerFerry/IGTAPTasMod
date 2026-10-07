@@ -274,7 +274,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>forced-paths.json's rules (a course's and category's boxes, a Full-TAS run's avoid boxes). The studio edits the
         /// file while a solve runs, so it is read again whenever it has changed.</summary>
         sealed record PathRule(int? Course, string[] Capabilities, string[] Fulltas, float[][] Via, float[][] Avoid, bool Guide, PathBlock[] Optional);
-        sealed record PathBlock(string Name, string Note, bool Default, float[][] Via, float[][] Avoid, string[] OffFor, string After, string From);
+        sealed record PathBlock(string Name, string Note, bool Default, float[][] Via, float[][] Avoid, string[] OffFor, string After, string From, string For);
         sealed record PathsFile(PathRule[] Paths);
         static Tuple<DateTime, PathRule[]> _pathRules;
 
@@ -293,7 +293,9 @@ namespace IGTAP.EngineSim.Cli
         /// The avoid boxes of the run's Full-TAS rules for a window heading for <paramref name="goals"/>: each rule's "avoid", plus
         /// its "optional" blocks except those whose "offFor" lists one of the goals (null goals: every block, as the map draws them).
         /// A block's "after" (a goal label of the run, <paramref name="labels"/>) makes its boxes cut a run only once it has reached
-        /// that goal; without the run's labels, or when the run has no such goal, the block is off.
+        /// that goal; without the run's labels, or when the run has no such goal, the block is off. A block's "for" (a goal label)
+        /// makes its boxes cut only while the run heads for that goal: from the goal before it until it is reached, at each place
+        /// the label has in the run (no labels: the map draws it; a run without the goal: off).
         /// </summary>
         internal static OfflineSolver.ForcedPath FullTasPaths(string run, ICollection<string> goals = null, IReadOnlyList<string> labels = null)
         {
@@ -311,6 +313,13 @@ namespace IGTAP.EngineSim.Cli
                 foreach (PathBlock block in rule.Optional ?? Array.Empty<PathBlock>())
                 {
                     if (goals != null && block.OffFor != null && block.OffFor.Any(goals.Contains)) continue;
+                    if (block.For != null)
+                    {
+                        if (labels == null) { if (goals == null) AddBoxes(forced, null, block.Avoid, 0, Sides(block)); continue; }
+                        for (int i = 0; i < labels.Count; i++)
+                            if (labels[i] == block.For) AddBoxes(forced, null, block.Avoid, i, Sides(block), i + 1);
+                        continue;
+                    }
                     int after = 0;
                     if (block.After != null)
                     {
@@ -329,10 +338,10 @@ namespace IGTAP.EngineSim.Cli
         internal static readonly System.Collections.Concurrent.ConcurrentDictionary<string, OfflineSolver.ForcedPath> CourseRuns =
             new System.Collections.Concurrent.ConcurrentDictionary<string, OfflineSolver.ForcedPath>();
 
-        static void AddBoxes(OfflineSolver.ForcedPath forced, float[][] via, float[][] avoid, int after = 0, int from = 0)
+        static void AddBoxes(OfflineSolver.ForcedPath forced, float[][] via, float[][] avoid, int after = 0, int from = 0, int until = 0)
         {
             foreach (float[] c in via ?? Array.Empty<float[]>()) forced.Via.Add(new OfflineSolver.Box(new WorldPos(c[0], c[1]), new WorldPos(c[2], c[3]), after));
-            foreach (float[] c in avoid ?? Array.Empty<float[]>()) forced.Avoid.Add(new OfflineSolver.Box(new WorldPos(c[0], c[1]), new WorldPos(c[2], c[3]), after, from));
+            foreach (float[] c in avoid ?? Array.Empty<float[]>()) forced.Avoid.Add(new OfflineSolver.Box(new WorldPos(c[0], c[1]), new WorldPos(c[2], c[3]), after, from, until));
         }
 
         /// <summary>A block's "from" ("bottom", "left+top", ...): its avoid boxes cut only a move into them across those edges

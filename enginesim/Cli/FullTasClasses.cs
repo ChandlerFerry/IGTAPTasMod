@@ -177,18 +177,21 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>Route <paramref name="a"/> ranks ahead of <paramref name="b"/> (both at the same goals) in the class. a's
-        /// report is made only when its live time is under <see cref="Bar"/>, its difficulty only when its score without it is.</summary>
+        /// report is made only when its live time is under <see cref="Bar"/>, its difficulty only when its score without it is. At
+        /// the same live time (major, nmg) the one that stands idle more waiting for its buys (<see cref="IdleTicks"/>).</summary>
         bool Ahead(Route a, Route b)
         {
-            if (!Classed) return a.Live < b.Live;
+            if (!Classed) return LiveAhead(a, b);
             if (a.Progress == 0 || a.Live >= Bar(b)) return false;
             if (b.Progress == 0) return true;
             GlitchReport ra = Report(a), rb = Report(b);
             if (NoMajors && ra.Major != rb.Major) return ra.Major < rb.Major;
-            if (!Human) return a.Live < b.Live;
+            if (!Human) return LiveAhead(a, b);
             long bar = ScoreUnits(b);
             return ScoreUnits(a, false) < bar && ScoreUnits(a) < bar;
         }
+
+        bool LiveAhead(Route a, Route b) => a.Live < b.Live || a.Live == b.Live && a.Progress > 0 && IdleTicks(a) > IdleTicks(b);
 
         /// <summary>
         /// A window's baseline (the best's tick at its last goal, what a find must beat there) in the class: a human class takes a

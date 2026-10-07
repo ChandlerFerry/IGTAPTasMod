@@ -1,0 +1,9 @@
+{
+  "name": "test-c10-zip-skip",
+  "savestate": "4f3d1ecd43564684b59444267cef691e",
+  "tree": 27,
+  "section": "test",
+  "goals": [
+    "at:30186.6,5780.6,32,32"
+  ]
+}

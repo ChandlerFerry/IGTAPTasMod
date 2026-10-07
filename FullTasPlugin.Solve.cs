@@ -27,7 +27,8 @@ namespace IGTAPTasMod
                 {
                     JObject o = JObject.Parse(File.ReadAllText(p));
                     return new FullTasOfflineFile { goals = o["goals"].ToObject<List<string>>(), ticks = o["goalPhysicsTicks"].ToObject<List<long>>(),
-                        held = o["goalHeldFrames"]?.ToObject<List<long>>(), inputTicks = o["goalInputTicks"].ToObject<List<long>>(), inputs = o["inputs"].ToObject<List<SolverTick>>() };
+                        held = o["goalHeldFrames"]?.ToObject<List<long>>(), inputTicks = o["goalInputTicks"].ToObject<List<long>>(), inputs = o["inputs"].ToObject<List<SolverTick>>(),
+                        idles = o["idles"]?.Type == JTokenType.Array ? o["idles"].ToObject<List<FullTasIdle>>() : null };
                 });
             }
             catch (Exception ex)
@@ -49,6 +50,7 @@ namespace IGTAPTasMod
             int keep = offline.reached == 0 ? 0 : (int)Math.Min(file.inputTicks[offline.reached - 1], file.inputs.Count);
             offline.inputs = file.inputs.GetRange(0, keep);
             offline.segments = ResetSegments(offline.inputs, file.inputTicks, offline.reached);
+            offline.idles = file.idles?.Where(i => i.goal >= 1 && i.goal <= offline.reached && i.arrive?.Length == 2 && i.afford?.Length == 2).ToList();
             return offline;
         }
 
@@ -99,14 +101,14 @@ namespace IGTAPTasMod
         /// <summary>
         /// Improve (the default): `fulltas --auto` from the run's best, with the saved record as a --ref (the engine's run file can
         /// trail it) and `--focus a-b` when goals are picked. `unsolved: true`: the old reach search (`--unsolved`, with the seed
-        /// routes) for a run whose best misses goals, which --auto can't start from. Either leaves the game 4 cores by default.
+        /// routes) for the goals a best misses (--auto improves the goals it reaches). Either leaves the game 2 cores by default, as course Optimize does.
         /// `class` (README ### Rules 54) solves for that class (`--class`), its own best the --ref.
         /// </summary>
         void LaunchFullTasSolve(FullTasRunDef run, string trace, JObject body)
         {
             var args = new StringBuilder("fulltas ").Append(Quote(trace));
             int threads = Number(body, "threads", 0);
-            if (threads <= 0) threads = Math.Max(1, Environment.ProcessorCount - 4);
+            if (threads <= 0) threads = Math.Max(1, Environment.ProcessorCount - 2);
             args.Append(" --threads ").Append(threads);
             string cls = FullTasClassOf(Text(body, "class"));
             if (cls != MajorClass) args.Append(" --class ").Append(cls);
@@ -127,28 +129,21 @@ namespace IGTAPTasMod
                 if (focus != null && (focus[0] < 1 || focus[1] < focus[0] || focus[1] > run.goals.Count))
                     throw new InvalidOperationException("focus: a goal range [first, last] within 1-" + run.goals.Count + ".");
                 MacroDefinition record = FullTasClassBest(run.name, cls, out _);
-                // --auto refuses a best that misses goals: picked goals on one (no record yet) are searched as one window instead
-                // (`--goal b --window n`: goal a-1 to goal b, over and over), which needs only the goals the best reaches.
+                // --auto improves the goals the offline best reaches (all of them, or those of a best that misses goals): picked
+                // goals must be among them.
                 int reached = FullTasOfflineBest(run.name + (cls == MajorClass ? "" : "." + cls), run.goals)?.reached ?? 0;
-                if (focus != null && record == null && reached < run.goals.Count)
+                if (focus != null && record == null && focus[1] > reached)
+                    throw new InvalidOperationException("focus: the offline best reaches goal " + (reached - 1) + " of " + (run.goals.Count - 1) + "; pick goals up to it, or Reach missing goals first.");
+                args.Append(" --auto --window-minutes 0.5");
+                if (focus != null) args.Append(" --focus ").Append(focus[0]).Append('-').Append(focus[1]);
+                if (record != null)
                 {
-                    if (focus[1] > reached)
-                        throw new InvalidOperationException("focus: the offline best reaches goal " + reached + " of " + run.goals.Count + "; pick goals up to it, or Reach missing goals first.");
-                    args.Append(" --goal ").Append(focus[1]).Append(" --window ").Append(focus[1] - focus[0] + 1);
-                    what = "Improving " + of + " goals " + focus[0] + "-" + focus[1] + " (the best reaches " + reached + " of " + run.goals.Count + " goals) on " + threads + " threads";
+                    string file = Path.Combine(EngineSimDir, "fulltas-" + run.name + (cls == MajorClass ? "" : "-" + cls) + "-record.json");
+                    File.WriteAllText(file, JsonConvert.SerializeObject(new { name = record.name, ticks = ToTicks(record.steps) }));
+                    args.Append(" --ref ").Append(Quote(file));
                 }
-                else
-                {
-                    args.Append(" --auto --window-minutes 0.5");
-                    if (focus != null) args.Append(" --focus ").Append(focus[0]).Append('-').Append(focus[1]);
-                    if (record != null)
-                    {
-                        string file = Path.Combine(EngineSimDir, "fulltas-" + run.name + (cls == MajorClass ? "" : "-" + cls) + "-record.json");
-                        File.WriteAllText(file, JsonConvert.SerializeObject(new { name = record.name, ticks = ToTicks(record.steps) }));
-                        args.Append(" --ref ").Append(Quote(file));
-                    }
-                    what = "Improving " + of + (focus == null ? "" : " goals " + focus[0] + "-" + focus[1]) + " on " + threads + " threads";
-                }
+                what = "Improving " + of + (focus == null ? "" : " goals " + (focus[0] - 1) + "-" + (focus[1] - 1))
+                    + (record == null && reached < run.goals.Count ? " (the best reaches " + reached + " of " + run.goals.Count + " goals)" : "") + " on " + threads + " threads";
             }
             while (_fullTasOutput.TryDequeue(out _)) { }
             _fullTasProcess = StartEngineSim(args.ToString(), _fullTasOutput, stdin: true);
@@ -196,9 +191,8 @@ namespace IGTAPTasMod
                     if (target.IsBonus) goals.Add("reward:" + token);
                     else { goals.Add("start:" + target.id); goals.Add("finish:" + target.id); course = target.id; }
                 }
-                // A course's gates stay whether or not the run's goals have them: the economy planner laps any course it can reach.
-                goals.RemoveAll(g => !labels.Contains(g) && !g.StartsWith("start:", StringComparison.Ordinal) && !g.StartsWith("finish:", StringComparison.Ordinal));
-                if (goals.Count == 0) continue;
+                // Every goal stays whether or not the run's goals have it: the economy planner laps any course it can reach, and --auto's
+                // place lever splices any category route in where the run passes (Zip% passes bonus 11's way through the atom room).
                 bool stale = route.name.EndsWith(" stale", StringComparison.Ordinal);
                 string plain = stale ? route.name.Substring(0, route.name.Length - " stale".Length) : route.name;
                 Match category = MatchGatedRoute(plain);
@@ -404,8 +398,11 @@ namespace IGTAPTasMod
         string FullTasSolvingGroup { get { return _fullTasProcess == null ? null : "fulltas-" + _fullTasSolveRun; } }
 
         /// <summary>A box drawn on a Full-TAS run's map: under the rule with `"fulltas": [runs]` those runs share
-        /// (created when none is drawn yet), so every window of their solves that enters it is cut.</summary>
-        int EditFullTasAvoids(string[] runs, float[] b, bool remove)
+        /// (created when none is drawn yet), so every window of their solves that enters it is cut. With a goal label, it goes into
+        /// that rule's optional block "for" the goal: it cuts only while a run heads for that goal; with <paramref name="after"/>
+        /// (a goal label), the block "after" it: it cuts once a run has reached that goal. <paramref name="from"/> ("left+bottom",
+        /// ...) makes it one-way, the block's "from": it cuts only a move into it across those sides. Remove takes it out of all.</summary>
+        int EditFullTasAvoids(string[] runs, float[] b, bool remove, string goal = null, string after = null, string from = null)
         {
             float[] wanted = NormalizedBox(b);
             Func<JToken, bool> same = SameBox(wanted);
@@ -417,9 +414,17 @@ namespace IGTAPTasMod
                 {
                     foreach (JObject rule in rules.Where(r => r["fulltas"].Any(n => runs.Contains((string)n))))
                     {
-                        if (!(rule["avoid"] is JArray avoid)) continue;
-                        foreach (JToken hit in avoid.Where(same).ToList()) { hit.Remove(); changed++; }
-                        if (avoid.Count == 0 && !(rule["via"] is JArray via && via.Count > 0)) rule.Remove();
+                        if (rule["avoid"] is JArray avoid)
+                            foreach (JToken hit in avoid.Where(same).ToList()) { hit.Remove(); changed++; }
+                        if (rule["optional"] is JArray optional)
+                            foreach (JObject block in optional.OfType<JObject>().Where(o => o["avoid"] is JArray).ToList())
+                            {
+                                var boxes = (JArray)block["avoid"];
+                                foreach (JToken hit in boxes.Where(same).ToList()) { hit.Remove(); changed++; }
+                                if (boxes.Count == 0) block.Remove();
+                            }
+                        bool empty(string key) => !(rule[key] is JArray list && list.Count > 0);
+                        if (empty("avoid") && empty("via") && empty("optional")) rule.Remove();
                     }
                 }
                 else
@@ -432,6 +437,25 @@ namespace IGTAPTasMod
                         paths.Add(rule);
                     }
                     var avoid = (JArray)rule["avoid"];
+                    if (goal != null || after != null || from != null)
+                    {
+                        if (!(rule["optional"] is JArray optional)) rule["optional"] = optional = new JArray();
+                        JObject block = optional.OfType<JObject>().FirstOrDefault(o => (string)o["for"] == goal && (string)o["after"] == after
+                            && (string)o["from"] == from && o["offFor"] == null && o["avoid"] is JArray);
+                        if (block == null)
+                        {
+                            string name = (goal != null ? "for " + goal : after != null ? "after " + after : "always") + (from != null ? " from " + from : "");
+                            block = new JObject { ["name"] = name, ["note"] = "Drawn on the Full-TAS map: cuts "
+                                + (goal != null ? "only while a run heads for " + goal : after != null ? "once a run has reached " + after : "for every goal")
+                                + (from != null ? ", only a move into it across its " + from + " side" : "") + "." };
+                            if (goal != null) block["for"] = goal;
+                            if (after != null) block["after"] = after;
+                            if (from != null) block["from"] = from;
+                            block["avoid"] = new JArray();
+                            optional.Add(block);
+                        }
+                        avoid = (JArray)block["avoid"];
+                    }
                     if (!avoid.Any(same)) { avoid.Add(new JArray(wanted)); changed++; }
                 }
                 return changed;

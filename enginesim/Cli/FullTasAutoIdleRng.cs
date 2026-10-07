@@ -250,7 +250,7 @@ namespace IGTAP.EngineSim.Cli
         {
             double c0 = CpuSeconds();
             // A goal reached in the no-input ticks after the last input (a dash) has its input tick at the inputs' end.
-            var starts = Enumerable.Range(1, _goals - 1).Where(g =>
+            var starts = Enumerable.Range(1, _goals - 1).Where(g => InIdleReach(g + 1)).Where(g =>
             {
                 int from = (int)best.GoalInput[g - 1] + 1, to = (int)Math.Min(best.GoalInput[g], best.Inputs.Count);
                 return Enumerable.Range(from, Math.Max(0, to - from)).Any(i => best.Inputs[i].reset);
@@ -260,7 +260,7 @@ namespace IGTAP.EngineSim.Cli
                 (s, i) => results[i] = Retune(s.sim, s.Start, best, best.Inputs, starts[i]))();
             int pick = -1;
             for (int i = 0; i < results.Length; i++)
-                if (results[i] != null && results[i].Progress == _goals && results[i].Live < best.Live && (pick < 0 || results[i].Live < results[pick].Live)) pick = i;
+                if (results[i] != null && results[i].Progress == _goals && LiveAhead(results[i], best) && (pick < 0 || LiveAhead(results[i], results[pick]))) pick = i;
             Log($"auto: idle re-timing: {starts.Count} starts, {results.Count(r => r != null && r.Progress == _goals)} complete, {results.Count(r => r != null && r.Progress == _goals && r.Live < best.Live)} faster than {Describe(best)}"
                 + (pick < 0 ? "" : $"; best from goal {starts[pick] + 1} ({_labels[starts[pick]]}): {Describe(results[pick])}") + $" in {CpuSeconds() - c0:0} CPU s");
             return pick < 0 ? null : results[pick];
@@ -279,6 +279,7 @@ namespace IGTAP.EngineSim.Cli
             var tickets = new List<(int k, int resets, List<InputTick> inputs)>();
             for (int k = 1; k < _goals; k++)
             {
+                if (!InIdleReach(k + 1)) continue;
                 int a = (int)best.GoalInput[k - 1], b = (int)Math.Min(best.GoalInput[k], best.Inputs.Count);
                 List<int> resets = Enumerable.Range(a, Math.Max(0, b - a)).Where(i => best.Inputs[i].reset).ToList();
                 if (resets.Count < 2 || resets[0] == a) continue;
@@ -295,7 +296,7 @@ namespace IGTAP.EngineSim.Cli
                 (s, i) => results[i] = Retune(s.sim, s.Start, best, tickets[i].inputs, tickets[i].k))();
             int pick = -1;
             for (int i = 0; i < results.Length; i++)
-                if (results[i] != null && results[i].Progress == _goals && results[i].Live < best.Live && (pick < 0 || results[i].Live < results[pick].Live)) pick = i;
+                if (results[i] != null && results[i].Progress == _goals && LiveAhead(results[i], best) && (pick < 0 || LiveAhead(results[i], results[pick]))) pick = i;
             Log($"auto: idle filler: {tickets.Count} stretches with filler before their last quick restart, {results.Count(r => r != null && r.Progress == _goals)} complete standing, "
                 + $"{results.Count(r => r != null && r.Progress == _goals && r.Live < best.Live)} faster than {Describe(best)}"
                 + (pick < 0 ? "" : $"; best at goal {tickets[pick].k + 1} ({_labels[tickets[pick].k]}, {tickets[pick].resets} restarts dropped): {Describe(results[pick])}") + $" in {CpuSeconds() - c0:0} CPU s");

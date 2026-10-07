@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using UnityEngine;
 using Caps = IGTAPTasMod.Caps;
 using FullTasGoal = IGTAPTasMod.FullTasGoal;
@@ -125,6 +126,9 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>Beam: most ticks the target's stand waits past its walk (a longer wait is a later state's: the beam goes on
         /// lapping and buying, and a stand from there is shorter).</summary>
         const int BeamStand = 2000;
+        /// <summary>Beam: most ticks an atoms:N touch stands for its GP past its walk. Nearly every atoms option the beam plays fails
+        /// (Zip% from goal 630: 98.6% of 35,081, 82% of the beam's time at BeamStand); a later state's stand is shorter.</summary>
+        const int AtomStand = 300;
         /// <summary>Beam: the width is per this many ticks of plan (fulltas-plan --beam; docs/fulltas.md "Economy planner").</summary>
         const int BeamBucket = 10;
         /// <summary>A capped search completes this many of its richest states by standing at the target.</summary>
@@ -463,7 +467,7 @@ namespace IGTAP.EngineSim.Cli
             }
             // The buy pre-check, with the economy at n: the option's boxes cost more than n holds plus PrecheckMargin times n's
             // income over the step's ticks (a stand: and BeamStand more, a patient one StandCap; atoms:N: its N levels, an atom
-            // touch's stand over BeamStand, as the beam plays it). A buy right after a buy is always played
+            // touch's stand over AtomStand, as the beam plays it). A buy right after a buy is always played
             // (what it bought, a clone, may pay before the window shows it); a stand always checked; no income over the window
             // (Estimate's fallbacks) never pre-checks.
             bool Short(Node<TSnap> n, PlanOption o)
@@ -479,7 +483,7 @@ namespace IGTAP.EngineSim.Cli
                     need ??= new double[p.Length];
                     for (int c = 0; c < p.Length; c++) need[c] += p[c];
                 }
-                double ticks = o.Step.Ticks + (o.Step.Kind == "atoms" ? BeamStand : o.Patient ? StandCap : o.Stand ? BeamStand : 0);
+                double ticks = o.Step.Ticks + (o.Step.Kind == "atoms" ? AtomStand : o.Patient ? StandCap : o.Stand ? BeamStand : 0);
                 for (int c = 0; c < need.Length; c++)
                 {
                     double missing = need[c] - n.Holds[c];
@@ -487,6 +491,8 @@ namespace IGTAP.EngineSim.Cli
                     if (missing > 0 && rate > 0 && missing > PrecheckMargin * rate * ticks) return true;
                     // A patient stand for a currency nothing has paid since the search's start (GP with no clones) never ends.
                     if (missing > 0 && o.Patient && rate <= 0 && Rate(n, root, c) <= 0) return true;
+                    // An atom touch short of its price with nothing coming in over the window: its walk and stand are played to fail.
+                    if (missing > 0 && rate <= 0 && o.Step.Kind == "atoms") return true;
                 }
                 return false;
             }
@@ -517,7 +523,7 @@ namespace IGTAP.EngineSim.Cli
                             if (last) e.parent.Snap = default;
                             continue;
                         }
-                        long? end = Played(e.parent, e.via, out _, out int extra, e.via.Stand && (!e.via.Patient || e.via.Step.Kind == "atoms") ? e.parent.Tick + e.via.Step.Ticks + BeamStand : long.MaxValue);
+                        long? end = Played(e.parent, e.via, out _, out int extra, e.via.Stand && (!e.via.Patient || e.via.Step.Kind == "atoms") ? e.parent.Tick + e.via.Step.Ticks + (e.via.Step.Kind == "atoms" ? AtomStand : BeamStand) : long.MaxValue);
                         if (last) e.parent.Snap = default;
                         if (end == null) continue;
                         n = Made(e.parent, e.via, end.Value, e.via.End, extra);
@@ -671,7 +677,10 @@ namespace IGTAP.EngineSim.Cli
                             list.Add((new PlanOption(new Step("all", "all:" + to.Substring(4), m.Ticks), to, boxes, null, false, boxes, estimated.ToArray(), All: true), boxes));
                     }
                     // atoms:N (Area 2's spawnNewAtom box): the next N atoms' price saved, then a touch (buy-max: all it can pay for).
-                    if (to == AtomBox && (only == null || only.Contains(AtomBox)))
+                    // Not from the atom box itself: the touch's buy-max routine buys the rest a step at a time, and those buys are no
+                    // goal (Simulation.Bought's continuing), so a second atoms step there plans a buy the run never makes (Zip%'s
+                    // realize stuck at goal 831, 2026-10-06); the player falls from the box after a touch anyway.
+                    if (to == AtomBox && to != place && (only == null || only.Contains(AtomBox)))
                         for (int n = 1; n <= MaxAtoms; n *= 2)
                             list.Add((new PlanOption(new Step("atoms", "atoms:" + n, m.Ticks), to, boxes, null, false, boxes, estimated.ToArray(), Stand: true, Levels: n), boxes));
                 }
@@ -935,7 +944,95 @@ namespace IGTAP.EngineSim.Cli
 
     sealed partial class FullTas
     {
-        internal static int EconomyPlanCommand(string[] args) => new FullTas(args).PlanEconomy(args);
+        internal static int EconomyPlanCommand(string[] args) => args.Contains("--stages") ? Stages(args) : new FullTas(args).PlanEconomy(args);
+
+        /// <summary>
+        /// fulltas-plan &lt;trace&gt; --stages [the plan's options]: plan and realize from the best's furthest goal to its next buy
+        /// (--from furthest --target next --realize --install), again from where each stage's installed route gets, until the
+        /// best reaches every goal or three stages in a row get no further (the second of them with the beam twice as wide).
+        /// Each stage opens the run afresh, as a new process would: the trace header, the run file and the moves table it left.
+        /// </summary>
+        static int Stages(string[] args)
+        {
+            int width = Solve.Option(args, "--beam", EconomyPlan.DefaultWidth);
+            for (int stage = 1, fails = 0; fails < 3; stage++)
+            {
+                var run = new FullTas(args) { _stageWidth = fails == 1 ? width * 2 : width };
+                Console.WriteLine($"stage {stage}" + (fails > 0 ? $" ({fails} without progress before it)" : ""));
+                run.PlanEconomy(args);
+                if (run._allReached) return 0;
+                fails = run._installed ? 0 : fails + 1;
+            }
+            Console.WriteLine("stages: three in a row got no further");
+            return 3;
+        }
+
+        /// <summary>--stages: this stage's beam width (0: --beam's), whether every goal was reached before it, and whether it installed a route.</summary>
+        int _stageWidth;
+        bool _allReached, _installed;
+
+        /// <summary>
+        /// --install (fulltas-plan --realize): a realized route that reaches further than the best becomes the run's, as the studio
+        /// takes a record of other goals: its goals the run definition's (the source tree's runs\&lt;run&gt;.json, which the studio
+        /// reloads), the trace header's (each goal's entry by label, else as <see cref="NewGoal"/> resolves it: no capture, whose
+        /// replay would change the live scene), and the route the run file (fulltas\&lt;run&gt;.json).
+        /// </summary>
+        void Install(Route route, string[] goals)
+        {
+            string root = TechGrafts.SourceRoot() ?? throw new InvalidOperationException("--install: no source tree (runs\\) found from this engine");
+            string def = Path.Combine(root, "runs", _name + ".json");
+            if (!File.Exists(def)) throw new InvalidOperationException($"--install: no run definition {def}");
+            var indented = new JsonSerializerOptions { WriteIndented = true, NewLine = "\n", Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+            var compact = new JsonSerializerOptions { Encoder = indented.Encoder };
+            var byLabel = new Dictionary<string, JsonNode>();
+            foreach (JsonElement g in Solve.ReadHeader(_trace).GetProperty("fulltas").GetProperty("goals").EnumerateArray())
+                byLabel.TryAdd(g.GetProperty("label").GetString(), JsonNode.Parse(g.GetRawText()));
+            var entries = new JsonArray(goals.Select(l => byLabel.TryGetValue(l, out JsonNode e) ? e.DeepClone()
+                : NewGoal(l)?.header ?? throw new InvalidOperationException($"--install: no header entry for goal {l}; capture the trace again")).ToArray());
+            SpliceHeaderGoals(_trace, entries.ToJsonString(compact));
+            _labels = goals;
+            _goals = goals.Length;
+            WriteRunFile(route);
+            JsonObject run = JsonNode.Parse(File.ReadAllText(def)).AsObject();
+            run["goals"] = new JsonArray(goals.Select(g => (JsonNode)g).ToArray());
+            Solve.WriteShared(def, run.ToJsonString(indented) + "\n");
+            _installed = true;
+            Log($"install: {goals.Length} goals -> runs\\{_name}.json and {Path.GetFileName(_trace)}'s header; the route -> fulltas\\{Path.GetFileName(_runFile)}");
+        }
+
+        /// <summary>The trace's header goals ("fulltas": {"goals": [...]}, in its first 16 MB) replaced by <paramref name="goals"/>, the
+        /// rest of the file (its ticks, over a GB for a long run) copied as it is.</summary>
+        internal static void SpliceHeaderGoals(string trace, string goals)
+        {
+            byte[] head;
+            using (FileStream f = File.OpenRead(trace))
+            {
+                head = new byte[Math.Min(16 << 20, f.Length)];
+                f.ReadExactly(head);
+            }
+            int run = head.AsSpan().IndexOf("\"fulltas\":{"u8), found = run < 0 ? -1 : head.AsSpan(run).IndexOf("\"goals\":["u8);
+            if (found < 0) throw new InvalidOperationException(trace + ": no \"fulltas\" goals in its header");
+            int open = run + found + "\"goals\":".Length, end = open, depth = 0;
+            for (bool text = false; end < head.Length; end++)
+            {
+                byte c = head[end];
+                if (text) { if (c == '\\') end++; else if (c == '"') text = false; }
+                else if (c == '"') text = true;
+                else if (c == '[') depth++;
+                else if (c == ']' && --depth == 0) break;
+            }
+            if (end >= head.Length) throw new InvalidOperationException(trace + ": the header's goals don't end in its first 16 MB");
+            string temp = trace + "." + Environment.ProcessId + ".tmp";
+            using (FileStream o = File.Create(temp))
+            using (FileStream f = File.OpenRead(trace))
+            {
+                o.Write(head, 0, open);
+                o.Write(System.Text.Encoding.UTF8.GetBytes(goals));
+                f.Position = end + 1;
+                f.CopyTo(o);
+            }
+            Solve.Replace(temp, trace);
+        }
 
         /// <summary>
         /// fulltas-plan &lt;trace&gt; --from &lt;goal&gt; --target &lt;buy:box&gt;[,...] [--bonuses bonus1,...] [--buytable FILE]
@@ -946,9 +1043,24 @@ namespace IGTAP.EngineSim.Cli
         int PlanEconomy(string[] args)
         {
             Open();
-            int kept = GoalNumber(Solve.Option(args, "--from", ""), 1);
+            bool stages = args.Contains("--stages");
+            if (stages && _best.Progress == _goals)
+            {
+                Log($"stages: the best reaches all {_goals} goals");
+                _allReached = true;
+                return 0;
+            }
+            // --from furthest: the last goal the best reaches; --target next: the first buy after it (--stages: both).
+            string fromArg = stages ? "furthest" : Solve.Option(args, "--from", "");
+            int kept = fromArg == "furthest" ? _best.Progress : GoalNumber(fromArg, 1);
             if (kept < 1 || kept > _goals || kept > _best.Progress) throw new ArgumentException($"--from wants a goal the best reaches (1..{_best.Progress})");
-            string[] targets = Solve.Option(args, "--target", "buy:buyds").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            string targetArg = stages ? "next" : Solve.Option(args, "--target", "buy:buyds");
+            int nextBuy = Array.FindIndex(_labels, kept, l => l.StartsWith("buy:", StringComparison.Ordinal));
+            if (targetArg == "next" && nextBuy < 0) throw new ArgumentException($"--target next: no buy goal after goal {kept}");
+            string[] targets = (targetArg == "next" ? _labels[nextBuy] : targetArg).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            // A stage without seeds given takes the ones the studio's last solve of the run listed (fulltas-<run>-seeds.txt).
+            string seedList = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(_trace)), $"fulltas-{_name}-seeds.txt");
+            if (stages && _seedFiles.Count == 0 && File.Exists(seedList)) _seedFiles.AddRange(File.ReadAllLines(seedList).Select(l => l.Trim()).Where(l => l.Length > 0));
             string[] bonuses = (Solve.Option(args, "--bonuses", "") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(b => b.StartsWith("reward:", StringComparison.Ordinal) ? b : "reward:" + b).ToArray();
             string buyTable = Solve.Option(args, "--buytable", BuyTableFile), movesFile = Solve.Option(args, "--moves", MovesFile);
@@ -1000,7 +1112,7 @@ namespace IGTAP.EngineSim.Cli
             // the exact search is capped. --stand on|off: the target stands at its box for its last Cash (default: the beam's on).
             string mode = Solve.Option(args, "--mode", "auto");
             if (mode != "exact" && mode != "beam" && mode != "auto") throw new ArgumentException("--mode wants exact, beam or auto");
-            var settings = new PlanSettings(targets, bonuses, mode, Solve.Option(args, "--beam", EconomyPlan.DefaultWidth), maxStates,
+            var settings = new PlanSettings(targets, bonuses, mode, _stageWidth > 0 ? _stageWidth : Solve.Option(args, "--beam", EconomyPlan.DefaultWidth), maxStates,
                 Solve.Option(args, "--minutes", 30.0) * 60, levels, only, Solve.Option<string>(args, "--stand", null));
             EconomyPlanResult Plan(IReadOnlyList<string> prefix) => PlanFrom(at, place, prefix, moves, settings, GoalOf);
             // --join FILE: no search; a route --realize wrote (its goals and inputs through the target) joined to the best's way on again.
@@ -1041,7 +1153,7 @@ namespace IGTAP.EngineSim.Cli
                 }, new JsonSerializerOptions { WriteIndented = true }));
                 Log("plan -> " + outFile);
             }
-            if (!args.Contains("--realize")) return rows.All(r => r.plan.Done) ? 0 : 3;
+            if (!stages && !args.Contains("--realize")) return rows.All(r => r.plan.Done) ? 0 : 3;
             return RealizeRows(args, rows, kept, targetGoal - 1, place, moves, movesFile, settings, GoalOf, outFile);
         }
 
@@ -1115,6 +1227,11 @@ namespace IGTAP.EngineSim.Cli
                 File.WriteAllText(routeFile, JsonSerializer.Serialize(new { name = _name, goals, inputs = r.Inputs.Select(t => t.ToJson()),
                     goalInputTicks = r.GoalInput, goalPhysicsTicks = r.GoalPhysics, total = r.Progress == goals.Length ? r.GoalPhysics[goals.Length - 1] : -1 }));
                 Log($"realize: {written.name}'s route " + (r.Progress == goals.Length ? $"({r.LiveSeconds:0.00} s live)" : $"(to goal {r.Progress} of {goals.Length})") + " -> " + routeFile);
+            }
+            if (args.Contains("--install") || args.Contains("--stages"))
+            {
+                if (written.run != null && written.run.Progress > _best.Progress) Install(written.run, written.goals);
+                else Log($"install: no route reaches further than the best's goal {_best.Progress}");
             }
             return realized.All(r => r.z.Done) ? 0 : 3;
         }

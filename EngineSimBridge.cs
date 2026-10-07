@@ -543,7 +543,7 @@ namespace IGTAPTasMod
         int _offlineWaiting;
         // The offline bests waiting, counted on a pool thread (the directory listing, beside the offline solver's own writes,
         // could stall a paced frame every 5 s): -1 while that count runs, which _offlineCounting is set for. Only files the
-        // pump can act on count (a known course and category, or a Full-TAS run still in fulltas.json): an orphan stays in
+        // pump can act on count (a known course and category, or a Full-TAS run still in runs/): an orphan stays in
         // the folder unjudged, and counting it ran the whole pass, 3.4 ms and 400 KB on the main thread, every 5 s.
         int _offlineCount = -1;
         string[] _offlineFiles = new string[0];

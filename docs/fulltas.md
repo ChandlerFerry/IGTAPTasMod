@@ -29,12 +29,15 @@ the whole run from goal 1, about 200 s slower, and a build without the buy-max r
 repairs on its own: it keeps the file as `fulltas/<run>.before-repair-<n>-of-<m>.json` and re-finds the run from where the
 replay stops.
 
-## fulltas.json
+## Run definitions
 
-In the game's `BepInEx/config/IGTAPTasMod/` (edits are picked up within a second, never mid-run):
+One file per run in the repo's [`runs/`](../runs), named for the run (`runs/<run>.json`, its `"name"` the file's: a file
+whose name differs is skipped with a warning). The plugin reads the source tree it was built from (`IgtapRepo`), so the
+runs are versioned with the code; the studio's goal edits and adopted records write the run's file there, and an edit on
+disk (or `fulltas-plan --install`'s, [below](#install-and-stages)) is picked up within a second, never mid-run:
 
 ```json
-[{ "name": "main", "goals": ["start:1", "finish:1", "buy:buyreward", "start:1", "finish:1", "buy:buywj", "start:2"] }]
+{ "name": "main", "goals": ["start:1", "finish:1", "buy:buyreward", "start:1", "finish:1", "buy:buywj", "start:2"] }
 ```
 
 | Goal | Reached when |
@@ -239,10 +242,14 @@ the time goes:
 `x0,y0,x1,y1`): every search window of the run cuts a run that enters one, which keeps the search in the corridor
 between area goals. The Full-TAS tab's **Show map** (`POST /api/fulltas/map {name}`) draws where the run's windows
 went (`archive\fulltas-<run>.visits.json`, every solve of its current goals), the best so far, the `at:` goals and the
-avoid boxes, with a world-coordinate readout. On the map, **Draw avoid** and drag a box, tick the runs it's for and
-**Add avoid** (`POST /api/fulltas/avoid {box: [x0, y0, x1, y1], runs: [...]}`): it goes into the `"drawn": true` rule
-for exactly those runs. **Remove** under the map (`remove: true`, `name`) takes a box out of every rule of the run, and
-so out of the other runs sharing that rule. The plugin writes both `enginesim\Cli\forced-paths.json` and the solver's
+avoid boxes, with a world-coordinate readout. The map's **Avoid boxes** bar sets when a new box cuts (for every goal,
+only heading for goal N, or from goal N on; a click on a goal's green box while drawing picks N), its open sides (where a
+run may enter it; none: any tick inside is cut) and the runs it's for; then **Draw avoid** and drag boxes, each saved as
+drawn (`POST /api/fulltas/avoid {box: [x0, y0, x1, y1], runs: [...], goal?, after?, from?}`): it goes into the
+`"drawn": true` rule for exactly those runs, or that rule's optional block with the same `for`, `after` and `from`. The
+map draws a one-way box's open sides dashed green and fades the boxes that don't cut at the bar's goal; its list puts
+those that do first. **Remove** under the map (`remove: true`, `name`) takes a box out of every rule of the run and its
+optional blocks, and so out of the other runs sharing that rule. The plugin writes both `enginesim\Cli\forced-paths.json` and the solver's
 copy beside its exe, and a solve rereads the boxes before every window, so a box drawn mid-solve applies from the next
 window on. A hand edit of the source file needs an engine rebuild
 (`dotnet build enginesim\Cli\IGTAP.EngineSim.csproj -c Release`) to reach the solver's copy. Course search maps draw
@@ -256,8 +263,13 @@ last place in the run's goals), so a window that starts below the box isn't cut 
 `TrueEnding-ANY%` has three: `bonus3-wall` (x 10305.6 to 10373.1, y 7200.9 to 7538.2, between Course 3 and bonus 3's
 end) is off only for `reward:bonus3`, `statue-wall` (x 7198.2 to 7476.9, y 6900.4 to 7786.2, over the statue box) only
 for `buy:buystatue`, and `above-374` cuts everything below y 17997 once goal 374 (the gap under the spiked pillar) is
-reached. The map draws `offFor` blocks as always on and leaves `after` blocks out; the in-game goals overlay doesn't draw
-them, and the studio's **Remove** doesn't reach them: edit `enginesim\Cli\forced-paths.json` and rebuild.
+reached. A block's `for` (a goal label) is the other way round: its boxes cut only while the run heads for that goal, from the
+goal before it until it is reached (`OfflineSolver.Box.After`/`Until`; at each place the label has in the run). The avoid
+endpoint's `goal` (a label, or its number as the studio shows it, from 0) puts a drawn box in the drawn rule's block `for`
+that goal, `after` in the block `after` it (from goal N on is `after` goal N − 1; refused when that label comes again later
+in the run, where the engine would start the box instead), and `from` (`"left+right+bottom"`: entered from the top only)
+makes the block one-way. The search's distance fields leave `for` boxes out, as they do `after` ones. The map draws
+`offFor` blocks as always on and `for` and `after` blocks at their goals; the in-game goals overlay doesn't draw them.
 
 Goals chain, and a window's search follows that: its explore cells keep what the player has left in the air (wall
 jumps, midair jumps, air dashes), so a faster arrival that spent its dash doesn't replace one that still has it for the
@@ -421,7 +433,7 @@ laps: an ordering planned for slower laps asks for a clone before the clones hav
 that box. Its Course 2 and Course 3 goals (after `reward:bonus1` through `buy:buyds`, and Course 3's through `buy:buydj`) were planned
 by `tools/plan_fulltas.py`, a Python model of the economy deleted with the other old planners on 2026-10-04 (git history
 has it and its notes: the pre-2026-09-30 clone model it replayed `buy:buyds` with at 3539 ticks against the best's 3533,
-the Course 3 plan with `buystatue` 5288 ticks after the gate and `buydj` 10555). The goals in `fulltas.json` stay as they
+the Course 3 plan with `buystatue` 5288 ticks after the gate and `buydj` 10555). The goals in `runs/<run>.json` stay as they
 were planned. To plan them again, use the economy planner on the run's best ([Economy planner](#economy-planner)):
 it plans from the engine's own economy, not a copy of it.
 
@@ -488,6 +500,21 @@ rests, windows, the library) and compares whole runs by live time (`Route.Live`)
 scores; its run file carries `goalHeldFrames` beside `goalPhysicsTicks`. A record named when a run's time was its
 ticks alone is renamed to its live time on its next trace (`RememberBestSplits`).
 
+### Idles
+
+An idle is a buy goal's wait for its Cash made visible ([design](superpowers/specs/2026-10-06-fulltas-idles-design.md)):
+from the first tick the player is at the box (within its trigger's x-range plus the player's half width, at most 160 units
+below it) to the first tick the run holds what the goal's boxes cost, when that is 8 ticks or more. It is not a goal: it
+belongs to the buy it waits for, so the goal list, its numbers, `runs/<run>.json` and the gate are unchanged. The engine
+measures them (`enginesim\Cli\FullTasIdles.cs`, one replay) and writes them in the run file as `idles`, `{ goal, arrive:
+[physics, held], afford: [physics, held] }`, each time it writes the run file (`fulltas <trace> --idles` prints the best's and
+writes them without a search). The studio shows an unnumbered `idle · waiting for <goal>` row before its buy in the goals
+table, and a Full-TAS playback of the offline best's inputs shows an `IDLE · waiting for <goal>` banner with the seconds left
+(the live state's `playing.idle`). A wait away from the box (filler, a stall) isn't an idle: at the same live time the search
+ranks the route that stands idle more ahead (`Ahead`, idle-input ticks in each buy's stretch), so filler made standing and a
+faster stretch whose time comes back as a longer wait are kept. A best kept on such a tie isn't submitted to the gate, which
+saves only strictly faster times.
+
 Each run keeps a best per class (README `### Rules` 54, [Classes](#classes)): the record above is `major`;
 `fulltas/<run>_NONE nmg <time>`, `fulltas/<run>_NONE human-major <time>` and `fulltas/<run>_NONE human-nmg <time>` are
 the others, one each (a new one replaces the old). `/api/fulltas/submit` takes `class` (unset: major) and judges the route
@@ -519,7 +546,7 @@ window responsive instead of marking it "Not Responding". It doesn't yield frame
 `Movement.Update`'s step-up, coroutines, Invokes, the offline-best pump and HTTP handlers in the middle of the run, and
 the judge's state would no longer be the route's alone.
 
-A goals edit (the studio's **Save goals** or `fulltas.json` edited on disk) or a changed `start` renames every saved
+A goals edit (the studio's **Save goals** or `runs/<run>.json` edited on disk) or a changed `start` renames every saved
 route of that run solved for other goals to `<name> stale`: it's out of the record and never played or captured. The
 offline best counts only its unchanged leading goals it reaches, and **Play** and **Capture start** use its inputs only
 up to the last of them (past it they head for the old goals, or miss the next one). The solver drops a saved best's
@@ -545,8 +572,9 @@ inputs past the last unchanged goal the same way.
   start in goals a..b, while combine still splices known faster stretches anywhere. The pick shows as **Improve
   selected: goals a–b** with its time in the record; **Clear selection** (or clicking the same pick again) goes back to
   the whole run.
-- A run whose best misses goals can't be improved yet (`--auto` needs a complete route): the button is **Reach missing
-  goals** instead (`unsolved: true`, the solver's `--unsolved`, with the seed routes, an hour), which searches for the
+- A run whose best misses goals: picked goals it reaches are improved as on a complete run (`--auto --focus`, which then
+  treats the goals the best reaches as the run, writing no record and submitting nothing until every goal is reached);
+  with no pick the button is **Reach missing goals** instead (`unsolved: true`, the solver's `--unsolved`, with the seed routes, an hour), which searches for the
   missing goals in order. Either recaptures the trace (seeded with the saved best) when the run's goals or start changed
   since it was taken, or when its header's `startSetup` isn't the plugin's `FullTasStartSetup` (bumped whenever what a
   new game's start state holds changes) or its `format` isn't `FullTasTraceFormat` (bumped whenever the per-tick export
@@ -571,7 +599,7 @@ inputs past the last unchanged goal the same way.
   (`courses.json`'s frame plus the current origin), independent of the main overlay. While that run plays, reached
   goals are green and the next one yellow. The run's avoid boxes (forced-paths.json, the solver's copy) are drawn in
   red, and a box added or removed on the map shows up within a second.
-- **Show map** draws the run's `at:` goals as they are in `fulltas.json` now (the plugin passes them to `map` as
+- **Show map** draws the run's `at:` goals as they are in `runs/<run>.json` now (the plugin passes them to `map` as
   `--goals`; the trace's own goals are the ones it was captured with). **Move goals** there: drag a green goal box, or
   type its new centre, then **Save goal** (`POST /api/fulltas/move-goal {name, index, label, x, y}`: `index` 0-based,
   `label` the goal as the map drew it, refused if the goal list changed since). The goal keeps its size and any
@@ -622,7 +650,7 @@ Every run keeps four bests, one per class (`enginesim\Runtime\Glitches.cs`, `eng
 | `human-nmg` | glitchless and nmg techs | goals, then fewer major spans, then score; a route with a major span is never saved |
 
 Score = live seconds + 2 × spike-grace ticks + 5 × frame-perfect inputs + 20 × back-to-back pairs of the whole route's
-[difficulty](#difficulty); the run's `"human"` weights in `fulltas.json` (the trace header's `fulltas.human`) replace the
+[difficulty](#difficulty); the run's `"human"` weights in `runs/<run>.json` (the trace header's `fulltas.human`) replace the
 defaults. A major or nmg span adds nothing of its own (before 2026-10-01: 60 s and 20 s): a glitch is as hard as the
 inputs that make it, which the difficulty counts. A span is one occurrence of a tech, however long it lasts; a
 spike-grace tick is a step whose hurtbox touches a spike the run lives through (spike grace stays glitchless). A route
@@ -962,8 +990,9 @@ window whose own goal is reached later but with more speed wins when it gains by
 & $exe fulltas $traces\fulltas-VMAN.json --auto --minutes 75 --window-minutes 0.5 --threads 24 --no-submit   # --parallel K, --probe-minutes p, --repair-minutes r, --repair-cpu-per-tick c, --repair-slack T, --ref FILE, --focus a-b; --minutes 0: the table only
 ```
 
-`--auto` (`enginesim\Cli\FullTasAuto.cs`) improves a complete route with no one choosing goals or levers, and needs no
-reference route. It is the same solve (windows, merge, repair, reset study, the transplant's splices, polish, plan), driven
+`--auto` (`enginesim\Cli\FullTasAuto.cs`) improves a route with no one choosing goals or levers, and needs no reference
+route. A best that misses goals is improved through the goals it reaches, as if they were the run (no record, no submission,
+the goals part off). It is the same solve (windows, merge, repair, reset study, the transplant's splices, polish, plan), driven
 by a measured gap. The studio's **Improve** runs it ([Studio](#studio-full-tas-tab)).
 
 **Focus.** `--focus a-b` (or `--focus a`) keeps the search on goals a..b: the scheduler's regions are those goals' labels
@@ -1020,16 +1049,25 @@ known route that does goal k better: reached sooner, its way there kept and the 
 bridges do; a shorter split, its inputs picked up from the best's states nearest its path by position, velocity and
 facing, the transplant's splices), `plan` (the contact planner on goal k's window, the best's window as its guide; a
 goal whose plan finds no finish is dropped from the plan lever), and `waste` (a window from goal k to the goal after its
-last waste finding, Parts 8, seeded with each finding undone; prior 0.5 × the audit's ticks there). First every goal label (a lap phase: every
+last waste finding, Parts 8, seeded with each finding undone; prior 0.5 × the audit's ticks there), and `place`
+(`FullTasAutoPlace.cs`: a window from goal k−1 seeded by place, once per goal until the best changes there: each known category
+route, any standing seed with a category start within 3000 u of the best's way whatever its goal, picked up at the best's
+states nearest its path, as the graft's splices do, a few inputs either way, played to its end and back into the best's
+inputs where its path meets the best's later; and every dash of the best's window and of the closest splices tried with the
+game paused on it or on one of the two inputs after it, 20, 40 or 60 frames, on each tick and frame of those, kept as a
+pauselift when it peaks 40 u above the same inputs unpaused, then played on as it was and by the known routes from its top;
+the window's last three finds get the pauses and splices again, searched for half the budget; a class without major techs
+gets no pauses). First every goal label (a lap phase: every
 `buy:buyclone2` is one) gets one window probe of `--probe-minutes` (half of `--window-minutes`) at its goal with the most
 expected headroom, most expected first (one per goal took longer than 10 minutes on `FalseEnding-Any%`'s 300 goals). Then each pull takes the arm with the most expected
 ticks per CPU second, (lever share × expected + ticks gained) / (the lever's CPU seconds per pull + CPU seconds spent on
 the arm; a pull's cost is its budget's CPU seconds counted as one pull, averaged with every pull the lever made, so one
 that ended early doesn't make a lever look free): an arm that pays keeps winning, one that doesn't fades as its CPU grows. Lever shares (from the `VMAN` work: the goal 11 gain came from a window scored at goal 14's small box, windows scored
 at large area boxes found arrivals the next goals couldn't use, and the early resets proved to be teleports): polish
-0.15, window 0.2, lookahead and plan 0.3, span 0.45, dropreset 0.15, graft 0.6 (of the proven lead: a known route's lead at a goal a graft or merge has already followed, and not kept, is
+0.15, window and place 0.2, lookahead and plan 0.3, span 0.45, dropreset 0.15, graft 0.6 (of the proven lead: a known route's lead at a goal a graft or merge has already followed, and not kept, is
 no longer proven). A window arm pulled again searches
-longer (`--window-minutes` × pulls, up to 4×; its archive resumes it), a plan pull 1.5× that and at least 2 minutes. A
+longer (`--window-minutes` × pulls, up to 4×; its archive resumes it), a plan pull 1.5× that and at least 2 minutes. `--pull
+lever@k` (with `--auto`) makes one pull of a lever at goal k with the loop's budgets and stops: a lever tried on its own. A
 graft tries each known route's source once per goal (a window pull's finds are one source, and the goal its merge already
 repaired from is skipped). CPU is the process's
 (`Process.TotalProcessorTime`).
@@ -1291,8 +1329,8 @@ baseline). The default is set by the measurements below, and has every part exce
    offline best and the gate submission carry the list (`goals`) and the lists it came from (`goalsFrom`, oldest first);
    a later `--auto` on the same trace resumes on them when that route is the faster one. The game judges such a route
    under its own goals, only when one of its `goalsFrom` lists is the run's
-   list in `fulltas.json` as it is now and the edit keeps those goals (`EditRefused` again); when it saves it as the
-   record, the list becomes the run's (`fulltas.json` is kept first as `fulltas.json.<yyyyMMdd-HHmmss>.bak`, and the old
+   list in `runs/<run>.json` as it is now and the edit keeps those goals (`EditRefused` again); when it saves it as the
+   record, the list becomes the run's (the run's file is kept first as the config folder's `runs-backup/<run>.<yyyyMMdd-HHmmss>.json`, and the old
    list's routes retire as after a goals edit in the studio). The studio feed shows the adopted edit as the record's
    title; `fulltas/<run>.auto.jsonl` has every edit tried (`goalEdit`) and every adopted list (`goals`). Off with
    `--course` and `--focus`.
@@ -1300,9 +1338,9 @@ baseline). The default is set by the measurements below, and has every part exce
    **A planned list that drops or moves a reward goal (skipping bonus 1, say) is refused by the game.** The game's
    `FullTasGoal.EditRefused` (`FullTas.cs`, the gate) refuses any list whose area, reward or unlock goals differ from
    the run's, cash reward goals included, so such a route is never judged and never becomes the record on its own. Put
-   it into `fulltas.json` by hand, as `--insert-goal` lists always were: (1) take the adopted list (`goals` in the run
+   it into `runs/<run>.json` by hand, as `--insert-goal` lists always were: (1) take the adopted list (`goals` in the run
    file `fulltas/<run>.json` the pull wrote, or the `goals` event in `fulltas/<run>.auto.jsonl`); (2) edit the run's
-   goals to it (the studio's Full-TAS tab, **Save goals**, or `fulltas.json` edited with the game closed; either marks
+   goals to it (the studio's Full-TAS tab, **Save goals**, or `runs/<run>.json` edited with the game closed; either marks
    the run's saved routes stale); (3) put the route in `fulltas/<run>.json` and submit it (`/api/fulltas/submit`);
    (4) **Capture start** again, so the next `--auto` traces from the new list. A list that keeps every reward goal in
    place needs none of this: the game adopts it through `goalsFrom` (above).
@@ -1719,7 +1757,8 @@ them together from pieces instead:
 Stretches can be planned and built in parallel: the loop pieces (`archive/fulltas-pieces.json`) are written under a lock
 (`fulltas-pieces.json.lock`) and merged with what other processes filed since, and shared files get a per-process temp
 name (two plans crashed on one `.tmp`). The builder and `fulltas-plan` play the goals of the trace's header, not
-`fulltas.json`: to plan or build a stretch on top of a planned route, capture the start again with its goals first.
+`runs/<run>.json`: to plan or build a stretch on top of a planned route, capture the start again with its goals first,
+or let `fulltas-plan --install` put them in the header ([Install and stages](#install-and-stages)).
 
 `--harvest FILE` (the solve and `fulltas-plan`) plays a saved route (a `fulltas/<run>.json`: its goals and inputs, goals
 of the run's labels) under its own goals from the run's start and files each of its goals as a library piece. After a
@@ -1885,7 +1924,11 @@ of a place, with the unlocks held there (`PlayerCaps`), is one of:
   now, a goal per level (`upgradeBox.OnTriggerStay2D`: a buy each 0.2 s cooldown);
 - `atoms:N` (N 1, 2, 4, ..., 512) for Area 2's atom box (`buy:buyatom`, `AtomUpgrades/AtomUpgrade`, `spawnNewAtom`,
   buy-max), unless `--only` leaves it out: the next N atoms' price (GP) saved at the box, then one touch, which buys all the
-  GP pays for (`atoms:1` touches now; a larger N is offered only while its price is more than the run holds);
+  GP pays for (`atoms:1` touches now; a larger N is offered only while its price is more than the run holds); never from the
+  atom box itself (the touch's buy-max buys the rest a step at a time, and those buys are no goal: a second `atoms` there
+  planned a goal the run never reached, Zip%'s realize stuck at goal 831). The beam stands an `atoms` touch at most 300
+  ticks for its GP (`AtomStand`) and doesn't play one short of its price with no income over its window: nearly every
+  atoms option failed, 82% of the beam's time (Zip% from goal 630: 341 s to 50 s, and a plan 2,283 ticks sooner);
 - `reward:bonusN` for each `--bonuses` box not bought yet;
 - `restart@x,y`, a quick restart to a landing the table saw from there (`MoveTable.Restarts`);
 - the target.
@@ -2114,6 +2157,28 @@ bridges and the stray fits, the free plan's route is 415 ticks ahead at bonus 3 
 stops short of Cash at `buy:buydj` (goal 275 of 285). The stretch after `buy:buyds` has to be planned for the new
 economy too (the goals part, per stretch).
 
+### Install and stages
+
+```powershell
+& $exe fulltas-plan $traces\fulltas-Zip%.json --stages --mode beam --beam 4 --minutes 120 --rounds 30 --off-ticks 300 --only lap:6,record:6,buy:buyreward6,buy:buygreen6,buy:buyclone6,buy:buyatom,buy:buytree0,buy:buytree2,buy:buytree3,buy:buytree4,buy:buytree5,buy:buytree6 --piece-minutes 3
+```
+
+`--install` (with `--realize`) makes the route realize writes the run's when it reaches further than the best: its goals
+go into `runs/<run>.json` (the studio reloads them and retires the old goals' routes, as after **Save goals**) and into
+the trace header (each goal's entry by its label, else made as the plugin makes one: `NewGoal`), and the route into
+`fulltas/<run>.json`. No capture: its replay would change the live scene (a grown tree spoils the next world export), and
+the header splice leaves the trace's start and ticks as they are. A goal the header lacks that `NewGoal` can't make (an
+`at:` goal, a grouped buy) stops it: capture the start again.
+
+`--stages` repeats plan, realize and install unattended: each stage plans from the best's furthest goal
+(`--from furthest`) to the first buy after it (`--target next`), opens the run afresh (the header, run file and moves
+table the stage before left) and goes on while stages get further. It stops when the best reaches every goal, or after
+three stages in a row that don't (the second of them with a beam twice `--beam`). Without `--seed`/`--seed-list` it
+takes the seeds the studio's last solve of the run listed (`fulltas-<run>-seeds.txt` beside the trace; a reach solve
+started and stopped writes them again). It uses one core for the beam and every core for realize's piece searches; run
+it on a private engine build (`dotnet build enginesim\Cli\IGTAP.EngineSim.csproj -c Release -o <dir>`) when other
+searches share the built one.
+
 ### Area 2: the zip movers
 
 `fulltas-plan` plans Area 2 too: the target `buy:buytree16` (the zip movers, `ZipMoversUnlock`, 625,000,000 NP) has the tree's
@@ -2192,7 +2257,8 @@ missing:
   the tree play through a saved-route chain, `tree0to6` then a quick restart then `6_WJ_DS_DJ_BS 1.20` (the restart lands
   at bonus 11's checkpoint, where the transition starts): the engine chains each tree transition seed to each of its
   course's standing routes (0-6 idle ticks after the restart) as a restart seed (`FullTas.LoadSeeds`). The plugin writes
-  seeds for every course's routes, the run's goals or not, and for the tree transitions (`FullTasSeedTransition`).
+  seeds for every course's and bonus's routes, the run's goals or not (the `place` lever splices any of them in where the run
+  passes), and for the tree transitions (`FullTasSeedTransition`).
 - **Realize** now waits at any buy reached before its Cash (the build ahead of the plan), writes the furthest build when
   it stops (its goals, then the run's from the target on) and takes `--rounds N` re-plans and `--off-ticks N`, the drift
   from the plan that makes one (10 by default; a long stretch's plan takes half an hour to make again, so 300 there). A stretch is then built a
@@ -2222,9 +2288,20 @@ them (20+ minute piece searches, none found). Strict buys stay. Each search wind
 the builder's piece searches) now adds an avoid box for each box the run can buy at the window's start that its goals
 don't name: only its trigger, the thin buy area under the box, grown by the player's body box (`Simulation.StrayTriggers`,
 `FullTas.WithStrays`), logged as `avoid: N boxes this window could buy by stray (...)`. A run is cut on entering one
-and the guide treats it as a wall. Not yet run: the next stage from goal 630 is the test. A box that becomes affordable
+and the guide treats it as a wall. Run from goal 630 (eng with the later fixes): the lap from the atom room's restart
+to Course 6 is found in about a minute (it was never found before). The avoids are now discourage boxes (a graze buys
+nothing), logged `discourage: N boxes ...`, and the stray set is read with the window's start restored (a window that
+started from a stored goal state read the new game's boxes before). A box that becomes affordable
 during the window still ends a run that touches it. A plain lap (`lap:N`) also tries the saved course routes, a tree
 transition's chain among them, before a piece search (`FullTas.Lap`).
+
+The way from the atom box up the shaft (goal 511 `buy:buyfree6a`, 2026-10-06 evening): bonus 11's route
+(`bonus11_WJ_DS_DJ_BS 2.86`) runs through the atom room, and its own pauselift (40 frames on the input after a dash) lifts the
+player from y 867 to 1805 in the shaft. Spliced in where the best passes its path, it reaches goal 511 on tick 36008
+against the best's 36033; the window from there (`--auto --pull place@511`, 3 minutes) reaches goal 512 on tick 36168
+against 36182. Pausing the dashes of the best's window, of the splices and of the window's finds lifts nothing more (the
+find's climb dash paused plays the same ticks, only later). The old route after it plays 35 ticks behind the best at goal
+590, so the merge's repair drops it: the gain needs the stretch after the plant planned again from the earlier arrival.
 
 ## When a game update breaks a route
 
