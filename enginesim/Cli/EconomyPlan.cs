@@ -1548,11 +1548,17 @@ namespace IGTAP.EngineSim.Cli
             bool searched = false;
             if (played == null && stood && affordable != true)
             {
-                // An atom touch short of the plan's atoms stands at most --off-ticks past the plan's step, then goes back to the plan,
-                // which sees what the run holds (Zip% after buytree0: 1,225 ticks standing for the plan's 139); a search would touch
-                // the box with fewer.
-                played = Waited(z, goals, s.Ticks, need > 1 ? Math.Max(25, Math.Min(StandWait, s.Ticks + _offTicks)) : StandWait, need);
-                if (played == null && need > 1) { _whyNot = $"{goals[^1].label}: the plan's {need} atoms not paid for by {s.Ticks + _offTicks} ticks"; return null; }
+                // An atom touch short of the plan's atoms stands at most --off-ticks past the plan's step for them (Zip% after
+                // buytree0: 1,225 ticks for the plan's 139), then touches with what it holds: the plan stands for them at the box,
+                // this wait is where the step before left the player (its on-screen clones pay otherwise), and a plan made again
+                // from here asked for the same atoms again, round after round. The next plan sees the atoms bought.
+                if (need > 1)
+                {
+                    played = Waited(z, goals, s.Ticks, Math.Max(25, Math.Min(StandWait, s.Ticks + _offTicks)), need);
+                    if (played == null) Log($"realize: {goals[^1].label}: the plan's {need} atoms not paid for by {s.Ticks + _offTicks} ticks; touching with what it holds");
+                }
+                if (played == null && Affordable(z.State, boxes) == true) played = Play(z.State, z.Inputs, z.Planned, goals, true);
+                if (played == null) played = Waited(z, goals, s.Ticks, StandWait);
                 if (played == null) { played = Play(z.State, z.Inputs, z.Planned, goals, true); searched = true; }
             }
             else if (played == null && affordable == false && (played = Waited(z, goals, s.Ticks)) == null) _whyNot += ", short of Cash";
