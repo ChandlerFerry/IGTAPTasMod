@@ -202,7 +202,8 @@ namespace IGTAP.EngineSim.Cli
             /// <summary>Every currency held, and (beam) gained so far, spending left out.</summary>
             public double[] Holds, Earned;
             public bool Done, Dead;
-            /// <summary>The levels its `all:` step bought after its first (a goal each).</summary>
+            /// <summary>The levels its `all:` step bought after its first (a goal each); an `atoms` step's: the atoms its touch's
+        /// buy-max pays for after the first (no goal: Simulation.Bought's continuing), which realize waits for.</summary>
             public int Extra;
             /// <summary>Its steps still in the queue: at 0 its snapshot is let go (the search's memory is the queue's front).</summary>
             public int Pending;
@@ -236,8 +237,12 @@ namespace IGTAP.EngineSim.Cli
                     economy.Idle(1, o.End);
                     tick++;
                 }
+                // An atom touch buys every atom the GP pays for (buy-max): realize stands for as many (PlayStep's levels).
+                int could = 0;
+                if (last && o.Step.Kind == "atoms")
+                    while (could < MaxAtoms && Covered(economy.Price(box, could + 1), economy.Holds())) could++;
                 tick++;
-                if (economy.Buy(box)) continue;
+                if (economy.Buy(box)) { extra = Math.Max(0, could - 1); continue; }
                 if (!o.Stand || !last) return null;
                 was = null;
                 for (int w = 0; ; w++)
@@ -345,7 +350,7 @@ namespace IGTAP.EngineSim.Cli
                 result.Tick = result.Done ? done.Tick : -1;
                 result.Proven = proven && result.Done;
                 result.Steps = path.Select(n => n.Via.Step with { Ticks = (int)(n.Tick - n.Parent.Tick) }).ToArray();
-                result.Goals = path.SelectMany(n => n.Extra == 0 ? n.Via.Goals : n.Via.Goals.Concat(Enumerable.Repeat(n.Via.Goals[^1], n.Extra))).ToArray();
+                result.Goals = path.SelectMany(n => n.Extra == 0 || n.Via.Step.Kind == "atoms" ? n.Via.Goals : n.Via.Goals.Concat(Enumerable.Repeat(n.Via.Goals[^1], n.Extra))).ToArray();
                 result.Estimated = path.SelectMany(n => n.Via.Estimated ?? Array.Empty<string>()).Distinct().ToArray();
                 result.Ends = path.Select(n => n.Tick).ToArray();
                 result.Cash = path.Select(n => n.Holds[0]).ToArray();
@@ -1514,15 +1519,18 @@ namespace IGTAP.EngineSim.Cli
             // while the next level is paid for.
             goals = EconomyPlan.PlaceOf(s).Split(MoveTable.SetJoin).Select(goalOf).ToArray();
             string[] boxes = goals.SelectMany(g => g.boxes ?? Array.Empty<string>()).ToArray();
-            bool? affordable = boxes.Length == 0 ? true : Affordable(z.State, boxes);
-            var played = Play(z.State, z.Inputs, z.Planned, goals, affordable == true);
+            // An atom touch with fewer GP than the plan's buys fewer atoms (buy-max), and their NP is what the plan counted on:
+            // it waits for the plan's levels' price (Zip%: a touch 1000 ticks early bought 1 atom, not the plan's tier-up).
+            int need = s.Kind == "atoms" ? Math.Max(1, levels) : 1;
+            bool? affordable = boxes.Length == 0 ? true : Affordable(z.State, boxes, need);
+            var played = need > 1 && affordable != true ? null : Play(z.State, z.Inputs, z.Planned, goals, affordable == true);
             // A step the plan stood for (Area 2's buys: its Cash, or its box still growing) waits as the target's stand does.
             // Standing still where the step before left the player can buy that box again (a strict stray): then a piece search,
             // whose way waits for the Cash inside it, so its ticks aren't the walk's (walked -1: not measured).
             bool searched = false;
             if (played == null && stood && affordable != true)
             {
-                played = Waited(z, goals, s.Ticks, StandWait);
+                played = Waited(z, goals, s.Ticks, StandWait, need);
                 if (played == null) { played = Play(z.State, z.Inputs, z.Planned, goals, true); searched = true; }
             }
             else if (played == null && affordable == false && (played = Waited(z, goals, s.Ticks)) == null) _whyNot += ", short of Cash";
@@ -1542,7 +1550,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>A buy short of Cash on arrival (the target's stand, or any buy the build reaches before its Cash): the fewest idle ticks where the step before left the
         /// player (5 at a time from the first standing pays for it less the walk, <paramref name="walk"/>), after which the builder's
         /// way buys it.</summary>
-        (List<InputTick> inputs, SimSnapshot state, long tick)? Waited(Realization z, FullTasGoal[] goals, int walk, int most = TargetWait)
+        (List<InputTick> inputs, SimSnapshot state, long tick)? Waited(Realization z, FullTasGoal[] goals, int walk, int most = TargetWait, int levels = 1)
         {
             var list = _kept.Concat(z.Planned).ToList();
             Track(list.Concat(goals).ToList());
@@ -1555,10 +1563,12 @@ namespace IGTAP.EngineSim.Cli
                 Track(list.Concat(goals).ToList());
                 SimSnapshot s = AdvanceFrom(here, z.Inputs.Count, Idle(w));
                 if (s == null) break;
-                if (Affordable(s, boxes) == true) paid = w;
+                if (Affordable(s, boxes, levels) == true) paid = w;
             }
             if (paid < 0) { _whyNot = $"{goals[^1].label}: short of Cash after {most} ticks standing"; return null; }
-            for (int w = Math.Max(0, paid - walk); w <= paid; w += 5)
+            // ponytail: several levels wait out the walk too (an earlier start can arrive short of one); a check of what the touch
+            // bought would save the walk's ticks.
+            for (int w = levels > 1 ? paid : Math.Max(0, paid - walk); w <= paid; w += 5)
             {
                 Track(list.Concat(goals).ToList());
                 SimSnapshot s = w == 0 ? here : AdvanceFrom(here, z.Inputs.Count, Idle(w));

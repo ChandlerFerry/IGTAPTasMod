@@ -404,7 +404,7 @@ namespace IGTAP.EngineSim.Cli
                     InputTick k = i > 0 && i <= _best.Inputs.Count ? _best.Inputs[i - 1] : default;
                     WorldPos at = _eval.PlayerWorld;
                     FullTasGoal next = _eval.Progress < _goals ? _runGoals.Goals[_eval.Progress] : null;
-                    string price = next?.boxes == null ? "" : $" next {next.label} affordable {_eval.Shop.Affordable(next.boxes)} cash {_eval.Shop.CashNow:G4}";
+                    string price = next?.boxes == null ? "" : $" next {next.label} affordable {_eval.Shop.Affordable(next.boxes)} cash {_eval.Shop.CashNow:G4} ({_eval.Shop.Describe(next.boxes)})";
                     Console.WriteLine($"in {i} t {t} held {_eval.Engine.HeldFrames} goal {_eval.Progress} at {at.x:0.0},{at.y:0.0} v {vel?.GetValue(_eval.Player)} ground {ground?.GetValue(_eval.Player)}"
                         + $" | x {k.x:0.##} y {k.y:0.##}{(k.held ? " J" : "")}{(k.press ? " press" : "")}{(k.release ? " rel" : "")}{(k.dash ? " DASH" : "")}{(k.reset ? " RESET" : "")}{price}");
                     return true;

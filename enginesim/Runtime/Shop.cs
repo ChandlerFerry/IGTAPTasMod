@@ -117,9 +117,9 @@ namespace IGTAP.EngineSim
         /// Whether the run holds enough now to buy each of these boxes once (their costs added per currency); null when one of
         /// them can't be bought (not active: capped, or not unlocked yet), which Cash doesn't change.
         /// </summary>
-        internal bool? Affordable(string[] boxes)
+        internal bool? Affordable(string[] boxes, int levels = 1)
         {
-            double[] need = Need(boxes);
+            double[] need = Need(boxes, levels);
             if (need == null) return null;
             for (int c = 0; c < CurrencyCount; c++)
                 if (need[c] > 0.0 && Available(c) < need[c]) return false;

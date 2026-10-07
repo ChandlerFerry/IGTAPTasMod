@@ -850,7 +850,7 @@ namespace IGTAP.EngineSim.Cli
         void Read(SimSnapshot s) { _eval.Restore(s.WithGoal(Fresh(_goals, 0))); }
         double Cash(SimSnapshot s) { Read(s); return _eval.Shop.CashNow; }
 
-        bool? Affordable(SimSnapshot s, string[] boxes) { Read(s); return _eval.Shop.Affordable(boxes); }
+        bool? Affordable(SimSnapshot s, string[] boxes, int levels = 1) { Read(s); return _eval.Shop.Affordable(boxes, levels); }
 
         static readonly Regex CostText = new Regex(@"costs (\S+)");
 
