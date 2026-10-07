@@ -97,9 +97,14 @@ namespace IGTAP.EngineSim.Cli
             return table;
         }
 
+        /// <summary>Places realize found no way to (its step there didn't play for want of a way, not of Cash): no move leads there
+        /// until it clears them (a tree box bought grows the way up). Not saved.</summary>
+        public readonly HashSet<string> Blocked = new HashSet<string>();
+
         /// <summary>The most trusted move from here to there with these unlocks, else an estimate; null when neither is known.</summary>
         public Move Best(string from, string to, string caps)
         {
+            if (Blocked.Contains(to)) return null;
             if (_moves.TryGetValue((from, to, caps), out Move m)) return m;
             int ticks = Guess(from, to, caps);
             return ticks < 0 ? null : new Move(from, to, ticks, "estimate", true);

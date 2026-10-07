@@ -1452,6 +1452,13 @@ namespace IGTAP.EngineSim.Cli
                 {
                     string why = $"{s.Kind} {s.Arg} from {from} on tick {z.Tick} doesn't play ({_whyNot})";
                     Log("realize: " + why);
+                    // No way there (not short of Cash): the plan made again goes elsewhere until a tree box grows the way (Zip%
+                    // after buytree0: buytree2, whose way up comes with buytree1, was planned and searched for round after round).
+                    if (s.Kind != "target" && s.Kind != "lap" && s.Kind != "record" && _whyNot?.Contains("Cash") != true && _whyNot?.Contains("paid") != true)
+                    {
+                        moves.Blocked.Add(to);
+                        Log($"realize: {to} blocked until a tree box is bought");
+                    }
                     z.Log.Add(new { round = z.Rounds, kind = s.Kind, step = s.Arg, from, planTicks, plan = planEnd, built = -1L, why, estimated });
                     if (!Again(why)) z.Why ??= why;
                     continue;
@@ -1481,6 +1488,7 @@ namespace IGTAP.EngineSim.Cli
                 z.Inputs = inputs;
                 z.State = state;
                 z.Planned.AddRange(goals);
+                if (goals.Any(g => g.label.StartsWith("buy:buytree", StringComparison.Ordinal))) moves.Blocked.Clear();
                 double cash = Cash(state);
                 long off = end - planEnd;
                 Log($"realize: {s.Kind} {s.Arg} from {from}: planned {planTicks} ticks to {planEnd} ({plan.Cash[i]:0} Cash), built {ticks} to {end} ({cash:0} Cash), {off:+0;-0}"
