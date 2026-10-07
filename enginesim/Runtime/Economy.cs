@@ -563,6 +563,28 @@ namespace IGTAP.EngineSim
 
         static double Boost(courseScript course) { return course.compBoostTimeLeft > 0.0 ? course.compBoostBonus : 1.0; }
 
+        /// <summary>
+        /// What the clones pay a physics tick now, per currency (globalStats.Currencies' order), as their state stands: each course's
+        /// clones spawn Count a path (BaseInterval apart) and pay off screen at each spawn (SpawnClone): Cash its reward × the clone
+        /// multiplier, GP its gpReward on the green ones (globalStats' greenCloneClance in 100 spawns: clonesScript.checkIfColourClone)
+        /// × CloneDustGpCdMult. Bigness and fastness rolls left out (a lower bound). The planner ranks an investment by it at once,
+        /// before the money it brings shows over a window.
+        /// </summary>
+        internal double[] CloneRates(float dt)
+        {
+            var rates = new double[7];
+            double green = Global(globalStats.globalUpgradeSet.greenCloneClance) / 100.0;
+            foreach (Clones c in _clones)
+            {
+                if (c.V.Count <= 0 || c.V.PathLength <= 0.1f || (object)c.Course == null || c.Local < 0 || !c.Script.isActiveAndEnabled) continue;
+                double spawns = c.V.Count / (double)c.V.PathLength * dt, boost = Boost(c.Course);
+                double mult = 0.1 + Global(globalStats.globalUpgradeSet.cloneMult) * 0.2 + Local(c.Local, localUpgrades.localUpgradeSet.cloneMult) * 0.1;
+                rates[(int)globalStats.Currencies.Cash] += spawns * c.Course.reward * mult * boost;
+                rates[(int)globalStats.Currencies.GreenPower] += spawns * green * c.Course.gpReward * _cdMult * boost;
+            }
+            return rates;
+        }
+
         /// <summary>A red clone's red power (clonesScript.cs:250-254, 330-334): capped at globalStats.rpCap as the world holds it
         /// (UpdateRpCap runs at Movement.Start and at an RP cap box's buy: <see cref="UpdateRpCap"/>).</summary>
         bool PayRed(double value)

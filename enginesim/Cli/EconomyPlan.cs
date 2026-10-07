@@ -79,11 +79,16 @@ namespace IGTAP.EngineSim.Cli
         string Key();
         double[] Earned();
         double[] Price(string box, int levels = 1);
+        /// <summary><see cref="Price"/> of a box not shown yet too (a tree box whose segment hasn't grown): the beam's estimate.</summary>
+        double[] PriceAhead(string box);
         /// <summary>The most ticks the economy can go paying nothing while it still earns (a clone's lap: its payouts come once a
         /// lap), 0 where income comes every tick or not at all.</summary>
         int Quiet();
         /// <summary>The most of each currency waiting can bring (NP: its cap while nothing can raise it), else infinity.</summary>
         double[] Ceiling();
+        /// <summary>What the economy earns a tick standing still now, per currency as Holds counts them (null: not modelled): the
+        /// beam ranks an investment by it before its money shows over a window.</summary>
+        double[] Rates();
     }
 
     /// <summary>A step out of a place as the search plays it: Ticks less its events standing at End, then each Buys box a tick
@@ -476,13 +481,16 @@ namespace IGTAP.EngineSim.Cli
                 var (price, ticks) = remaining(n.Place);
                 Node<TSnap> a = Window(n);
                 double[] ceiling = economy.Ceiling();
+                // What the state earns a tick now (its clones, NP): an investment counts at once, not once its money shows over the
+                // window (Zip%'s plans from buytree0 never levelled buytree0's green clone chance, all of Area 2's GP).
+                double[] model = economy.Rates();
                 double wait = 0;
                 bool capped = false;
                 for (int c = 0; c < price.Length; c++)
                 {
                     double missing = price[c] - n.Holds[c];
                     if (missing <= 0 || n.Tick == a.Tick) continue;
-                    double rate = Rate(n, a, c);
+                    double rate = Math.Max(Rate(n, a, c), model != null && c < model.Length ? model[c] : 0);
                     // A price over the currency's cap (Area 2's NP, capped at NpCapTicks of its rate) is reached only by raising the
                     // rate (atoms): ranked by that rate, the cap's. The window's earnings stop at the cap, so every state read as no
                     // income and Cash broke the ties (Zip%'s plan to buytree5 laid up 3.3M Cash at NP's cap, 693, for 30 minutes).
@@ -502,7 +510,7 @@ namespace IGTAP.EngineSim.Cli
                     {
                         double missing = atom[c] - n.Holds[c];
                         if (missing <= 0 || n.Tick == a.Tick) continue;
-                        double rate = Rate(n, a, c);
+                        double rate = Math.Max(Rate(n, a, c), model != null && c < model.Length ? model[c] : 0);
                         if (rate <= 0) rate = Rate(n, root, c);
                         wait += rate > 0 ? missing / rate : NoIncome;
                     }
@@ -600,7 +608,7 @@ namespace IGTAP.EngineSim.Cli
                         log?.Invoke($"beam: tick {n.Tick}, Cash {n.Holds[0]:0}, {result.States} states played, {result.Nodes} let in, {result.Pruned} cut, {result.Dropped} dominated, "
                             + $"{result.Prechecked} pre-checked out, {queue.Count} queued, {GC.GetTotalMemory(false) / 1e9:0.00} GB; "
                             + string.Join(", ", result.Profile.Select(p => $"{p.Key} {p.Value.played}/{p.Value.failed}/{p.Value.dominated}"))
-                            + $"; GP {n.Holds[1]:G3}, NP {n.Holds[2]:G3}; its steps: {Trail(n)}");
+                            + $"; GP {n.Holds[1]:G3}, NP {n.Holds[2]:G3}" + (economy.Rates() is double[] r ? $" (a tick: Cash {r[0]:G3}, GP {r[1]:G3}, NP {r[2]:G3}; F {n.F - n.Tick:0})" : "") + $"; its steps: {Trail(n)}");
                     }
                 }
                 result.Exhausted = why == null;
@@ -766,7 +774,9 @@ namespace IGTAP.EngineSim.Cli
                 foreach (string t in targets)
                 {
                     if (t != target && economy.Level(t) != bought[t]) continue;
-                    double[] p = economy.Price(t);
+                    // A tree box its segment hasn't grown yet costs what it will (buytree5's 22,500 NP left out, the beam saw only the
+                    // tree's cheap boxes before it and laid up Cash at NP's cap).
+                    double[] p = economy.Price(t) ?? economy.PriceAhead(t);
                     for (int c = 0; p != null && c < p.Length; c++) price[c] += p[c];
                     next ??= t;
                 }
@@ -926,6 +936,18 @@ namespace IGTAP.EngineSim.Cli
                 + "|" + string.Join(",", _sim.Courses.Select(c => ((float)BestPathTime.GetValue(c)).ToString("R", CultureInfo.InvariantCulture)));
         }
 
+        public double[] Rates()
+        {
+            double[] rates = _sim.Shop.Economy?.CloneRates(_sim.World.FixedDeltaTime);
+            if (rates == null) return null;
+            globalStats stats = Singleton<globalStats>.Instance;
+            // globalStats.DoConstantCurrency's NP below its cap (the cap's own rate: Ceiling).
+            if (stats != null)
+                rates[(int)globalStats.Currencies.AtomicPower] = stats.NPrewardPerTick * (1.0 + globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.NpGenerationSpeed])
+                    * stats.GameSpeed * (globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.compBoostDoublesNP] != 0.0 ? stats.EffectOfNpCompBoost : 1.0);
+            return rates;
+        }
+
         public double[] Earned()
         {
             var earned = new double[7];
@@ -936,6 +958,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>A label's boxes' price now (their next <paramref name="levels"/> levels), per currency (Shop.Need); null when one
         /// can't be bought.</summary>
         public double[] Price(string label, int levels = 1) => _sim.Shop.Need(Ids(label), levels);
+        public double[] PriceAhead(string label) => _sim.Shop.Need(Ids(label), 1, shown: false);
 
         /// <summary>Twice the longest clone path of a course with clones (a clone pays at its path's end, the next one spawns an
         /// interval later, at most a path), in ticks.</summary>

@@ -129,13 +129,14 @@ namespace IGTAP.EngineSim
         /// <summary>What buying each of these boxes once (<paramref name="levels"/> times: its next levels) costs now, per currency
         /// (their costs added); null when one of them can't be bought (<see cref="Affordable"/>; or hasn't that many levels left
         /// under its cap).</summary>
-        internal double[] Need(string[] boxes, int levels = 1)
+        internal double[] Need(string[] boxes, int levels = 1, bool shown = true)
         {
             var need = new double[CurrencyCount];
             foreach (upgradeBox b in _boxes)
             {
                 if (!Named(boxes, b)) continue;
-                if (!b.isActive || !b.gameObject.activeInHierarchy || levels > 1 && b.TimesUsed + levels > b.Cap) return null;
+                // Not shown (shown: false): a tree box its segment hasn't grown yet is priced at its cost as loaded.
+                if (shown && (!b.isActive || !b.gameObject.activeInHierarchy) || levels > 1 && b.TimesUsed + levels > b.Cap) return null;
                 int currency = (int)Currency(b);
                 if (currency < 0 || currency >= CurrencyCount) continue;
                 // The next `levels` levels' costs, each raised as ScaleBoxCost raises it after a buy.
