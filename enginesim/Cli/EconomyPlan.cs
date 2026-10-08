@@ -1721,7 +1721,14 @@ namespace IGTAP.EngineSim.Cli
                 if (need > 1)
                 {
                     played = Waited(z, goals, s.Ticks, Math.Max(25, Math.Min(StandWait, s.Ticks + _offTicks)), need);
-                    if (played == null) Log($"realize: {goals[^1].label}: the plan's {need} atoms not paid for by {s.Ticks + _offTicks} ticks; touching with what it holds");
+                    if (played == null)
+                    {
+                        Read(z.State);
+                        double[] price = _eval.Shop.Need(boxes, need, shown: false);
+                        int gp = (int)globalStats.Currencies.GreenPower;
+                        Log($"realize: {goals[^1].label}: the plan's {need} atoms ({(price == null ? "?" : price[gp].ToString("G4", CultureInfo.InvariantCulture))} GP) not paid for by "
+                            + $"{s.Ticks + _offTicks} ticks (GP {_eval.Shop.Holds(globalStats.Currencies.GreenPower):G4} on tick {z.Tick}); touching with what it holds");
+                    }
                 }
                 if (played == null && Affordable(z.State, boxes) == true) played = Play(z.State, z.Inputs, z.Planned, goals, true);
                 if (played == null) played = Waited(z, goals, s.Ticks, StandWait);
