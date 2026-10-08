@@ -829,6 +829,15 @@ namespace IGTAP.EngineSim.Cli
             }
             var played = Play(at, route, planned, lap, false);
             if (played != null) return played;
+            // No way in the library: the gate's walk searched alone, then the record lap's ways again (the gate, a restart onto the
+            // course, the saved route repaired from its reset point). Searched from a moving gate crossing instead, Zip%'s first
+            // Course 7 lap at tree level 7 found no finish in 9 minutes; this way it took 37 s.
+            if (Play(at, route, planned, new[] { lap[0] }, true) != null
+                && RecordLap(at, route, planned, lap, lap[1].course, improve: false, gateBy: _playBy) is var (gi, gs, gt) && gt <= _playBy)
+            {
+                _playedTicks = null;
+                return (gi, gs, gt);
+            }
             Log($"lap from {Where(at.WithGoal(Fresh(_goals, 0))).at}: no library pieces as it is ({_whyNot})");
             var list = _kept.Concat(planned).Append(lap[0]).ToList();
             Track(list);
