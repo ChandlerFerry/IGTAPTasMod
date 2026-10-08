@@ -1237,11 +1237,11 @@ namespace IGTAP.EngineSim.Cli
             // --join FILE: no search; a route --realize wrote (its goals and inputs through the target) joined to the best's way on again.
             string joinFile = Solve.Option<string>(args, "--join", null);
             if (joinFile != null) return JoinAgain(args, joinFile, kept, targetGoal - 1, outFile);
-            // --try-lap N[,N...]: no search; realize's laps (Lap: the saved laps whole, the library, a search) played one after another
-            // from the best's state at --from, each line its ticks, its way and the wall time it took. A step's check in seconds, where
-            // a whole --realize reaches the step only after its plan and every step before it.
-            string tryLap = Solve.Option<string>(args, "--try-lap", null);
-            if (tryLap != null) return TryLaps(kept, targetGoal - 1, tryLap, GoalOf);
+            // --try STEPS: no plan; realize's steps (`lap:7,lap:7`, `atoms:6`) played one after another from the best's state at --from,
+            // each line its ticks, currencies and wall time. A step's check in seconds, where a whole --realize reaches the step only
+            // after its plan and every step before it.
+            string trySteps = Solve.Option<string>(args, "--try", null);
+            if (trySteps != null) return TrySteps(kept, targetGoal - 1, trySteps, GoalOf, moves);
             if (args.Contains("--replan")) return ReplanCheck(args, kept, targets, targetGoal - 1);
             EconomyPlanResult free = skipFree ? new EconomyPlanResult { Why = "--skip-free" } : Plan(null);
             if (!skipFree) EconomyPlan.Print("free search", free);
@@ -1422,29 +1422,51 @@ namespace IGTAP.EngineSim.Cli
             return run.Progress == goals.Length ? 0 : 3;
         }
 
-        /// <summary>fulltas-plan --try-lap: each course's lap (<see cref="Lap"/>) from where the one before left the player, from the best's
-        /// state at goal <paramref name="kept"/>; 3 when one doesn't play.</summary>
-        int TryLaps(int kept, int targetIndex, string courses, Func<string, FullTasGoal> goalOf)
+        /// <summary>fulltas-plan --try: realize's steps (PlayStep: `lap:N`, `record:N`, `buy:box`, `all:box`, `atoms:N`; `@T` its planned
+        /// ticks, 300 by default; a buy or atoms step stands for its price as Area 2's do) one after another from the best's state at
+        /// goal <paramref name="kept"/>, each line its ticks, Cash, GP and NP after it and the wall time; 3 when one doesn't play.</summary>
+        int TrySteps(int kept, int targetIndex, string steps, Func<string, FullTasGoal> goalOf, MoveTable moves)
         {
-            if (targetIndex < 0) throw new ArgumentException("--try-lap: --target must be a goal of the run after --from");
+            if (targetIndex < 0) throw new ArgumentException("--try: --target must be a goal of the run after --from");
             LoadSeeds();
             _planBase = _runGoals;
             var (at, route) = BuildFrom(_runGoals.Goals, kept, targetIndex);
-            var planned = new List<FullTasGoal>();
-            long tick = _best.GoalPhysics[kept - 1];
-            foreach (string n in courses.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            var z = new Realization { Inputs = route, State = at, Tick = _best.GoalPhysics[kept - 1] };
+            foreach (string text in steps.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
-                FullTasGoal[] lap = { goalOf("start:" + n), goalOf("finish:" + n) };
+                int atSign = text.IndexOf('@');
+                string arg = atSign < 0 ? text : text.Substring(0, atSign);
+                int ticks = atSign < 0 ? 300 : int.Parse(text.Substring(atSign + 1), CultureInfo.InvariantCulture);
+                string kind = arg.Substring(0, arg.IndexOf(':'));
+                int levels = kind == "atoms" ? int.Parse(arg.Substring(6), CultureInfo.InvariantCulture) : 1;
                 var clock = Stopwatch.StartNew();
-                var played = Lap(at, route, planned, lap);
+                long from = z.Tick;
+                // idle:PLACE: the plan's economy (SimEconomy.Idle: the player put at the place) from here, for comparing with the build's;
+                // the build's state isn't moved.
+                if (kind == "idle")
+                {
+                    var economy = new SimEconomy(_eval, moves, label => goalOf(label)?.boxes);
+                    economy.Restore(z.State);
+                    double[] before = economy.Holds();
+                    economy.Idle(ticks, arg.Substring(5));
+                    double[] after = economy.Holds();
+                    string screens = string.Join(" ", _eval.World.All<clonesScript>().Select(c => _eval.Shop.Economy?.OnScreenOf(c) is bool on ? $"{c.transform.parent?.name}:{(on ? "on" : "off")}" : null).Where(t => t != null));
+                    Console.WriteLine($"try {text}: the plan's economy {ticks} ticks at {arg.Substring(5)}: Cash {before[0]:G4} -> {after[0]:G4}, GP {before[1]:G4} -> {after[1]:G4}, "
+                        + $"NP {before[2]:G4} -> {after[2]:G4}; clones {screens}");
+                    continue;
+                }
+                var played = PlayStep(new PlanStep(kind, arg, ticks), z, goalOf, out FullTasGoal[] goals, out _, stood: kind is "buy" or "atoms", levels: levels);
                 if (played == null)
                 {
-                    Console.WriteLine($"try-lap {n}: no lap from tick {tick} ({clock.Elapsed.TotalSeconds:0.0} s): {_whyNot}");
+                    Console.WriteLine($"try {arg}: doesn't play from tick {from} ({clock.Elapsed.TotalSeconds:0.0} s): {_whyNot}");
                     return 3;
                 }
-                Console.WriteLine($"try-lap {n}: tick {tick} -> {played.Value.tick}, {played.Value.tick - tick} ticks ({clock.Elapsed.TotalSeconds:0.0} s)");
-                (route, at, tick) = played.Value;
-                planned.AddRange(lap);
+                (z.Inputs, z.State, z.Tick) = played.Value;
+                z.Planned.AddRange(goals);
+                Read(z.State);
+                Console.WriteLine($"try {arg}: tick {from} -> {z.Tick}, {z.Tick - from} ticks; Cash {_eval.Shop.Holds(globalStats.Currencies.Cash):G4}, "
+                    + $"GP {_eval.Shop.Holds(globalStats.Currencies.GreenPower):G4}, NP {_eval.Shop.Holds(globalStats.Currencies.AtomicPower):G4}"
+                    + $" ({Singleton<globalStats>.Instance.NPrewardPerTick:G4} a tick) ({clock.Elapsed.TotalSeconds:0.0} s)");
             }
             return 0;
         }
@@ -1640,9 +1662,10 @@ namespace IGTAP.EngineSim.Cli
                 z.State = state;
                 z.Planned.AddRange(goals);
                 if (goals.Any(g => g.label.StartsWith("buy:buytree", StringComparison.Ordinal))) moves.Blocked.Clear();
-                double cash = Cash(state);
+                double cash = Cash(state), gp = _eval.Shop.Holds(globalStats.Currencies.GreenPower);
+                string planGp = i < plan.Held.Length && plan.Held[i]?.Length > 1 ? plan.Held[i][1].ToString("G4", CultureInfo.InvariantCulture) : "?";
                 long off = end - planEnd;
-                Log($"realize: {s.Kind} {s.Arg} from {from}: planned {planTicks} ticks to {planEnd} ({plan.Cash[i]:0} Cash), built {ticks} to {end} ({cash:0} Cash), {off:+0;-0}"
+                Log($"realize: {s.Kind} {s.Arg} from {from}: planned {planTicks} ticks to {planEnd} ({plan.Cash[i]:0} Cash, {planGp} GP), built {ticks} to {end} ({cash:0} Cash, {gp:G4} GP), {off:+0;-0}"
                     + (s.Kind == "record" ? $"; best time {record:0.00}s -> {after:0.00}s" : "") + (estimated.Length > 0 ? "; estimated: " + string.Join("; ", estimated) : ""));
                 z.Log.Add(new { round = z.Rounds, kind = s.Kind, step = s.Arg, from, planTicks, plan = planEnd, planCash = plan.Cash[i], ticks, built = end, cash, off, estimated });
                 if (pending.Count > 0 && pending[0] == s.Arg) pending.RemoveAt(0);
@@ -1766,7 +1789,16 @@ namespace IGTAP.EngineSim.Cli
                 if (s == null) break;
                 if (Affordable(s, boxes, levels) == true) paid = w;
             }
-            if (paid < 0) { _whyNot = $"{goals[^1].label}: short of Cash after {most} ticks standing"; return null; }
+            if (paid < 0)
+            {
+                Track(list.Concat(goals).ToList());
+                SimSnapshot end = AdvanceFrom(here, z.Inputs.Count, Idle(most));
+                if (end != null) Read(end);
+                _whyNot = $"{goals[^1].label}: short of Cash after {most} ticks standing" + (end == null ? "" : $" (then Cash {_eval.Shop.Holds(globalStats.Currencies.Cash):G4}, "
+                    + $"GP {_eval.Shop.Holds(globalStats.Currencies.GreenPower):G4}, NP {_eval.Shop.Holds(globalStats.Currencies.AtomicPower):G4})");
+                Log("realize: " + _whyNot);
+                return null;
+            }
             // ponytail: several levels wait out the walk too (an earlier start can arrive short of one); a check of what the touch
             // bought would save the walk's ticks.
             for (int w = levels > 1 ? paid : Math.Max(0, paid - walk); w <= paid; w += 5)
