@@ -824,8 +824,16 @@ namespace IGTAP.EngineSim.Cli
                 }
                 return (price, next == null ? 0 : moves.Best(place, next, PlayerCaps.Of(sim).Id)?.Ticks ?? 0);
             }
-            PlanResult r = Search(economy, startTick, startPlace, p => Options(p, false), maxStates, maxSeconds, prefix, log, p => Options(p, true).FirstOrDefault(),
-                width, Remaining);
+            // Green clones at their expected share while planning (Economy.ExpectedGreens), never in a run that is built or judged.
+            Economy model = sim.Shop.Economy;
+            if (model != null) model.ExpectedGreens = true;
+            PlanResult r;
+            try
+            {
+                r = Search(economy, startTick, startPlace, p => Options(p, false), maxStates, maxSeconds, prefix, log, p => Options(p, true).FirstOrDefault(),
+                    width, Remaining);
+            }
+            finally { if (model != null) model.ExpectedGreens = false; }
             sim.RestoreForDrive(start);
             return r;
         }

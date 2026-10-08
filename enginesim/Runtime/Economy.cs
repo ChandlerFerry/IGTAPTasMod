@@ -588,7 +588,8 @@ namespace IGTAP.EngineSim
             if (!ColourCheck(c, out bool red, out bool green)) return false;
             double size = j * 2 + 1;
             if (red && !PayRed(c.Course.rpReward * size * boost / divisor)) return false;
-            if (green) Add(globalStats.Currencies.GreenPower, Math.Ceiling(c.Course.gpReward * size * _cdMult * boost / divisor));
+            if (ExpectedGreens) Add(globalStats.Currencies.GreenPower, c.Course.gpReward * size * _cdMult * boost / divisor * GreenShare());
+            else if (green) Add(globalStats.Currencies.GreenPower, Math.Ceiling(c.Course.gpReward * size * _cdMult * boost / divisor));
             if (Local(c.Local, localUpgrades.localUpgradeSet.enableCloneDustGeneration) >= 1.0)
             {
                 Add(globalStats.Currencies.CloneDust, Math.Ceiling(c.Course.CdReward * size * boost * _cdMult / divisor));
@@ -651,6 +652,17 @@ namespace IGTAP.EngineSim
         /// <summary>clonesScript.checkIfColourClone (clonesScript.cs:379-401): the green counter grows each spawn, a pass over 100
         /// makes the clone green and grows the red counter (off Area 2), a red pass over 100 makes it red; each pass draws
         /// Random.Range(-15, 15).</summary>
+        /// <summary>
+        /// The economy planner's mode (fulltas-plan's search only, never a run that is judged or built): every clone pays its share
+        /// of a green clone's GP (greenCloneClance / 100 of it) and no green clone pays the whole. A green clone comes when the
+        /// course's counter passes 100, a lump of gpReward (x the off-screen divisor's 11.7 at Course 6's), so a step's GP hung on
+        /// where the counter stood; the beam kept the states that caught a lump and the build, a few ticks off, missed it (Zip% to
+        /// buytree7: the plan's 1,098 GP after a lap of Course 7, the build's 12, with more Cash).
+        /// </summary>
+        internal bool ExpectedGreens;
+
+        double GreenShare() => Math.Max(0.0, Global(globalStats.globalUpgradeSet.greenCloneClance)) / 100.0;
+
         bool ColourCheck(Clones c, out bool red, out bool green)
         {
             red = green = false;
@@ -681,7 +693,8 @@ namespace IGTAP.EngineSim
             double boost = Boost(c.Course), size = clone.Bigness * 2 + 1;
             Add(globalStats.Currencies.Cash, Math.Ceiling(Pay(c, clone.Bigness)));
             if (clone.Red && !PayRed(c.Course.rpReward * size * boost)) return false;
-            if (clone.Green) Add(globalStats.Currencies.GreenPower, Math.Ceiling(c.Course.gpReward * size * _cdMult * boost));
+            if (ExpectedGreens) Add(globalStats.Currencies.GreenPower, c.Course.gpReward * size * _cdMult * boost * GreenShare());
+            else if (clone.Green) Add(globalStats.Currencies.GreenPower, Math.Ceiling(c.Course.gpReward * size * _cdMult * boost));
             if (Local(c.Local, localUpgrades.localUpgradeSet.enableCloneDustGeneration) >= 1.0)
             {
                 Add(globalStats.Currencies.CloneDust, Math.Ceiling(c.Course.CdReward * size * boost * _cdMult));
