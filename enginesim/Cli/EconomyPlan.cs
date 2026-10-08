@@ -1781,21 +1781,24 @@ namespace IGTAP.EngineSim.Cli
             SimSnapshot here = z.State.WithGoal(Fresh(_goals, list.Count));
             string[] boxes = goals.SelectMany(g => g.boxes ?? Array.Empty<string>()).ToArray();
             List<InputTick> Idle(int n) => Enumerable.Repeat(new InputTick(), n).ToList();
-            int paid = -1;
+            int paid = -1, stood = 0;
+            // Each 25 ticks on from the last check's state, not replayed from here: a target's NP stand of thousands of ticks replayed
+            // its whole wait at every check (Zip%'s buytree6 stand, 1,736 ticks planned: 13 minutes on one core).
+            SimSnapshot end = here;
             for (int w = 25; w <= most && paid < 0; w += 25)
             {
                 Track(list.Concat(goals).ToList());
-                SimSnapshot s = AdvanceFrom(here, z.Inputs.Count, Idle(w));
+                SimSnapshot s = AdvanceFrom(end, z.Inputs.Count + stood, Idle(25));
                 if (s == null) break;
+                end = s;
+                stood = w;
                 if (Affordable(s, boxes, levels) == true) paid = w;
             }
             if (paid < 0)
             {
-                Track(list.Concat(goals).ToList());
-                SimSnapshot end = AdvanceFrom(here, z.Inputs.Count, Idle(most));
-                if (end != null) Read(end);
-                _whyNot = $"{goals[^1].label}: short of Cash after {most} ticks standing" + (end == null ? "" : $" (then Cash {_eval.Shop.Holds(globalStats.Currencies.Cash):G4}, "
-                    + $"GP {_eval.Shop.Holds(globalStats.Currencies.GreenPower):G4}, NP {_eval.Shop.Holds(globalStats.Currencies.AtomicPower):G4})");
+                Read(end);
+                _whyNot = $"{goals[^1].label}: short of Cash after {stood} ticks standing (then Cash {_eval.Shop.Holds(globalStats.Currencies.Cash):G4}, "
+                    + $"GP {_eval.Shop.Holds(globalStats.Currencies.GreenPower):G4}, NP {_eval.Shop.Holds(globalStats.Currencies.AtomicPower):G4})";
                 Log("realize: " + _whyNot);
                 return null;
             }
