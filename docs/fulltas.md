@@ -289,7 +289,7 @@ unlocks are what the savestate carries: a savestate captures none, but its `move
 `wallJumpUnlocked`, `dashUnlocked`, `omniDashUnlocked`, `doubleJumpUnlocked`, `blockSwapUnlocked`, `maxAirDashes` and
 `maxAirJumps`, and the unlock audit starts from them (then follows the run's purchases). With "Don't touch my
 unlocks" on, a restore skips those fields and a savestate start that has them fails. `POST /api/session/newgame`
-takes `savestate` too. Changing a run's savestate retires its routes like a goals edit.
+takes `savestate` too (and `tree`, as a run's below). Changing a run's savestate retires its routes like a goals edit.
 
 A savestate in the air (its `movementFields.onGround` false) can't rest: after the restore (and the rebase) the plugin
 restores it again on every physics tick, holding the player where the savestate put it, and takes the start after the
@@ -347,8 +347,10 @@ for that tick (a "ghost" wall that ended the dash in the spikes), and dies there
 (`PhysicsWorld.SyncMovedWorld`).
 
 `"tree": L` on a savestate run sets The Tree at level L right after the restore, as a tree transition's start does
-(README `### Rules` 21: from 23 Area 1 overgrown and the Zone 2→1 path open; no unlock written), and loads the zone of the
-gate or checkpoint nearest the player, so a zone 2 savestate has its floor (without it the player falls through zone 1's
+(README `### Rules` 21: from 23 Area 1 overgrown and the Zone 2→1 path open; no unlock written). `"tree": [s, ...]` sets
+exactly those segments grown instead, as a save's `_grownSegments` loads them (no auto-growth added), the plant and the
+boxes that grow one of them bought, every other box unbought, Area 1 and the path as the new game has them
+(`TreeLevel.Apply(tree, int[])`). Either way it loads the zone of the gate or checkpoint nearest the player, so a zone 2 savestate has its floor (without it the player falls through zone 1's
 world and never rests). The trace header carries `tree`; changing it retires the run's routes. `test-c10-zip-skip` uses
 it: from savestate `lab/test-c10-zip-skip` (`4f3d1ecd…`, the checkpoint at (25844, 6264), resting at (25851, 6245.5),
 facing right, `WJ_DS_DJ_BS`, the atom door key set), The Tree at 27, to Course 10's start checkpoint
@@ -2123,8 +2125,8 @@ inputs through the target), no search. `fulltas <trace> --check <route> --goals 
 (with `--from` and `--target`; `lap:7,lap:7`, `atoms:6`, `buy:buyclone6@120`) plays realize's steps one after another from the
 best's state at `--from` (`PlayStep`, as realize: a lap's saved laps whole, the record lap's ways, the library, a search) and
 prints each one's ticks, currencies and wall time: a step's check without a plan or the steps before it. `idle:PLACE@T`
-plays the plan's economy instead (`SimEconomy.Idle`, the player put at the place) and prints the currencies and which
-courses' clones are on screen. To use
+plays the plan's economy instead (`SimEconomy.Idle`, the player put at the place), `finish:N@T` its finish of course N on
+a T-tick course time (`Shop.CourseFinished`); both print the currencies and which courses' clones are on screen. To use
 one: save the goals (**Save goals**, which marks the run's saved routes stale), put the route in `fulltas/<run>.json`,
 submit it (`/api/fulltas/submit`) and **Capture start** again.
 

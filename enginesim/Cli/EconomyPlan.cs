@@ -1443,15 +1443,17 @@ namespace IGTAP.EngineSim.Cli
                 long from = z.Tick;
                 // idle:PLACE: the plan's economy (SimEconomy.Idle: the player put at the place) from here, for comparing with the build's;
                 // the build's state isn't moved.
-                if (kind == "idle")
+                if (kind == "idle" || kind == "finish")
                 {
                     var economy = new SimEconomy(_eval, moves, label => goalOf(label)?.boxes);
                     economy.Restore(z.State);
                     double[] before = economy.Holds();
-                    economy.Idle(ticks, arg.Substring(5));
+                    // finish:N@T: the plan's finish of course N on a T-tick course time (SimEconomy.Finish: Shop.CourseFinished).
+                    if (kind == "finish") economy.Finish(arg.Substring(7) + "@" + ticks);
+                    else economy.Idle(ticks, arg.Substring(5));
                     double[] after = economy.Holds();
                     string screens = string.Join(" ", _eval.World.All<clonesScript>().Select(c => _eval.Shop.Economy?.OnScreenOf(c) is bool on ? $"{c.transform.parent?.name}:{(on ? "on" : "off")}" : null).Where(t => t != null));
-                    Console.WriteLine($"try {text}: the plan's economy {ticks} ticks at {arg.Substring(5)}: Cash {before[0]:G4} -> {after[0]:G4}, GP {before[1]:G4} -> {after[1]:G4}, "
+                    Console.WriteLine($"try {text}: the plan's economy: Cash {before[0]:G4} -> {after[0]:G4}, GP {before[1]:G4} -> {after[1]:G4}, "
                         + $"NP {before[2]:G4} -> {after[2]:G4}; clones {screens}");
                     continue;
                 }
