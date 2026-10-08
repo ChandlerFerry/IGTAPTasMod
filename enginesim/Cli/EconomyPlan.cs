@@ -1516,6 +1516,9 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>Realize plans again at most this many times (--rounds); a step built more than this many ticks from its plan's tick
         /// (--off-ticks: a long stretch's plan takes minutes to make again, worth it only for a larger drift) is planned again from.</summary>
         int _maxRounds = 3, _offTicks = 10;
+        /// <summary>A lap or record step that took this many minutes to fail blocks its course's laps; a quicker failure can be one
+        /// bad spot, not a closed course.</summary>
+        const double LapGiveUp = 5;
         /// <summary>The target's wait for its last Cash (the plan's stand) is at most this many ticks.</summary>
         const int TargetWait = 3000;
         /// <summary>A step the plan stood for where no lap earns (Area 2's NP waits) waits at most this many ticks.</summary>
@@ -1614,6 +1617,7 @@ namespace IGTAP.EngineSim.Cli
                 (List<InputTick> inputs, SimSnapshot state, long tick)? played;
                 FullTasGoal[] goals;
                 long walked;
+                var stepClock = Stopwatch.StartNew();
                 try { played = PlayStep(s, z, goalOf, out goals, out walked, i < plan.Stands.Length && plan.Stands[i], i < plan.Levels.Length ? plan.Levels[i] : 1); }
                 finally { _playBy = long.MaxValue; }
                 long planEnd = plan.Ends[i];
@@ -1632,9 +1636,11 @@ namespace IGTAP.EngineSim.Cli
                         moves.Blocked.Add(to);
                         Log($"realize: {to} blocked until a tree box is bought");
                     }
-                    // A lap whose course's gate no way reached (not its finish missed): its laps and record laps too, until a tree box
-                    // grows a way (Zip%'s Course 9 at tree level 7: a lap:9 planned again each round, its gate searched 8 minutes a time).
-                    else if (course > 0 && _whyNot?.StartsWith("start:" + course + " ", StringComparison.Ordinal) == true)
+                    // A lap whose course's gate no way reached, or that searched LapGiveUp minutes for none: its laps and record laps too,
+                    // until a tree box grows a way (Zip%'s Course 9 at tree level 7: a lap:9 planned again each round, its gate searched 8
+                    // minutes a time, then its finish 20 from a gate crossing).
+                    else if (course > 0 && (_whyNot?.StartsWith("start:" + course + " ", StringComparison.Ordinal) == true
+                        || stepClock.Elapsed.TotalMinutes > LapGiveUp))
                     {
                         moves.Blocked.Add("lap:" + course);
                         moves.Blocked.Add("record:" + course);
