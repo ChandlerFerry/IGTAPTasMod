@@ -1804,18 +1804,21 @@ namespace IGTAP.EngineSim.Cli
             }
             // ponytail: several levels wait out the walk too (an earlier start can arrive short of one); a check of what the touch
             // bought would save the walk's ticks.
-            for (int w = levels > 1 ? paid : Math.Max(0, paid - walk); w <= paid; w += 5)
+            // From the wait that pays (a search allowed there) down, 5 ticks at a time, while the walk still arrives paid: the shortest
+            // wait is the last that buys. Up from the wait less the walk, a target's NP stand (its walk the plan's whole stand, 1,736
+            // ticks) played some 340 library walks that arrive short before one bought.
+            (List<InputTick> inputs, SimSnapshot state, long tick)? bought = null;
+            for (int w = paid; w >= (levels > 1 ? paid : Math.Max(0, paid - walk)); w -= 5)
             {
                 Track(list.Concat(goals).ToList());
                 SimSnapshot s = w == 0 ? here : AdvanceFrom(here, z.Inputs.Count, Idle(w));
-                if (s == null) continue;
-                var played = Play(s, z.Inputs.Concat(Idle(w)).ToList(), z.Planned, goals, w == paid);
-                if (played == null) continue;
-                Log($"realize: {goals[^1].label} waited {w} ticks for its Cash");
+                var played = s == null ? null : Play(s, z.Inputs.Concat(Idle(w)).ToList(), z.Planned, goals, w == paid);
+                if (played == null) break;
+                bought = played;
                 _waited = w;
-                return played;
             }
-            _whyNot = $"{goals[^1].label}: no way buys it after waiting {Math.Max(0, paid - walk)}-{paid} ticks";
+            if (bought != null) { Log($"realize: {goals[^1].label} waited {_waited} ticks for its Cash"); return bought; }
+            _whyNot = $"{goals[^1].label}: no way buys it after waiting {paid} ticks";
             return null;
         }
     }
