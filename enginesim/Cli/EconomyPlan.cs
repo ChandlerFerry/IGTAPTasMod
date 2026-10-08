@@ -89,6 +89,9 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>What the economy earns a tick standing still now, per currency as Holds counts them (null: not modelled): the
         /// beam ranks an investment by it before its money shows over a window.</summary>
         double[] Rates();
+        /// <summary>The NP a tick (as Rates counts it), its cap, and the one-off NP of tiers first formed, once the waiting atoms and
+        /// <paramref name="extra"/> more have landed and crafted up (null: not modelled): the beam prices an NP target in atoms.</summary>
+        (double rate, double cap, double bonus)? NpAfterAtoms(int extra);
     }
 
     /// <summary>A step out of a place as the search plays it: Ticks less its events standing at End, then each Buys box a tick
@@ -163,6 +166,9 @@ namespace IGTAP.EngineSim.Cli
         static readonly HashSet<string> Never = new HashSet<string> { "lap:10", "record:10" };
         /// <summary>globalStats' NP cap is this many ticks of its NP a tick.</summary>
         const double NpCapTicks = 6000;
+        const int Np = (int)globalStats.Currencies.AtomicPower;
+        /// <summary>AtomColliderSystem's grid lands a waiting atom each 0.4 s.</summary>
+        const int AtomGridTicks = 20;
 
         /// <summary>Where a step ends and what it buys, as a movement table To: atoms:N's the atom box, all:box's its box.</summary>
         internal static string PlaceOf(Step s) => s.Kind == "atoms" ? AtomBox : s.Kind == "all" ? "buy:" + s.Arg.Substring(4) : s.Arg;
@@ -490,6 +496,13 @@ namespace IGTAP.EngineSim.Cli
                 {
                     double missing = price[c] - n.Holds[c];
                     if (missing <= 0 || n.Tick == a.Tick) continue;
+                    if (c == Np && economy.NpAfterAtoms(0) != null)
+                    {
+                        double np = NpWait(n, a, price[c], model);
+                        if (double.IsPositiveInfinity(np)) { result.NoIncome++; np = NoIncome; }
+                        wait = Math.Max(wait, np);
+                        continue;
+                    }
                     double rate = Math.Max(Rate(n, a, c), model != null && c < model.Length ? model[c] : 0);
                     // A price over the currency's cap (Area 2's NP, capped at NpCapTicks of its rate) is reached only by raising the
                     // rate (atoms): ranked by that rate, the cap's. The window's earnings stop at the cap, so every state read as no
@@ -515,6 +528,35 @@ namespace IGTAP.EngineSim.Cli
                         wait += rate > 0 ? missing / rate : NoIncome;
                     }
                 return wait + ticks;
+            }
+            // NP comes only from atoms, and an atom's worth jumps as tiers craft up (12 white atoms, 384 GP, make 17 NP a tick, 6 make
+            // 0.24 and cap under buytree5's 22,500): the soonest of buying k more atoms (their GP at n's GP income, the 0.4 s grid
+            // landing each) and then earning the NP at the rate they craft up to, its cap over the price. So a green box or a
+            // buytree0 level, raising the GP income, ranks at once (the NP window alone saw no income below a merge).
+            double NpWait(Node<TSnap> n, Node<TSnap> a, double npPrice, double[] model)
+            {
+                double best = double.PositiveInfinity;
+                for (int k = 0; k <= MaxAtoms; k++)
+                {
+                    double gp = 0;
+                    if (k > 0)
+                    {
+                        if (!(economy.Price(AtomBox, k) is double[] atoms)) break;
+                        for (int c = 0; c < atoms.Length; c++)
+                        {
+                            double missing = atoms[c] - n.Holds[c];
+                            if (missing <= 0) continue;
+                            double rate = Math.Max(Rate(n, a, c), model != null && c < model.Length ? model[c] : 0);
+                            if (rate <= 0) rate = Rate(n, root, c);
+                            gp = Math.Max(gp, rate > 0 ? missing / rate : double.PositiveInfinity);
+                        }
+                    }
+                    // The atoms' price only rises with k: no more atoms beat the best once their GP alone takes longer.
+                    if (gp >= best) break;
+                    if (!(economy.NpAfterAtoms(k) is var (np, cap, bonus)) || cap < npPrice || np <= 0) continue;
+                    best = Math.Min(best, gp + AtomGridTicks * k + Math.Max(0, npPrice - n.Holds[Np] - bonus) / np);
+                }
+                return best;
             }
             // The buy pre-check, with the economy at n: the option's boxes cost more than n holds plus PrecheckMargin times n's
             // income over the step's ticks (a stand: and BeamStand more, a patient one StandCap; atoms:N: its N levels, an atom
@@ -942,10 +984,19 @@ namespace IGTAP.EngineSim.Cli
             if (rates == null) return null;
             globalStats stats = Singleton<globalStats>.Instance;
             // globalStats.DoConstantCurrency's NP below its cap (the cap's own rate: Ceiling).
-            if (stats != null)
-                rates[(int)globalStats.Currencies.AtomicPower] = stats.NPrewardPerTick * (1.0 + globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.NpGenerationSpeed])
-                    * stats.GameSpeed * (globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.compBoostDoublesNP] != 0.0 ? stats.EffectOfNpCompBoost : 1.0);
+            // globalStats.DoConstantCurrency's NP below its cap (the cap's own rate: Ceiling).
+            if (stats != null) rates[(int)globalStats.Currencies.AtomicPower] = stats.NPrewardPerTick * NpSpeed(stats);
             return rates;
+        }
+
+        static double NpSpeed(globalStats stats) => (1.0 + globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.NpGenerationSpeed])
+            * stats.GameSpeed * (globalStats.globalUpgradeDict[globalStats.globalUpgradeSet.compBoostDoublesNP] != 0.0 ? stats.EffectOfNpCompBoost : 1.0);
+
+        public (double rate, double cap, double bonus)? NpAfterAtoms(int extra)
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            if (stats == null || !(_sim.Shop.Economy?.NpAfterAtoms(extra) is var (rate, cap, bonus))) return null;
+            return (rate * NpSpeed(stats), cap, bonus);
         }
 
         public double[] Earned()

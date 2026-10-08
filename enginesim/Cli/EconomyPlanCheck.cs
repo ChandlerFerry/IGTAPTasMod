@@ -68,6 +68,7 @@ namespace IGTAP.EngineSim.Cli
             public int Quiet() => Lump;
             public double[] Ceiling() => new[] { double.PositiveInfinity, double.PositiveInfinity };
             public double[] Rates() => null;
+            public (double rate, double cap, double bonus)? NpAfterAtoms(int extra) => null;
             public double[] PriceAhead(string box) => Price(box);
             void Gain(double cash) { _cash += cash; _earned += cash; }
             public bool Buy(string box)

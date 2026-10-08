@@ -406,6 +406,56 @@ namespace IGTAP.EngineSim
                 return true;
             }
         }
+        /// <summary>
+        /// The planner's look ahead (nothing changes): globalStats.NPrewardPerTick (RecalcNpRewardPerTick's) once the waiting atoms
+        /// and <paramref name="extra"/> more have landed at determineAtomTier's tiers and every tier has crafted up (3 + t of tier t
+        /// to one of t + 1, FinishCrafting's counts), and the NP FinishCrafting adds when a tier forms the collider never had
+        /// (NPrewardPerTick × 1000 then), with its cap (NPrewardCap's; none with NpCapIsSoftcap). Null without the collider or its effect values.
+        /// </summary>
+        internal (double rate, double cap, double bonus)? NpAfterAtoms(int extra)
+        {
+            Dictionary<G, double> effect = globalStats.globalUpgradeEffectDict;
+            if ((object)_atomCollider == null || effect == null || !effect.TryGetValue(G.atomLevelChance, out double chance)
+                || !effect.TryGetValue(G.increasedNuclearPower, out double nuclear) || !effect.TryGetValue(G.tripleThreatIncrease, out double triple)) return null;
+            double boxes = 1.0 + Global(G.increasedNuclearPower) * (nuclear / 100.0) + Global(G.tripleThreatIncrease) * (triple / 100.0);
+            var counts = new List<int>(_atoms);
+            double counter = _tierUpCounter, bonus = 0;
+            double Rate()
+            {
+                double effective = 0, white = 0;
+                for (int t = 0; t < counts.Count; t++)
+                {
+                    effective += counts[t] * (double)Mathf.Pow(_atomEffectiveness + 10 * t, t) * (double)0.001f;
+                    white += counts[t] * Factorial(2 + t) / 2.0;
+                }
+                return effective * (1.0 + white / 60.0) * boxes;
+            }
+            void Craft()
+            {
+                for (int t = 0; t < counts.Count; t++)
+                    while (counts[t] >= 3 + t)
+                    {
+                        counts[t] -= 3 + t;
+                        bool first = counts.Count <= t + 1;
+                        if (first) counts.Add(0);
+                        counts[t + 1]++;
+                        if (first) bonus += Rate() * 1000.0;
+                    }
+            }
+            Craft();
+            for (int i = 0; i < _waitingAtoms + extra; i++)
+            {
+                int tier = 0;
+                counter += Global(G.atomLevelChance) * chance;
+                while (counter >= 100.0) { counter -= 100.0; tier++; }
+                while (counts.Count <= tier) counts.Add(0);
+                counts[tier]++;
+                Craft();
+            }
+            double rate = Rate();
+            return (rate, Global(G.NpCapIsSoftcap) != 0.0 ? double.PositiveInfinity : rate * 50.0 * 120.0 * _vmanMult, bonus);
+        }
+
         /// <summary>The grid's callAddNewAtom calls so far (--ticks-out, a diagnostic: not in snapshots).</summary>
         internal int GridCalls;
         /// <summary>globalStats.CloneDustGpCdMult as the run has it (--ticks-out).</summary>

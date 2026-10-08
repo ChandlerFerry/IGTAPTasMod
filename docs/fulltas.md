@@ -1979,7 +1979,13 @@ left out) over its last steps back to the first that covers 300 ticks (`IncomeWi
 less (a walk, a lap whose finish hasn't paid yet; `Gained` falls at an atom buy's or the breaker's Cash reset and the RP
 cap's clamp) h falls back on the income since the search's start, and with none there either on 1,000,000 ticks
 (`NoIncome`): such a state is ranked last, never dropped. One with no window yet (only zero-tick restarts since the
-start) is ranked by the table's ticks alone. Before a buy is queued the pre-check
+start) is ranked by the table's ticks alone. NP, which only atoms raise, is priced in atoms where the economy has the
+atom collider (`NpWait`, `Economy.NpAfterAtoms`): the soonest over k more atoms (0 to 512) of their GP at the state's GP
+income (its clones' rates, `Economy.CloneRates`), 20 ticks a landing (the 0.4 s grid), and the NP still missing (less
+the 1,000 ticks of rate `FinishCrafting` adds at a tier the collider never had) at the rate they craft up to, its cap at
+least the price. An atom's worth jumps at each new tier (12 white atoms, 384 GP: 17.3 NP a tick and a 103,680 cap; 6
+atoms: 0.24 and 1,452, under `buytree5`'s 22,500; 60, 3.9M GP: 4,394), so a green box or a `buytree0` level ranks by
+the GP it adds at once; the NP window alone saw no income below the next merge. Before a buy is queued the pre-check
 drops it when its price is more than the state holds plus twice its income over the walk (`PrecheckMargin`; a buy right
 after a buy is always queued, since a clone it bought can pay before the window shows it; the target's stand is always
 checked, over its walk and 2000 ticks; a state with no income over its window is never pre-checked). A state is let
