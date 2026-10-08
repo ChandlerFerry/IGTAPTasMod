@@ -46,8 +46,9 @@ Continues [issue #26](https://github.com/ChandlerFerry/IGTAPTasMod/issues/26).
   - `buytree16` (the zip movers) costs 625M NP, about 104,000 NP a tick.
   - Only atoms raise the rate. `buyatomlevel9` and `buyatomlevel10` make new atoms land a tier up; the earlier Area 2 study in
     `docs/fulltas.md` found every zip-mover plan buys `buyatomlevel9` first.
-  - Atoms cost GP. An atom touch is a buy-max: it buys every atom the GP pays for, and it resets the courses (their clones
-    and boxes) and Cash.
+  - Atoms cost GP. An atom touch is a buy-max: it buys every atom the GP pays for, and it resets Cash and the courses (their
+    clones and boxes) not exempt: `buytree10` exempts Course 6 (750,000 NP), `buytree11` Course 7 (100M NP), `buytree22`
+    Course 8 (800M, past the zip box); RP boxes (50 RP: GP atoms reset nothing; 60,000 RP: a course) are out of Zip%'s reach.
 - **The user's route knowledge:**
   - The Course 6 record in this category is **0.94 s**.
   - The run itself has found 1.06 s Course 6 laps.
