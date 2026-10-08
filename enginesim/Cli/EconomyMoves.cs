@@ -89,7 +89,7 @@ namespace IGTAP.EngineSim.Cli
             table.AddBest(stops);
             if (buyTableFile != null) table.AddBuyTable(buyTableFile);
             foreach (var (id, at) in run.CourseGates()) table.AddPlace(id, at.x, at.y, null);
-            if (routesFile != null) table.AddSavedLaps(routesFile);
+            if (routesFile != null) { table.AddSavedLaps(routesFile); table.AddSavedTransitions(routesFile); }
             movesFile ??= run.MovesFile;
             if (File.Exists(movesFile))
                 foreach (var kv in Read(movesFile)._moves)
@@ -483,6 +483,54 @@ namespace IGTAP.EngineSim.Cli
                 }
                 foreach (var (course, (game, _, _)) in anyCategory)
                     if (!covered.ContainsKey(course)) Put(new Move("start:" + course, "finish:" + course, (int)Math.Round(game / TickSeconds), "record", true), id);
+            }
+        }
+
+        static readonly Regex TransitionName = new Regex(@"^tree\d+to(\d+)_(" + Caps.LabelPattern + @") (\d+(?:\.\d+)?)$");
+
+        /// <summary>
+        /// The saved tree transitions (`tree0to7_WJ_DS_DJ_BS 2.66`, courses.json: from bonus 11's checkpoint by the atom room to Course
+        /// C's start checkpoint) as laps from that checkpoint's quick-restart landing: a restart, the transition (its name's time, physics
+        /// ticks), a restart onto the course's reset point and its fastest saved standing route (input ticks), estimated. Courses 7-9
+        /// are reached so (a tree box's quick restart lands at bonus 11's checkpoint); walked from another course's finish the plan
+        /// priced them as a grid walk realize can't play (Zip%'s first Course 7 lap from Course 6, 12 minutes of search for none).
+        /// </summary>
+        void AddSavedTransitions(string routesFile)
+        {
+            string coursesFile = Path.Combine(Path.GetDirectoryName(routesFile), "courses.json");
+            if (!File.Exists(routesFile) || !File.Exists(coursesFile)) return;
+            using JsonDocument courses = JsonDocument.Parse(File.ReadAllText(coursesFile));
+            using JsonDocument routes = JsonDocument.Parse(File.ReadAllText(routesFile));
+            var standing = new Dictionary<(int course, string caps), int>();
+            var transitions = new List<(string name, int course, Caps caps, int ticks)>();
+            foreach (JsonElement m in routes.RootElement.GetProperty("macros").EnumerateArray())
+            {
+                string name = m.TryGetProperty("name", out JsonElement n) ? n.GetString() ?? "" : "";
+                Match t = TransitionName.Match(name), r = RouteName.Match(name);
+                if (t.Success && Caps.TryParse(t.Groups[2].Value, out Caps tc))
+                    transitions.Add((name.Substring(0, name.IndexOf('_')), int.Parse(t.Groups[1].Value, CultureInfo.InvariantCulture), tc,
+                        (int)Math.Round(double.Parse(t.Groups[3].Value, CultureInfo.InvariantCulture) / TickSeconds)));
+                else if (r.Success && !r.Groups[3].Success && !r.Groups[5].Success && Caps.TryParse(r.Groups[2].Value, out Caps rc))
+                {
+                    int ticks = m.GetProperty("steps").EnumerateArray().Sum(st => Math.Max(1, st.TryGetProperty("durationTicks", out JsonElement d) && d.ValueKind == JsonValueKind.Number ? d.GetInt32() : 1));
+                    var key = (int.Parse(r.Groups[1].Value, CultureInfo.InvariantCulture), rc.Id);
+                    if (!standing.TryGetValue(key, out int was) || ticks < was) standing[key] = ticks;
+                }
+            }
+            foreach (var (name, course, caps, ticks) in transitions)
+            {
+                JsonElement? from = courses.RootElement.EnumerateArray().Cast<JsonElement?>().FirstOrDefault(c => c.Value.TryGetProperty("name", out JsonElement cn)
+                    && cn.ValueKind == JsonValueKind.String && cn.GetString() == name);
+                if (from == null) continue;
+                string landing = RestartId(from.Value.GetProperty("x").GetDouble(), from.Value.GetProperty("y").GetDouble());
+                AddPlace(landing, from.Value.GetProperty("x").GetDouble(), from.Value.GetProperty("y").GetDouble(), caps.Id);
+                foreach (string id in _caps.ToList())
+                {
+                    if (!Caps.TryParse(id, out Caps have) || !caps.IsSubsetOf(have)) continue;
+                    int run = standing.Where(kv => kv.Key.course == course && Caps.TryParse(kv.Key.caps, out Caps rc) && rc.IsSubsetOf(have))
+                        .Select(kv => kv.Value).DefaultIfEmpty(-1).Min();
+                    if (run > 0) Put(new Move(landing, "lap:" + course, 1 + ticks + 1 + run, "transition", true), id);
+                }
             }
         }
 

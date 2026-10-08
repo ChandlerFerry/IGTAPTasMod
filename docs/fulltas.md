@@ -2119,7 +2119,10 @@ fastest whole route's goal list) and `realized` (per plan: its rounds, each step
 estimates it used, its goals); `--route` writes that route under those goals, as `fulltas/<run>.json` holds a run's
 best (none whole: the build that got furthest, its steps' goals and then the run's own from the target on, `total` -1,
 so the next stretch is planned or searched from it). `--join FILE` joins such a route file again (its goals and
-inputs through the target), no search. `fulltas <trace> --check <route> --goals <file>` replays it under them. To use
+inputs through the target), no search. `fulltas <trace> --check <route> --goals <file>` replays it under them. `--try-lap N[,N...]`
+(with `--from` and `--target`) plays realize's laps of those courses one after another from the best's state at `--from`
+(`Lap`: the course's saved laps whole, `SavedLap`; the record lap's ways; the library; a search) and prints each one's ticks
+and wall time: a lap's check without a plan or the steps before it. To use
 one: save the goals (**Save goals**, which marks the run's saved routes stale), put the route in `fulltas/<run>.json`,
 submit it (`/api/fulltas/submit`) and **Capture start** again.
 

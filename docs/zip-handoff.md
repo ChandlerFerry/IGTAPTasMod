@@ -161,6 +161,14 @@ Continues [issue #26](https://github.com/ChandlerFerry/IGTAPTasMod/issues/26).
 
 ## Process lessons (the expensive ones)
 
+- **Test one step, not the whole build (the feedback loop).**
+  - A change to how realize plays a step is checked on that step alone: `--try-lap N` for laps (seconds to minutes from
+    the best's state at `--from`), `--join` for a saved route. Never by restarting a whole `--realize`: its beam and every
+    step before the changed one cost 10-15 minutes a try (2026-10-08: eight such restarts for the Course 6 and 7 laps).
+  - Before each run, write down what result would prove the change right and what would prove it wrong; if a check hasn't
+    answered in 5 minutes, stop it and think instead of waiting.
+  - A search that runs minutes without a candidate is the wrong question: ask what saved route should have covered it
+    (Course 7 had an 8.78 record and an 11.33 farm; the run just wasn't where they start) before tuning the search.
 - **Check the game, not just the engine.**
   - Everything built after `buytree0` was on a physics mismatch for a whole day.
   - After an engine change, or before trusting a long build, probe a stretch at 1x (above).

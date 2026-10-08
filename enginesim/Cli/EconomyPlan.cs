@@ -1237,6 +1237,11 @@ namespace IGTAP.EngineSim.Cli
             // --join FILE: no search; a route --realize wrote (its goals and inputs through the target) joined to the best's way on again.
             string joinFile = Solve.Option<string>(args, "--join", null);
             if (joinFile != null) return JoinAgain(args, joinFile, kept, targetGoal - 1, outFile);
+            // --try-lap N[,N...]: no search; realize's laps (Lap: the saved laps whole, the library, a search) played one after another
+            // from the best's state at --from, each line its ticks, its way and the wall time it took. A step's check in seconds, where
+            // a whole --realize reaches the step only after its plan and every step before it.
+            string tryLap = Solve.Option<string>(args, "--try-lap", null);
+            if (tryLap != null) return TryLaps(kept, targetGoal - 1, tryLap, GoalOf);
             if (args.Contains("--replan")) return ReplanCheck(args, kept, targets, targetGoal - 1);
             EconomyPlanResult free = skipFree ? new EconomyPlanResult { Why = "--skip-free" } : Plan(null);
             if (!skipFree) EconomyPlan.Print("free search", free);
@@ -1415,6 +1420,33 @@ namespace IGTAP.EngineSim.Cli
             if (outFile != null) File.WriteAllText(outFile, JsonSerializer.Serialize(new { run = _name, goals, live = run.Progress == goals.Length ? Math.Round(run.LiveSeconds, 2) : (double?)null },
                 new JsonSerializerOptions { WriteIndented = true }));
             return run.Progress == goals.Length ? 0 : 3;
+        }
+
+        /// <summary>fulltas-plan --try-lap: each course's lap (<see cref="Lap"/>) from where the one before left the player, from the best's
+        /// state at goal <paramref name="kept"/>; 3 when one doesn't play.</summary>
+        int TryLaps(int kept, int targetIndex, string courses, Func<string, FullTasGoal> goalOf)
+        {
+            if (targetIndex < 0) throw new ArgumentException("--try-lap: --target must be a goal of the run after --from");
+            LoadSeeds();
+            _planBase = _runGoals;
+            var (at, route) = BuildFrom(_runGoals.Goals, kept, targetIndex);
+            var planned = new List<FullTasGoal>();
+            long tick = _best.GoalPhysics[kept - 1];
+            foreach (string n in courses.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                FullTasGoal[] lap = { goalOf("start:" + n), goalOf("finish:" + n) };
+                var clock = Stopwatch.StartNew();
+                var played = Lap(at, route, planned, lap);
+                if (played == null)
+                {
+                    Console.WriteLine($"try-lap {n}: no lap from tick {tick} ({clock.Elapsed.TotalSeconds:0.0} s): {_whyNot}");
+                    return 3;
+                }
+                Console.WriteLine($"try-lap {n}: tick {tick} -> {played.Value.tick}, {played.Value.tick - tick} ticks ({clock.Elapsed.TotalSeconds:0.0} s)");
+                (route, at, tick) = played.Value;
+                planned.AddRange(lap);
+            }
+            return 0;
         }
 
         /// <summary>The search from a state (<paramref name="start"/>, at <paramref name="place"/>), per the settings' mode: exact

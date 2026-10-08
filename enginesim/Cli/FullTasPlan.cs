@@ -759,29 +759,50 @@ namespace IGTAP.EngineSim.Cli
         /// gate where no finish piece begins), and a piece search only when neither plays.
         /// </summary>
         /// <summary>
-        /// The course's farm loop played whole from here (a finish), after 0 to 4 idle ticks, the first that reaches the lap's finish by
-        /// <c>_playBy</c>: its quick restart's tick is part of what makes it work (the restart lands in the air, where depends on the
-        /// frame it is pressed on: Course 6's at 26173.6, -490.3 or 26175, -474), so it isn't split at the restart as a library piece is.
+        /// The course's saved laps played whole from here, after 0 to 4 idle ticks, the first that reaches the lap's finish by
+        /// <c>_playBy</c>: its farm loop (from its finish), then the saved routes from a quick restart, fastest first (a farm route's
+        /// laps; a tree transition then the course after a restart, LoadSeeds' chains, from a tree box: its restart lands at bonus
+        /// 11's checkpoint, where the transition starts). Whole, with their own restarts: where a restart lands moves with the frame
+        /// it is pressed on (Course 6's at 26173.6, -490.3 or 26175, -474), so they aren't split there as library pieces are. A
+        /// route that missed from a spot isn't tried there again.
         /// </summary>
-        (List<InputTick> inputs, SimSnapshot state, long tick)? LoopLap(SimSnapshot at, List<InputTick> route, List<FullTasGoal> planned, FullTasGoal[] lap)
+        (List<InputTick> inputs, SimSnapshot state, long tick)? SavedLap(SimSnapshot at, List<InputTick> route, List<FullTasGoal> planned, FullTasGoal[] lap)
         {
-            if (!(FastestLap(at, lap, true) is [{ Loop: true } loop])) return null;
+            Read(at);
+            IGTAPTasMod.Caps have = PlayerCaps.Of(_eval);
+            var spot = Where(at.WithGoal(Fresh(_goals, 0))).at;
+            string here = $"{spot.x:0},{spot.y:0}";
+            var runs = _seeds.Where(s => (s.Loop || s.Restart) && s.Caps.IsSubsetOf(have) && NamedCaps(s.Name).IsSubsetOf(have)
+                    && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label) && !_lapMisses.Contains(s.Name + "|" + here))
+                .OrderBy(s => s.Loop ? 0 : 1).ThenBy(s => NamedTime(s.Name)).Take(MaxSavedLaps).ToList();
+            if (runs.Count == 0) return null;
             var list = _kept.Concat(planned).Concat(lap).ToList();
             Track(list);
             int i = list.Count - 1;
-            SimSnapshot here = at.WithGoal(Fresh(list.Count, i - 1));
+            SimSnapshot from = at.WithGoal(Fresh(list.Count, i - 1));
             var target = new Target { Goal = i, Key = lap[1].label };
-            for (int idle = 0; idle < 5; idle++)
+            bool restarted = route.Count > 0 && route[^1].reset;
+            foreach (Seed s in runs)
             {
-                Step end = Reaches(here, route.Count, Enumerable.Repeat(new InputTick(), idle).Concat(loop.Inputs).ToList(), target);
-                if (end == null || end.Physics > _playBy) continue;
-                _playedTicks = null;
-                Log($"lap: {loop.Name} after {idle} idle ticks, finish at tick {end.Physics}");
-                return (route.Concat(end.Inputs).ToList(), end.Next, end.Physics);
+                // A restart right after the route's own (a plan's restart step) would be a quick restart on two ticks in a row.
+                List<InputTick> inputs = restarted && s.Inputs.Count > 0 && s.Inputs[0].reset ? s.Inputs.Skip(1).ToList() : s.Inputs;
+                for (int idle = 0; idle < 5; idle++)
+                {
+                    Step end = Reaches(from, route.Count, Enumerable.Repeat(new InputTick(), idle).Concat(inputs).ToList(), target);
+                    if (end == null || end.Physics > _playBy) continue;
+                    _playedTicks = null;
+                    Log($"lap: {s.Name} from {here} after {idle} idle ticks, finish at tick {end.Physics}");
+                    return (route.Concat(end.Inputs).ToList(), end.Next, end.Physics);
+                }
+                _lapMisses.Add(s.Name + "|" + here);
             }
-            Log($"lap: {loop.Name} misses {lap[1].label} from here after 0 to 4 idle ticks");
+            Log($"lap: none of {runs.Count} saved laps ({string.Join(", ", runs.Select(r => r.Name))}) reaches {lap[1].label} from {here}");
             return null;
         }
+
+        const int MaxSavedLaps = 12;
+        /// <summary>Saved laps (<see cref="SavedLap"/>) that missed, by route and spot.</summary>
+        readonly HashSet<string> _lapMisses = new HashSet<string>();
 
         (List<InputTick> inputs, SimSnapshot state, long tick)? Lap(SimSnapshot at, List<InputTick> route, List<FullTasGoal> planned, FullTasGoal[] lap)
         {
@@ -794,7 +815,7 @@ namespace IGTAP.EngineSim.Cli
                 Track(run);
                 SeedLaps(at.WithGoal(Fresh(run.Count, _kept.Length)), route, _kept.Length, lap);
             }
-            if (LoopLap(at, route, planned, lap) is var (loopInputs, loopState, loopTick)) return (loopInputs, loopState, loopTick);
+            if (SavedLap(at, route, planned, lap) is var (savedInputs, savedState, savedTick)) return (savedInputs, savedState, savedTick);
             // Off the loop's finish (another course's, a box), the saved routes start standing at the course's reset point: a record
             // lap's ways get there (the gate crossed, then a quick restart onto the course; or a restart right away) and play one whole.
             // Searched from the gate instead, Zip%'s first Course 7 lap from Course 6 ran 12 minutes with no candidate.
