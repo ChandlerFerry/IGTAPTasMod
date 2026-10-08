@@ -151,10 +151,15 @@ namespace IGTAP.EngineSim.Cli
             return (new UnityEngine.Vector3(start.x, start.y, 0f), Unlocks(_eval.Player));
         }
 
+        /// <summary>How <see cref="Reaches"/>'s last play toward lap goals ended (the lap seeds' log).</summary>
+        string _reachEnd;
+
         SimSnapshot AdvanceFrom(SimSnapshot at, int length, List<InputTick> inputs)
         {
             _eval.SetStart(at, length);
-            _eval.Goals.Limit = _goals;
+            // Past the last goal, as AdvanceToGoal: reaching the run's last goal (a lap's finish at the end of the tracked goals)
+            // would end the run before Advance captures, and every way found to it was cut away (Zip%'s Course 7 laps, 2026-10-08).
+            _eval.Goals.Limit = _goals + 1;
             return inputs.Count == 0 ? at : _eval.Advance(inputs);
         }
 
@@ -165,9 +170,6 @@ namespace IGTAP.EngineSim.Cli
         /// plays inputs that ran out. An extra lap is tracked by its own goals, the run's goals set aside, and its cut must leave the
         /// run's goals as they were.
         /// </summary>
-        /// <summary>How <see cref="Reaches"/>'s last play toward lap goals ended (the lap seeds' log).</summary>
-        string _reachEnd;
-
         Step Reaches(SimSnapshot at, int length, List<InputTick> inputs, Target target)
         {
             inputs = inputs.Concat(Enumerable.Repeat(new InputTick(), Settle)).ToList();
