@@ -165,6 +165,9 @@ namespace IGTAP.EngineSim.Cli
         /// plays inputs that ran out. An extra lap is tracked by its own goals, the run's goals set aside, and its cut must leave the
         /// run's goals as they were.
         /// </summary>
+        /// <summary>How <see cref="Reaches"/>'s last play toward lap goals ended (the lap seeds' log).</summary>
+        string _reachEnd;
+
         Step Reaches(SimSnapshot at, int length, List<InputTick> inputs, Target target)
         {
             inputs = inputs.Concat(Enumerable.Repeat(new InputTick(), Settle)).ToList();
@@ -188,6 +191,7 @@ namespace IGTAP.EngineSim.Cli
             }
             finally { _eval.UseGoals(_runGoals); }
             int last = target.Extra.Length - 1;
+            _reachEnd = $"{r.Progress} of {target.Extra.Length} goals, {(r.Finished ? "finished" : "not finished")}: {r.EndReason}";
             if (r.Progress <= last || !r.Finished) return null;
             return Cut(at, length, inputs, (int)(r.GoalInputTicks[last] - length), r.GoalPhysicsTicks[last], reached, target);
         }

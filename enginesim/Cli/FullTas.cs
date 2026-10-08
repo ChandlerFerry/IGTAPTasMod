@@ -120,6 +120,9 @@ namespace IGTAP.EngineSim.Cli
             public string Name;
             public string[] Goals;
             public bool Standing, Restart;
+            /// <summary>A farm route's loop (routes.json's loopFrom on): its laps finish to finish through the end gate, played from a
+            /// finish, no restart (LoadSeeds).</summary>
+            public bool Loop;
             /// <summary>The unlocks its saved route was solved with (its "capabilities"); usable in a window whose caps
             /// cover them.</summary>
             public Caps Caps;
@@ -1567,6 +1570,25 @@ namespace IGTAP.EngineSim.Cli
                             Inputs = new[] { new InputTick { reset = true } }.Concat(t.Inputs).Append(new InputTick { reset = true })
                                 .Concat(Enumerable.Repeat(new InputTick(), pad)).Concat(c.Inputs).ToList() });
             _seeds.AddRange(chains);
+            _seeds.AddRange(FarmLoops(_seeds));
+        }
+
+        /// <summary>Each standing farm route's loop (its inputs from routes.json's loopFrom, the lead's input ticks): every saved farm
+        /// loop drops through the end gate into its next lap, so the run laps on from a finish with it, where its quick-restart laps
+        /// start at the course's reset point, not where a restart after the run's finish lands (Zip%: Course 6's at 26174.6, -488.85).</summary>
+        List<Seed> FarmLoops(List<Seed> seeds)
+        {
+            var loops = new List<Seed>();
+            if (!File.Exists(RoutesFile)) return loops;
+            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(RoutesFile));
+            var from = new Dictionary<string, int>();
+            foreach (JsonElement m in doc.RootElement.GetProperty("macros").EnumerateArray())
+                if (m.TryGetProperty("loopFrom", out JsonElement l) && l.ValueKind == JsonValueKind.Number && m.TryGetProperty("name", out JsonElement n))
+                    from.TryAdd(n.GetString(), l.GetInt32());
+            foreach (Seed s in seeds.Where(s => s.Standing))
+                if (from.TryGetValue(s.Name, out int at) && at > 0 && at < s.Inputs.Count)
+                    loops.Add(new Seed { Name = s.Name + " loop", Goals = s.Goals, Loop = true, Caps = s.Caps, Inputs = s.Inputs.Skip(at).ToList() });
+            return loops;
         }
 
         static Seed ReadSeed(string path)

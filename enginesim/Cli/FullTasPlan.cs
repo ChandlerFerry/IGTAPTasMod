@@ -368,18 +368,18 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// The one saved course route a lap is made of: of those that run the lap's course from standing or a quick restart with
-        /// unlocks the run holds at <paramref name="at"/>, the fastest by its name's time (`6_WJ_DS_DJ_BS 0.94`), the ones from a quick
-        /// restart first when <paramref name="restart"/> (a farm route's steady loop, `6_WJ_DS_DJ_BS farm 1.3500`: the record from
-        /// standing didn't play from a restart, its 0.94 the game timer's, not a lap's), else the ones from standing (a record lap: the
-        /// clones' path). Slower ones aren't laps (Course 6's `seed 300fps 5.94` was filed as one, and where the record didn't play
+        /// unlocks the run holds at <paramref name="at"/>, the fastest by its name's time (`6_WJ_DS_DJ_BS 0.94`). With <paramref name="restart"/>
+        /// (a plain lap) a farm route's loop first (`6_WJ_DS_DJ_BS farm 1.3500 loop`, from the finish), then the ones from a quick restart:
+        /// the record from standing didn't play from a restart, its 0.94 the game timer's, not a lap's; else the ones from standing (a
+        /// record lap: the clones' path), never a loop. Slower ones aren't laps (Course 6's `seed 300fps 5.94` was filed as one, and where the record didn't play
         /// every Zip% lap took 5.9 s); a slower lap a plan needs (a record broken a step at a time, for its clones) is made from this one.
         /// </summary>
-        List<Seed> FastestLap(SimSnapshot at, FullTasGoal[] lap, bool restart)
+        List<Seed> FastestLap(SimSnapshot at, FullTasGoal[] lap, bool restart, bool loops = true)
         {
             Read(at);
             IGTAPTasMod.Caps have = PlayerCaps.Of(_eval);
-            Seed fastest = _seeds.Where(s => (s.Standing || s.Restart) && s.Caps.IsSubsetOf(have) && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label))
-                .OrderBy(s => s.Restart != restart).ThenBy(s => NamedTime(s.Name)).FirstOrDefault();
+            Seed fastest = _seeds.Where(s => (s.Standing || s.Restart || s.Loop && restart && loops) && s.Caps.IsSubsetOf(have) && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label))
+                .OrderBy(s => !restart ? (s.Restart ? 1 : 0) : s.Loop ? 0 : s.Restart ? 1 : 2).ThenBy(s => NamedTime(s.Name)).FirstOrDefault();
             return fastest == null ? new List<Seed>() : new List<Seed> { fastest };
         }
 
@@ -399,6 +399,9 @@ namespace IGTAP.EngineSim.Cli
             return space >= 0 && double.TryParse(name.AsSpan(space + 1), NumberStyles.Float, CultureInfo.InvariantCulture, out double t) ? t : double.PositiveInfinity;
         }
 
+        /// <summary>The lap pieces SeedLaps filed: a course's goal, its route and the restart's landing spot.</summary>
+        readonly HashSet<string> _lapsSeeded = new HashSet<string>();
+
         /// <summary>
         /// Files the saved course routes (--seed files that run this course from standing at its start, or from a quick restart
         /// onto it) as lap pieces at the spot a quick restart from here lands: the gate's part as the lap's start piece, the rest
@@ -407,27 +410,42 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         void SeedLaps(SimSnapshot at, List<InputTick> route, int reached, FullTasGoal[] lap)
         {
-            var runs = FastestLap(at, lap, true);
+            var runs = FastestLap(at, lap, true, loops: false);
             if (runs.Count == 0) return;
             var restart = Restarts(at, route, reached).FirstOrDefault();
             if (restart.state == null) { Log("lap seeds: no quick restart from the stretch's start"); return; }
+            var landed = Where(restart.state.WithGoal(Fresh(_goals, 0))).at;
+            if (!_lapsSeeded.Add($"{lap[0].label}|{runs[0].Name}|{landed.x:0},{landed.y:0}")) return;
             List<InputTick> before = route.Concat(restart.inputs).ToList();
             int filed = 0;
             foreach (Seed s in runs)
-            {
-                var start = new Target { Goal = reached, Extra = new[] { lap[0] }, Key = lap[0].label };
-                Step gate = Reaches(restart.state, before.Count, LapInputs(s), start);
-                if (gate == null || gate.Next == null) { Log($"lap seeds: {s.Name} doesn't reach {lap[0].label} from the quick restart's spot at {Where(restart.state.WithGoal(Fresh(_goals, 0))).at} ({_whyNot})"); continue; }
-                var finish = new Target { Goal = reached, Extra = new[] { lap[1] }, Key = lap[1].label };
-                List<InputTick> afterGate = before.Concat(gate.Inputs).ToList();
-                Step end = Reaches(gate.Next, afterGate.Count, LapInputs(s).Skip(gate.Inputs.Count).ToList(), finish);
-                if (end == null) { Log($"lap seeds: {s.Name} crosses {lap[0].label} but doesn't reach {lap[1].label} after it ({_whyNot})"); continue; }
-                Keep(gate, restart.state, before, start);
-                Keep(end, gate.Next, afterGate, finish);
-                filed++;
-                Log($"lap seeds: {s.Name} laps from the quick restart's spot to its finish in {gate.Inputs.Count + end.Inputs.Count} inputs (finish at physics tick {end.Physics})");
-            }
+                if (FileLap(restart.state, before, LapInputs(s), reached, lap, $"{s.Name} from the quick restart's spot at {Where(restart.state.WithGoal(Fresh(_goals, 0))).at}")) filed++;
             Log($"lap seeds: {filed} of {runs.Count} saved course routes filed as lap pieces");
+        }
+
+        /// <summary>A saved lap filed as lap pieces from <paramref name="at"/> (after <paramref name="before"/>): the gate's part, then the
+        /// rest, each checked by playing it there, after 0 to 4 idle ticks, the first that plays (the 280 fps clock's frames repeat every 5
+        /// ticks: the route's phase there needn't be the run's, as a record lap's pad).</summary>
+        bool FileLap(SimSnapshot at, List<InputTick> before, List<InputTick> inputs, int reached, FullTasGoal[] lap, string what)
+        {
+            var start = new Target { Goal = reached, Extra = new[] { lap[0] }, Key = lap[0].label };
+            var finish = new Target { Goal = reached, Extra = new[] { lap[1] }, Key = lap[1].label };
+            string why = null;
+            for (int pad = 0; pad < 5; pad++)
+            {
+                List<InputTick> padded = Enumerable.Repeat(new InputTick(), pad).Concat(inputs).ToList();
+                Step gate = Reaches(at, before.Count, padded, start);
+                if (gate == null || gate.Next == null) { why ??= $"doesn't reach {lap[0].label} ({_reachEnd})"; continue; }
+                List<InputTick> afterGate = before.Concat(gate.Inputs).ToList();
+                Step end = Reaches(gate.Next, afterGate.Count, padded.Skip(gate.Inputs.Count).ToList(), finish);
+                if (end == null) { why ??= $"crosses {lap[0].label} but doesn't reach {lap[1].label} ({_reachEnd})"; continue; }
+                Keep(gate, at, before, start);
+                Keep(end, gate.Next, afterGate, finish);
+                Log($"lap seeds: {what} laps to its finish in {gate.Inputs.Count + end.Inputs.Count} inputs after {pad} idle ticks (finish at physics tick {end.Physics})");
+                return true;
+            }
+            Log($"lap seeds: {what} {why}, after 0 to 4 idle ticks");
+            return false;
         }
 
         /// <summary>
@@ -731,8 +749,43 @@ namespace IGTAP.EngineSim.Cli
         /// A lap from at: library pieces as they are, else after a quick restart (the fastest start piece from a box can cross the
         /// gate where no finish piece begins), and a piece search only when neither plays.
         /// </summary>
+        /// <summary>
+        /// The course's farm loop played whole from here (a finish), after 0 to 4 idle ticks, the first that reaches the lap's finish by
+        /// <c>_playBy</c>: its quick restart's tick is part of what makes it work (the restart lands in the air, where depends on the
+        /// frame it is pressed on: Course 6's at 26173.6, -490.3 or 26175, -474), so it isn't split at the restart as a library piece is.
+        /// </summary>
+        (List<InputTick> inputs, SimSnapshot state, long tick)? LoopLap(SimSnapshot at, List<InputTick> route, List<FullTasGoal> planned, FullTasGoal[] lap)
+        {
+            if (!(FastestLap(at, lap, true) is [{ Loop: true } loop])) return null;
+            var list = _kept.Concat(planned).Concat(lap).ToList();
+            Track(list);
+            int i = list.Count - 1;
+            SimSnapshot here = at.WithGoal(Fresh(list.Count, i - 1));
+            var target = new Target { Goal = i, Key = lap[1].label };
+            for (int idle = 0; idle < 5; idle++)
+            {
+                Step end = Reaches(here, route.Count, Enumerable.Repeat(new InputTick(), idle).Concat(loop.Inputs).ToList(), target);
+                if (end == null || end.Physics > _playBy) continue;
+                _playedTicks = null;
+                Log($"lap: {loop.Name} after {idle} idle ticks, finish at tick {end.Physics}");
+                return (route.Concat(end.Inputs).ToList(), end.Next, end.Physics);
+            }
+            Log($"lap: {loop.Name} misses {lap[1].label} from here after 0 to 4 idle ticks");
+            return null;
+        }
+
         (List<InputTick> inputs, SimSnapshot state, long tick)? Lap(SimSnapshot at, List<InputTick> route, List<FullTasGoal> planned, FullTasGoal[] lap)
         {
+            // The course's lap pieces from here, once a spot: a stretch whose goals lap no course (Zip% from buytree0 to buytree5) filed
+            // none in BuildFrom, and every lap was a search's (84-92 ticks for the farm's 68). Filed as BuildFrom does, the run's goals
+            // tracked with the stretch's next one ahead: one ending in the lap's gate is reached by it, and Cut drops the piece.
+            var run = _planBase.Goals.ToList();
+            if (_kept.Length < run.Count)
+            {
+                Track(run);
+                SeedLaps(at.WithGoal(Fresh(run.Count, _kept.Length)), route, _kept.Length, lap);
+            }
+            if (LoopLap(at, route, planned, lap) is var (loopInputs, loopState, loopTick)) return (loopInputs, loopState, loopTick);
             var played = Play(at, route, planned, lap, false);
             if (played != null) return played;
             Log($"lap from {Where(at.WithGoal(Fresh(_goals, 0))).at}: no library pieces as it is ({_whyNot})");
