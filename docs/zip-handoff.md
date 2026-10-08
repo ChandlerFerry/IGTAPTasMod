@@ -208,11 +208,18 @@ Continues [issue #26](https://github.com/ChandlerFerry/IGTAPTasMod/issues/26).
 
 ## Resume checklist
 
+Done 2026-10-07 evening (no engine run since): goals reset to 513 plus the six tree targets (both files; the old 709 in
+`C:\tmp\igtap\zip10`); private engine `C:\tmp\igtap\zip\eng20`; lap pieces now take a farm route's quick-restart laps
+first (`FastestLap(..., restart: true)`; `6_WJ_DS_DJ_BS farm 1.3500`, `8_... farm 1.1536`; record laps still the standing
+record); the beam prices NP in atoms (`NpWait`, docs/fulltas.md's beam: GP is what an NP target costs, so GP investments
+rank at once). Waiting on: the Course 7 and 9 farm routes (another agent), then step 1 and the rest.
+
 1. **Seeds:** regenerate `fulltas-Zip%-seeds.txt` (reach solve started and stopped in the studio). Check that it lists the
-   0.94 s Course 6 route.
+   0.94 s Course 6 route and the farm routes (`... farm ... from its quick restart`).
 2. **Goals:** reset to 513 plus the tree targets (above).
 3. **Engine:** build a private engine.
-4. **Course 6 laps:** check them before anything else. One plan from 513 to `buytree5` with the full `--only` and
+4. **Course 6 laps:** check them before anything else. Read the beam's estimate too: an NP target should now show a GP wait
+   (the progress line's `F`), not `NoIncome`. One plan from 513 to `buytree5` with the full `--only` and
    `--realize --rounds 1`, then read the lap steps' built ticks. They should come out near 1 s (about 50-60 ticks), not 5.9.
 5. **GP:** fix the planner's undervaluing of GP investments (or get the macro order from the user) before a long run.
    Compare the `buytree5` tick against the Course 6-only build's.
