@@ -378,9 +378,18 @@ namespace IGTAP.EngineSim.Cli
         {
             Read(at);
             IGTAPTasMod.Caps have = PlayerCaps.Of(_eval);
-            Seed fastest = _seeds.Where(s => (s.Standing || s.Restart || s.Loop && restart && loops) && s.Caps.IsSubsetOf(have) && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label))
+            Seed fastest = _seeds.Where(s => (s.Standing || s.Restart || s.Loop && restart && loops) && s.Caps.IsSubsetOf(have) && NamedCaps(s.Name).IsSubsetOf(have) && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label))
                 .OrderBy(s => !restart ? (s.Restart ? 1 : 0) : s.Loop ? 0 : s.Restart ? 1 : 2).ThenBy(s => NamedTime(s.Name)).FirstOrDefault();
             return fastest == null ? new List<Seed>() : new List<Seed> { fastest };
+        }
+
+        /// <summary>The category a saved route's name gives (`7_WJ_DS_DJ_BS_ORB_ZIP_OM seed 300fps 5.92`), none without one: the studio files a
+        /// `seed` route under its course's lowest category, so its own caps can understate what it uses (that one, at Zip%'s WJ_DS_DJ_BS,
+        /// beat the 8.78 record by its name and died at action 88).</summary>
+        static IGTAPTasMod.Caps NamedCaps(string name)
+        {
+            Match m = Regex.Match(name, @"^[0-9a-z]+_(" + IGTAPTasMod.Caps.LabelPattern + ") ");
+            return m.Success && IGTAPTasMod.Caps.TryParse(m.Groups[1].Value, out IGTAPTasMod.Caps caps) ? caps : default;
         }
 
         /// <summary>A saved route's time, its name's last word (`6_WJ_DS_DJ_BS 0.94`); a chain's (`tree0to6_... 2.52 then 6_... 2.04 after a
@@ -786,6 +795,14 @@ namespace IGTAP.EngineSim.Cli
                 SeedLaps(at.WithGoal(Fresh(run.Count, _kept.Length)), route, _kept.Length, lap);
             }
             if (LoopLap(at, route, planned, lap) is var (loopInputs, loopState, loopTick)) return (loopInputs, loopState, loopTick);
+            // Off the loop's finish (another course's, a box), the saved routes start standing at the course's reset point: a record
+            // lap's ways get there (the gate crossed, then a quick restart onto the course; or a restart right away) and play one whole.
+            // Searched from the gate instead, Zip%'s first Course 7 lap from Course 6 ran 12 minutes with no candidate.
+            if (RecordLap(at, route, planned, lap, lap[1].course, improve: false, gateBy: _playBy) is var (ri, rs, rt) && rt <= _playBy)
+            {
+                _playedTicks = null;
+                return (ri, rs, rt);
+            }
             var played = Play(at, route, planned, lap, false);
             if (played != null) return played;
             Log($"lap from {Where(at.WithGoal(Fresh(_goals, 0))).at}: no library pieces as it is ({_whyNot})");
