@@ -1698,6 +1698,13 @@ namespace IGTAP.EngineSim.Cli
             string[] boxes = goals.SelectMany(g => g.boxes ?? Array.Empty<string>()).ToArray();
             // An atom touch with fewer GP than the plan's buys fewer atoms (buy-max), and their NP is what the plan counted on:
             // it waits for the plan's levels' price (Zip%: a touch 1000 ticks early bought 1 atom, not the plan's tier-up).
+            // A box whose NP is over NP's cap (no atom waiting or crafting to raise it) is bought by no walk, stand or search: the plan
+            // is made again from here at once (Zip%'s buytree5 after an atom touch short of the plan's atoms: 9 minutes searched).
+            if (boxes.Length > 0 && OverNpCap(z.State, boxes))
+            {
+                _whyNot = "not paid for: its NP is over NP's cap (more atoms first)";
+                return null;
+            }
             int need = s.Kind == "atoms" ? Math.Max(1, levels) : 1;
             bool? affordable = boxes.Length == 0 ? true : Affordable(z.State, boxes, need);
             var played = need > 1 && affordable != true ? null : Play(z.State, z.Inputs, z.Planned, goals, affordable == true);

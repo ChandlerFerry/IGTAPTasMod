@@ -1005,6 +1005,16 @@ namespace IGTAP.EngineSim.Cli
 
         bool? Affordable(SimSnapshot s, string[] boxes, int levels = 1) { Read(s); return _eval.Shop.Affordable(boxes, levels); }
 
+        /// <summary>The boxes' NP price is over NP's cap and waiting can't raise it (Economy.NpCapped: no softcap, no atom waiting or
+        /// crafting).</summary>
+        bool OverNpCap(SimSnapshot s, string[] boxes)
+        {
+            Read(s);
+            double[] price = _eval.Shop.Need(boxes, 1, shown: false);
+            int np = (int)globalStats.Currencies.AtomicPower;
+            return price != null && price.Length > np && _eval.Shop.Economy?.NpCapped == true && price[np] > Singleton<globalStats>.Instance.NPrewardCap;
+        }
+
         static readonly Regex CostText = new Regex(@"costs (\S+)");
 
         // ponytail: reads the box's cost from Shop.Describe's log text (4 digits); a Shop accessor if the planner needs more.
