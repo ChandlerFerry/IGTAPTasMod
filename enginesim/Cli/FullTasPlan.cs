@@ -368,23 +368,28 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// The one saved course route a lap is made of: of those that run the lap's course from standing or a quick restart with
-        /// unlocks the run holds at <paramref name="at"/>, the fastest by its name's time (`6_WJ_DS_DJ_BS 0.94`). Slower ones aren't
-        /// laps (Course 6's `seed 300fps 5.94` was filed as one, and where the record didn't play every Zip% lap took 5.9 s); a
-        /// slower lap a plan needs (a record broken a step at a time, for its clones) is made from this one.
+        /// unlocks the run holds at <paramref name="at"/>, the fastest by its name's time (`6_WJ_DS_DJ_BS 0.94`), the ones from a quick
+        /// restart first when <paramref name="restart"/> (a farm route's steady loop, `6_WJ_DS_DJ_BS farm 1.3500`: the record from
+        /// standing didn't play from a restart, its 0.94 the game timer's, not a lap's), else the ones from standing (a record lap: the
+        /// clones' path). Slower ones aren't laps (Course 6's `seed 300fps 5.94` was filed as one, and where the record didn't play
+        /// every Zip% lap took 5.9 s); a slower lap a plan needs (a record broken a step at a time, for its clones) is made from this one.
         /// </summary>
-        List<Seed> FastestLap(SimSnapshot at, FullTasGoal[] lap)
+        List<Seed> FastestLap(SimSnapshot at, FullTasGoal[] lap, bool restart)
         {
             Read(at);
             IGTAPTasMod.Caps have = PlayerCaps.Of(_eval);
             Seed fastest = _seeds.Where(s => (s.Standing || s.Restart) && s.Caps.IsSubsetOf(have) && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label))
-                .OrderBy(s => NamedTime(s.Name)).FirstOrDefault();
+                .OrderBy(s => s.Restart != restart).ThenBy(s => NamedTime(s.Name)).FirstOrDefault();
             return fastest == null ? new List<Seed>() : new List<Seed> { fastest };
         }
 
         /// <summary>A saved route's time, its name's last word (`6_WJ_DS_DJ_BS 0.94`); a chain's (`tree0to6_... 2.52 then 6_... 2.04 after a
-        /// restart, pad 0`) its routes' times added; infinity without one.</summary>
+        /// restart, pad 0`) its routes' times added; a farm route's laps from its quick restart (`... farm 1.3500 from its quick restart`)
+        /// the farm's; infinity without one.</summary>
         static double NamedTime(string name)
         {
+            const string laps = " from its quick restart";
+            if (name.EndsWith(laps, StringComparison.Ordinal)) name = name.Substring(0, name.Length - laps.Length);
             if (name.Contains(" then ", StringComparison.Ordinal))
             {
                 MatchCollection times = Regex.Matches(name, @"(?<= )\d+\.\d+(?= |$)");
@@ -402,7 +407,7 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         void SeedLaps(SimSnapshot at, List<InputTick> route, int reached, FullTasGoal[] lap)
         {
-            var runs = FastestLap(at, lap);
+            var runs = FastestLap(at, lap, true);
             if (runs.Count == 0) return;
             var restart = Restarts(at, route, reached).FirstOrDefault();
             if (restart.state == null) { Log("lap seeds: no quick restart from the stretch's start"); return; }
@@ -764,7 +769,7 @@ namespace IGTAP.EngineSim.Cli
         (List<InputTick> inputs, SimSnapshot state, long tick)? RecordLap(SimSnapshot at, List<InputTick> route, List<FullTasGoal> planned, FullTasGoal[] lap, int course,
             bool improve = true, long gateBy = long.MaxValue)
         {
-            var runs = FastestLap(at, lap);
+            var runs = FastestLap(at, lap, false);
             if (runs.Count == 0) return null;
             var list = _kept.Concat(planned).Concat(lap).ToList();
             int i = list.Count - 1;
