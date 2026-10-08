@@ -26,6 +26,8 @@ namespace IGTAP.EngineSim.Cli
         // Record laps: each saved course route's idle ticks after the quick restart (-1: none plays it).
         readonly Dictionary<string, int> _recordPads = new Dictionary<string, int>();
         const int MaxRecordPad = 40;
+        /// <summary>Restart pads a record lap tries, one per frame phase (the 280 fps grid repeats every 5 ticks).</summary>
+        const int Phases = 5;
         // Record laps searched from the restart once per course, and the ways found (tried with the saved routes after).
         readonly HashSet<int> _recordSearched = new HashSet<int>();
         readonly List<(int course, List<InputTick> inputs)> _recordWays = new List<(int, List<InputTick>)>();
@@ -378,18 +380,19 @@ namespace IGTAP.EngineSim.Cli
         {
             Read(at);
             IGTAPTasMod.Caps have = PlayerCaps.Of(_eval);
-            Seed fastest = _seeds.Where(s => (s.Standing || s.Restart || s.Loop && restart && loops) && s.Caps.IsSubsetOf(have) && NamedCaps(s.Name).IsSubsetOf(have) && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label))
+            Seed fastest = _seeds.Where(s => (s.Standing || s.Restart || s.Loop && restart && loops) && s.Caps.IsSubsetOf(have) && NamedWithin(s.Name, have) && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label))
                 .OrderBy(s => !restart ? (s.Restart ? 1 : 0) : s.Loop ? 0 : s.Restart ? 1 : 2).ThenBy(s => NamedTime(s.Name)).FirstOrDefault();
             return fastest == null ? new List<Seed>() : new List<Seed> { fastest };
         }
 
-        /// <summary>The category a saved route's name gives (`7_WJ_DS_DJ_BS_ORB_ZIP_OM seed 300fps 5.92`), none without one: the studio files a
-        /// `seed` route under its course's lowest category, so its own caps can understate what it uses (that one, at Zip%'s WJ_DS_DJ_BS,
-        /// beat the 8.78 record by its name and died at action 88).</summary>
-        static IGTAPTasMod.Caps NamedCaps(string name)
+        /// <summary>Every category a saved route's name gives (`7_WJ_DS_DJ_BS_ORB_ZIP_OM seed 300fps 5.92`; a chain's, `tree0to7_... then 7_...`,
+        /// each) is held: the studio files a `seed` route under its course's lowest category, so its own caps can understate what it
+        /// uses (that one, at Zip%'s WJ_DS_DJ_BS, beat the 8.78 record by its name and died at action 88).</summary>
+        static bool NamedWithin(string name, IGTAPTasMod.Caps have)
         {
-            Match m = Regex.Match(name, @"^[0-9a-z]+_(" + IGTAPTasMod.Caps.LabelPattern + ") ");
-            return m.Success && IGTAPTasMod.Caps.TryParse(m.Groups[1].Value, out IGTAPTasMod.Caps caps) ? caps : default;
+            foreach (Match m in Regex.Matches(name, @"(?<=^| )[0-9a-z]+_(" + IGTAPTasMod.Caps.LabelPattern + ") "))
+                if (IGTAPTasMod.Caps.TryParse(m.Groups[1].Value, out IGTAPTasMod.Caps caps) && !caps.IsSubsetOf(have)) return false;
+            return true;
         }
 
         /// <summary>A saved route's time, its name's last word (`6_WJ_DS_DJ_BS 0.94`); a chain's (`tree0to6_... 2.52 then 6_... 2.04 after a
@@ -772,7 +775,7 @@ namespace IGTAP.EngineSim.Cli
             IGTAPTasMod.Caps have = PlayerCaps.Of(_eval);
             var spot = Where(at.WithGoal(Fresh(_goals, 0))).at;
             string here = $"{spot.x:0},{spot.y:0}";
-            var runs = _seeds.Where(s => (s.Loop || s.Restart) && s.Caps.IsSubsetOf(have) && NamedCaps(s.Name).IsSubsetOf(have)
+            var runs = _seeds.Where(s => (s.Loop || s.Restart) && s.Caps.IsSubsetOf(have) && NamedWithin(s.Name, have)
                     && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label) && !_lapMisses.Contains(s.Name + "|" + here))
                 .OrderBy(s => s.Loop ? 0 : 1).ThenBy(s => NamedTime(s.Name)).Take(MaxSavedLaps).ToList();
             if (runs.Count == 0) return null;
@@ -869,6 +872,12 @@ namespace IGTAP.EngineSim.Cli
             // before the first input. Idle ticks after the quick restart stand in for that wait; each route's pad is the first that
             // plays it to the finish, then tried first (the restart lands the same; another frame phase tries the rest).
             var starts = new List<(string how, List<InputTick> basis, List<InputTick> pre, SimSnapshot state)>();
+            // A saved route plays after a restart only as it starts at its category start: its first input right after the landing
+            // (the player sinks from there: Course 7's 3027 to 3019 in 12 ticks) and on the same 280 fps frame phase (the grid repeats
+            // every 5 ticks). Idle ticks before the restart move the phase; a start so (Phased) plays its routes with no idle after it.
+            // Course 7's 8.78 from its own start: restarted after 4 idle ticks it finishes, after 0-3 it dies, idled after it never.
+            var phased = new HashSet<string>();
+            string Phased(string how) { phased.Add(how); return how; }
             var gate = Play(at, route, planned, new[] { lap[0] }, false);
             long[] gateTick = _playedTicks;
             Track(list);
@@ -881,7 +890,11 @@ namespace IGTAP.EngineSim.Cli
                 gate = null;
             }
             if (gate is var (crossed, past, _))
-                foreach (var (pre, restarted) in Restarts(past.WithGoal(Fresh(list.Count, i)), crossed, i).Take(1)) starts.Add(("", crossed, pre, restarted));
+            {
+                var restarts = Restarts(past.WithGoal(Fresh(list.Count, i)), crossed, i).Take(Phases).ToList();
+                foreach (var (pre, restarted) in restarts.Take(1)) starts.Add(("", crossed, pre, restarted));
+                foreach (var (pre, restarted) in restarts.Skip(1)) starts.Add((Phased($" from a restart {pre.Count - 1} ticks after the gate"), crossed, pre, restarted));
+            }
             // Right after a quick restart (the plan's restart to the course's reset point) the routes play from where it landed.
             // A route's pad is kept per start and spot (a restart elsewhere misses them all).
             if (route.Count > 0 && route[route.Count - 1].reset)
@@ -891,10 +904,11 @@ namespace IGTAP.EngineSim.Cli
                 starts.Add(($" from the restart before it at {spot.x:0},{spot.y:0}", route, new List<InputTick>(), landed));
             }
             else
-                foreach (var (pre, restarted) in Restarts(at.WithGoal(Fresh(list.Count, i - 1)), route, i - 1).Take(1))
+                foreach (var (pre, restarted) in Restarts(at.WithGoal(Fresh(list.Count, i - 1)), route, i - 1).Take(Phases))
                 {
                     var (spot, _) = Where(restarted);
-                    starts.Add(($" from a restart at {spot.x:0},{spot.y:0}", route, pre, restarted));
+                    string how = $" from a restart at {spot.x:0},{spot.y:0}";
+                    starts.Add((pre.Count == 1 ? how : Phased(how + $" after {pre.Count - 1} idle ticks"), route, pre, restarted));
                 }
             (List<InputTick> inputs, SimSnapshot state, long tick, float best, string how)? pick = null;
             void Pick(string how, List<InputTick> basis, List<InputTick> pre, Step end)
@@ -913,7 +927,7 @@ namespace IGTAP.EngineSim.Cli
                     string key = s.Name + how;
                     bool cached = _recordPads.TryGetValue(key, out int found);
                     if (cached && found < 0) { tried.Add($"{key} misses {lap[1].label}"); continue; }
-                    foreach (int idle in cached ? Enumerable.Range(0, MaxRecordPad + 1).Prepend(found).Distinct() : Enumerable.Range(0, MaxRecordPad + 1))
+                    foreach (int idle in cached ? Enumerable.Range(0, phased.Contains(how) ? 1 : MaxRecordPad + 1).Prepend(found).Distinct() : Enumerable.Range(0, phased.Contains(how) ? 1 : MaxRecordPad + 1))
                     {
                         end = Reaches(restarted, basis.Count + pre.Count, Enumerable.Repeat(new InputTick(), idle).Concat(LapInputs(s)).ToList(), target);
                         if (end != null) { found = idle; break; }

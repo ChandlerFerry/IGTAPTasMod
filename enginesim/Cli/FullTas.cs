@@ -1565,10 +1565,12 @@ namespace IGTAP.EngineSim.Cli
             var chains = new List<Seed>();
             foreach (Seed t in _seeds.Where(s => s.Name.StartsWith("tree", StringComparison.Ordinal) && s.Goals is [string g] && g.StartsWith("start:", StringComparison.Ordinal)))
                 foreach (Seed c in _seeds.Where(s => s.Standing && s.Goals is [string a, string b] && a == t.Goals[0] && b == "finish:" + a.Substring(6)))
-                    for (int pad = 0; pad <= 6; pad += 2)
-                        chains.Add(new Seed { Name = $"{t.Name} then {c.Name} after a restart, pad {pad}", Goals = c.Goals, Restart = true, Caps = c.Caps,
-                            Inputs = new[] { new InputTick { reset = true } }.Concat(t.Inputs).Append(new InputTick { reset = true })
-                                .Concat(Enumerable.Repeat(new InputTick(), pad)).Concat(c.Inputs).ToList() });
+                    // Idle before the second restart, not after: the course's route plays right after the landing, on its frame phase
+                    // (the grid repeats every 5 ticks; FullTasPlan.RecordLap's Phased).
+                    for (int pad = 0; pad < 5; pad++)
+                        chains.Add(new Seed { Name = $"{t.Name} then {c.Name} after {pad} idle ticks and a restart", Goals = c.Goals, Restart = true, Caps = c.Caps,
+                            Inputs = new[] { new InputTick { reset = true } }.Concat(t.Inputs).Concat(Enumerable.Repeat(new InputTick(), pad))
+                                .Append(new InputTick { reset = true }).Concat(c.Inputs).ToList() });
             _seeds.AddRange(chains);
             _seeds.AddRange(FarmLoops(_seeds));
         }
