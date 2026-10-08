@@ -1632,6 +1632,14 @@ namespace IGTAP.EngineSim.Cli
                         moves.Blocked.Add(to);
                         Log($"realize: {to} blocked until a tree box is bought");
                     }
+                    // A lap whose course's gate no way reached (not its finish missed): its laps and record laps too, until a tree box
+                    // grows a way (Zip%'s Course 9 at tree level 7: a lap:9 planned again each round, its gate searched 8 minutes a time).
+                    else if (course > 0 && _whyNot?.StartsWith("start:" + course + " ", StringComparison.Ordinal) == true)
+                    {
+                        moves.Blocked.Add("lap:" + course);
+                        moves.Blocked.Add("record:" + course);
+                        Log($"realize: lap:{course} and record:{course} blocked until a tree box is bought");
+                    }
                     z.Log.Add(new { round = z.Rounds, kind = s.Kind, step = s.Arg, from, planTicks, plan = planEnd, built = -1L, why, estimated });
                     if (!Again(why)) z.Why ??= why;
                     continue;
