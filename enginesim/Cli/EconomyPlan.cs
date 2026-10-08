@@ -1502,7 +1502,10 @@ namespace IGTAP.EngineSim.Cli
                 string to = EconomyPlan.PlaceOf(s);
                 int bound = s.Ticks + restarts.Sum(r => r.Ticks);
                 // A stand's wait for its Cash is the economy's, not the walk's: no bound on its pieces.
-                _playBy = i < plan.Stands.Length && plan.Stands[i] ? long.MaxValue : z.Tick + Math.Max(3L * bound, bound + 500L);
+                // A lap's bound is tighter: a library lap far slower than the course's known lap is a search's to beat (Course 6's 5.9 s
+                // seed laps against its 0.94 s record, inside the walks' bound).
+                _playBy = i < plan.Stands.Length && plan.Stands[i] ? long.MaxValue
+                    : z.Tick + (s.Kind == "lap" || s.Kind == "record" ? Math.Max(2L * bound, bound + 100L) : Math.Max(3L * bound, bound + 500L));
                 (List<InputTick> inputs, SimSnapshot state, long tick)? played;
                 FullTasGoal[] goals;
                 long walked;

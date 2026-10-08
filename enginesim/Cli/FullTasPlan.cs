@@ -367,6 +367,34 @@ namespace IGTAP.EngineSim.Cli
         static List<InputTick> LapInputs(Seed s) => s.Restart ? s.Inputs.Skip(1).ToList() : s.Inputs;
 
         /// <summary>
+        /// The one saved course route a lap is made of: of those that run the lap's course from standing or a quick restart with
+        /// unlocks the run holds at <paramref name="at"/>, the fastest by its name's time (`6_WJ_DS_DJ_BS 0.94`). Slower ones aren't
+        /// laps (Course 6's `seed 300fps 5.94` was filed as one, and where the record didn't play every Zip% lap took 5.9 s); a
+        /// slower lap a plan needs (a record broken a step at a time, for its clones) is made from this one.
+        /// </summary>
+        List<Seed> FastestLap(SimSnapshot at, FullTasGoal[] lap)
+        {
+            Read(at);
+            IGTAPTasMod.Caps have = PlayerCaps.Of(_eval);
+            Seed fastest = _seeds.Where(s => (s.Standing || s.Restart) && s.Caps.IsSubsetOf(have) && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label))
+                .OrderBy(s => NamedTime(s.Name)).FirstOrDefault();
+            return fastest == null ? new List<Seed>() : new List<Seed> { fastest };
+        }
+
+        /// <summary>A saved route's time, its name's last word (`6_WJ_DS_DJ_BS 0.94`); a chain's (`tree0to6_... 2.52 then 6_... 2.04 after a
+        /// restart, pad 0`) its routes' times added; infinity without one.</summary>
+        static double NamedTime(string name)
+        {
+            if (name.Contains(" then ", StringComparison.Ordinal))
+            {
+                MatchCollection times = Regex.Matches(name, @"(?<= )\d+\.\d+(?= |$)");
+                return times.Count == 0 ? double.PositiveInfinity : times.Sum(m => double.Parse(m.Value, CultureInfo.InvariantCulture));
+            }
+            int space = name.LastIndexOf(' ');
+            return space >= 0 && double.TryParse(name.AsSpan(space + 1), NumberStyles.Float, CultureInfo.InvariantCulture, out double t) ? t : double.PositiveInfinity;
+        }
+
+        /// <summary>
         /// Files the saved course routes (--seed files that run this course from standing at its start, or from a quick restart
         /// onto it) as lap pieces at the spot a quick restart from here lands: the gate's part as the lap's start piece, the rest
         /// as its finish piece, each checked by playing it there. A lap the route polished in the run is often slower than the course's own record
@@ -374,7 +402,7 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         void SeedLaps(SimSnapshot at, List<InputTick> route, int reached, FullTasGoal[] lap)
         {
-            var runs = _seeds.Where(s => (s.Standing || s.Restart) && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label)).ToList();
+            var runs = FastestLap(at, lap);
             if (runs.Count == 0) return;
             var restart = Restarts(at, route, reached).FirstOrDefault();
             if (restart.state == null) { Log("lap seeds: no quick restart from the stretch's start"); return; }
@@ -736,7 +764,7 @@ namespace IGTAP.EngineSim.Cli
         (List<InputTick> inputs, SimSnapshot state, long tick)? RecordLap(SimSnapshot at, List<InputTick> route, List<FullTasGoal> planned, FullTasGoal[] lap, int course,
             bool improve = true, long gateBy = long.MaxValue)
         {
-            var runs = _seeds.Where(s => (s.Standing || s.Restart) && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label)).ToList();
+            var runs = FastestLap(at, lap);
             if (runs.Count == 0) return null;
             var list = _kept.Concat(planned).Concat(lap).ToList();
             int i = list.Count - 1;
