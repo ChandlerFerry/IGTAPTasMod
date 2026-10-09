@@ -1270,6 +1270,35 @@ namespace IGTAP.EngineSim.Cli
             return failed < TrapFailures ? null : $"walks to {failed} targets failed from it and a quick restart lands back beside it";
         }
 
+        /// <summary>
+        /// A stage whose next goal is an area goal (a pad's visit, ZipEscape%'s before the tree grows past it): one piece search to
+        /// it from the best's end, within a step's budget, installed when it plays; the economy stages go on from there.
+        /// </summary>
+        int ReachArea(int kept)
+        {
+            LoadSeeds();
+            _planBase = _runGoals;
+            FullTasGoal[] all = _runGoals.Goals;
+            FullTasGoal goal = all[kept];
+            var (at, route) = BuildFrom(all, kept, kept);
+            Log($"unattended: goal {kept + 1} {goal.label} is an area goal: a piece search to it from goal {kept} (tick {_best.GoalPhysics[kept - 1]})");
+            (List<InputTick> inputs, SimSnapshot state, long tick)? played;
+            _stepTicks = StepTicks;
+            try { played = Play(at, route, new List<FullTasGoal>(), new[] { goal }, true); }
+            finally { _stepTicks = long.MaxValue; }
+            if (played == null)
+            {
+                _stageReport = new { target = goal.label, from = kept, stop = $"{goal.label} doesn't play from goal {kept} ({_whyNot})" };
+                Log("unattended: " + goal.label + " doesn't play: " + _whyNot);
+                return 3;
+            }
+            Route run = Evaluate(played.Value.inputs);
+            if (run.Progress > _best.Progress) Install(run, all.Select(g => g.label).ToArray());
+            else Log($"install: the area goal's route reaches goal {run.Progress}, not past the best's {_best.Progress}");
+            _stageReport = new { target = goal.label, from = kept, built = played.Value.tick, installed = _installed, reaches = run.Progress };
+            return 0;
+        }
+
         /// <summary>The best's income is read over its last goals spanning at least this many ticks.</summary>
         const long IncomeSpan = 5000;
 
@@ -1476,6 +1505,7 @@ namespace IGTAP.EngineSim.Cli
             }
             int kept = stage ? _best.Progress : GoalNumber(Solve.Option(args, "--from", ""), 1);
             if (kept < 1 || kept > _goals || kept > _best.Progress) throw new ArgumentException($"--from wants a goal the best reaches (1..{_best.Progress})");
+            if (stage && kept < _goals && _labels[kept].StartsWith("at:", StringComparison.Ordinal)) return ReachArea(kept);
             int nextBuy = Array.FindIndex(_labels, kept, l => l.StartsWith("buy:", StringComparison.Ordinal));
             if (stage && nextBuy < 0)
             {

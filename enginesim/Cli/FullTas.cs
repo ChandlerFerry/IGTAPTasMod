@@ -619,6 +619,7 @@ namespace IGTAP.EngineSim.Cli
                 {
                     _best = run;
                     from = "fulltas/" + Path.GetFileName(_runFile);
+                    _ownBest = true;
                     // A run file written without its goal ticks (a hand-merged route) reads as reaching no goal in the studio,
                     // which cuts its reset segments from those ticks: write them back from this replay.
                     if (keep == stored && !goalInput.SequenceEqual(run.GoalInput))
@@ -628,6 +629,7 @@ namespace IGTAP.EngineSim.Cli
                     }
                 }
             }
+            AdoptSeedBest(dir, ref from);
             HarvestRuns(dir);
             foreach (string file in _harvestFiles) HarvestRoute(file);
             return from;
@@ -805,6 +807,38 @@ namespace IGTAP.EngineSim.Cli
             _eval.Goals.Limit = limit < 0 ? _goals : limit;
             RunResult r = _eval.Run(inputs, null, afterTick, 1000000);
             return new Route { Inputs = inputs, Progress = r.Progress, GoalInput = r.GoalInputTicks, GoalPhysics = r.GoalPhysicsTicks, GoalHeld = r.GoalHeldFrames, EndReason = r.EndReason };
+        }
+
+        /// <summary>The best came from the run's own file (not a seed run's).</summary>
+        bool _ownBest;
+
+        /// <summary>
+        /// A run with nothing of its own yet (a fresh capture, no run file): its seed runs' bests (runs/&lt;run&gt;.json "seeds"),
+        /// each cut where its goals part from this run's, the furthest taken (ZipEscape%: Zip%'s through goal 1157).
+        /// </summary>
+        void AdoptSeedBest(string dir, ref string from)
+        {
+            if (_fresh || _ownBest || _best.Progress > 0) return;
+            string root = TechGrafts.SourceRoot();
+            string def = root == null ? null : Path.Combine(root, "runs", _name + ".json");
+            if (def == null || !File.Exists(def)) return;
+            using JsonDocument run = JsonDocument.Parse(File.ReadAllText(def));
+            if (!run.RootElement.TryGetProperty("seeds", out JsonElement seeds)) return;
+            foreach (JsonElement s in seeds.EnumerateArray())
+            {
+                string file = Path.Combine(dir, "fulltas", s.GetString() + ".json");
+                if (!File.Exists(file)) continue;
+                using JsonDocument saved = JsonDocument.Parse(File.ReadAllText(file));
+                List<InputTick> inputs = Solve.ReadInputs(saved.RootElement);
+                string[] solved = saved.RootElement.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
+                long[] goalInput = saved.RootElement.GetProperty("goalInputTicks").EnumerateArray().Select(t => t.GetInt64()).ToArray();
+                int keep = CurrentInputs(solved, goalInput, _labels, inputs.Count);
+                if (keep < inputs.Count) inputs.RemoveRange(keep, inputs.Count - keep);
+                Route r = Padded(Evaluate(inputs));
+                if (!Better(r, _best)) continue;
+                _best = r;
+                from = "seed run fulltas/" + Path.GetFileName(file);
+            }
         }
 
         internal static int CurrentInputs(string[] solved, long[] goalInputTicks, string[] labels, int count)
