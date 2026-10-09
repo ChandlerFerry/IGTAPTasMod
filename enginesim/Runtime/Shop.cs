@@ -217,6 +217,9 @@ namespace IGTAP.EngineSim
             Economy?.AtomFrame(dt);
         }
 
+        /// <summary>The levels a running buy-max routine on the box still buys (0: none running).</summary>
+        internal int BuyMaxLeft(upgradeBox box) { int left = 0; foreach (BuyMaxRoutine r in _buyMax) if (r.Box == box) left += r.Left; return left; }
+
         internal void FixedStep()
         {
             _continuing = true;

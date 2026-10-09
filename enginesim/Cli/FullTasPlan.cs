@@ -1023,7 +1023,7 @@ namespace IGTAP.EngineSim.Cli
             int np = (int)globalStats.Currencies.AtomicPower;
             // NP held can pass the cap (a tier's first craft adds 1000 ticks of the rate uncapped): over both is over.
             return price != null && price.Length > np && _eval.Shop.Economy?.NpCapped == true
-                && price[np] > Math.Max(Singleton<globalStats>.Instance.NPrewardCap, _eval.Shop.Holds(globalStats.Currencies.AtomicPower));
+                && price[np] > Math.Max(_eval.NpCapAfterPending(), _eval.Shop.Holds(globalStats.Currencies.AtomicPower));
         }
 
         static readonly Regex CostText = new Regex(@"costs (\S+)");

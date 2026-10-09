@@ -319,7 +319,7 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         internal static PlanResult Search<TSnap>(IEconomy<TSnap> economy, long startTick, string startPlace, Func<string, IEnumerable<PlanOption>> options,
             int maxStates, double maxSeconds, IReadOnlyList<string> prefix = null, Action<string> log = null, Func<string, PlanOption> stand = null,
-            int width = 0, Func<string, (double[] price, int ticks)> remaining = null)
+            int width = 0, Func<string, (double[] price, int ticks)> remaining = null, Func<string, int> atomDetour = null)
         {
             var clock = Stopwatch.StartNew();
             var result = new PlanResult { Width = width };
@@ -512,7 +512,7 @@ namespace IGTAP.EngineSim.Cli
                     if (missing <= 0 || n.Tick == a.Tick) continue;
                     if (c == Np && economy.NpAfterAtoms(0) != null)
                     {
-                        double np = NpWait(n, a, price[c], model);
+                        double np = NpWait(n, a, price[c], model, atomDetour?.Invoke(n.Place) ?? 0);
                         if (double.IsPositiveInfinity(np)) { result.NoIncome++; np = NoIncome; }
                         wait = Math.Max(wait, np);
                         continue;
@@ -556,7 +556,7 @@ namespace IGTAP.EngineSim.Cli
             // 0.24 and cap under buytree5's 22,500): the soonest of buying k more atoms (their GP at n's GP income, the 0.4 s grid
             // landing each) and then earning the NP at the rate they craft up to, its cap over the price. So a green box or a
             // buytree0 level, raising the GP income, ranks at once (the NP window alone saw no income below a merge).
-            double NpWait(Node<TSnap> n, Node<TSnap> a, double npPrice, double[] model)
+            double NpWait(Node<TSnap> n, Node<TSnap> a, double npPrice, double[] model, int detour)
             {
                 double best = double.PositiveInfinity;
                 // From the fewest atoms whose NP cap holds the price, found by halves (the cap only rises with atoms; fewer can't buy it).
@@ -584,7 +584,8 @@ namespace IGTAP.EngineSim.Cli
                     // The atoms' price only rises with k: no more atoms beat the best once their GP alone takes longer.
                     if (gp >= best) break;
                     if (!(economy.NpAfterAtoms(k) is var (np, cap, bonus)) || cap < npPrice || np <= 0) continue;
-                    best = Math.Min(best, gp + AtomGridTicks * k + Math.Max(0, npPrice - n.Holds[Np] - bonus) / np);
+                    // More atoms are a touch away: the walk to the atom box and on to the next target, past the walk there straight.
+                    best = Math.Min(best, gp + (k > 0 ? detour : 0) + AtomGridTicks * k + Math.Max(0, npPrice - n.Holds[Np] - bonus) / np);
                 }
                 return best;
             }
@@ -848,6 +849,17 @@ namespace IGTAP.EngineSim.Cli
                 return list;
             }
             // The beam's estimate: every target not bought yet, at its price now, and the table's ticks to the next one.
+            // The ticks an atom touch adds on the way to the next target (the beam's estimate charges it to a state that needs atoms): saving
+            // states that never paid it out-ranked the ones that had touched, bucket after bucket, and the plan never touched (Zip% from
+            // goal 998: 265k GP held at tick 98k, the touch worth buytree7 on tick 74,696 never taken).
+            int AtomDetour(string place)
+            {
+                string next = targets.FirstOrDefault(t => t == target || economy.Level(t) == bought[t]);
+                string caps = PlayerCaps.Of(sim).Id;
+                if (next == null || place == AtomBox) return 0;
+                Move toAtom = moves.Best(place, AtomBox, caps), on = moves.Best(AtomBox, next, caps), direct = moves.Best(place, next, caps);
+                return toAtom == null || on == null ? 0 : Math.Max(0, toAtom.Ticks + on.Ticks - (direct?.Ticks ?? 0));
+            }
             (double[] price, int ticks) Remaining(string place)
             {
                 var price = new double[7];
@@ -870,7 +882,7 @@ namespace IGTAP.EngineSim.Cli
             try
             {
                 r = Search(economy, startTick, startPlace, p => Options(p, false), maxStates, maxSeconds, prefix, log, p => Options(p, true).FirstOrDefault(),
-                    width, Remaining);
+                    width, Remaining, AtomDetour);
             }
             finally { if (model != null) model.ExpectedGreens = false; }
             sim.RestoreForDrive(start);
@@ -1082,7 +1094,7 @@ namespace IGTAP.EngineSim.Cli
         {
             var ceiling = new double[7];
             Array.Fill(ceiling, double.PositiveInfinity);
-            if (_sim.Shop.Economy?.NpCapped == true) ceiling[(int)globalStats.Currencies.AtomicPower] = Singleton<globalStats>.Instance.NPrewardCap;
+            if (_sim.Shop.Economy?.NpCapped == true) ceiling[(int)globalStats.Currencies.AtomicPower] = _sim.NpCapAfterPending();
             return ceiling;
         }
 
@@ -1440,7 +1452,22 @@ namespace IGTAP.EngineSim.Cli
                     Economy model = _eval.Shop.Economy;
                     double[] rate = model?.CloneRates(0.02f) ?? new double[7];
                     Console.WriteLine($"try {text}: the build stood {ticks} ticks: Cash {_eval.Shop.Holds(globalStats.Currencies.Cash):G4}, GP {_eval.Shop.Holds(globalStats.Currencies.GreenPower):G4}"
+                        + $"; NP {_eval.Shop.Holds(globalStats.Currencies.AtomicPower):G4} ({Singleton<globalStats>.Instance?.NPrewardPerTick:G4} a tick, atoms {string.Join("/", model?.AtomCounts ?? Array.Empty<int>())})"
                         + $"; green chance {model?.GlobalOf(globalStats.globalUpgradeSet.greenCloneClance):G4}%, clone rates a tick: Cash {rate[0]:G4}, GP {rate[1]:G4}; {model?.DescribeClones()}");
+                    continue;
+                }
+                // plan / plan:STEPS (steps joined by ';'): the unattended planner from goal --from to the target (its first steps forced to
+                // STEPS, as fulltas-plan --compare did), its schedule printed; a question about the beam's choices, nothing played.
+                if (kind == "plan")
+                {
+                    string place = _labels[kept - 1];
+                    string[] targets = { _labels[targetIndex] };
+                    HashSet<string> only = goalOf(targets[0])?.boxes is [string tb] && tb.StartsWith("zone 2/", StringComparison.Ordinal) ? EconomyPlan.AreaTwoOffer : null;
+                    var settings = new PlanSettings(targets, Array.Empty<string>(), "beam", EconomyPlan.UnattendedWidth, EconomyPlan.BeamStates, double.PositiveInfinity, false, only, null);
+                    IReadOnlyList<string> prefix = arg.Length > 5 ? arg.Substring(5).Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : null;
+                    EconomyPlanResult r = PlanFrom(GoalState(kept).at, place, prefix, moves, settings, goalOf);
+                    EconomyPlan.Print(text, r);
+                    Console.WriteLine($"try {(prefix == null ? "plan" : "plan:" + prefix.Count + " steps")}: target {(r.Done ? r.Tick.ToString() : "-")} ({r.Why}); {r.States} states, {clock.Elapsed.TotalSeconds:0} s");
                     continue;
                 }
                 if (kind == "idle" || kind == "finish")

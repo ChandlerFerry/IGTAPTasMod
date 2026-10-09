@@ -128,6 +128,20 @@ namespace IGTAP.EngineSim
             return strays;
         }
 
+        /// <summary>NP's cap once the atoms on their way have landed and crafted: those waiting on the grid and those the atom box's running
+        /// buy-max routine still buys (Economy.NpAfterAtoms), never under the cap now. Right after a touch the cap is the old one for
+        /// ~400 ticks (Zip%: 21 atoms bought one a step, landing one each 0.4 s: 31 NP a tick, then 119); a price over the old cap but
+        /// under this one is paid by waiting.</summary>
+        internal double NpCapAfterPending()
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            double cap = stats?.NPrewardCap ?? 0;
+            int left = Shop.Box(AtomBoxId) is upgradeBox atom ? Shop.BuyMaxLeft(atom) : 0;
+            return Shop.Economy?.NpAfterAtoms(left) is var (_, after, _) ? Math.Max(cap, after) : cap;
+        }
+
+        static readonly string AtomBoxId = FullTasGoal.BoxId("AtomUpgrades/AtomUpgrade", 0);
+
         /// <summary>One of the box's own trigger colliders, on and where it is now, overlaps the player's boxes, its body standing at
         /// <paramref name="at"/> (PhysicsWorld.PlayerOverlaps, as the clonesLoD triggers are tested).</summary>
         internal bool Reaches(upgradeBox box, Vector2 at)
