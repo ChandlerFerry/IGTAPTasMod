@@ -129,6 +129,9 @@ namespace IGTAP.EngineSim.Cli
     {
         /// <summary>fulltas-plan --beam's default width (docs/fulltas.md, "Economy planner": chosen by measurement).</summary>
         internal const int DefaultWidth = 200;
+        /// <summary>The unattended stages' beam (Zip% 2026-10-08: beam 4 reached buytree7 in 250k states) and its state cap, in place of a
+        /// seconds cap: the same plan on any machine.</summary>
+        internal const int UnattendedWidth = 4, BeamStates = 1_000_000;
         /// <summary>Most ticks the target's last resort stands at its box.</summary>
         const int StandCap = 50000;
         /// <summary>Beam: most ticks the target's stand waits past its walk (a longer wait is a later state's: the beam goes on
@@ -614,7 +617,12 @@ namespace IGTAP.EngineSim.Cli
                 Expand(start, true);
                 while (queue.TryDequeue(out var e, out var priority))
                 {
-                    if (clock.Elapsed.TotalSeconds >= maxSeconds) { why = $"stopped after {clock.Elapsed.TotalSeconds:0} s at tick {priority.tick}"; break; }
+                    // With no seconds cap (unattended) the beam stops at maxStates played; every other caller has one, as before.
+                    if (clock.Elapsed.TotalSeconds >= maxSeconds || double.IsPositiveInfinity(maxSeconds) && result.States >= maxStates)
+                    {
+                        why = $"stopped after {result.States} states ({clock.Elapsed.TotalSeconds:0} s) at tick {priority.tick}";
+                        break;
+                    }
                     Node<TSnap> n = e.node;
                     if (n == null)
                     {
@@ -1263,8 +1271,11 @@ namespace IGTAP.EngineSim.Cli
             // the exact search is capped. --stand on|off: the target stands at its box for its last Cash (default: the beam's on).
             string mode = Solve.Option(args, "--mode", "auto");
             if (mode != "exact" && mode != "beam" && mode != "auto") throw new ArgumentException("--mode wants exact, beam or auto");
-            var settings = new PlanSettings(targets, bonuses, mode, _stageWidth > 0 ? _stageWidth : Solve.Option(args, "--beam", EconomyPlan.DefaultWidth), maxStates,
-                Solve.Option(args, "--minutes", 30.0) * 60, levels, only, Solve.Option<string>(args, "--stand", null));
+            var settings = _unattended
+                ? new PlanSettings(targets, bonuses, "beam", _stageWidth > 0 ? _stageWidth : EconomyPlan.UnattendedWidth, EconomyPlan.BeamStates,
+                    double.PositiveInfinity, levels, only, null)
+                : new PlanSettings(targets, bonuses, mode, _stageWidth > 0 ? _stageWidth : Solve.Option(args, "--beam", EconomyPlan.DefaultWidth), maxStates,
+                    Solve.Option(args, "--minutes", 30.0) * 60, levels, only, Solve.Option<string>(args, "--stand", null));
             EconomyPlanResult Plan(IReadOnlyList<string> prefix) => PlanFrom(at, place, prefix, moves, settings, GoalOf);
             // --join FILE: no search; a route --realize wrote (its goals and inputs through the target) joined to the best's way on again.
             string joinFile = Solve.Option<string>(args, "--join", null);

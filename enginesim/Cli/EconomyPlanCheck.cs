@@ -254,6 +254,9 @@ namespace IGTAP.EngineSim.Cli
             }
             // Wide, on the same steps as the search above: the brute force's optimum.
             PlanResult wide = Beam(1000, false);
+            toy.Restore(new Toy().Capture());
+            PlanResult byStates = EconomyPlan.Search(toy, 0, "c1", p => Options(toy, p, false), 5, double.PositiveInfinity, width: 1000, remaining: p => Remaining(toy, p));
+            Check(byStates.Why?.Contains("stopped after") == true, $"a beam with no time cap stops at its state cap ({byStates.Why})");
             var again = Replay(wide, false);
             Check(wide.Done && !wide.Proven && wide.Tick == best && again.plays && again.tick == wide.Tick,
                 $"beam 1000: tick {wide.Tick} ({wide.Nodes} let in, {wide.Pruned} cut, {wide.Prechecked} pre-checked), the brute force's {best}, played again {again.tick}, not proven");
