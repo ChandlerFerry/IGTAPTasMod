@@ -1263,6 +1263,7 @@ namespace IGTAP.EngineSim.Cli
             List<string> landings = moves.Restarts(place, caps).ToList();
             if (landings.Count == 0 || landings.Any(l => !moves.Places.TryGetValue(l, out Place q) || Math.Abs(q.X - p.X) > 300 || Math.Abs(q.Y - p.Y) > 300)) return null;
             int failed = moves.FailuresFrom(landings.Append(place).ToHashSet());
+            Log($"trap check at goal {kept} {place}: every quick restart lands beside it ({string.Join(", ", landings)}); walks to {failed} target(s) failed");
             return failed < TrapFailures ? null : $"walks to {failed} targets failed from it and a quick restart lands back beside it";
         }
 

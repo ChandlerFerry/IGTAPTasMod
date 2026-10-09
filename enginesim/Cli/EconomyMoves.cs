@@ -157,6 +157,8 @@ namespace IGTAP.EngineSim.Cli
             if (File.Exists(movesFile))
             {
                 MoveTable saved = Read(movesFile);
+                // The places realize learned (a quick restart's landing): its measured moves into them mean nothing without them.
+                foreach (var kv in saved._places) table._places.TryAdd(kv.Key, kv.Value);
                 foreach (var kv in saved._moves)
                     if (kv.Value.Source == "measured") table.Put(kv.Value, kv.Key.caps);
                 foreach (var f in saved.Failures) table._failed[(f.from, f.to, f.caps, f.tree)] = f.why;
