@@ -237,6 +237,12 @@ Continues [issue #26](https://github.com/ChandlerFerry/IGTAPTasMod/issues/26).
 
 ## Where things stand
 
+**2026-10-09: done.** Zip% reaches the zip movers. `fulltas/Zip%_NONE 2899.60` is saved through the gate: 1717 goals,
+`buy:buytree16` on tick 134888, the same tick in turbo and offline (score 3199.60 with 150 grace ticks). The last stretch
+was `buytree20` (MoreOrbs), then `buyorbs7` (bonus17's pit), then out of the pit and up to the zip box by its orb. The
+blocker was an engine and turbo fidelity bug: refill orbs never came on after a Full-TAS buy (`docs/fidelity-log.md`,
+2026-10-09). The notes below are the history of how it got here.
+
 - **Goals 1-513 are good.** They replay the same offline, in turbo and at 1x (probe-checked through tick 36643). Goal 513 is
   `buy:buytree0` on tick 36328.
 - **Everything after 513 is throwaway.** The installed best (`fulltas/Zip%.json` in the config folder) reaches goal 703
