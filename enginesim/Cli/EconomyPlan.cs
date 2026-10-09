@@ -1511,6 +1511,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 IReadOnlyList<string> prefix = name == "free search" ? null : EconomyPlan.StepIds(name);
                 Log($"realize {name}: from goal {kept} {place} on tick {startTick}");
+                _factsFile = movesFile;
                 Realization z = Realize(plan, start, route, startTick, place, prefix, moves, (s, p, pre) => PlanFrom(s, p, pre, moves, settings, goalOf), goalOf);
                 moves.Save(movesFile);
                 var (run, goals, _) = z.Done ? Join(z.Planned, z.Inputs, all, kept, targetIndex) : (null, null, null);
@@ -1723,6 +1724,8 @@ namespace IGTAP.EngineSim.Cli
         const int TargetWait = 3000;
         /// <summary>A step the plan stood for where no lap earns (Area 2's NP waits) waits at most this many ticks.</summary>
         const int StandWait = 10000;
+        /// <summary>Where realize saves a failed fact the moment it learns it (the stage's moves file; null: not saved early).</summary>
+        string _factsFile;
         /// <summary>The idle ticks the last <see cref="Waited"/> that played stood (0: none).</summary>
         int _waited;
 
@@ -1837,6 +1840,8 @@ namespace IGTAP.EngineSim.Cli
                     moves.AtTreeLevel(MoveTable.TreeGroup(EconomyPlan.TreeLevel(EconomyPlan.TreeBoxes(_eval))));
                     bool learned = false;
                     foreach (string f in froms) learned |= moves.Failed(f, to, caps, why);
+                    // Kept at once: a stage stopped or crashing before realize returns would lose it (and search it again).
+                    if (learned && _factsFile != null) moves.Save(_factsFile);
                     if (_unattended && !learned) { z.Why = why + "; already known not to play, nothing new to plan on"; continue; }
                     z.Log.Add(new { round = z.Rounds, kind = s.Kind, step = s.Arg, from, planTicks, plan = planEnd, built = -1L, why, estimated });
                     if (!Again(why)) z.Why ??= why;
