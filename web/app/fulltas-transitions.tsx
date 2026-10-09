@@ -4,7 +4,7 @@ import { useState } from "react";
 import { FullTasSolvePanel, goalSpan, liveSeconds, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
 
 type Run = { name: string; section: string; goals: string[]; best: { splits: FullTasSplit[] } | null;
-  offline?: { reached: number; splits: FullTasSplit[] } | null; stretches?: { goal: number; bestTicks: number; runTicks: number }[] };
+  offline?: { reached: number; splits: FullTasSplit[]; idles?: { goal: number; arrive: number[]; afford: number[] }[] | null } | null; stretches?: { goal: number; bestTicks: number; runTicks: number }[] };
 
 /**
  * A Full-TAS run's stretches (goal N-1 to goal N of its best, costed from its splits), longest first: pick one to map it, fence
@@ -18,8 +18,14 @@ export function FullTasTransitions({ runs, solve, lastResult, busy, onMap, onCom
   const [all, setAll] = useState(false);
   const run = runs.find(r => r.name === name);
   const splits = run?.best?.splits ?? run?.offline?.splits ?? [];
-  const stretches = splits.map((s, i) => ({ goal: i + 1, to: s.label, from: i > 0 ? splits[i - 1].label : "the start",
-    ticks: s.ticks - (i > 0 ? splits[i - 1].ticks : 0), seconds: liveSeconds(s) - (i > 0 ? liveSeconds(splits[i - 1]) : 0) }));
+  // A buy's wait for its Cash under its box (an idle: arrive to afford) is its own thing, not the stretch's: a stretch counts
+  // its movement only.
+  const idles = new Map((run?.offline?.idles ?? []).map(i => [i.goal, i.afford[0] - i.arrive[0]]));
+  const stretches = splits.map((s, i) => {
+    const wait = idles.get(i + 1) ?? 0, all = s.ticks - (i > 0 ? splits[i - 1].ticks : 0);
+    return { goal: i + 1, to: s.label, from: i > 0 ? splits[i - 1].label : "the start", wait, ticks: all - wait,
+      seconds: liveSeconds(s) - (i > 0 ? liveSeconds(splits[i - 1]) : 0) - wait * 0.02 };
+  });
   // The 15 longest (or all), in goal order.
   const shown = all ? stretches : [...stretches].sort((a, b) => b.ticks - a.ticks).slice(0, 15).sort((a, b) => a.goal - b.goal);
   const next = run && splits.length < run.goals.length ? { goal: splits.length + 1, label: run.goals[splits.length] } : null;
@@ -51,7 +57,7 @@ export function FullTasTransitions({ runs, solve, lastResult, busy, onMap, onCom
       picked={picked ? [picked.goal, picked.goal] : null} onPick={g => setGoal(g)}/>
     <div className="routeList">{shown.map(s => <div className={`routeRow ${s.goal === goal ? "active" : ""}`} key={s.goal}>
       <button className="routeItem" onClick={() => setGoal(s.goal)}><div><strong>{goalSpan([s.goal, s.goal])}: {s.to}</strong>
-        <small>from {s.from} · {s.ticks} ticks ({s.seconds.toFixed(2)} s){found(s.goal) && found(s.goal)!.bestTicks < s.ticks
+        <small>from {s.from} · {s.ticks} ticks ({s.seconds.toFixed(2)} s){s.wait > 0 ? `, then ${s.wait} ticks idle for its Cash` : ""}{found(s.goal) && found(s.goal)!.bestTicks < s.ticks
           ? <b> → {found(s.goal)!.bestTicks} ticks ({(found(s.goal)!.bestTicks * 0.02).toFixed(2)} s), {s.ticks - found(s.goal)!.bestTicks} faster</b> : null}</small></div></button></div>)}</div>
   </div>;
 }

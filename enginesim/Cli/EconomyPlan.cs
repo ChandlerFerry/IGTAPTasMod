@@ -1198,6 +1198,15 @@ namespace IGTAP.EngineSim.Cli
                 if (run._allReached) return 0;
                 if (code == NotEconomy) return new FullTas(args).Search();
                 fails = run._installed ? 0 : fails + 1;
+                // A buy's wait for its Cash stands under its box (an idle, docs/superpowers/specs/2026-10-06-fulltas-idles-design.md):
+                // realize waits where the step before left the player, so each install's new goals get --auto's idle pass.
+                if (run._installed && run._installedTo > run._installedFrom)
+                {
+                    string[] idle = { args[0], "--auto", "--place-idles", "--no-submit", "--focus", $"{Math.Max(1, run._installedFrom)}-{run._installedTo}" };
+                    Console.WriteLine($"unattended: the idles of goals {Math.Max(1, run._installedFrom)}-{run._installedTo} (--place-idles)");
+                    try { new FullTas(idle).Search(); }
+                    catch (Exception ex) when (ex is not OutOfMemoryException) { Console.WriteLine("unattended: idles not placed: " + ex.Message); }
+                }
                 if (fails == 2)
                 {
                     report.Add(new { stop = "two stages in a row got no further" });
@@ -1421,8 +1430,13 @@ namespace IGTAP.EngineSim.Cli
         /// reloads), the trace header's (each goal's entry by label, else as <see cref="NewGoal"/> resolves it: no capture, whose
         /// replay would change the live scene), and the route the run file (fulltas\&lt;run&gt;.json).
         /// </summary>
+        /// <summary>The goals an install added (from the best's progress before it to the new route's): the stage's idle pass covers them.</summary>
+        int _installedFrom, _installedTo;
+
         void Install(Route route, string[] goals)
         {
+            _installedFrom = _best.Progress;
+            _installedTo = route.Progress;
             WriteGoals(goals);
             WriteRunFile(route);
             _installed = true;

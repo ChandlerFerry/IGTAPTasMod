@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
+using FullTasGoal = IGTAPTasMod.FullTasGoal;
 
 namespace IGTAP.EngineSim.Cli
 {
@@ -24,18 +25,36 @@ namespace IGTAP.EngineSim.Cli
             int prefixLength = goal == 1 ? 0 : (int)Math.Min(best.GoalInput[goal - 2], best.Inputs.Count);
             int end = (int)Math.Min(best.GoalInput[goal - 1], best.Inputs.Count);
             long startTick = goal == 1 ? 0 : best.GoalPhysics[goal - 2], runTick = best.GoalPhysics[goal - 1];
+            // A buy the run waits for under its box (an idle, FullTasIdles.cs) is two things: the walk to the box, and the wait for its
+            // Cash, which is the idles' to optimize. The stretch is the walk: its goal is the box's spot (where an idle counts the
+            // player as at the box), judged by the arrival, the run's own arrival the tick to beat.
+            string target = null;
+            if (_runGoals.Goals[goal - 1].kind == FullTasGoal.Buy && Idles(best).FirstOrDefault(i => i.Goal == goal) is IdleSpan idle)
+            {
+                Zone z = BoxZone(_runGoals.Goals[goal - 1]);
+                float bottom = z.y0 - IdleReachBelow;
+                target = FormattableString.Invariant($"at:{z.Middle:0},{(bottom + z.y1) / 2:0},{z.x1 - z.x0 + 2 * z.playerHalf:0},{z.y1 - bottom:0}");
+                runTick = idle.ArrivePhysics;
+                var goals = _runGoals.Goals.ToList();
+                goals[goal - 1] = NewGoal(target)?.goal ?? throw new InvalidOperationException("no area goal " + target);
+                _planBase = _runGoals;
+                Track(goals);
+                Log($"stretch: goal {goal - 1} {_labels[goal - 1]} waits {idle.AffordPhysics - idle.ArrivePhysics} ticks for its Cash under its box: "
+                    + $"the stretch is the walk to the box ({target}), the run's arrival on tick {runTick}");
+            }
             List<InputTick> prefix = best.Inputs.GetRange(0, prefixLength);
             // --minutes is the whole session: TimeUp stops it (Stop too).
             string file = Path.Combine(Path.GetDirectoryName(_runFile), $"{_runKey}.stretch-{goal}.json");
             string prefixKey = string.Join(",", prefix.Select(t => t.GetHashCode())).GetHashCode().ToString("x8");
             List<InputTick> stretchBest = best.Inputs.GetRange(prefixLength, end - prefixLength);
+            string fileKey = prefixKey + (target == null ? "" : " " + target);
             long bestTick = runTick;
             // A stretch best kept by an earlier session from the same prefix seeds this one.
             if (File.Exists(file))
             {
                 using JsonDocument saved = JsonDocument.Parse(File.ReadAllText(file));
                 JsonElement root = saved.RootElement;
-                if (root.GetProperty("prefix").GetString() == prefixKey && root.GetProperty("bestTick").GetInt64() < bestTick)
+                if (root.GetProperty("prefix").GetString() == fileKey && root.GetProperty("bestTick").GetInt64() < bestTick)
                 {
                     stretchBest = Solve.ReadInputs(root);
                     bestTick = root.GetProperty("bestTick").GetInt64();
@@ -57,7 +76,7 @@ namespace IGTAP.EngineSim.Cli
                 if (atGoal >= bestTick) return;
                 bestTick = atGoal;
                 stretchBest = inputs.ToList();
-                File.WriteAllText(file, JsonSerializer.Serialize(new { run = _name, goal = goal - 1, label = _labels[goal - 1], prefix = prefixKey, prefixLength,
+                File.WriteAllText(file, JsonSerializer.Serialize(new { run = _name, goal = goal - 1, label = _labels[goal - 1], prefix = fileKey, prefixLength, arrival = target != null,
                     startTick, runTick, bestTick, saved = runTick - bestTick, inputs = stretchBest.Select(t => t.ToJson()) }));
                 Log($"stretch: goal {goal - 1} in {bestTick - startTick} ticks (the run's {runTick - startTick}): {runTick - bestTick} ticks faster -> {Path.GetFileName(file)}");
                 Announce(true);
