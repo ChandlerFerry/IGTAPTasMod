@@ -202,6 +202,18 @@ namespace IGTAP.EngineSim.Cli
         /// (null: the stand's first look, never stalled); a box that can't be bought stalls when it couldn't at the last look either
         /// (one growing on a tree segment comes on within a look). A price over what waiting can hold (IEconomy.Ceiling: NP's cap)
         /// stalls at once: the stand would fill the cap and wait out a look for nothing.</summary>
+        /// <summary>Why a target's buy gave up (the first StandLogs a process): the planner's question when every target fails.</summary>
+        static void StandLog<TSnap>(PlanOption o, string box, IEconomy<TSnap> economy, long tick, int w, string why)
+        {
+            if (!o.Target || System.Threading.Interlocked.Increment(ref _standLogs) > StandLogs) return;
+            double[] price = economy.Price(box), held = economy.Holds(), ceiling = economy.Ceiling();
+            string need = price == null ? "no price (not buyable)" : string.Join(", ", Enumerable.Range(0, price.Length).Where(c => price[c] > 0)
+                .Select(c => $"{(globalStats.Currencies)c} {held[c]:G4} of {price[c]:G4}{(double.IsPositiveInfinity(ceiling[c]) ? "" : $" (ceiling {ceiling[c]:G4})")}"));
+            Console.WriteLine($"plan: target {box} gave up on tick {tick} after {w} ticks standing ({why}): {need}");
+        }
+        const int StandLogs = 10;
+        static int _standLogs;
+
         static bool Stalled<TSnap>(IEconomy<TSnap> economy, string box, int levels, ref double[] was)
         {
             double[] price = economy.Price(box, levels), held = economy.Holds();
@@ -286,11 +298,15 @@ namespace IGTAP.EngineSim.Cli
                     while (could < MaxAtoms && Covered(economy.Price(box, could + 1), economy.Holds())) could++;
                 tick++;
                 if (economy.Buy(box)) { extra = Math.Max(0, could - 1); continue; }
-                if (!o.Stand || !last) return null;
+                if (!o.Stand || !last) { StandLog(o, box, economy, tick, 0, "not a stand"); return null; }
                 was = null;
                 for (int w = 0; ; w++)
                 {
-                    if (w == StandCap || tick >= limit || o.Patient && w % look == 0 && Stalled(economy, box, 1, ref was)) return null;
+                    if (w == StandCap || tick >= limit || o.Patient && w % look == 0 && Stalled(economy, box, 1, ref was))
+                    {
+                        StandLog(o, box, economy, tick, w, w == StandCap ? "stood its cap" : tick >= limit ? "past its limit" : "stalled");
+                        return null;
+                    }
                     tick++;
                     if (economy.Buy(box)) break;
                 }
@@ -1158,7 +1174,7 @@ namespace IGTAP.EngineSim.Cli
         internal static int Unattended(string[] args)
         {
             var report = new List<object>();
-            for (int stage = 1, fails = 0, enablers = 0; fails < 2; stage++)
+            for (int stage = 1, fails = 0; fails < 2; stage++)
             {
                 var run = new FullTas(args) { _unattended = true, _stageWidth = fails == 1 ? EconomyPlan.UnattendedWidth * 2 : EconomyPlan.UnattendedWidth };
                 Console.WriteLine($"stage {stage}" + (fails > 0 ? $" ({fails} without progress before it)" : ""));
@@ -1173,12 +1189,6 @@ namespace IGTAP.EngineSim.Cli
                 WriteReport(run, report);
                 if (run._allReached) return 0;
                 if (code == NotEconomy) return new FullTas(args).Search();
-                if (code == NeedsEnabler && enablers++ < MaxEnablersInARow)
-                {
-                    run.InsertGoal(run._enabler.label, run._enabler.at);
-                    continue;
-                }
-                enablers = 0;
                 fails = run._installed ? 0 : fails + 1;
                 if (fails == 2)
                 {
@@ -1199,11 +1209,28 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>PlanEconomy's answer when the next goal is no economy buy (none, or one held already): the reach solve's.</summary>
         const int NotEconomy = 4;
-        /// <summary>PlanEconomy's answer when its NP target is out of the atoms' reach (<see cref="Enabler"/>): the enabler goes in first.</summary>
-        const int NeedsEnabler = 5, MaxEnablersInARow = 3;
         /// <summary>A target this far off in ticks of GP income for the atoms it needs is out of reach (an enabler first).</summary>
         const double EnablerHorizon = 50000;
-        (string label, int at) _enabler;
+        /// <summary>The best's income is read over its last goals spanning at least this many ticks.</summary>
+        const long IncomeSpan = 5000;
+
+        /// <summary>What the best earned a tick per currency over its last goals to goal <paramref name="kept"/> (at least IncomeSpan ticks:
+        /// laps, clones, atoms; Shop.Gained, a reset's loss left out): the income the economy rebuilds to after an atom touch, where the
+        /// clones' rate right after one is nothing (Zip%'s buyatomlevel9, 60M GP, ranked by price against Cash boxes on that).</summary>
+        double[] RecentIncome(int kept)
+        {
+            long end = _best.GoalPhysics[kept - 1];
+            int from = kept - 1;
+            while (from > 1 && end - _best.GoalPhysics[from - 1] < IncomeSpan) from--;
+            double[] Gained(int goal)
+            {
+                Read(GoalState(goal).at);
+                return Enumerable.Range(0, 7).Select(c => _eval.Shop.Gained((globalStats.Currencies)c)).ToArray();
+            }
+            double[] a = Gained(from), b = Gained(kept);
+            double ticks = Math.Max(1, end - _best.GoalPhysics[from - 1]);
+            return a.Zip(b, (x, y) => Math.Max(0, y - x) / ticks).ToArray();
+        }
 
         /// <summary>
         /// An NP target the atoms can't reach at today's multipliers (docs/zip-handoff.md: buytree16's 625M NP needs ~104k NP a tick,
@@ -1213,15 +1240,15 @@ namespace IGTAP.EngineSim.Cli
         /// triple threat: globalStats.RecalcNpRewardPerTick, AtomColliderSystem.determineAtomTier) soonest paid for at today's income,
         /// offered, its door open and under its cap; (null, why) when the target is in reach or no such box is.
         /// </summary>
-        (string label, string why) Enabler(SimSnapshot at, string target, Func<string, FullTasGoal> goalOf, ISet<string> offer)
+        (string label, string why) Enabler(int kept, SimSnapshot at, string target, Func<string, FullTasGoal> goalOf, ISet<string> offer)
         {
+            double[] rates = RecentIncome(kept);
             Read(at);
             int np = (int)globalStats.Currencies.AtomicPower, gp = (int)globalStats.Currencies.GreenPower;
             if (!(goalOf(target)?.boxes is string[] targetBoxes) || !(_eval.Shop.Need(targetBoxes, 1, shown: false) is double[] price) || price[np] <= 0) return (null, null);
             if (price[np] <= Math.Max(_eval.NpCapAfterPending(), _eval.Shop.Holds(globalStats.Currencies.AtomicPower))) return (null, null);
             Economy model = _eval.Shop.Economy;
             if (model == null) return (null, null);
-            double[] rates = model.CloneRates(0.02f);
             string atomId = FullTasGoal.BoxId("AtomUpgrades/AtomUpgrade", 0);
             int k = 1;
             while (k <= EconomyPlan.MaxAtomsCount && !(model.NpAfterAtoms(k) is var (_, cap, _) && cap >= price[np])) k++;
@@ -1238,6 +1265,19 @@ namespace IGTAP.EngineSim.Cli
                 globalStats.globalUpgradeSet.exemptCourseFromAtomPrestige,
             };
             double npRate = Singleton<globalStats>.Instance?.NPrewardPerTick ?? 0;
+            // An NP price: waited for under NP's cap; over it, the GP for the atoms whose cap holds it (at the recent GP income) and the
+            // NP at their rate, as the beam's NpWait reaches it (Zip%'s buytree7: atoms, then the wait).
+            double NpTicks(double cost, double missing)
+            {
+                if (cost <= _eval.NpCapAfterPending()) return npRate > 0 ? missing / npRate : double.PositiveInfinity;
+                for (int n = 1; n <= EconomyPlan.MaxAtomsCount; n++)
+                    if (model.NpAfterAtoms(n) is var (rate, cap, _) && cap >= cost)
+                    {
+                        double gpFor = Math.Max(0, (_eval.Shop.Need(new[] { atomId }, n, shown: false)?[gp] ?? double.PositiveInfinity) - _eval.Shop.Holds(globalStats.Currencies.GreenPower));
+                        return gpFor / Math.Max(rates[gp], 1e-6) + (rate > 0 ? missing / rate : double.PositiveInfinity);
+                    }
+                return double.PositiveInfinity;
+            }
             (string label, double ticks) best = (null, double.PositiveInfinity);
             foreach (string label in offer.Where(l => l.StartsWith("buy:", StringComparison.Ordinal)).OrderBy(l => l, StringComparer.Ordinal))
             {
@@ -1249,24 +1289,15 @@ namespace IGTAP.EngineSim.Cli
                 {
                     double missing = cost[c] - _eval.Shop.Holds((globalStats.Currencies)c);
                     if (missing <= 0) continue;
-                    // A currency earning nothing now (just after a touch) ranks the box by its price, as a trickle: the stage that targets
-                    // it plans the income too. An NP price over NP's cap can't be waited for.
-                    double rate = c == np ? (cost[c] <= _eval.NpCapAfterPending() ? npRate : 0) : Math.Max(rates[c], 1e-6);
-                    ticks = Math.Max(ticks, rate > 0 ? missing / rate : double.PositiveInfinity);
+                    if (c == np) { ticks = Math.Max(ticks, NpTicks(cost[c], missing)); continue; }
+                    ticks = Math.Max(ticks, missing / Math.Max(rates[c], 1e-6));
                 }
                 if (ticks < best.ticks) best = (label, ticks);
             }
             return best.label == null ? (null, why + "; no box raising NP's equation can be paid for") : (best.label, why);
         }
 
-        /// <summary>The run's goals with <paramref name="label"/> put in before goal index <paramref name="at"/> (0-based): its definition and
-        /// the trace header, as Install writes them; the best's route stays (it reaches fewer goals than the new one's index).</summary>
-        void InsertGoal(string label, int at)
-        {
-            Open();
-            WriteGoals(_labels.Take(at).Append(label).Concat(_labels.Skip(at)).ToArray());
-            Log($"unattended: goal {at + 1} {label} put in before {_labels[Math.Min(at + 1, _labels.Length - 1)]}");
-        }
+
         internal string ReportFile => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(_trace)), "fulltas", _name + ".report.json");
         /// <summary>This stage's report entry: target, plan and built ticks, the failed facts it added, its install and why it stopped.</summary>
         object _stageReport;
@@ -1394,12 +1425,18 @@ namespace IGTAP.EngineSim.Cli
                 _stageReport = new { target = targets[^1], from = kept, stop = $"{targets[^1]} is paid for at goal {kept}: the reach solve's" };
                 return NotEconomy;
             }
-            if (stage && only != null && Enabler(at, targets[^1], GoalOf, only) is var (enabler, why) && enabler != null)
+            if (stage && only != null && Enabler(kept, at, targets[^1], GoalOf, only) is var (enabler, why) && enabler != null)
             {
+                // In memory only: the run's definition takes the enabler with the install that buys it, so a stage that doesn't
+                // leaves nothing behind and the next stage chooses afresh.
                 Log($"unattended: {targets[^1]} is out of the atoms' reach now ({why}); first {enabler}");
-                _stageReport = new { target = targets[^1], from = kept, stop = $"{enabler} first: {why}", enabler };
-                _enabler = (enabler, nextBuy);
-                return NeedsEnabler;
+                var goals = _runGoals.Goals.ToList();
+                goals.Insert(nextBuy, GoalOf(enabler));
+                _runGoals = _runGoals.For(goals.ToArray());
+                _labels = goals.Select(g => g.label).ToArray();
+                _goals = _labels.Length;
+                targets = new[] { enabler };
+                _eval.Restore(at);
             }
             string place = _labels[kept - 1];
             if (!moves.Places.ContainsKey(place)) throw new InvalidOperationException($"goal {kept} {place} is no place of the movement table");
