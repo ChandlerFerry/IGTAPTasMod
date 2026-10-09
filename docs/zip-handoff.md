@@ -1,6 +1,36 @@
+# Zip% handoff (2026-10-08, third session): what changed
+
+Read this, then the second session's notes below it.
+
+- **Measured (don't re-derive):**
+  - **GP isn't dead, it's lumpy.** At goal 987, Course 6's 16 clones are off screen and spawn once a second, so at 1% green
+    chance a green comes every ~100 s, a lump of thousands. GP stood at 4085 for 2,000 ticks while the model's expected rate was
+    0.42 a tick. `--try wait@T` now prints the green chance, the clone rates and each course's clones (`4ecfeb5`).
+  - **`--try all:box` buys one level** (`--try` passes `levels = 1`); a plan's `all:` step buys its planned levels. Not a bug.
+  - **The NP cap gates the tree boxes:** cap = 6000 ticks of NP. `buytree7` (620k NP) needs at least 103 NP a tick; goal 987
+    had 30.8. The beam line's `a tick: Cash 0, GP 0` after `atoms:1` is real: an atom touch zeroes Courses 6/7's clones.
+  - **Plan-only to `buytree7`** (beam 4, `--only` plus `buytree1, buytree25, buytree26`): from goal 987 it reaches it on tick
+    78,397 (5 minutes; `all:buytree0` early, two atom touches, 166 Course 6 laps). From goal 831 it was still short on tick
+    77,770 after 10 minutes, so stages append from the best (no `--replace`).
+  - Box prices (world export): `buytree10` 750k NP, `buytree11` 100M, `buytree12` 400k, `buytree13` 300k, `buytree16` 625M,
+    `buytree25` (Course 6 buy max) 35k, `buytree26` 600k, `buyatomlevel9` 6M GP, atoms ×1.2 GP each.
+- **Fixed:** tree transitions gated per state (`a8a6016`: `MoveTable.AtTreeLevel`, `Built` keyed by the level's group);
+  `NpWait` starts at the fewest atoms whose cap holds the price (`58fa599`).
+- **Third review** (covered `c58ca5a..5e432d1`), open:
+  1. `--only` lacked `buytree1` (20 levels of watts), `buytree25` and `buytree26` (buy max; the engine runs any `buyMax` box's
+     later levels as non-goals, as the atom box's). Added to this session's stage; the plan to `buytree7` still didn't buy
+     `buytree25`.
+  2. Course 9 / `buyatomlevel9` (open issue 3 below): the only atom-level source before `buytree13`. Needs the user's call
+     on loose buys, or a stray model that matches `OnTriggerStay2D` (cooldown, price at that step).
+  3. `CloneRates` (the beam's estimate): off screen pays `ceil(x / divisor)` per spawn (clonesScript.cs:251-256), so a slow
+     course's greens pay at least 1 GP; the estimate has neither the ceiling nor the off-screen rate. Ranking only.
+  4. Farm lap moves are live seconds / 0.02 (`AddSavedLaps`): Course 7's 566 against 521 measured. Course 6's is measured.
+  5. Another agent's uncommitted `Simulation.cs` change (no idle ticks counted while the tick is locked) is in every build;
+     the plugin's matching change is uncommitted too. Rebuild the plugin with it before judging in the game.
+
 # Zip% handoff (2026-10-08, second session): state, tools, and what's open
 
-Read this section first; the 2026-10-07 notes below it are history (still useful for the planner's internals).
+The 2026-10-07 notes below this section are history (still useful for the planner's internals).
 
 ## State
 
