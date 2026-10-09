@@ -1707,7 +1707,21 @@
     "buy:buyreward7",
     "buy:buygreen9",
     "buy:buytree19",
+    "buy:buyatom",
+    "buy:buyreward7",
+    "buy:buytree20",
+    "buy:buyatom",
+    "buy:buytree19",
+    "buy:buyclone7",
+    "buy:buyreward7",
+    "buy:buytree5",
+    "start:6",
+    "finish:6",
+    "buy:buyatom",
     "buy:buyorbs7",
+    "start:6",
+    "finish:6",
+    "buy:buyclone6",
     "buy:buytree16"
   ]
 }
