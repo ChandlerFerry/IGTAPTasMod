@@ -1421,13 +1421,20 @@ namespace IGTAP.EngineSim.Cli
             double c0 = CpuSeconds();
             Sustained(Profile(_best.Inputs, false), "the best's path");
             var peaks = new SortedDictionary<int, float>();
+            // Each goal's state from the one before it, not replayed from the start: a long run's probes (ZipEscape%'s 1,158 goals)
+            // replayed some 88 million ticks on one core before.
+            SimSnapshot before = _origin;
+            int beforeLength = 0;
             for (int k = 1; k <= _goals; k++)
             {
+                if (k % 100 == 0) Log($"auto: speed probes at goal {k} of {_goals} ({CpuSeconds() - c0:0} CPU s)");
                 int prefixLength = PrefixAt(_best, k);
-                _eval.SetStart(_origin, 0);
+                _eval.SetStart(before, beforeLength);
                 _eval.Goals.Limit = _goals;
-                SimSnapshot at = prefixLength == 0 ? _origin : _eval.Advance(_best.Inputs.GetRange(0, prefixLength));
+                SimSnapshot at = prefixLength <= beforeLength ? before : _eval.Advance(_best.Inputs.GetRange(beforeLength, prefixLength - beforeLength));
                 if (at == null) continue;
+                before = at;
+                beforeLength = Math.Max(beforeLength, prefixLength);
                 _eval.SetStart(at, prefixLength);
                 _eval.Restore(at);
                 string capsId = PlayerCaps.Of(_eval).Id;

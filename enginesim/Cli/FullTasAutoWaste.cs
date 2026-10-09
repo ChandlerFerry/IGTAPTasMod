@@ -467,6 +467,13 @@ namespace IGTAP.EngineSim.Cli
             _wasteFound = new List<Waste>();
             _wasteAt.Clear();
             if (!_auto || !Part("waste") || _best == null || _best.Progress < _goals || _model == null || _model.Count < _goals) return;
+            // A focus (one stretch, Optimize's Full-TAS transitions) pulls only windows starting in it: a whole run's audit (ZipEscape%:
+            // 87 CPU s on one core before its first window) would find waste nothing searches.
+            if (_focusFrom > 1 || _focusTo < _goals)
+            {
+                Log($"auto: no waste audit: focused on goals {_focusFrom}-{_focusTo}");
+                return;
+            }
             double c0 = CpuSeconds();
             var (s, w) = WasteTrace(_best.Inputs);
             _wasteFound = Audit(_best, s, w, _model);
