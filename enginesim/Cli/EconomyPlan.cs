@@ -952,6 +952,9 @@ namespace IGTAP.EngineSim.Cli
         public void Restore(SimSnapshot s) { _sim.RestoreForDrive(s); _restored = s; }
         public void Idle(int ticks, string place) { _restored = null; _sim.EconomyIdle(ticks, At(place)); }
 
+        /// <summary>The farthest a box's touch spot may be from its place for a buy to touch there.</summary>
+        const float NearPlace = 300f;
+
         public bool Buy(string label)
         {
             _restored = null;
@@ -961,10 +964,10 @@ namespace IGTAP.EngineSim.Cli
             // the box (from its side, jumping through), and Zip%'s buytree0 place stands 135 u off the box's trigger, so the planner
             // never bought a second level (each +1% green clone chance: five more made six times the GP).
             Vector2 at = At(label);
-            // A tree box only once bought (at rest on its spot): one just grown drops from 2000 u above for ~100 ticks, and its touch
-            // spot would buy it in mid-air.
-            if (_sim.Shop.Box(ids[0]) is upgradeBox box && (box.TimesUsed > 0 || !ids[0].Contains("TreeArea", StringComparison.Ordinal))
-                && !_sim.Reaches(box, at) && _sim.TouchSpot(box) is Vector2 spot) at = spot;
+            // Only a touch spot near the place: a tree box just grown drops from 2000 u above for ~100 ticks, and its touch spot would
+            // buy it in mid-air.
+            if (_sim.Shop.Box(ids[0]) is upgradeBox box && !_sim.Reaches(box, at) && _sim.TouchSpot(box) is Vector2 spot
+                && Vector2.Distance(spot, at) < NearPlace) at = spot;
             return _sim.EconomyBuy(ids[0], at);
         }
 
@@ -1453,7 +1456,7 @@ namespace IGTAP.EngineSim.Cli
                 int atSign = text.IndexOf('@');
                 string arg = (atSign < 0 ? text : text.Substring(0, atSign)).TrimEnd('!');
                 int ticks = atSign < 0 ? 300 : int.Parse(text.Substring(atSign + 1).TrimEnd('!'), CultureInfo.InvariantCulture);
-                string kind = arg.Substring(0, arg.IndexOf(':'));
+                string kind = arg.Contains(':') ? arg.Substring(0, arg.IndexOf(':')) : arg;
                 arg = arg.TrimEnd('!');
                 int levels = kind == "atoms" ? int.Parse(arg.Substring(6), CultureInfo.InvariantCulture) : 1;
                 var clock = Stopwatch.StartNew();
@@ -1469,6 +1472,18 @@ namespace IGTAP.EngineSim.Cli
                     string spot = goalOf(place)?.boxes is [string id] && _eval.Shop.Box(id) is upgradeBox box && _eval.TouchSpot(box) is Vector2 t
                         ? $"{_eval.ToWorld(new ScenePos(t.x, t.y)).x:0.0},{_eval.ToWorld(new ScenePos(t.x, t.y)).y:0.0} (active {box.gameObject.activeInHierarchy}, used {box.TimesUsed}/{box.Cap})" : "none";
                     Console.WriteLine($"try {text}: the table's place {have}; the box's touch spot {spot}");
+                    continue;
+                }
+                // wait@T: the build stands still T ticks (the full simulation), to compare with the plan's idle:.
+                if (kind == "wait")
+                {
+                    Track(_kept.Concat(z.Planned).ToList());
+                    var standing = Enumerable.Repeat(new InputTick(), ticks).ToList();
+                    SimSnapshot waited = AdvanceFrom(z.State.WithGoal(Fresh(_goals, _goals)), z.Inputs.Count, standing);
+                    if (waited == null) { Console.WriteLine($"try {text}: the run ended standing"); return 3; }
+                    (z.Inputs, z.State, z.Tick) = (z.Inputs.Concat(standing).ToList(), waited, z.Tick + ticks);
+                    Read(z.State);
+                    Console.WriteLine($"try {text}: the build stood {ticks} ticks: Cash {_eval.Shop.Holds(globalStats.Currencies.Cash):G4}, GP {_eval.Shop.Holds(globalStats.Currencies.GreenPower):G4}");
                     continue;
                 }
                 if (kind == "idle" || kind == "finish")
@@ -1564,9 +1579,6 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>Realize plans again at most this many times (--rounds); a step built more than this many ticks from its plan's tick
         /// (--off-ticks: a long stretch's plan takes minutes to make again, worth it only for a larger drift) is planned again from.</summary>
         int _maxRounds = 3, _offTicks = 10;
-        /// <summary>A lap or record step that took this many minutes to fail blocks its course's laps; a quicker failure can be one
-        /// bad spot, not a closed course.</summary>
-        const double LapGiveUp = 5;
         /// <summary>The target's wait for its last Cash (the plan's stand) is at most this many ticks.</summary>
         const int TargetWait = 3000;
         /// <summary>A step the plan stood for where no lap earns (Area 2's NP waits) waits at most this many ticks.</summary>
@@ -1665,7 +1677,6 @@ namespace IGTAP.EngineSim.Cli
                 (List<InputTick> inputs, SimSnapshot state, long tick)? played;
                 FullTasGoal[] goals;
                 long walked;
-                var stepClock = Stopwatch.StartNew();
                 try { played = PlayStep(s, z, goalOf, out goals, out walked, i < plan.Stands.Length && plan.Stands[i], i < plan.Levels.Length ? plan.Levels[i] : 1); }
                 finally { _playBy = long.MaxValue; }
                 long planEnd = plan.Ends[i];
@@ -1682,17 +1693,16 @@ namespace IGTAP.EngineSim.Cli
                     if (s.Kind != "target" && s.Kind != "lap" && s.Kind != "record" && _whyNot?.Contains("Cash") != true && _whyNot?.Contains("paid") != true)
                     {
                         moves.Blocked.Add(to);
-                        Log($"realize: {to} blocked until a tree box is bought");
+                        Log($"realize: {to} blocked until a tree box grows a segment");
                     }
-                    // A lap whose course's gate no way reached, or that searched LapGiveUp minutes for none: its laps and record laps too,
-                    // until a tree box grows a way (Zip%'s Course 9 at tree level 7: a lap:9 planned again each round, its gate searched 8
-                    // minutes a time, then its finish 20 from a gate crossing).
-                    else if (course > 0 && (_whyNot?.StartsWith("start:" + course + " ", StringComparison.Ordinal) == true
-                        || stepClock.Elapsed.TotalMinutes > LapGiveUp))
+                    // A lap whose course's gate no way reached: its laps and record laps too, until a tree box grows a way (Zip%'s Course 9
+                    // at tree level 7: a lap:9 planned again each round, its gate searched 8 minutes a time). Not on a slow failure's wall
+                    // time: blocks clear only when a segment grows, and one slow step under load blocked Course 6 for a stage.
+                    else if (course > 0 && _whyNot?.StartsWith("start:" + course + " ", StringComparison.Ordinal) == true)
                     {
                         moves.Blocked.Add("lap:" + course);
                         moves.Blocked.Add("record:" + course);
-                        Log($"realize: lap:{course} and record:{course} blocked until a tree box is bought");
+                        Log($"realize: lap:{course} and record:{course} blocked until a tree box grows a segment");
                     }
                     z.Log.Add(new { round = z.Rounds, kind = s.Kind, step = s.Arg, from, planTicks, plan = planEnd, built = -1L, why, estimated });
                     if (!Again(why)) z.Why ??= why;

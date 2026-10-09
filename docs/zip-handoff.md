@@ -127,6 +127,30 @@ Last review: covered `bdc4278..70d99f0`. Findings fixed in `70d99f0`; the rest a
 8. Not run after this session's changes: `tools/validate.py`, `tools/tech-check.py`, and replays of Tree%, TouchGrass-ANY%,
    FalseEnding%-280 (they share realize's code).
 
+## Second review (covered `70d99f0..c58ca5a`): fixed and open
+
+Fixed in the commit after `c58ca5a`: no wall-clock lap blocking (a slow step under load blocked Course 6 for a whole stage, since
+blocks clear only when a segment grows); the touch-spot fallback guarded by distance (spot within 300 u of the place) instead of
+"bought before" (which shut out every never-bought tree box); `--try wait@T` re-added (the "idle vs wait" measurement above used
+a build that had it). `--only` for now: the full list without `lap:9,record:9` and Course 9's boxes (`buyreward9, buyclone9,
+buygreen9, buycd9, buyclonemult9, buyatomlevel9`): with Course 9 closed every round planned them and failed.
+
+Open, before the buytree12 stage:
+- **Per-state tree gating.** `c58ca5a` reads the level once, at table load, from the best's last goal (not the plan's start
+  goal; wrong for `--from` earlier than the best, `--replace`, and the goals pull's replans, which other runs share), never
+  updates it as the plan buys tree boxes, and counts distinct boxes rather than README rule 21's level (the plant and the first
+  L boxes in segment order). Decide per state in `Options` (where `Gates` is checked) from the sim's grown segments
+  (`TreeLevel.Segments`). Also gate `LoadSeeds`' transition chains (`FullTas.cs` ~1566), which chain every `tree<L>to<C>`.
+- **Course 6's transition:** `tree1to6`..`tree27to6` were dropped because Course 6's start is reachable from Course 0;
+  `TreeLevelPlays(0, 6, L)` is false past level 2. Check with one `--try lap:6` from bonus 11's landing at level 7.
+- **Course 9 without a stray buy:** a box buys only in `OnTriggerStay2D` with its cooldown over (upgradeBox.cs:336-341); a
+  trigger's first step is Enter, so a one-step crossing never buys, nor does a pass while NP is under the next level's price.
+  `StrayTriggers` (EconomyDrive.cs:104) counts any overlap. `--try` a dash through `buytree0`'s trigger or a pass right after an
+  NP spend; if it plays, put Course 9 back (every earlier zip-mover plan bought `buyatomlevel9`).
+- **Uncommitted engine changes from another agent are in every build** (`Simulation.cs` ~1597: no idle ticks counted during
+  dash or spring ticks; `CourseAuto.cs`'s round loop can spin if `Solve.Run` returns at once). They can re-time Full-TAS
+  replays: run `tools/validate.py` and replays of Tree%, TouchGrass-ANY%, FalseEnding%-280 before trusting an install.
+
 ## This session's commits (oldest first)
 
 `3c81ca0` farm restart laps first; `7b464b1` NP priced in atoms (NpWait); `de867f0` goals reset; `7624af8` farm loop laps
