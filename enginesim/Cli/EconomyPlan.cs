@@ -180,6 +180,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>globalStats' NP cap is this many ticks of its NP a tick.</summary>
         const double NpCapTicks = 6000;
         const int Np = (int)globalStats.Currencies.AtomicPower;
+        const int Gp = (int)globalStats.Currencies.GreenPower;
         /// <summary>AtomColliderSystem's grid lands a waiting atom each 0.4 s.</summary>
         const int AtomGridTicks = 20;
 
@@ -536,11 +537,20 @@ namespace IGTAP.EngineSim.Cli
                     {
                         double missing = atom[c] - n.Holds[c];
                         if (missing <= 0 || n.Tick == a.Tick) continue;
-                        double rate = Math.Max(Rate(n, a, c), model != null && c < model.Length ? model[c] : 0);
-                        if (rate <= 0) rate = Rate(n, root, c);
+                        double rate = AtomRate(n, a, c, model);
                         wait += rate > 0 ? missing / rate : NoIncome;
                     }
                 return wait + ticks;
+            }
+            // An atom's price, paid in GP, at the state's own GP income: the clones' (Economy.CloneRates, green at its expected share), the
+            // only GP there is. Not the window's or the root's: right after an atom touch the courses' clones are gone (doNewAtomPrestige)
+            // and the window still holds their income, so a state that touched short of the NP cap ranked as if it still earned and the
+            // beam filled with them (Zip% from goal 998: every leading state at NP's cap, 78 a tick, 0 GP). Other currencies as Rate.
+            double AtomRate(Node<TSnap> n, Node<TSnap> a, int c, double[] model)
+            {
+                if (c == Gp && model != null && c < model.Length) return model[c];
+                double rate = Math.Max(Rate(n, a, c), model != null && c < model.Length ? model[c] : 0);
+                return rate > 0 ? rate : Rate(n, root, c);
             }
             // NP comes only from atoms, and an atom's worth jumps as tiers craft up (12 white atoms, 384 GP, make 17 NP a tick, 6 make
             // 0.24 and cap under buytree5's 22,500): the soonest of buying k more atoms (their GP at n's GP income, the 0.4 s grid
@@ -567,8 +577,7 @@ namespace IGTAP.EngineSim.Cli
                         {
                             double missing = atoms[c] - n.Holds[c];
                             if (missing <= 0) continue;
-                            double rate = Math.Max(Rate(n, a, c), model != null && c < model.Length ? model[c] : 0);
-                            if (rate <= 0) rate = Rate(n, root, c);
+                            double rate = AtomRate(n, a, c, model);
                             gp = Math.Max(gp, rate > 0 ? missing / rate : double.PositiveInfinity);
                         }
                     }
