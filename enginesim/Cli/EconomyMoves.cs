@@ -72,10 +72,12 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>Moves realize tried from a real state and couldn't build, by (from, to, unlocks, tree group), with why: never
         /// offered again on this engine build (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md, section 1).</summary>
         readonly Dictionary<(string from, string to, string caps, int tree), string> _failed = new Dictionary<(string, string, string, int), string>();
-        /// <summary>The game logic's build (the Runtime assembly's MVID) and the search budgets: a failure from another is dropped on Read
-        /// (an engine fix or a bigger search can make it play). Not the planner's (CLI) build: a planner change can't make a move play, and
-        /// keying it there threw every learned failure away at each planner rebuild (Zip%'s buyfree6b relearned, a search budget each).</summary>
-        internal static readonly string Build = typeof(Simulation).Assembly.ManifestModule.ModuleVersionId.ToString("N") + "-" + FullTas.PieceTicks + "-" + FullTas.StepTicks;
+        /// <summary>What a failure holds under: the search budgets and FactsVersion (bump it when the simulation or realize changes so a
+        /// failed move may play), a failure under another is dropped on Read. Not an assembly's build: other agents' edits to the shared
+        /// working tree rebuild the engine every few hours, and each rebuild threw every learned failure away (Zip%'s record:6 from
+        /// buytree6 and buyclonegp8 from round Course 6, searched again a budget each).</summary>
+        internal static readonly string Build = FactsVersion + "-" + FullTas.PieceTicks + "-" + FullTas.StepTicks;
+        const int FactsVersion = 1;
         int Group => Math.Max(0, _treeGroup);
 
         /// <summary>Records that the move doesn't play here; true when it is a new fact.</summary>

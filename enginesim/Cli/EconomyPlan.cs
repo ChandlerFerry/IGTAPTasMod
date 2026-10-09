@@ -1447,6 +1447,8 @@ namespace IGTAP.EngineSim.Cli
                 Realization z = Realize(plan, start, route, startTick, place, prefix, moves, (s, p, pre) => PlanFrom(s, p, pre, moves, settings, goalOf), goalOf);
                 moves.Save(movesFile);
                 var (run, goals, _) = z.Done ? Join(z.Planned, z.Inputs, all, kept, targetIndex) : (null, null, null);
+                if (run != null && run.Progress < goals.Length)
+                    Log($"realize {name}: the joined route replays to goal {run.Progress} of {goals.Length} ({(run.Progress < goals.Length ? goals[run.Progress] : "")} next): {run.EndReason}");
                 realized.Add((name, z, run, goals ?? all.Take(kept).Concat(z.Planned).Select(g => g.label).ToArray()));
                 if (run == null && z.Inputs != null)
                 {
