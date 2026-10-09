@@ -72,8 +72,10 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>Moves realize tried from a real state and couldn't build, by (from, to, unlocks, tree group), with why: never
         /// offered again on this engine build (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md, section 1).</summary>
         readonly Dictionary<(string from, string to, string caps, int tree), string> _failed = new Dictionary<(string, string, string, int), string>();
-        /// <summary>This engine build (the Runtime assembly's MVID): a failure from another build is dropped on Read.</summary>
-        internal static readonly string Build = typeof(Simulation).Assembly.ManifestModule.ModuleVersionId.ToString("N");
+        /// <summary>This engine build (the Runtime and CLI assemblies' MVIDs) and its search budgets: a failure from another build or budget is
+        /// dropped on Read (an engine fix or a bigger search can make it play).</summary>
+        internal static readonly string Build = typeof(Simulation).Assembly.ManifestModule.ModuleVersionId.ToString("N") + "-"
+            + typeof(MoveTable).Assembly.ManifestModule.ModuleVersionId.ToString("N") + "-" + FullTas.PieceTicks + "-" + FullTas.StepTicks;
         int Group => Math.Max(0, _treeGroup);
 
         /// <summary>Records that the move doesn't play here; true when it is a new fact.</summary>

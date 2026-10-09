@@ -928,12 +928,15 @@ namespace IGTAP.EngineSim.Cli
             var finds = new List<(List<InputTick> inputs, string how, long atGoal)>[SearchWorkers];
             var bests = new List<InputTick>[SearchWorkers];
             var ticks = new long[SearchWorkers];
-            TechGrafts grafts = _mined ?? AutoGrafts(caps);
             Log($"{title} {span}: {SearchWorkers} fixed searches of {share} ticks each");
-            System.Threading.Tasks.Parallel.For(0, SearchWorkers, new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = SearchWorkers }, i =>
+            // Built one after another, each with its own graft set (AutoGrafts makes one a call; a shared one's Prepare swaps its
+            // arrays under the others' workers), then started together.
+            var solvers = new OfflineSolver[SearchWorkers];
+            for (int i = 0; i < SearchWorkers; i++)
             {
                 var mine = finds[i] = new List<(List<InputTick>, string, long)>();
-                var solver = new OfflineSolver(create, caps, seeds, null, path, VisitCell, grafts, rng: 1 + i) { ArchiveBudget = 1L << 29, StateBudget = 1L << 30, TickLimit = share, StallTicks = stall };
+                var solver = solvers[i] = new OfflineSolver(create, caps, seeds, null, path, VisitCell, _mined != null ? null : AutoGrafts(caps), rng: 1 + i)
+                    { ArchiveBudget = 1L << 29, StateBudget = 1L << 30, TickLimit = share, StallTicks = stall };
                 if (_mined == null) TuneGrafts(solver, 0, 0, 0);
                 solver.Resume = resume ? _states.Index : null;
                 solver.NoResets = _noResets;
@@ -942,6 +945,10 @@ namespace IGTAP.EngineSim.Cli
                     long atGoal = runTicks - Simulation.StrictFinishTicks;
                     if (atGoal < baseline) lock (mine) mine.Add((inputs, how, atGoal));
                 };
+            }
+            System.Threading.Tasks.Parallel.For(0, SearchWorkers, new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = SearchWorkers }, i =>
+            {
+                OfflineSolver solver = solvers[i];
                 // The worker ends itself (TickLimit, StallTicks): no stop from this thread, whose timing would decide where.
                 foreach (Thread t in solver.Start(1)) t.Join();
                 solver.Stop();

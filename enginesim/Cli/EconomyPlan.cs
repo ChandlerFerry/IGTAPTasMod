@@ -732,14 +732,13 @@ namespace IGTAP.EngineSim.Cli
             var bought = targets.ToDictionary(t => t, t => economy.Level(t));
             var rewards = bonuses.ToHashSet();
             var built = new Dictionary<(string place, string caps, int tree), List<(PlanOption option, string[] boxes)>>();
-            upgradeBox[] treeBoxes = FullTasGoal.Boxes.Where(b => b.token.StartsWith("buytree", StringComparison.Ordinal))
-                .Select(b => sim.Shop.Box(FullTasGoal.BoxId(b.path, b.sibling))).Where(b => b != null).Distinct().ToArray();
+            upgradeBox[] treeBoxes = TreeBoxes(sim);
 
             string Estimate(string from, Move m, string caps) => $"{from} -> {m.To} [{caps}] {m.Ticks} ticks";
             List<(PlanOption option, string[] boxes)> Built(string place, string caps)
             {
                 // The tree's level as FullTas.TreeLevel counts it: the tree boxes bought.
-                int tree = MoveTable.TreeGroup(treeBoxes.Count(b => b.TimesUsed > 0));
+                int tree = MoveTable.TreeGroup(TreeLevel(treeBoxes));
                 if (built.TryGetValue((place, caps, tree), out var list)) return list;
                 moves.AtTreeLevel(tree);
                 Caps.TryParse(caps, out Caps have);
@@ -760,7 +759,7 @@ namespace IGTAP.EngineSim.Cli
                 if (moves.Places.TryGetValue(place, out Place self) && self.Kind == "box") tos = tos.Append(place);
                 foreach (string to in tos.Distinct().ToList())
                 {
-                    Move m = to == place ? new Move(place, place, 1, "here", false) : moves.Best(place, to, caps);
+                    Move m = to == place ? (moves.HasFailed(place, place, caps) ? null : new Move(place, place, 1, "here", false)) : moves.Best(place, to, caps);
                     if (m == null || !Reachable(m, to)) continue;
                     var estimated = new List<string>();
                     if (m.Estimated) estimated.Add(Estimate(place, m, caps));
@@ -871,6 +870,13 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>The targets with the boxes whose buys grow a tree box target's tree down to it (Shop.TreeWay) put first, the ones
         /// the state at <paramref name="sim"/> hasn't bought, root first: a tree box is bought only once its segment has grown.</summary>
+        /// <summary>The tree boxes of the run's world (buytree0-27), each once.</summary>
+        internal static upgradeBox[] TreeBoxes(Simulation sim) => FullTasGoal.Boxes.Where(b => b.token.StartsWith("buytree", StringComparison.Ordinal))
+            .Select(b => sim.Shop.Box(FullTasGoal.BoxId(b.path, b.sibling))).Where(b => b != null).Distinct().ToArray();
+
+        /// <summary>The tree's level as FullTas.TreeLevel counts it: the tree boxes bought (the boxes' state as the world holds it now).</summary>
+        internal static int TreeLevel(upgradeBox[] treeBoxes) => treeBoxes.Count(b => b.TimesUsed > 0);
+
         internal static string[] TreeTargets(Simulation sim, string[] targets, Func<string, FullTasGoal> goalOf)
         {
             var tokens = FullTasGoal.Boxes.ToDictionary(b => FullTasGoal.BoxId(b.path, b.sibling), b => b.token);
@@ -1133,16 +1139,33 @@ namespace IGTAP.EngineSim.Cli
             {
                 var run = new FullTas(args) { _unattended = true, _stageWidth = fails == 1 ? EconomyPlan.UnattendedWidth * 2 : EconomyPlan.UnattendedWidth };
                 Console.WriteLine($"stage {stage}" + (fails > 0 ? $" ({fails} without progress before it)" : ""));
-                int code = run.PlanEconomy(args);
-                report.Add(run._stageReport);
-                Directory.CreateDirectory(Path.GetDirectoryName(run.ReportFile));
-                File.WriteAllText(run.ReportFile, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+                int code;
+                try { code = run.PlanEconomy(args); }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    run._stageReport = new { stop = "error: " + ex.Message };
+                    WriteReport(run, report);
+                    throw;
+                }
+                WriteReport(run, report);
                 if (run._allReached) return 0;
                 if (code == NotEconomy) return new FullTas(args).Search();
                 fails = run._installed ? 0 : fails + 1;
+                if (fails == 2)
+                {
+                    report.Add(new { stop = "two stages in a row got no further" });
+                    File.WriteAllText(run.ReportFile, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+                }
             }
             Console.WriteLine("unattended: two stages in a row got no further; see the report");
             return 3;
+        }
+
+        static void WriteReport(FullTas run, List<object> report)
+        {
+            report.Add(run._stageReport);
+            Directory.CreateDirectory(Path.GetDirectoryName(run.ReportFile));
+            File.WriteAllText(run.ReportFile, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
         }
 
         /// <summary>PlanEconomy's answer when the next goal is no economy buy (none, or one held already): the reach solve's.</summary>
@@ -1352,6 +1375,8 @@ namespace IGTAP.EngineSim.Cli
                 target = _labels[targetIndex], from = kept, fromTick = startTick, planTicks = z0?.PlanTicks, built = z0 != null && z0.Done ? z0.Tick : -1,
                 installed = _installed, reaches = written.run?.Progress, stop = z0?.Why,
                 failed = moves.Failures.Where(f => !failuresBefore.Contains(f)).Select(f => new { f.from, f.to, f.caps, f.tree, f.why }).ToList(),
+                // A stop: every failed move the plan couldn't use (spec section 4), not only this stage's.
+                known = z0 != null && z0.Done ? null : moves.Failures.Select(f => new { f.from, f.to, f.caps, f.tree, f.why }).ToList(),
             };
             return realized.All(r => r.z.Done) ? 0 : 3;
         }
@@ -1501,6 +1526,9 @@ namespace IGTAP.EngineSim.Cli
         /// stretch's plan takes minutes to make again, worth it only for a larger drift); an atom touch short of its atoms stands this
         /// much past the plan.</summary>
         const int DriftTicks = 300;
+        /// <summary>The goals pull's realize (not unattended) as before: re-plans at most PullRounds times, a drift past PullDrift ticks.</summary>
+        const int PullRounds = 3, PullDrift = 10;
+        int Drift => _unattended ? DriftTicks : PullDrift;
         /// <summary>The target's wait for its last Cash (the plan's stand) is at most this many ticks.</summary>
         const int TargetWait = 3000;
         /// <summary>A step the plan stood for where no lap earns (Area 2's NP waits) waits at most this many ticks.</summary>
@@ -1539,6 +1567,7 @@ namespace IGTAP.EngineSim.Cli
             Log($"realize: round 0, the plan's target on tick {plan.Tick}");
             bool Again(string why)
             {
+                if (!_unattended && z.Rounds == PullRounds) return false;
                 z.Rounds++;
                 var list = _kept.Concat(z.Planned).ToList();
                 Track(list);
@@ -1614,9 +1643,11 @@ namespace IGTAP.EngineSim.Cli
                     Log("realize: " + why);
                     // A fact under every place the step started from (its restarts' landings too, where the plan stood), so no plan
                     // makes it again on this engine build; a failure that teaches nothing new ends the stage (it would loop).
+                    Read(z.State);
+                    moves.AtTreeLevel(MoveTable.TreeGroup(EconomyPlan.TreeLevel(EconomyPlan.TreeBoxes(_eval))));
                     bool learned = false;
                     foreach (string f in froms) learned |= moves.Failed(f, to, caps, why);
-                    if (!learned) { z.Why = why + "; already known not to play, nothing new to plan on"; continue; }
+                    if (_unattended && !learned) { z.Why = why + "; already known not to play, nothing new to plan on"; continue; }
                     z.Log.Add(new { round = z.Rounds, kind = s.Kind, step = s.Arg, from, planTicks, plan = planEnd, built = -1L, why, estimated });
                     if (!Again(why)) z.Why ??= why;
                     continue;
@@ -1633,12 +1664,13 @@ namespace IGTAP.EngineSim.Cli
                 // A step built far slower than planned isn't kept: its walk is measured above, so the plan made again from here
                 // prices it as built and takes another way, or takes it knowingly (Zip% after buytree0, 2026-10-07: a library walk
                 // of 4,884 ticks for the plan's 227 was kept and set the whole build back 93 s).
-                if (walked > Math.Max(3L * planTicks, planTicks + 500L) && driftAt.Add(z.Planned.Count))
+                if (walked > Math.Max(3L * planTicks, planTicks + 500L) && (!_unattended || driftAt.Add(z.Planned.Count)))
                 {
                     string why = $"{s.Kind} {s.Arg} from {from} on tick {z.Tick} walked {walked} ticks for the plan's {planTicks}; not kept";
                     Log("realize: " + why);
                     z.Log.Add(new { round = z.Rounds, kind = s.Kind, step = s.Arg, from, planTicks, plan = planEnd, built = -1L, why, estimated });
                     if (Again(why)) continue;
+                    if (!_unattended) { z.Why ??= why; continue; }
                 }
                 float after = course > 0 ? BestPath(state, course) : 0f;
                 if (s.Kind == "record" && after < record) moves.Measured(new Move("start:" + course, "record:" + course, (int)Math.Round(after / _dt), "measured", false), caps);
@@ -1657,7 +1689,7 @@ namespace IGTAP.EngineSim.Cli
                 restarts.Clear();
                 i++;
                 if (s.Kind == "target") { z.Done = true; break; }
-                if (Math.Abs(off) > DriftTicks && driftAt.Add(z.Planned.Count)) Again($"built {off:+0;-0} ticks off the plan");
+                if (Math.Abs(off) > Drift && (!_unattended || driftAt.Add(z.Planned.Count))) Again($"built {off:+0;-0} ticks off the plan");
             }
             return z;
         }
@@ -1726,14 +1758,14 @@ namespace IGTAP.EngineSim.Cli
                 // from here asked for the same atoms again, round after round. The next plan sees the atoms bought.
                 if (need > 1)
                 {
-                    played = Waited(z, goals, s.Ticks, Math.Max(25, Math.Min(StandWait, s.Ticks + DriftTicks)), need);
+                    played = Waited(z, goals, s.Ticks, Math.Max(25, Math.Min(StandWait, s.Ticks + Drift)), need);
                     if (played == null)
                     {
                         Read(z.State);
                         double[] price = _eval.Shop.Need(boxes, need, shown: false);
                         int gp = (int)globalStats.Currencies.GreenPower;
                         Log($"realize: {goals[^1].label}: the plan's {need} atoms ({(price == null ? "?" : price[gp].ToString("G4", CultureInfo.InvariantCulture))} GP) not paid for by "
-                            + $"{s.Ticks + DriftTicks} ticks (GP {_eval.Shop.Holds(globalStats.Currencies.GreenPower):G4} on tick {z.Tick}); touching with what it holds");
+                            + $"{s.Ticks + Drift} ticks (GP {_eval.Shop.Holds(globalStats.Currencies.GreenPower):G4} on tick {z.Tick}); touching with what it holds");
                     }
                 }
                 if (played == null && Affordable(z.State, boxes) == true) played = Play(z.State, z.Inputs, z.Planned, goals, true);
