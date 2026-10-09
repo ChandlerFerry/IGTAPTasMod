@@ -33,7 +33,7 @@ namespace IGTAP.EngineSim
         // 5: the transforms a script moved (SimSnapshot.Transforms).
         // 7: dynamic and kinematic bodies off at the export are built (disabled), so the physics world has more bodies than an
         // older state's (b2World.LoadState refuses a body count that differs).
-        public const int Format = 7;
+        public const int Format = 8;
 
         /// <summary>A stable hash of the fields a snapshot writes for type (names and declared types, in order).</summary>
         static int Layout(Type type)
@@ -127,7 +127,7 @@ namespace IGTAP.EngineSim
         {
             "Tick", "Rebases", "RebasePending", "RebaseDue", "Position", "LocalScale", "Rotation", "Colliders",
             "Active", "Enabled", "Layers", "Transforms", "Physics", "Movement", "Engine", "Courses", "Pending", "Touched",
-            "Routines", "Economy", "Goal", "Random", "Waypoints", "VmanTimeLeft", "StepFrom", "StepTo", "Animation",
+            "Routines", "Economy", "Goal", "Random", "Waypoints", "VmanTimeLeft", "StepFrom", "StepTo", "Animation", "OrbSeen",
         };
 
         static readonly FieldInfo[] RootFields = Array.ConvertAll(RootOrder, name =>

@@ -126,6 +126,8 @@ namespace IGTAP.EngineSim
         public Vector3 StepFrom, StepTo;
         /// <summary>The player animator's "Animation": Movement.FixedUpdate plays a sound (an RNG draw) leaving a wall cling (3).</summary>
         public int Animation;
+        /// <summary>Each refill orb on camera after the last physics step (Simulation.SeeOrbs), in the world's orb order.</summary>
+        public bool[] OrbSeen;
 
         /// <summary>This state with another goal tracker's progress (a search for goals the run doesn't list: <see cref="Simulation.UseGoals"/>).</summary>
         internal SimSnapshot WithGoal(FullTasTracker.State goal)
@@ -164,6 +166,7 @@ namespace IGTAP.EngineSim
         readonly Action[] _courseFixedUpdates;
         readonly JiggleDropScript[] _orbs;
         readonly Action[] _orbFixedUpdates;
+        readonly bool[] _orbSeen;
         readonly System.Collections.IList[][] _coursePathLists;
         readonly BoxCollider2D[] _playerColliders;
         SimSnapshot _start;
@@ -285,6 +288,8 @@ namespace IGTAP.EngineSim
                 .Where(l => l != null).ToArray()).ToArray();
             _orbs = world.All<JiggleDropScript>();
             _orbFixedUpdates = _orbs.Select(o => (Action)Delegate.CreateDelegate(typeof(Action), o, OrbFixedUpdateMethod)).ToArray();
+            _orbSeen = new bool[_orbs.Length];
+            for (int i = 0; i < _orbs.Length; i++) _orbSeen[i] = OnCamera(_orbs[i], Player.transform.m_Position);
             _playerColliders = Player.GetComponents<BoxCollider2D>();
             Engine.AttemptEnded += (success, reason) =>
             {
@@ -1171,6 +1176,7 @@ namespace IGTAP.EngineSim
                 StepFrom = _inRun ? _stepFrom : AtLoadedStart ? _loadedStepFrom : Player.transform.m_Position,
                 StepTo = _inRun ? _stepTo : AtLoadedStart ? _loadedStepTo : Player.transform.m_Position,
                 Animation = Animation,
+                OrbSeen = (bool[])_orbSeen.Clone(),
             };
         }
 
@@ -1231,6 +1237,7 @@ namespace IGTAP.EngineSim
             foreach (courseScript c in Courses) AddFields(ref h, c);
             AddPlayer(ref h);
             h.Add(Animation);
+            foreach (bool seen in _orbSeen) h.Add(seen);
             foreach (Scheduler.Pending p in Scheduler.Queue)
             {
                 h.Add(p.Due - Scheduler.Tick); h.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(p.Target)); h.Add(p.Method); h.Add(p.Repeat);
@@ -1372,6 +1379,7 @@ namespace IGTAP.EngineSim
             _stepFrom = s.StepFrom;
             _stepTo = s.StepTo;
             Player.animator?.SetInteger("Animation", s.Animation);
+            for (int i = 0; i < _orbs.Length; i++) _orbSeen[i] = s.OrbSeen != null ? s.OrbSeen[i] : OnCamera(_orbs[i], s.StepTo);
         }
 
         /// <summary>The objects toggled since load (active, enabled, layer) as the snapshot has them, the physics suspended meanwhile
@@ -1559,6 +1567,7 @@ namespace IGTAP.EngineSim
                     _stepFrom -= by;
                     _stepTo -= by;
                 }
+                SeeOrbs();
                 InterpolatedFrames();
                 FloatingOriginFrame();
                 // The plugin's box tests read the body (BoundsPose); a rebase this tick has moved the transform's world, not the body.
@@ -1653,6 +1662,25 @@ namespace IGTAP.EngineSim
             }
             OrbUsable(orb) = OrbCooldown(orb) <= 0f && orbs > OrbSequence(orb);
         }
+
+        /// <summary>
+        /// JiggleDropScript.OnBecameVisible: an orb coming on camera reads the refill upgrades (SetActiveVisualState(regrow: false)),
+        /// its only refresh but a use and a cooldown's end, so one on screen when they change stays as it was until it leaves the view
+        /// and comes back (bonus17's pit: the orbs its box unlocks are off screen, and come on as the player walks to them). On camera
+        /// is MacroEngine.OrbOnCamera after the physics step, as turbo's TurboRunner.SeeOrbs.
+        /// </summary>
+        void SeeOrbs()
+        {
+            for (int i = 0; i < _orbs.Length; i++)
+            {
+                bool seen = OnCamera(_orbs[i], _stepTo);
+                if (seen && !_orbSeen[i]) RefillOrbState(_orbs[i]);
+                _orbSeen[i] = seen;
+            }
+        }
+
+        static bool OnCamera(JiggleDropScript orb, Vector3 player) =>
+            orb.gameObject.activeInHierarchy && MacroEngine.OrbOnCamera(orb.transform.position, player);
 
         void VmanClock()
         {

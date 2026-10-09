@@ -1199,3 +1199,14 @@ synced them only at the step (bottom 495). Both now sync script-moved colliders 
 (`PhysicsWorld.FrameStart`, `TurboRunner.FrameStart`, the player's transform put on its body first in turbo). The engine then
 matches the 1x probe body for body through tick 36643 and turbo-then-1x from 36440 for 202 ticks; Tree%, TouchGrass-ANY% and
 FalseEnding%-280 replay unchanged.
+
+## 2026-10-09: refill orbs bought on never came on (Zip% bonus17's pit)
+
+Zip% bought the refill orbs' unlock (`buyorbs7`, bonus17's end, in a pit) and every search out of the pit stalled at the same
+distance, with refresh orb levels 1 and 2 alike. A refill orb reads the upgrades only in `SetActiveVisualState`, which the game
+calls on a use, a cooldown's end and `OnBecameVisible`: at 1x an orb turns usable as it comes on camera, but turbo and the engine
+render no frame, so an orb never used kept the export's `usable` (off in a new game) for good. Both now call it when an orb
+comes on camera after the physics step (`MacroEngine.OrbOnCamera`: the follow camera on the player, 550 high, 16:9 wide;
+`Simulation.SeeOrbs`, `TurboRunner.SeeOrbs`), the orbs on camera in their snapshots (`SimSnapshot.OrbSeen`, snapshot format 8;
+`Snapshot.orbsSeen`). Category starts set the orbs with the unlocks (`TasPlugin.RefreshRefillOrbs`), so only a Full-TAS buy of
+`unlockJiggleDrops` or `moreRefreshOrbs` saw it. Zip%'s best replays unchanged through goal 1713.

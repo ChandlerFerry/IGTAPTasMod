@@ -412,6 +412,19 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
+        /// Whether a refill orb at <paramref name="orb"/> is on camera with the player's body at <paramref name="player"/> after a
+        /// physics step, for JiggleDropScript.OnBecameVisible (its refresh from the refill upgrades on coming into view), which turbo
+        /// and the offline engine render no frame to get: the follow camera centred on the player, cameraMover.camSize (550) high
+        /// and 16:9 wide, widened by the orb's sprite (64).
+        /// </summary>
+        // ponytail: no camera lag, lookahead, zone or real screen aspect; run cameraMover.LateUpdate per frame if an edge ever decides a route.
+        public static bool OrbOnCamera(Vector2 orb, Vector2 player)
+        {
+            const float halfHeight = 550f, halfWidth = halfHeight * 16f / 9f, reach = 64f;
+            return Math.Abs(orb.x - player.x) <= halfWidth + reach && Math.Abs(orb.y - player.y) <= halfHeight + reach;
+        }
+
+        /// <summary>
         /// The Update frames of a tick's frame grid (<paramref name="frameCount"/> of them) each one runs again: the dash
         /// freeze's <paramref name="frozen"/> on the first frame, and a pause of <paramref name="pauseFrames"/> after
         /// <paramref name="pauseAfter"/> frames. Opened in the tick (0) it holds the first frame, whose Update it is, so that

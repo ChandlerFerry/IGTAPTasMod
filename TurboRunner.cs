@@ -591,6 +591,8 @@ namespace IGTAPTasMod
             public (PlatformMover mover, object[] fields, int layer, Vector3 local, (Vector2 position, Vector2 velocity) body)[] movers;
             /// <summary>Every refill orb's fields (its cooldown after a use and whether it is usable).</summary>
             public (JiggleDropScript orb, object[] fields)[] orbs;
+            /// <summary>The refill orbs on camera after the last physics step (<see cref="SeeOrbs"/>).</summary>
+            public JiggleDropScript[] orbsSeen;
             /// <summary>
             /// Every spike's live state (spikeScript <c>counter</c>, <c>playerKilled</c>). A restore mutes the callbacks around the
             /// player's old position, so a run that ended in a spike never got its OnTriggerExit2D reset: without this the next run
@@ -1016,6 +1018,7 @@ namespace IGTAPTasMod
                     m => (m, FieldState.Capture(m), m.gameObject.layer, m.transform.localPosition, MoverPose(m))),
                 orbs = Array.ConvertAll(UnityEngine.Object.FindObjectsByType<JiggleDropScript>(FindObjectsInactive.Include, FindObjectsSortMode.None),
                     o => (o, FieldState.Capture(o))),
+                orbsSeen = Active ? OrbsSeen.ToArray() : SeenFrom(body.position).ToArray(),
                 spikes = Array.ConvertAll(UnityEngine.Object.FindObjectsByType<spikeScript>(FindObjectsInactive.Include, FindObjectsSortMode.None),
                     k => (k, SpikeCounter(k), SpikeKilled(k))),
                 routines = CaptureRoutines(next), zoneLoadPending = _zoneLoadPending, neverStarted = economy ? NeverStarted().ToArray() : null };
@@ -1039,6 +1042,8 @@ namespace IGTAPTasMod
         /// <summary>The refill orbs as the snapshot had them; their sprites follow (the game's refresh), the usable flag stays the snapshot's.</summary>
         static void RestoreOrbs(Snapshot s)
         {
+            OrbsSeen.Clear();
+            OrbsSeen.UnionWith(s.orbsSeen ?? SeenFrom(s.bodyPosition));
             if (s.orbs == null) return;
             foreach (var (orb, fields) in s.orbs)
             {
@@ -1047,6 +1052,29 @@ namespace IGTAPTasMod
                 bool usable = OrbUsable(orb);
                 OrbState.Invoke(orb, new object[] { false });
                 OrbUsable(orb) = usable;
+            }
+        }
+
+        static readonly HashSet<JiggleDropScript> OrbsSeen = new HashSet<JiggleDropScript>();
+
+        /// <summary>The refill orbs on camera with the player's body at <paramref name="player"/> (MacroEngine.OrbOnCamera).</summary>
+        static IEnumerable<JiggleDropScript> SeenFrom(Vector2 player) =>
+            UnityEngine.Object.FindObjectsByType<JiggleDropScript>(FindObjectsInactive.Exclude, FindObjectsSortMode.None)
+                .Where(o => o.gameObject.activeInHierarchy && MacroEngine.OrbOnCamera(o.transform.position, player));
+
+        /// <summary>
+        /// JiggleDropScript.OnBecameVisible, which no turbo frame renders to call: an orb coming on camera after the physics step reads
+        /// the refill upgrades (SetActiveVisualState(regrow: false)), so one on screen when they change keeps its state until it
+        /// leaves the view and comes back. The offline engine's Simulation.SeeOrbs is the same.
+        /// </summary>
+        static void SeeOrbs(JiggleDropScript[] orbs, Vector2 player)
+        {
+            foreach (JiggleDropScript orb in orbs)
+            {
+                if (orb == null) continue;
+                bool seen = orb.gameObject.activeInHierarchy && MacroEngine.OrbOnCamera(orb.transform.position, player);
+                if (seen && OrbsSeen.Add(orb)) OrbState.Invoke(orb, new object[] { false });
+                else if (!seen) OrbsSeen.Remove(orb);
             }
         }
 
@@ -1328,6 +1356,11 @@ namespace IGTAPTasMod
             _atomNow = false;
             if (resume != null) Pending.AddRange(resume.pending);
             if (resume != null) RestoreRoutines(resume.routines);
+            else
+            {
+                OrbsSeen.Clear();
+                OrbsSeen.UnionWith(SeenFrom(movement.GetComponent<Rigidbody2D>().position));
+            }
             Rigidbody2D body = movement.GetComponent<Rigidbody2D>();
             Transform player = movement.transform;
             MacroEngine.FrameGrid frames = MacroEngine.FrameGrid.Playback;
@@ -1409,6 +1442,7 @@ namespace IGTAPTasMod
                         _stepFrom += by;
                         _stepTo += by;
                     }
+                    SeeOrbs(orbs, _stepTo);
                     // The tick's rendered frames, the dash freeze's first: Update at each blend. A step-up write moves the body
                     // there and drops the interpolation, so the frames after show it. A pause holds its frame's time as a
                     // freeze does (MacroEngine.FrameRepeats).
