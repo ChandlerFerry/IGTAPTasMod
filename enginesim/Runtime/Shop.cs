@@ -136,7 +136,7 @@ namespace IGTAP.EngineSim
             {
                 if (!Named(boxes, b)) continue;
                 // Not shown (shown: false): a tree box its segment hasn't grown yet is priced at its cost as loaded.
-                if (shown && (!b.isActive || !b.gameObject.activeInHierarchy) || levels > 1 && b.TimesUsed + levels > b.Cap) return null;
+                if (shown && (!b.isActive || !b.gameObject.activeInHierarchy) || b.TimesUsed + levels > b.Cap) return null;
                 int currency = (int)Currency(b);
                 if (currency < 0 || currency >= CurrencyCount) continue;
                 // The next `levels` levels' costs, each raised as ScaleBoxCost raises it after a buy.
