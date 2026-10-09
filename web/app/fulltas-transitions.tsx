@@ -4,7 +4,7 @@ import { useState } from "react";
 import { FullTasSolvePanel, goalSpan, liveSeconds, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
 
 type Run = { name: string; section: string; goals: string[]; best: { splits: FullTasSplit[] } | null;
-  offline?: { reached: number; splits: FullTasSplit[] } | null };
+  offline?: { reached: number; splits: FullTasSplit[] } | null; stretches?: { goal: number; bestTicks: number; runTicks: number }[] };
 
 /**
  * A Full-TAS run's stretches (goal N-1 to goal N of its best, costed from its splits), longest first: pick one to map it, fence
@@ -24,6 +24,8 @@ export function FullTasTransitions({ runs, solve, lastResult, busy, onMap, onCom
   const shown = all ? stretches : [...stretches].sort((a, b) => b.ticks - a.ticks).slice(0, 15).sort((a, b) => a.goal - b.goal);
   const next = run && splits.length < run.goals.length ? { goal: splits.length + 1, label: run.goals[splits.length] } : null;
   const picked = stretches.find(s => s.goal === goal);
+  // A stretch's best found by Improve this stretch (its goal from 0 there, from 1 here).
+  const found = (g: number) => run?.stretches?.find(s => s.goal === g - 1);
   // The stretch search's latest word (the engine's `stretch` event): its best against the run's own ticks.
   const stretchBest = solve.name === name ? (solve.events ?? []).filter(e => e.type === "stretch").at(-1) : undefined;
   return <div className="panel routePicker">
@@ -39,6 +41,8 @@ export function FullTasTransitions({ runs, solve, lastResult, busy, onMap, onCom
         <button className="primary" disabled={busy} title={`Searches this stretch alone (from the goal before to ${goalSpan([picked.goal, picked.goal])}), judged by when it reaches that goal; the rest of the run is left as it is. Until Stop.`}
           onClick={() => onCommand("/fulltas/solve", { name, stretch: picked.goal })}>Improve this stretch</button>
         <button className="danger" disabled={!solve.running} onClick={() => onCommand("/fulltas/stop")}>Stop</button>
+        <button className="secondary" disabled={busy || !found(picked.goal)} title="Plays the run's best up to the stretch in turbo, then the stretch's best way at 1x from 3 s before it, to its goal."
+          onClick={() => onCommand("/fulltas/play", { name, stretch: picked.goal })}>Play stretch best</button>
       </span></div>}
     {stretchBest && <p className="hint">Stretch to {goalSpan([Number(stretchBest.goal) + 1, Number(stretchBest.goal) + 1])}: best <b>{String(stretchBest.bestTicks)}</b> ticks against the run's {String(stretchBest.runTicks)} ({Number(stretchBest.runTicks) - Number(stretchBest.bestTicks)} faster); kept in fulltas/{name}.stretch-{Number(stretchBest.goal) + 1}.json for a whole run's Improve</p>}
     {/* The solve's progress as the Full-TAS tab shows it: runs, ticks, runs a second, windows, finds, gate checks. */}
@@ -47,6 +51,7 @@ export function FullTasTransitions({ runs, solve, lastResult, busy, onMap, onCom
       picked={picked ? [picked.goal, picked.goal] : null} onPick={g => setGoal(g)}/>
     <div className="routeList">{shown.map(s => <div className={`routeRow ${s.goal === goal ? "active" : ""}`} key={s.goal}>
       <button className="routeItem" onClick={() => setGoal(s.goal)}><div><strong>{goalSpan([s.goal, s.goal])}: {s.to}</strong>
-        <small>from {s.from} · {s.ticks} ticks ({s.seconds.toFixed(2)} s)</small></div></button></div>)}</div>
+        <small>from {s.from} · {s.ticks} ticks ({s.seconds.toFixed(2)} s){found(s.goal) && found(s.goal)!.bestTicks < s.ticks
+          ? <b> → {found(s.goal)!.bestTicks} ticks ({(found(s.goal)!.bestTicks * 0.02).toFixed(2)} s), {s.ticks - found(s.goal)!.bestTicks} faster</b> : null}</small></div></button></div>)}</div>
   </div>;
 }

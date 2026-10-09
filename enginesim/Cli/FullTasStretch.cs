@@ -25,6 +25,7 @@ namespace IGTAP.EngineSim.Cli
             int end = (int)Math.Min(best.GoalInput[goal - 1], best.Inputs.Count);
             long startTick = goal == 1 ? 0 : best.GoalPhysics[goal - 2], runTick = best.GoalPhysics[goal - 1];
             List<InputTick> prefix = best.Inputs.GetRange(0, prefixLength);
+            // --minutes is the whole session: TimeUp stops it (Stop too).
             string file = Path.Combine(Path.GetDirectoryName(_runFile), $"{_runKey}.stretch-{goal}.json");
             string prefixKey = string.Join(",", prefix.Select(t => t.GetHashCode())).GetHashCode().ToString("x8");
             List<InputTick> stretchBest = best.Inputs.GetRange(prefixLength, end - prefixLength);
@@ -50,25 +51,21 @@ namespace IGTAP.EngineSim.Cli
             Announce(false);
             LoadSeeds();
             new Thread(WatchStdin) { IsBackground = true }.Start();
-            for (int attempt = 0; !TimeUp; attempt++)
+            // Each find kept the moment it's found: a window's last goal is goal N, so its tick there is the find's arrival.
+            _onFind = (inputs, atGoal) =>
             {
-                List<List<InputTick>> found = SearchWindow("stretch", best, prefixLength, goal, new List<List<InputTick>> { stretchBest }, bestTick, _windowMinutes, attempt);
-                // The fastest few finds replayed from the start: their arrival at goal N decides.
-                foreach (List<InputTick> f in found.Take(8))
-                {
-                    Route r = Evaluate(prefix.Concat(f).ToList());
-                    if (r.Progress < goal || r.GoalPhysics[goal - 1] >= bestTick) continue;
-                    bestTick = r.GoalPhysics[goal - 1];
-                    stretchBest = f.Take((int)Math.Min(r.GoalInput[goal - 1], prefixLength + f.Count) - prefixLength).ToList();
-                }
-                if (bestTick < runTick && found.Count > 0)
-                {
-                    File.WriteAllText(file, JsonSerializer.Serialize(new { run = _name, goal = goal - 1, label = _labels[goal - 1], prefix = prefixKey,
-                        startTick, runTick, bestTick, saved = (runTick - bestTick), inputs = stretchBest.Select(t => t.ToJson()) }));
-                    Log($"stretch: goal {goal - 1} in {bestTick - startTick} ticks (the run's {runTick - startTick}): {runTick - bestTick} ticks faster -> {Path.GetFileName(file)}");
-                }
-                Announce(found.Count > 0);
-            }
+                if (atGoal >= bestTick) return;
+                bestTick = atGoal;
+                stretchBest = inputs.ToList();
+                File.WriteAllText(file, JsonSerializer.Serialize(new { run = _name, goal = goal - 1, label = _labels[goal - 1], prefix = prefixKey, prefixLength,
+                    startTick, runTick, bestTick, saved = runTick - bestTick, inputs = stretchBest.Select(t => t.ToJson()) }));
+                Log($"stretch: goal {goal - 1} in {bestTick - startTick} ticks (the run's {runTick - startTick}): {runTick - bestTick} ticks faster -> {Path.GetFileName(file)}");
+                Announce(true);
+            };
+            // One window until Stop (the whole --minutes, no stall cut): a window per 30 s replayed to the stretch's start and
+            // reloaded its archive each time, a good share of every half minute.
+            for (int attempt = 0; !TimeUp; attempt++)
+                SearchWindow("stretch", best, prefixLength, goal, new List<List<InputTick>> { stretchBest }, bestTick, _minutes, attempt);
             Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Stretch to goal {goal - 1}: {bestTick - startTick} ticks (the run's {runTick - startTick})");
             Emit(new { type = "done", best = RouteJson(_best) });
             return 0;

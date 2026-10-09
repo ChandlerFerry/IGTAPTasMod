@@ -859,6 +859,10 @@ namespace IGTAP.EngineSim.Cli
             return changed == 0 ? 0 : (int)Math.Min(goalInputTicks[changed - 1], count);
         }
 
+        /// <summary>Told of each find faster than a window's baseline as it is found (its inputs after the window's prefix, its tick at the
+        /// window's last goal): the stretch search keeps each at once.</summary>
+        Action<List<InputTick>, long> _onFind;
+
         List<List<InputTick>> SearchWindow(string kind, Route route, int prefixLength, int limit, List<List<InputTick>> seeds, long baseline, double budgetMinutes, int attempt,
             double? stallMinutes = null)
         {
@@ -1083,6 +1087,7 @@ namespace IGTAP.EngineSim.Cli
                     windowBest = Math.Min(windowBest, atGoal);
                     if (atGoal < baseline)
                     {
+                        _onFind?.Invoke(inputs, atGoal);
                         found.Add(inputs);
                         _findModes?.Add(how);
                         GraftFind(how);

@@ -163,6 +163,24 @@ namespace IGTAPTasMod
                         StartFullTasPlayback(run, best, null, Number(body, "fromTick", 0));
                         return new { ok = true };
                     }
+                    // "stretch": a stretch's best (its goal from 1): the run's best up to the stretch, then the stretch's inputs, from a few
+                    // seconds before it (turbo before, 1x from there), stopping at its goal.
+                    int stretch = Number(body, "stretch", 0);
+                    if (stretch > 0)
+                    {
+                        string file = Path.Combine(EngineSimDir, "fulltas", run.name + ".stretch-" + stretch + ".json");
+                        if (!File.Exists(file)) throw new InvalidOperationException("No stretch best for goal " + (stretch - 1) + " of " + run.name + " yet: Improve this stretch first.");
+                        JObject s = JObject.Parse(File.ReadAllText(file));
+                        if (s["prefixLength"] == null) throw new InvalidOperationException("That stretch best predates playback: Improve the stretch again to save it anew.");
+                        List<SolverTick> route = ToTicks(FullTasPlayableRoute(run).steps);
+                        int prefix = (int)s["prefixLength"];
+                        if (prefix > route.Count) throw new InvalidOperationException("The run's best is shorter than the stretch's start: the stretch was found on another best.");
+                        List<SolverTick> ticks = route.Take(prefix).Concat(s["inputs"].ToObject<List<SolverTick>>()).ToList();
+                        long from = Math.Max(0, (long)s["startTick"] - 150);
+                        StartFullTasPlayback(run, new MacroDefinition { name = "fulltas/" + run.name + " stretch to goal " + (stretch - 1) + " (" + ((long)s["bestTick"] - (long)s["startTick"]) + " ticks)",
+                            steps = ToSteps(ticks) }, stretch, (int)from);
+                        return new { ok = true };
+                    }
                     if (!Truthy(body, "closest"))
                     {
                         StartFullTasPlayback(run, FullTasPlayableRoute(run), null, Number(body, "fromTick", 0));
@@ -295,6 +313,26 @@ namespace IGTAPTasMod
 
         /// <summary>The runs (studio static state): goals, bests (the record and each class's), offline bests, closest attempts,
         /// human candidates; they change with files and routes.</summary>
+        /// <summary>A run's stretch bests (fulltas/&lt;run&gt;.stretch-&lt;N&gt;.json, the engine's --stretch): each stretch's goal (from 0), its best
+        /// ticks and the run's.</summary>
+        object[] FullTasStretches(string run)
+        {
+            string dir = Path.Combine(EngineSimDir, "fulltas");
+            if (!Directory.Exists(dir)) return Array.Empty<object>();
+            var list = new List<object>();
+            foreach (string file in Directory.GetFiles(dir, run + ".stretch-*.json"))
+            {
+                try
+                {
+                    JObject s = JObject.Parse(File.ReadAllText(file));
+                    long start = (long)s["startTick"];
+                    list.Add(new { goal = (int)s["goal"], bestTicks = (long)s["bestTick"] - start, runTicks = (long)s["runTick"] - start });
+                }
+                catch (Exception) { }
+            }
+            return list.ToArray();
+        }
+
         object[] BuildFullTasRunsWebState()
         {
             return _fullTasRuns.Select(r =>
@@ -316,7 +354,7 @@ namespace IGTAPTasMod
                     offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits, segments = offline.segments, idles = offline.idles },
                     closest = closest == null ? null : new { reached = closest.reached, next = closest.next, distance = closest.distance, ticks = closest.inputs.Count },
                     classes = FullTasClassesWebState(r), human = r.Human, candidates = FullTasCandidatesWebState(r, labels),
-                    playable = best != null || offline != null && offline.inputs.Count > 0,
+                    playable = best != null || offline != null && offline.inputs.Count > 0, stretches = FullTasStretches(r.name),
                     traceReady = File.Exists(FullTasTracePath(r.name)) };
             }).ToArray();
         }
