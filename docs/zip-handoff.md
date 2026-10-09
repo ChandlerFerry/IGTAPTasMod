@@ -10,12 +10,12 @@ Read this section first; the 2026-10-07 notes below it are history (still useful
   then `buytree12`, `buytree13`, `buytree16`.
 - The tree is at about level 7 (buytree0-6 bought), `buytree0` (green clone chance) still at level 1 in the installed route:
   the planner could never buy it until `70d99f0` (below). Expect the next stages to level it.
-- **Nothing is running.** The last engine build is `C:\tmp\igtap\zip\eng53` (HEAD `70d99f0`).
+- **Nothing is running.** The last engine build is `C:\tmp\igtap\zip\eng54` (`c58ca5a`).
 
 ## Resume
 
 ```
-& C:\tmp\igtap\zip\eng53\IGTAP.EngineSim.exe fulltas-plan $traces\fulltas-Zip%.json --stages --mode beam --beam 4 --minutes 30 --rounds 4 --off-ticks 300 --only <list> --piece-minutes 2
+& C:\tmp\igtap\zip\eng54\IGTAP.EngineSim.exe fulltas-plan $traces\fulltas-Zip%.json --stages --mode beam --beam 4 --minutes 30 --rounds 4 --off-ticks 300 --only <list> --piece-minutes 2
 ```
 
 `<list>`: the full `--only` list below without `lap:9,record:9` (Course 9 is closed under strict buys, see open issue 3). Run
@@ -106,9 +106,8 @@ Last review: covered `bdc4278..70d99f0`. Findings fixed in `70d99f0`; the rest a
 
 ## Open issues, ranked (from the session and an adversarial review; not fixed)
 
-1. **Tree transitions ignore the tree level** (`EconomyMoves.AddSavedTransitions`): every `tree<L>to<C>` is a `lap:C` move from
-   bonus 11's landing whatever the level (README rule 21: Courses 7/9 keep levels 0 and 3 only). Gate by the run's tree
-   level, or drop them past level 4 and leave lap:C to measured moves. This drove the Course 7/9 lap churn.
+1. ~~Tree transitions ignore the tree level~~: fixed in `c58ca5a` (`MoveTable.TreeLevelPlays`, checked by `plan-selftest`);
+   the level is the distinct tree boxes the best bought, an approximation while the run buys out of segment order.
 2. **`CloneRates` (the beam estimate's GP rate) uses the on-screen spawn rate** (Count/PathLength) and no ceiling; off screen
    a course spawns once a second and pays ceil(x)/divisor. The estimate mis-ranks Courses 7-9's clones.
 3. **Course 9 / `buyatomlevel9`** (the earlier study: every zip-mover plan buys it; a GLOBAL box, kept through atom touches):
