@@ -123,6 +123,10 @@ namespace IGTAP.EngineSim.Cli
                 && !MoveTable.TreeLevelPlays(0, 7, 3) && !MoveTable.TreeLevelPlays(3, 7, 7) && !MoveTable.TreeLevelPlays(0, 6, 1)
                 && MoveTable.TreeLevelPlays(10, 8, 8) && MoveTable.TreeLevelPlays(10, 8, 10) && !MoveTable.TreeLevelPlays(10, 8, 7)
                 && MoveTable.TreeLevelPlays(27, 10, 30), "tree transitions play only at their tree level's group");
+            Check(EconomyPlan.AreaTwoOffer.Contains("buy:buytree0") && EconomyPlan.AreaTwoOffer.Contains("buy:buytree25") && EconomyPlan.AreaTwoOffer.Contains("buy:buyatom")
+                && EconomyPlan.AreaTwoOffer.Contains("buy:buyatomlevel9") && EconomyPlan.AreaTwoOffer.Contains("buy:buyreward6") && EconomyPlan.AreaTwoOffer.Contains("lap:7")
+                && !EconomyPlan.AreaTwoOffer.Contains("lap:10") && !EconomyPlan.AreaTwoOffer.Contains("buy:buyreward5") && !EconomyPlan.AreaTwoOffer.Contains("buy:buywj"),
+                $"the Area 2 offer: {EconomyPlan.AreaTwoOffer.Count} boxes and laps, Area 1's out");
             // The ledger (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md, section 1): a failed move is a fact at its
             // key, never offered again, saved, and dropped by another engine build.
             {

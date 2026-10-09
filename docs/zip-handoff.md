@@ -45,12 +45,13 @@ The 2026-10-07 notes below this section are history (still useful for the planne
 ## Resume
 
 ```
-& C:\tmp\igtap\zip\eng54\IGTAP.EngineSim.exe fulltas-plan $traces\fulltas-Zip%.json --stages --mode beam --beam 4 --minutes 30 --rounds 4 --off-ticks 300 --only <list> --piece-minutes 2
+& <engine>\IGTAP.EngineSim.exe fulltas $traces\fulltas-Zip%.json
 ```
 
-`<list>`: the full `--only` list below without `lap:9,record:9` (Course 9 is closed under strict buys, see open issue 3). Run
-from the repo (`--install` writes `runs/Zip%.json`). Each stage plans to the next tree goal, realizes, and installs. Watch the
-`realize: ... planned ... (C Cash, G GP), built ... (C Cash, G GP)` lines: they show where the plan and the build part.
+The trace alone, no flags (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md): run from the repo (an install
+writes `runs/Zip%.json`). Each stage plans to the next buy, realizes, installs, and goes on until the last goal or a stop;
+`fulltas\Zip%.report.json` (beside the trace) says per stage what was planned and built, the failed moves it learned, and why it
+stopped. The flags below (`--only`, `--stages`, `--rounds`, ...) are gone; `fulltas-plan` keeps only `--try`.
 
 ## The feedback loop (use it; full `--realize` reruns cost 10-15 minutes before they reach the step you changed)
 

@@ -167,6 +167,16 @@ namespace IGTAP.EngineSim.Cli
             ["buy:buynp10"] = "buy:buytree13", ["buy:buyatomlevel10"] = "buy:buytree13", ["buy:buygreen10"] = "buy:buytree13",
         };
         static readonly HashSet<string> Never = new HashSet<string> { "lap:10", "record:10" };
+        /// <summary>
+        /// What the unattended planner offers for an Area 2 target (a box under zone 2/): every Area 2 economy box and tree box (Courses
+        /// 6-10's, the atom box, the tree's), Courses 6-9's laps and record laps. The game's doors (Gates, Never) still apply; a box or
+        /// lap realize can't build becomes a failed fact (MoveTable.Failed).
+        /// </summary>
+        internal static readonly HashSet<string> AreaTwoOffer = new HashSet<string>(
+            FullTasGoal.Boxes.Where(b => b.path.StartsWith("zone 2/", StringComparison.Ordinal) || b.path.StartsWith("AtomUpgrades/", StringComparison.Ordinal)
+                    || System.Text.RegularExpressions.Regex.IsMatch(b.path, @"^Courses/[Cc]ourse ([6-9]|10)/"))
+                .Select(b => "buy:" + b.token)
+                .Concat(new[] { 6, 7, 8, 9 }.SelectMany(n => new[] { "lap:" + n, "record:" + n })));
         /// <summary>globalStats' NP cap is this many ticks of its NP a tick.</summary>
         const double NpCapTicks = 6000;
         const int Np = (int)globalStats.Currencies.AtomicPower;
@@ -1103,30 +1113,45 @@ namespace IGTAP.EngineSim.Cli
 
     sealed partial class FullTas
     {
-        internal static int EconomyPlanCommand(string[] args) => args.Contains("--stages") ? Stages(args) : new FullTas(args).PlanEconomy(args);
+        internal static int EconomyPlanCommand(string[] args)
+        {
+            if (Solve.Option<string>(args, "--try", null) == null)
+                throw new ArgumentException("fulltas-plan keeps only --try STEPS (a diagnostic); `fulltas <trace>` runs the economy stages");
+            return new FullTas(args) { _unattended = true }.PlanEconomy(args);
+        }
 
         /// <summary>
-        /// fulltas-plan &lt;trace&gt; --stages [the plan's options]: plan and realize from the best's furthest goal to its next buy
-        /// (--from furthest --target next --realize --install), again from where each stage's installed route gets, until the
-        /// best reaches every goal or three stages in a row get no further (the second of them with the beam twice as wide).
-        /// Each stage opens the run afresh, as a new process would: the trace header, the run file and the moves table it left.
+        /// fulltas &lt;trace&gt; with no flags (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md, section 4): from the best's
+        /// furthest goal, plan to its next buy and realize, install when the build gets further, again, until the best reaches every
+        /// goal, the next goal isn't an economy buy (then the reach solve, Search), or two stages in a row install nothing (the second
+        /// with the beam twice as wide). Each stage opens the run afresh. Writes fulltas/&lt;run&gt;.report.json after each stage.
         /// </summary>
-        static int Stages(string[] args)
+        internal static int Unattended(string[] args)
         {
-            int width = Solve.Option(args, "--beam", EconomyPlan.DefaultWidth);
-            for (int stage = 1, fails = 0; fails < 3; stage++)
+            var report = new List<object>();
+            for (int stage = 1, fails = 0; fails < 2; stage++)
             {
-                var run = new FullTas(args) { _stageWidth = fails == 1 ? width * 2 : width };
+                var run = new FullTas(args) { _unattended = true, _stageWidth = fails == 1 ? EconomyPlan.UnattendedWidth * 2 : EconomyPlan.UnattendedWidth };
                 Console.WriteLine($"stage {stage}" + (fails > 0 ? $" ({fails} without progress before it)" : ""));
-                run.PlanEconomy(args);
+                int code = run.PlanEconomy(args);
+                report.Add(run._stageReport);
+                Directory.CreateDirectory(Path.GetDirectoryName(run.ReportFile));
+                File.WriteAllText(run.ReportFile, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
                 if (run._allReached) return 0;
+                if (code == NotEconomy) return new FullTas(args).Search();
                 fails = run._installed ? 0 : fails + 1;
             }
-            Console.WriteLine("stages: three in a row got no further");
+            Console.WriteLine("unattended: two stages in a row got no further; see the report");
             return 3;
         }
 
-        /// <summary>--stages: this stage's beam width (0: --beam's), whether every goal was reached before it, and whether it installed a route.</summary>
+        /// <summary>PlanEconomy's answer when the next goal is no economy buy (none, or one held already): the reach solve's.</summary>
+        const int NotEconomy = 4;
+        internal string ReportFile => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(_trace)), "fulltas", _name + ".report.json");
+        /// <summary>This stage's report entry: target, plan and built ticks, the failed facts it added, its install and why it stopped.</summary>
+        object _stageReport;
+
+        /// <summary>A stage's beam width (0: UnattendedWidth), whether every goal was reached before it, and whether it installed a route.</summary>
         int _stageWidth;
         bool _allReached, _installed;
 
@@ -1194,57 +1219,55 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// fulltas-plan &lt;trace&gt; --from &lt;goal&gt; --target &lt;buy:box&gt;[,...] [--bonuses bonus1,...] [--buytable FILE]
-        /// [--moves FILE] [--max-states N] [--minutes M] [--out FILE] [--compare "step,step,..." ...]: the economy planner from the
-        /// best's state at goal --from (its place that goal's) to the target buy; prints the schedule and, per --compare prefix
-        /// (played exactly, then searched on), its target tick beside the free search's.
+        /// One unattended stage (Unattended): the economy planner from the best's furthest goal to its next buy (README-free settings:
+        /// the Area 2 offer for an Area 2 target, beam UnattendedWidth to BeamStates), realized and installed when it gets further. With
+        /// --try STEPS (fulltas-plan): realize's steps from goal --from toward --target instead, a diagnostic that writes nothing.
+        /// Returns NotEconomy when the next goal is no economy buy.
         /// </summary>
         int PlanEconomy(string[] args)
         {
             Open();
-            bool stages = args.Contains("--stages");
-            if (stages && _best.Progress == _goals)
+            string trySteps = Solve.Option<string>(args, "--try", null);
+            bool stage = trySteps == null;
+            if (stage && _best.Progress == _goals)
             {
-                Log($"stages: the best reaches all {_goals} goals");
+                Log($"unattended: the best reaches all {_goals} goals");
                 _allReached = true;
+                _stageReport = new { stop = $"the best reaches all {_goals} goals" };
                 return 0;
             }
-            // --from furthest: the last goal the best reaches; --target next: the first buy after it (--stages: both).
-            string fromArg = stages ? "furthest" : Solve.Option(args, "--from", "");
-            int kept = fromArg == "furthest" ? _best.Progress : GoalNumber(fromArg, 1);
+            int kept = stage ? _best.Progress : GoalNumber(Solve.Option(args, "--from", ""), 1);
             if (kept < 1 || kept > _goals || kept > _best.Progress) throw new ArgumentException($"--from wants a goal the best reaches (1..{_best.Progress})");
-            string targetArg = stages ? "next" : Solve.Option(args, "--target", "buy:buyds");
             int nextBuy = Array.FindIndex(_labels, kept, l => l.StartsWith("buy:", StringComparison.Ordinal));
-            if (targetArg == "next" && nextBuy < 0) throw new ArgumentException($"--target next: no buy goal after goal {kept}");
-            string[] targets = (targetArg == "next" ? _labels[nextBuy] : targetArg).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            // A stage without seeds given takes the ones the studio's last solve of the run listed (fulltas-<run>-seeds.txt).
+            if (stage && nextBuy < 0)
+            {
+                _stageReport = new { from = kept, stop = $"no buy goal after goal {kept}: the reach solve's" };
+                return NotEconomy;
+            }
+            string[] targets = (stage ? _labels[nextBuy] : Solve.Option(args, "--target", "buy:buyds")).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            // The seeds the studio's last solve of the run listed (fulltas-<run>-seeds.txt), unless --seed gave some.
             string seedList = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(_trace)), $"fulltas-{_name}-seeds.txt");
-            if (stages && _seedFiles.Count == 0 && File.Exists(seedList)) _seedFiles.AddRange(File.ReadAllLines(seedList).Select(l => l.Trim()).Where(l => l.Length > 0));
-            string[] bonuses = (Solve.Option(args, "--bonuses", "") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(b => b.StartsWith("reward:", StringComparison.Ordinal) ? b : "reward:" + b).ToArray();
-            string buyTable = Solve.Option(args, "--buytable", BuyTableFile), movesFile = Solve.Option(args, "--moves", MovesFile);
-            int maxStates = Solve.Option(args, "--max-states", 200000);
-            bool levels = Solve.Option(args, "--dominance", "key") == "levels";
-            // --only: the laps, record laps and economy boxes offered (default: every one the table has).
-            string onlyArg = Solve.Option<string>(args, "--only", null);
-            HashSet<string> only = onlyArg?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
-            string outFile = Solve.Option<string>(args, "--out", null);
-            var compares = new List<string>();
-            int c = Array.IndexOf(args, "--compare");
-            for (int i = c + 1; c >= 0 && i < args.Length && !args[i].StartsWith("--", StringComparison.Ordinal); i++) compares.Add(args[i]);
-            // --skip-free: only the --compare orders (one process per order runs them side by side).
-            bool skipFree = args.Contains("--skip-free");
+            if (_seedFiles.Count == 0 && File.Exists(seedList)) _seedFiles.AddRange(File.ReadAllLines(seedList).Select(l => l.Trim()).Where(l => l.Length > 0));
+            string[] bonuses = Array.Empty<string>();
+            string movesFile = MovesFile;
             // The trace's goals, not the tracker's (realize tracks the goals it played), each label resolved once: NewGoal restores
             // the start to find a reward box, which mid-search would leave the economy at the start.
             FullTasGoal[] traceGoals = _runGoals.Goals;
             var resolved = new Dictionary<string, FullTasGoal>();
             FullTasGoal GoalOf(string label) => resolved.TryGetValue(label, out FullTasGoal g) ? g
                 : resolved[label] = traceGoals.FirstOrDefault(x => x.label == label) ?? NewGoal(label)?.goal;
-            foreach (string b in bonuses.Concat(targets))
+            foreach (string b in targets)
                 if (GoalOf(b) == null) throw new ArgumentException($"{b}: no such goal (a box token of FullTasGoal.Boxes, or a bonus of courses.json)");
+            // An Area 2 target offers Area 2's boxes and laps (EconomyPlan.AreaTwoOffer); an Area 1 one every economy box, as before.
+            HashSet<string> only = GoalOf(targets[^1])?.boxes is [string targetBox] && targetBox.StartsWith("zone 2/", StringComparison.Ordinal) ? EconomyPlan.AreaTwoOffer : null;
 
-            MoveTable moves = MoveTable.Load(this, File.Exists(buyTable) ? buyTable : null, RoutesFile, _best, movesFile);
+            MoveTable moves = MoveTable.Load(this, File.Exists(BuyTableFile) ? BuyTableFile : null, RoutesFile, _best, movesFile);
             SimSnapshot at = GoalState(kept).at;
+            if (stage && Affordable(at, GoalOf(targets[^1])?.boxes ?? Array.Empty<string>()) == true)
+            {
+                _stageReport = new { target = targets[^1], from = kept, stop = $"{targets[^1]} is paid for at goal {kept}: the reach solve's" };
+                return NotEconomy;
+            }
             string place = _labels[kept - 1];
             if (!moves.Places.ContainsKey(place)) throw new InvalidOperationException($"goal {kept} {place} is no place of the movement table");
             string[] tree = EconomyPlan.TreeTargets(_eval, targets, GoalOf);
@@ -1260,68 +1283,18 @@ namespace IGTAP.EngineSim.Cli
                 }
             int targetGoal = Array.IndexOf(_labels, targets[targets.Length - 1], kept) + 1;
             string bestTick = targetGoal > 0 && targetGoal <= _best.Progress ? _best.GoalPhysics[targetGoal - 1].ToString(CultureInfo.InvariantCulture) : "-";
-            Log($"plan from goal {kept} {place} (tick {_best.GoalPhysics[kept - 1]}) to {string.Join(", then ", targets)} (the best's: tick {bestTick}); bonuses {string.Join(" ", bonuses)}; "
-                + $"{moves.Count} moves");
+            Log($"plan from goal {kept} {place} (tick {_best.GoalPhysics[kept - 1]}) to {string.Join(", then ", targets)} (the best's: tick {bestTick}); {moves.Count} moves");
             _eval.Restore(at);
             globalStats start = Singleton<globalStats>.Instance;
             Log("plan start holds " + string.Join(", ", Enum.GetValues<globalStats.Currencies>().Select(cur => $"{cur} {_eval.Shop.Holds(cur):G4}"))
                 + (start == null ? "" : $"; NP {start.NPrewardPerTick:G4} a tick, cap {start.NPrewardCap:G4}"));
-
-            // --mode exact: Dijkstra (proven under the state key); beam: the beam of --beam W; auto: exact, then the beam where
-            // the exact search is capped. --stand on|off: the target stands at its box for its last Cash (default: the beam's on).
-            string mode = Solve.Option(args, "--mode", "auto");
-            if (mode != "exact" && mode != "beam" && mode != "auto") throw new ArgumentException("--mode wants exact, beam or auto");
-            var settings = _unattended
-                ? new PlanSettings(targets, bonuses, "beam", _stageWidth > 0 ? _stageWidth : EconomyPlan.UnattendedWidth, EconomyPlan.BeamStates,
-                    double.PositiveInfinity, levels, only, null)
-                : new PlanSettings(targets, bonuses, mode, _stageWidth > 0 ? _stageWidth : Solve.Option(args, "--beam", EconomyPlan.DefaultWidth), maxStates,
-                    Solve.Option(args, "--minutes", 30.0) * 60, levels, only, Solve.Option<string>(args, "--stand", null));
-            EconomyPlanResult Plan(IReadOnlyList<string> prefix) => PlanFrom(at, place, prefix, moves, settings, GoalOf);
-            // --join FILE: no search; a route --realize wrote (its goals and inputs through the target) joined to the best's way on again.
-            string joinFile = Solve.Option<string>(args, "--join", null);
-            if (joinFile != null) return JoinAgain(args, joinFile, kept, targetGoal - 1, outFile);
-            // --try STEPS: no plan; realize's steps (`lap:7,lap:7`, `atoms:6`) played one after another from the best's state at --from,
-            // each line its ticks, currencies and wall time. A step's check in seconds, where a whole --realize reaches the step only
-            // after its plan and every step before it.
-            string trySteps = Solve.Option<string>(args, "--try", null);
-            if (trySteps != null) return TrySteps(kept, targetGoal - 1, trySteps, GoalOf, moves);
-            if (args.Contains("--replan")) return ReplanCheck(args, kept, targets, targetGoal - 1);
-            EconomyPlanResult free = skipFree ? new EconomyPlanResult { Why = "--skip-free" } : Plan(null);
-            if (!skipFree) EconomyPlan.Print("free search", free);
-            var rows = new List<(string name, EconomyPlanResult plan)>();
-            if (!skipFree) rows.Add(("free search", free));
-            foreach (string prefix in compares)
-            {
-                EconomyPlanResult r = Plan(EconomyPlan.StepIds(prefix));
-                EconomyPlan.Print(prefix, r);
-                rows.Add((prefix, r));
-            }
-            Console.WriteLine();
-            Console.WriteLine($"{"order (then searched on)",-48} {"target tick",11} {"vs free",8}  proven*");
-            Console.WriteLine($"{"the best's own",-48} {bestTick,11}");
-            foreach (var (name, r) in rows)
-                Console.WriteLine($"{name,-48} {(r.Done ? r.Tick.ToString(CultureInfo.InvariantCulture) : "-"),11} {(r.Done && free.Done ? (r.Tick - free.Tick).ToString("+0;-0;0", CultureInfo.InvariantCulture) : ""),8}  {(r.Proven ? "yes" : "no")}"
-                    + (r.Why == null ? "" : "  (" + r.Why + ")"));
-            Console.WriteLine("* proven: no schedule reaches the target sooner under the planner's state key (place, unlocks, box levels, records,"
-                + " running buy-max routines); hidden economy state such as clones in flight isn't compared");
-            if (outFile != null)
-            {
-                object Json(string name, EconomyPlanResult r) => new
-                {
-                    name, done = r.Done, proven = r.Proven, tick = r.Tick, why = r.Why, states = r.States, dropped = r.Dropped, seconds = r.Seconds,
-                    beam = r.Width == 0 ? null : new { width = r.Width, letIn = r.Nodes, keys = r.Keys, cut = r.Pruned, prechecked = r.Prechecked, noIncome = r.NoIncome, peakBytes = r.PeakBytes },
-                    steps = r.Steps.Select((s, i) => new { kind = s.Kind, arg = s.Arg, ticks = s.Ticks, end = r.Ends[i], cash = r.Cash[i], held = r.Held[i].Take(7), levels = r.Levels[i] }),
-                    goals = r.Goals, estimated = r.Estimated,
-                };
-                File.WriteAllText(outFile, JsonSerializer.Serialize(new
-                {
-                    run = _name, from = kept, fromLabel = place, startTick = _best.GoalPhysics[kept - 1], targets, bonuses, best = bestTick,
-                    plans = rows.Select(r => Json(r.name, r.plan)),
-                }, new JsonSerializerOptions { WriteIndented = true }));
-                Log("plan -> " + outFile);
-            }
-            if (!stages && !args.Contains("--realize")) return rows.All(r => r.plan.Done) ? 0 : 3;
-            return RealizeRows(args, rows, kept, targetGoal - 1, place, moves, movesFile, settings, GoalOf, outFile);
+            if (!stage) return TrySteps(kept, targetGoal - 1, trySteps, GoalOf, moves);
+            var settings = new PlanSettings(targets, bonuses, "beam", _stageWidth > 0 ? _stageWidth : EconomyPlan.UnattendedWidth, EconomyPlan.BeamStates,
+                double.PositiveInfinity, false, only, null);
+            var failuresBefore = moves.Failures.ToHashSet();
+            EconomyPlanResult free = PlanFrom(at, place, null, moves, settings, GoalOf);
+            EconomyPlan.Print("free search", free);
+            return RealizeRows(new List<(string name, EconomyPlanResult plan)> { ("free search", free) }, kept, targetGoal - 1, place, moves, movesFile, settings, GoalOf, failuresBefore);
         }
 
         /// <summary>
@@ -1331,8 +1304,8 @@ namespace IGTAP.EngineSim.Cli
         /// each plan said and what its build did, the fastest whole route's goal list in --out (`goals`, with every realization's
         /// steps under `realized`) and its route in --route (as the solver saves a run's best, fulltas/&lt;run&gt;.json).
         /// </summary>
-        int RealizeRows(string[] args, List<(string name, EconomyPlanResult plan)> rows, int kept, int targetIndex, string place, MoveTable moves, string movesFile,
-            PlanSettings settings, Func<string, FullTasGoal> goalOf, string outFile)
+        int RealizeRows(List<(string name, EconomyPlanResult plan)> rows, int kept, int targetIndex, string place, MoveTable moves, string movesFile,
+            PlanSettings settings, Func<string, FullTasGoal> goalOf, ISet<(string from, string to, string caps, int tree, string why)> failuresBefore)
         {
             if (targetIndex < 0) throw new ArgumentException("the target is no goal of the run after --from: realize joins the best's way on after it");
             LoadSeeds();
@@ -1368,99 +1341,19 @@ namespace IGTAP.EngineSim.Cli
                     + $"{(run != null && run.Progress == run.GoalInput.Length ? run.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture) + " s" : run == null ? "-" : $"goal {run.Progress}"),12}"
                     + (z.Why == null ? "" : "  (" + z.Why + ")"));
             var whole = realized.Where(r => r.run != null && r.run.Progress == r.run.GoalInput.Length).OrderBy(r => r.run.Live).FirstOrDefault();
-            if (outFile != null)
-            {
-                var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(outFile)).AsObject();
-                json["goals"] = whole.z == null ? null : System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(whole.goals));
-                json["realized"] = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(realized.Select(r => new
-                {
-                    r.name, done = r.z.Done, why = r.z.Why, rounds = r.z.Rounds, planTicks = r.z.PlanTicks, tick = r.z.Done ? r.z.Tick : -1,
-                    live = r.run != null && r.run.Progress == r.run.GoalInput.Length ? Math.Round(r.run.LiveSeconds, 2) : (double?)null,
-                    r.goals, steps = r.z.Log,
-                })));
-                File.WriteAllText(outFile, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-                Log("realize -> " + outFile);
-            }
             // With no whole route, the one that gets furthest (its goals so far, total -1): the next stretch is planned or solved from it.
-            string routeFile = Solve.Option<string>(args, "--route", null);
             var written = whole.run != null ? (whole.name, whole.run, whole.goals)
                 : realized.Where(r => r.run != null).Select(r => (r.name, r.run, r.goals)).Concat(partials).OrderByDescending(r => r.run.Progress).FirstOrDefault();
-            if (routeFile != null && written.run != null)
+            if (written.run != null && written.run.Progress > _best.Progress) Install(written.run, written.goals);
+            else Log($"install: no route reaches further than the best's goal {_best.Progress}");
+            Realization z0 = realized.FirstOrDefault().z;
+            _stageReport = new
             {
-                Route r = written.run;
-                string[] goals = written.goals;
-                File.WriteAllText(routeFile, JsonSerializer.Serialize(new { name = _name, goals, inputs = r.Inputs.Select(t => t.ToJson()),
-                    goalInputTicks = r.GoalInput, goalPhysicsTicks = r.GoalPhysics, total = r.Progress == goals.Length ? r.GoalPhysics[goals.Length - 1] : -1 }));
-                Log($"realize: {written.name}'s route " + (r.Progress == goals.Length ? $"({r.LiveSeconds:0.00} s live)" : $"(to goal {r.Progress} of {goals.Length})") + " -> " + routeFile);
-            }
-            if (args.Contains("--install") || args.Contains("--stages"))
-            {
-                // --replace: a plan made again from an earlier goal (a better way up) is installed as the best however far past --from
-                // it gets (not one that got nowhere: its goals would be --from's and the target alone, the run's targets between lost).
-                if (written.run != null && (written.run.Progress > _best.Progress || args.Contains("--replace") && written.run.Progress > kept)) Install(written.run, written.goals);
-                else Log($"install: no route reaches further than the best's goal {_best.Progress}");
-            }
+                target = _labels[targetIndex], from = kept, fromTick = startTick, planTicks = z0?.PlanTicks, built = z0 != null && z0.Done ? z0.Tick : -1,
+                installed = _installed, reaches = written.run?.Progress, stop = z0?.Why,
+                failed = moves.Failures.Where(f => !failuresBefore.Contains(f)).Select(f => new { f.from, f.to, f.caps, f.tree, f.why }).ToList(),
+            };
             return realized.All(r => r.z.Done) ? 0 : 3;
-        }
-
-        /// <summary>
-        /// fulltas-plan --replan [--replan-seconds S] [--replan-cap T]: the goals part's call (FullTas.Replan, as a goals pull makes it: the
-        /// run's goals, joined, the best's tick at the target as the cap unless --replan-cap) once, on the run's best. Checks that it
-        /// returns within its budget (plus a piece search's --piece-minutes) and that its goal map is the labels it names: each goal
-        /// it maps to the run's goal of that index has that label. Exits 1 on a FAIL.
-        /// </summary>
-        int ReplanCheck(string[] args, int kept, string[] targets, int targetIndex)
-        {
-            LoadSeeds();
-            double seconds = Solve.Option(args, "--replan-seconds", 300.0);
-            long cap = Solve.Option(args, "--replan-cap", targetIndex >= 0 && targetIndex < _best.Progress ? _best.GoalPhysics[targetIndex] : _best.Last);
-            FullTasGoal[] all = _runGoals.Goals;
-            double t0 = _clock.Elapsed.TotalSeconds;
-            PlanResult p = Replan(_best, all, kept, targets, true, cap, seconds);
-            double took = _clock.Elapsed.TotalSeconds - t0;
-            int fails = 0;
-            void Check(bool ok, string what) { Console.WriteLine((ok ? "PASS " : "FAIL ") + what); if (!ok) fails++; }
-            Console.WriteLine($"replan: done {p.Done}, target {p.Target} on tick {p.Tick} (the best's {p.Old}, cap {cap}), {p.Goals.Length} goals"
-                + (p.Run != null ? $", route reaches {p.Run.Progress}" + (p.Run.Progress == p.Goals.Length ? $" in {p.Run.LiveSeconds:0.00} s" : "") : "") + (p.Why == null ? "" : "; " + p.Why));
-            Check(took <= seconds + _pieceMinutes * 60 * 4, $"returned in {took:0} s, budget {seconds:0} s (+ a piece search's {_pieceMinutes * 4:0.#} min at most)");
-            int mapped = Enumerable.Range(0, p.Goals.Length).Count(j => p.OldOf[j] >= 0);
-            Check(p.OldOf.Length == p.Goals.Length && Enumerable.Range(0, p.Goals.Length).All(j => p.OldOf[j] < 0 || p.OldOf[j] < all.Length && all[p.OldOf[j]].label == p.Goals[j]),
-                $"goal map: {p.OldOf.Length} entries for {p.Goals.Length} goals, {mapped} mapped to the run's goal of the same label, {p.Goals.Length - mapped} new");
-            Check(p.Done || p.Why != null, "not done says why");
-            Console.WriteLine(fails == 0 ? "replan: PASS" : $"replan: {fails} FAIL");
-            return fails == 0 ? 0 : 1;
-        }
-
-        /// <summary>
-        /// fulltas-plan --join FILE: the realized stretch of a route file --realize wrote (its goals after --from through the target,
-        /// and its inputs to the target) joined to the best's way on after the target again (<see cref="Join"/>), written as --route
-        /// writes; for a join that changed (bridges, stray fits) without realizing the plan again.
-        /// </summary>
-        int JoinAgain(string[] args, string file, int kept, int targetIndex, string outFile)
-        {
-            if (targetIndex < 0) throw new ArgumentException("the target is no goal of the run after --from");
-            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(file));
-            string[] labels = doc.RootElement.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
-            long[] goalInput = doc.RootElement.GetProperty("goalInputTicks").EnumerateArray().Select(t => t.GetInt64()).ToArray();
-            List<InputTick> inputs = Solve.ReadInputs(doc.RootElement);
-            string target = _labels[targetIndex];
-            int end = Array.IndexOf(labels, target, kept);
-            if (end < 0 || end >= goalInput.Length || goalInput[end] < 0) throw new ArgumentException($"{file} doesn't reach {target} after goal {kept}");
-            LoadSeeds();
-            _planBase = _runGoals;
-            FullTasGoal[] all = _runGoals.Goals;
-            BuildFrom(all, kept, targetIndex);
-            FullTasGoal GoalOf(string label) => all.FirstOrDefault(g => g.label == label) ?? NewGoal(label)?.goal ?? throw new ArgumentException($"{file}: no goal {label}");
-            List<FullTasGoal> planned = labels.Skip(kept).Take(end + 1 - kept).Select(GoalOf).ToList();
-            var (run, goals, _) = Join(planned, inputs.Take((int)Math.Min(inputs.Count, goalInput[end] + 2)).ToList(), all, kept, targetIndex);
-            Console.WriteLine($"joined: {run.Progress} of {goals.Length} goals" + (run.Progress == goals.Length ? $", {run.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)} s live ({run.Last} ticks)" : $": {run.EndReason}"));
-            string routeFile = Solve.Option<string>(args, "--route", null);
-            if (routeFile != null)
-                File.WriteAllText(routeFile, JsonSerializer.Serialize(new { name = _name, goals, inputs = run.Inputs.Select(t => t.ToJson()),
-                    goalInputTicks = run.GoalInput, goalPhysicsTicks = run.GoalPhysics, total = run.Progress == goals.Length ? run.GoalPhysics[goals.Length - 1] : -1 }));
-            if (outFile != null) File.WriteAllText(outFile, JsonSerializer.Serialize(new { run = _name, goals, live = run.Progress == goals.Length ? Math.Round(run.LiveSeconds, 2) : (double?)null },
-                new JsonSerializerOptions { WriteIndented = true }));
-            return run.Progress == goals.Length ? 0 : 3;
         }
 
         /// <summary>fulltas-plan --try: realize's steps (PlayStep: `lap:N`, `record:N`, `buy:box`, `all:box`, `atoms:N`; `@T` its planned
