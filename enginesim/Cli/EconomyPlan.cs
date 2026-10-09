@@ -1690,10 +1690,11 @@ namespace IGTAP.EngineSim.Cli
             public readonly List<object> Log = new List<object>();
         }
 
-        /// <summary>A step built more than this many ticks off its plan's tick is planned again from, once per goal position (a long
-        /// stretch's plan takes minutes to make again, worth it only for a larger drift); an atom touch short of its atoms stands this
-        /// much past the plan.</summary>
-        const int DriftTicks = 300;
+        /// <summary>A step built more than this many ticks off its plan's tick is planned again from, once per goal position: a re-plan
+        /// costs 10-20 minutes once the economy is large, and Zip%'s rarely moved the target (86,077 > 86,072 > 86,068 > 86,029 > 86,052
+        /// for five rounds); the plan's order stays good through smaller drift, realize waiting for the economy where it must. An atom
+        /// touch short of its atoms stands this much past the plan.</summary>
+        const int DriftTicks = 1500;
         /// <summary>The goals pull's realize (not unattended) as before: re-plans at most PullRounds times, a drift past PullDrift ticks.</summary>
         const int PullRounds = 3, PullDrift = 10;
         int Drift => _unattended ? DriftTicks : PullDrift;
