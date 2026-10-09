@@ -536,7 +536,15 @@ namespace IGTAP.EngineSim.Cli
             double NpWait(Node<TSnap> n, Node<TSnap> a, double npPrice, double[] model)
             {
                 double best = double.PositiveInfinity;
-                for (int k = 0; k <= MaxAtoms; k++)
+                // From the fewest atoms whose NP cap holds the price, found by halves (the cap only rises with atoms; fewer can't buy it).
+                int lo = 0, hi = MaxAtoms + 1;
+                while (lo < hi)
+                {
+                    int mid = (lo + hi) / 2;
+                    if (economy.NpAfterAtoms(mid) is var (_, midCap, _) && midCap >= npPrice) hi = mid;
+                    else lo = mid + 1;
+                }
+                for (int k = lo; k <= MaxAtoms; k++)
                 {
                     double gp = 0;
                     if (k > 0)
