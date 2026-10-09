@@ -463,24 +463,24 @@ The new stretch, traced (`fulltas --check --ticks-out`, mid-air refills matched 
 | `fc50721` | Capped NP ranks by its rate and the next atom's GP |
 | `c01f228` | Not-yet-grown tree boxes priced; clone income modelled in the estimate |
 | `fd08cac` | Laps use only the course's fastest saved route; tighter lap bound |
+| `47d5cbf`, `481a7ae` | Unattended stages 1-3: `buytree7` (tick 72,598), `buytree12` (75,540), `buytree13` (77,821) |
+| `8ec9363`, `b49d47e`, `19865a9`, `87580e3` | Enablers: an NP target out of the atoms' reach gets the box that gets there soonest first |
+| `917d05f`, `f11b6cf` | Planner: GP priced at the clones' GP rate; realize re-plans on drift past 1,500 ticks |
+| `9eefc75` to `efbc908` | Zip%: enabler stages, `buyatomlevel9` (~tick 118.7k), `buytree17-19` (1702 goals) |
+| `971296b`, `87ea966` | A second search seeded with the first's nearest attempts; failed facts saved as soon as they are learned |
+| `c1d3a16`, `9405b93`, `f16fd9d` | Refill orbs as reach enablers; facts keyed on the orb level; `buyorbs7` (1703 goals) |
+| `ee5bf71`, `07c2a95`, `d601c1d` | A quick restart's landing learned and loaded; a trap at the best's end rolls back |
+| `6ccbdf5` | **Refill orbs come on as they come on camera, in turbo and the engine** (the blocker: `docs/fidelity-log.md`) |
+| `e9c619a` | Zip%: `buytree16`, 1717 goals; saved through the gate as `fulltas/Zip%_NONE 2899.60` |
 
 ## Resume checklist
 
-Done 2026-10-07 evening (no engine run since): goals reset to 513 plus the six tree targets (both files; the old 709 in
-`C:\tmp\igtap\zip10`); private engine `C:\tmp\igtap\zip\eng20`; lap pieces now take a farm route's quick-restart laps
-first (`FastestLap(..., restart: true)`; `6_WJ_DS_DJ_BS farm 1.3500`, `8_... farm 1.1536`; record laps still the standing
-record); the beam prices NP in atoms (`NpWait`, docs/fulltas.md's beam: GP is what an NP target costs, so GP investments
-rank at once). Waiting on: the Course 7 and 9 farm routes (another agent), then step 1 and the rest.
+Zip% is done (see "Where things stand"). To improve it, run `fulltas <trace>` with nothing else: the unattended stages
+plan from the best and stop by themselves once the best reaches every goal, then hand over to the reach solve. The
+shared engine is `enginesim/Cli/bin/Release/net10.0/IGTAP.EngineSim.exe`; rebuild it after an engine commit, with your
+own runs stopped first. Before calling a stall a planning problem, check in the engine that the stretch can be played
+at all (which orbs are on, which doors are open).
 
-1. **Seeds:** regenerate `fulltas-Zip%-seeds.txt` (reach solve started and stopped in the studio). Check that it lists the
-   0.94 s Course 6 route and the farm routes (`... farm ... from its quick restart`).
-2. **Goals:** reset to 513 plus the tree targets (above).
-3. **Engine:** build a private engine.
-4. **Course 6 laps:** check them before anything else. Read the beam's estimate too: an NP target should now show a GP wait
-   (the progress line's `F`), not `NoIncome`. One plan from 513 to `buytree5` with the full `--only` and
-   `--realize --rounds 1`, then read the lap steps' built ticks. They should come out near 1 s (about 50-60 ticks), not 5.9.
-5. **GP:** fix the planner's undervaluing of GP investments (or get the macro order from the user) before a long run.
-   Compare the `buytree5` tick against the Course 6-only build's.
-6. **Stages:** run them with `--rounds 4`. Watch the first one. Probe the new stretch at 1x once it installs.
-7. **Last stretch:** for `buytree13` → `buytree16`, check that the plan buys `buyatomlevel9`, atoms and the comp-boost boxes;
-   the Course 6-only economy never planned it.
+Regression check after the orb fix (`6ccbdf5`), each installed best replayed with `--check` on the engine before and after:
+Tree% 763.73 s, TouchGrass-ANY% 699.12 s and FalseEnding%-280 353.29 s reach every goal in the same ticks on both. VMAN's
+installed route dies at action 191 (goal 2 of 23) on both, so that break predates the change.
