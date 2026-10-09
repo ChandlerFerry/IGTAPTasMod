@@ -95,9 +95,13 @@ namespace IGTAP.EngineSim.Cli
             if (!_places.TryGetValue(from, out Place a) || !_places.TryGetValue(TargetPlace(to), out Place t)) return false;
             double here = Walked(a, t);
             foreach (var k in _failed.Keys)
-                if (k.to == to && k.caps == caps && k.tree == Group && _places.TryGetValue(k.from, out Place f) && here >= Walked(f, t)) return true;
+                if (k.to == to && k.caps == caps && k.tree == Group && _places.TryGetValue(k.from, out Place f) && here >= NearerBy * Walked(f, t)) return true;
             return false;
         }
+
+        /// <summary>A failed move's next try is from a place this much nearer its target, or nearer still: a neighbour a few hundred units
+        /// nearer is no better start (Zip%'s buyclonegp8, searched again from each box round Course 6, 3-5 minutes a time).</summary>
+        const double NearerBy = 0.75;
 
         /// <summary>Where a move into this To is headed: a lap or record lap's gate, a box set's first box, else the place itself.</summary>
         static string TargetPlace(string to) => to.StartsWith("lap:", StringComparison.Ordinal) || to.StartsWith("record:", StringComparison.Ordinal)

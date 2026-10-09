@@ -132,7 +132,7 @@ namespace IGTAP.EngineSim.Cli
             // is 3,400 u from Course 7's landing.
             {
                 string spots = Path.Combine(Path.GetTempPath(), "plan-selftest-spots.json");
-                File.WriteAllText(spots, "{\"places\":[" + string.Join(",", new[] { ("buy:t", 0), ("near", 100), ("mid", 500), ("far", 1000) }
+                File.WriteAllText(spots, "{\"places\":[" + string.Join(",", new[] { ("buy:t", 0), ("near", 100), ("close", 400), ("mid", 500), ("far", 1000) }
                     .Select(p => $"{{\"id\":\"{p.Item1}\",\"kind\":\"box\",\"box\":\"{p.Item1}\",\"x\":{p.Item2},\"y\":0,\"caps\":\"wj\"}}"))
                     + "],\"speeds\":{\"wj\":10},\"moves\":[]}");
                 MoveTable line = MoveTable.Read(spots);
@@ -140,8 +140,8 @@ namespace IGTAP.EngineSim.Cli
                 line.AtTreeLevel(7);
                 Check(line.Best("far", "buy:t", "wj") != null && line.Best("near", "buy:t", "wj") != null, "an untried move is estimated from near and far");
                 line.Failed("mid", "buy:t", "wj", "no way");
-                Check(line.Best("far", "buy:t", "wj") == null && line.Best("mid", "buy:t", "wj") == null && line.Best("near", "buy:t", "wj") != null,
-                    "failed from the middle: out from as far or farther, still offered from nearer");
+                Check(line.Best("far", "buy:t", "wj") == null && line.Best("mid", "buy:t", "wj") == null && line.Best("close", "buy:t", "wj") == null
+                    && line.Best("near", "buy:t", "wj") != null, "failed from the middle: out from as far, farther or a little nearer; offered from much nearer");
             }
             // The ledger (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md, section 1): a failed move is a fact at its
             // key, never offered again, saved, and dropped by another engine build.
