@@ -1292,6 +1292,7 @@ namespace IGTAP.EngineSim.Cli
                 return double.PositiveInfinity;
             }
             (string label, double ticks) best = (null, double.PositiveInfinity);
+            var scored = new List<(string label, double afford, double after)>();
             foreach (string label in offer.Where(l => l.StartsWith("buy:", StringComparison.Ordinal)).OrderBy(l => l, StringComparer.Ordinal))
             {
                 if (!(goalOf(label)?.boxes is [string id]) || !(_eval.Shop.Box(id) is upgradeBox box) || !raises.Contains(box.globalUpgrade)) continue;
@@ -1306,9 +1307,13 @@ namespace IGTAP.EngineSim.Cli
                     ticks = Math.Max(ticks, missing / Math.Max(rates[c], 1e-6));
                 }
                 // To the target through this box: paying for it, then the atoms its effect leaves (the GP held less its own GP price).
-                ticks += AtomsTicksAfter(box.globalUpgrade, Economy.EffectMult(box), _eval.Shop.Holds(globalStats.Currencies.GreenPower) - cost[gp]);
+                double after = AtomsTicksAfter(box.globalUpgrade, Economy.EffectMult(box), _eval.Shop.Holds(globalStats.Currencies.GreenPower) - cost[gp]);
+                scored.Add((label, ticks, after));
+                ticks += after;
                 if (ticks < best.ticks) best = (label, ticks);
             }
+            Log("unattended: enablers (ticks to pay for, then the atoms' GP after): " + string.Join("; ", scored.OrderBy(x => x.afford + x.after).Take(6)
+                .Select(x => $"{x.label} {x.afford:G3} + {x.after:G3}")) + $"; the atoms now: {gpTicks:G3}");
             return best.label == null ? (null, why + "; no box raising NP's equation can be paid for") : (best.label, why);
         }
 

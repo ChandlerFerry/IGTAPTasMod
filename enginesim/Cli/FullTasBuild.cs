@@ -434,8 +434,11 @@ namespace IGTAP.EngineSim.Cli
                 return sim;
             };
             string archiveFile = Path.Combine(_archiveDir, "piece-" + (target.Goal + 1) + "-" + ArchiveHash(prefix, goals.Select(g => g.label)).ToString("x16") + ".json");
-            for (int attempt = 1; attempt <= (_unattended ? 1 : 2) && !TimeUp; attempt++)
+            for (int attempt = 1; attempt <= 2 && !TimeUp; attempt++)
             {
+                // Unattended, a second search takes the step's budget left on from where the first got nearest (Zip%'s buytree16: its 16
+                // searches ended 280-800 u short of a 5,000 u climb, and a buy step ran one search of its two).
+                if (_unattended && attempt == 2) foreach (List<InputTick> near in _lastClosest) Seed(near);
                 double budget = attempt == 1 ? budgetMinutes : budgetMinutes * 3;
                 long ticks = _unattended ? Math.Min(PieceTicks, _stepTicks) : 0;
                 if (_unattended && ticks <= 0) { Log($"{title}: the step's search budget is spent"); return null; }

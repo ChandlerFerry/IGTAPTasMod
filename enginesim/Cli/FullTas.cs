@@ -87,6 +87,8 @@ namespace IGTAP.EngineSim.Cli
         long _stepTicks = long.MaxValue;
         /// <summary>The ticks the last Explore simulated.</summary>
         long _lastSearchTicks;
+        /// <summary>The last unattended search's attempts nearest its goal, nearest first.</summary>
+        List<List<InputTick>> _lastClosest = new List<List<InputTick>>();
         readonly bool _submit, _fresh, _resetStudy;
         /// <summary>--lookahead N: a polish or repair window searches on N goals past its own and is scored there (arrival at the
         /// goal after next), so a way that reaches its own goal later but faster, and gains after it, is found and kept.</summary>
@@ -929,6 +931,7 @@ namespace IGTAP.EngineSim.Cli
             var bests = new List<InputTick>[SearchWorkers];
             var ticks = new long[SearchWorkers];
             var nearest = new float[SearchWorkers];
+            var closests = new List<InputTick>[SearchWorkers];
             Log($"{title} {span}: {SearchWorkers} fixed searches of {share} ticks each");
             // Walkable-distance guidance to the goal (an at: rect, a gate, a box's touch spot): without it a box thousands of units
             // off is a blind search.
@@ -958,7 +961,9 @@ namespace IGTAP.EngineSim.Cli
                 solver.Stop();
                 lock (solver.Shared) bests[i] = solver.Shared.Inputs;
                 ticks[i] = Interlocked.Read(ref solver.Ticks);
-                nearest[i] = solver.Closest()?.Distance ?? float.NaN;
+                OfflineSolver.Attempt closest = solver.Closest();
+                nearest[i] = closest?.Distance ?? float.NaN;
+                closests[i] = closest?.Inputs;
             });
             var found = new List<List<InputTick>>();
             for (int i = 0; i < SearchWorkers; i++)
@@ -969,6 +974,9 @@ namespace IGTAP.EngineSim.Cli
                     GraftFind(how);
                 }
             _lastSearchTicks = ticks.Sum();
+            // Nearest first (ties by solver): a search that found nothing seeds the next with how far each got (SolvePiece).
+            _lastClosest = Enumerable.Range(0, SearchWorkers).Where(i => closests[i] != null && !float.IsNaN(nearest[i]))
+                .OrderBy(i => nearest[i]).ThenBy(i => i).Select(i => closests[i]).ToList();
             bestInputs = Enumerable.Range(0, SearchWorkers).Where(i => bests[i] != null)
                 .Select(i => (inputs: bests[i], at: finds[i].Count == 0 ? long.MaxValue : finds[i].Min(f => f.atGoal), i))
                 .OrderBy(b => b.at).ThenBy(b => b.i).Select(b => b.inputs).FirstOrDefault();
