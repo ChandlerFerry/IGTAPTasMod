@@ -20,14 +20,15 @@ export function FullTasTransitions({ runs, solve, lastResult, busy, onMap, onCom
   const splits = run?.best?.splits ?? run?.offline?.splits ?? [];
   const stretches = splits.map((s, i) => ({ goal: i + 1, to: s.label, from: i > 0 ? splits[i - 1].label : "the start",
     ticks: s.ticks - (i > 0 ? splits[i - 1].ticks : 0), seconds: liveSeconds(s) - (i > 0 ? liveSeconds(splits[i - 1]) : 0) }));
-  const shown = all ? stretches : [...stretches].sort((a, b) => b.ticks - a.ticks).slice(0, 15);
+  // The 15 longest (or all), in goal order.
+  const shown = all ? stretches : [...stretches].sort((a, b) => b.ticks - a.ticks).slice(0, 15).sort((a, b) => a.goal - b.goal);
   const next = run && splits.length < run.goals.length ? { goal: splits.length + 1, label: run.goals[splits.length] } : null;
   const picked = stretches.find(s => s.goal === goal);
   return <div className="panel routePicker">
     <div className="panelTitle"><div><p className="eyebrow">FULL-TAS TRANSITIONS</p><h2>Optimize a stretch</h2></div>
       <span className="hint"><select value={name} onChange={e => { setName(e.target.value); setGoal(null); }}>
         {runs.map(r => <option key={r.name} value={r.name}>{r.name} ({r.section})</option>)}</select>
-        {" "}<button className="secondary" onClick={() => setAll(!all)}>{all ? "Longest 15" : `All ${stretches.length}`}</button></span></div>
+        {" "}<button className="secondary" onClick={() => setAll(!all)}>{all ? "Only the 15 longest" : `All ${stretches.length}`}</button></span></div>
     {next && <p className="hint">Next unreached: {goalSpan([next.goal, next.goal])} {next.label} (the solver's to find first)</p>}
     {picked && <div className="ftFocus on">
       <span><b>{goalSpan([picked.goal, picked.goal])}</b>: {picked.from} → {picked.to}, {picked.ticks} ticks ({picked.seconds.toFixed(2)} s)</span>
