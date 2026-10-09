@@ -705,12 +705,17 @@ namespace IGTAP.EngineSim.Cli
             var before = targets.Take(targets.Length - 1).ToHashSet();
             var bought = targets.ToDictionary(t => t, t => economy.Level(t));
             var rewards = bonuses.ToHashSet();
-            var built = new Dictionary<(string place, string caps), List<(PlanOption option, string[] boxes)>>();
+            var built = new Dictionary<(string place, string caps, int tree), List<(PlanOption option, string[] boxes)>>();
+            upgradeBox[] treeBoxes = FullTasGoal.Boxes.Where(b => b.token.StartsWith("buytree", StringComparison.Ordinal))
+                .Select(b => sim.Shop.Box(FullTasGoal.BoxId(b.path, b.sibling))).Where(b => b != null).Distinct().ToArray();
 
             string Estimate(string from, Move m, string caps) => $"{from} -> {m.To} [{caps}] {m.Ticks} ticks";
             List<(PlanOption option, string[] boxes)> Built(string place, string caps)
             {
-                if (built.TryGetValue((place, caps), out var list)) return list;
+                // The tree's level as FullTas.TreeLevel counts it: the tree boxes bought.
+                int tree = MoveTable.TreeGroup(treeBoxes.Count(b => b.TimesUsed > 0));
+                if (built.TryGetValue((place, caps, tree), out var list)) return list;
+                moves.AtTreeLevel(tree);
                 Caps.TryParse(caps, out Caps have);
                 list = new List<(PlanOption, string[])>();
                 bool laps = false;
@@ -786,7 +791,7 @@ namespace IGTAP.EngineSim.Cli
                     if ((!laps || economy.AtomPaid(o.Buys)) && o.Buys.Length > 0 && o.Step.Kind != "reward") list[i] = (o with { Stand = true, Patient = true }, list[i].boxes);
                     else if (standAtTarget && o.Target) list[i] = (o with { Stand = true }, list[i].boxes);
                 }
-                return built[(place, caps)] = list;
+                return built[(place, caps, tree)] = list;
             }
             List<PlanOption> Options(string place, bool standOnly)
             {

@@ -89,7 +89,7 @@ namespace IGTAP.EngineSim.Cli
             table.AddBest(stops);
             if (buyTableFile != null) table.AddBuyTable(buyTableFile);
             foreach (var (id, at) in run.CourseGates()) table.AddPlace(id, at.x, at.y, null);
-            if (routesFile != null) { table.AddSavedLaps(routesFile); table.AddSavedTransitions(routesFile, run.TreeLevel(best)); }
+            if (routesFile != null) { table.AddSavedLaps(routesFile); table.AddSavedTransitions(routesFile); table.AtTreeLevel(run.TreeLevel(best)); }
             movesFile ??= run.MovesFile;
             if (File.Exists(movesFile))
                 foreach (var kv in Read(movesFile)._moves)
@@ -494,8 +494,31 @@ namespace IGTAP.EngineSim.Cli
         /// group (the first listed level at or over it), or for Courses 7 and 9 level 0 at levels 1 and 2 (they play as 0).</summary>
         internal static bool TreeLevelPlays(int level, int course, int at)
         {
-            int group = TreeLevels.FirstOrDefault(l => l >= at, TreeLevels[^1]);
-            return group == level || (course == 7 || course == 9) && level == 0 && at <= 2;
+            return TreeGroup(at) == level || (course == 7 || course == 9) && level == 0 && at <= 2;
+        }
+
+        /// <summary>The listed level tree level <paramref name="at"/> plays as (the world is the same across a group).</summary>
+        internal static int TreeGroup(int at) => TreeLevels.FirstOrDefault(l => l >= at, TreeLevels[^1]);
+
+        /// <summary>Every saved transition (<see cref="AddSavedTransitions"/>) with its tree level; only those <see cref="AtTreeLevel"/>
+        /// plays are in the table.</summary>
+        readonly List<(int level, int course, Move move, string caps)> _transitions = new List<(int, int, Move, string)>();
+        int _treeGroup = -1;
+
+        /// <summary>Only the tree transitions that play at tree level <paramref name="at"/> in the table (README ### Rules 21): a state's
+        /// own level decides (EconomyPlan's Options), as a plan that buys tree boxes moves it on.</summary>
+        internal void AtTreeLevel(int at)
+        {
+            if (TreeGroup(at) == _treeGroup) return;
+            _treeGroup = TreeGroup(at);
+            foreach (var key in _moves.Where(kv => kv.Value.Source == "transition").Select(kv => kv.Key).ToList())
+            {
+                _moves.Remove(key);
+                _targets[(key.from, key.caps)].Remove(key.to);
+            }
+            _chains.Clear();
+            foreach (var (level, course, move, caps) in _transitions)
+                if (TreeLevelPlays(level, course, at)) Put(move, caps);
         }
 
         static readonly Regex TransitionName = new Regex(@"^tree\d+to(\d+)_(" + Caps.LabelPattern + @") (\d+(?:\.\d+)?)$");
@@ -507,7 +530,7 @@ namespace IGTAP.EngineSim.Cli
         /// are reached so (a tree box's quick restart lands at bonus 11's checkpoint); walked from another course's finish the plan
         /// priced them as a grid walk realize can't play (Zip%'s first Course 7 lap from Course 6, 12 minutes of search for none).
         /// </summary>
-        void AddSavedTransitions(string routesFile, int treeLevel)
+        void AddSavedTransitions(string routesFile)
         {
             string coursesFile = Path.Combine(Path.GetDirectoryName(routesFile), "courses.json");
             if (!File.Exists(routesFile) || !File.Exists(coursesFile)) return;
@@ -531,10 +554,9 @@ namespace IGTAP.EngineSim.Cli
             }
             foreach (var (name, course, caps, ticks) in transitions)
             {
-                // Only the transition of the run's own tree level (README ### Rules 21): its route is exact inputs over that tree, and
-                // a grown tree cuts it (Zip% at level 7: tree0to7 and tree0to9 priced Courses 7 and 9's laps realize couldn't play).
+                // Kept with its tree level (README ### Rules 21): its route is exact inputs over that tree, and a grown tree cuts it
+                // (Zip% at level 7: tree0to7 and tree0to9 priced Courses 7 and 9's laps realize couldn't play); AtTreeLevel picks.
                 int level = int.Parse(name.Substring(4, name.IndexOf("to", StringComparison.Ordinal) - 4), CultureInfo.InvariantCulture);
-                if (!TreeLevelPlays(level, course, treeLevel)) continue;
                 JsonElement? from = courses.RootElement.EnumerateArray().Cast<JsonElement?>().FirstOrDefault(c => c.Value.TryGetProperty("name", out JsonElement cn)
                     && cn.ValueKind == JsonValueKind.String && cn.GetString() == name);
                 if (from == null) continue;
@@ -545,7 +567,7 @@ namespace IGTAP.EngineSim.Cli
                     if (!Caps.TryParse(id, out Caps have) || !caps.IsSubsetOf(have)) continue;
                     int run = standing.Where(kv => kv.Key.course == course && Caps.TryParse(kv.Key.caps, out Caps rc) && rc.IsSubsetOf(have))
                         .Select(kv => kv.Value).DefaultIfEmpty(-1).Min();
-                    if (run > 0) Put(new Move(landing, "lap:" + course, 1 + ticks + 1 + run, "transition", true), id);
+                    if (run > 0) _transitions.Add((level, course, new Move(landing, "lap:" + course, 1 + ticks + 1 + run, "transition", true), id));
                 }
             }
         }
