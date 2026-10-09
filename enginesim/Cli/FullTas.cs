@@ -197,6 +197,9 @@ namespace IGTAP.EngineSim.Cli
             // The trace alone: the unattended economy stages (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md), which hand
             // over to the reach solve when the next goal isn't an economy buy.
             if (args.Length == 1) return Unattended(args);
+            // --stretch N: one stretch alone, judged at its goal (FullTasStretch.cs).
+            int stretch = Array.IndexOf(args, "--stretch");
+            if (stretch > 0 && stretch + 1 < args.Length) return new FullTas(args).StretchSearch(int.Parse(args[stretch + 1], System.Globalization.CultureInfo.InvariantCulture));
             return check > 0 && check + 1 < args.Length ? new FullTas(args).Check(args[check + 1]) : new FullTas(args).Search();
         }
 

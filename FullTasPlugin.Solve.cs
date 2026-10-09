@@ -117,7 +117,15 @@ namespace IGTAPTasMod
             float minutes = FloatNumber(body, "minutes", unsolved ? 60f : 24 * 60f);
             args.Append(" --minutes ").Append(minutes.ToString(CultureInfo.InvariantCulture));
             string what, of = run.name + (cls == MajorClass ? "" : " (" + cls + ")");
-            if (unsolved)
+            // "stretch": one stretch alone (its goal number from 1), judged at its goal (the engine's --stretch, FullTasStretch.cs).
+            int stretch = Number(body, "stretch", 0);
+            if (stretch > 0)
+            {
+                if (stretch > run.goals.Count) throw new InvalidOperationException("stretch: a goal within 1-" + run.goals.Count + ".");
+                args.Append(" --window-minutes 0.5 --stretch ").Append(stretch);
+                what = "Optimizing " + of + "'s stretch to goal " + (stretch - 1) + " (" + run.goals[stretch - 1] + ") on " + threads + " threads";
+            }
+            else if (unsolved)
             {
                 args.Append(" --unsolved");
                 int seeds = WriteFullTasSeeds(run, args);
