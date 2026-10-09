@@ -78,15 +78,21 @@ namespace IGTAP.EngineSim.Cli
             + typeof(MoveTable).Assembly.ManifestModule.ModuleVersionId.ToString("N") + "-" + FullTas.PieceTicks + "-" + FullTas.StepTicks;
         int Group => Math.Max(0, _treeGroup);
 
-        /// <summary>Records that the move doesn't play here; true when it is a new fact.</summary>
+        /// <summary>Records that the move doesn't play here; true when it is a new fact. Failed from two places, it is out from
+        /// every place (from "*"): what no search reaches from two places is out of reach (Zip%'s buyfree6b, tried from each place
+        /// in turn, about 9 minutes each).</summary>
         internal bool Failed(string from, string to, string caps, string why)
         {
             if (!_failed.TryAdd((from, to, caps, Group), why)) return false;
+            if (from != AnyPlace && _failed.Keys.Count(k => k.to == to && k.caps == caps && k.tree == Group && k.from != AnyPlace) >= 2)
+                _failed.TryAdd((AnyPlace, to, caps, Group), "failed from two places; the last: " + why);
             _chains.Clear();
             return true;
         }
 
-        internal bool HasFailed(string from, string to, string caps) => _failed.ContainsKey((from, to, caps, Group));
+        const string AnyPlace = "*";
+
+        internal bool HasFailed(string from, string to, string caps) => _failed.ContainsKey((from, to, caps, Group)) || _failed.ContainsKey((AnyPlace, to, caps, Group));
 
         internal IEnumerable<(string from, string to, string caps, int tree, string why)> Failures =>
             _failed.OrderBy(kv => kv.Key.from, StringComparer.Ordinal).ThenBy(kv => kv.Key.to, StringComparer.Ordinal)

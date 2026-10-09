@@ -138,6 +138,10 @@ namespace IGTAP.EngineSim.Cli
                 Check(ledger.Failed("a", "b", "wj", "no way") && !ledger.Failed("a", "b", "wj", "again"), "a failure is a new fact once");
                 Check(ledger.Best("a", "b", "wj") == null, "a failed move is never offered");
                 Check(ledger.Chain("a", "c", "wj") < 0, "no chain runs through a failed move");
+                ledger.Measured(new Move("y", "b", 80, "measured", false), "wj");
+                Check(ledger.Best("y", "b", "wj")?.Ticks == 80, "a move failed from one place is still offered from another");
+                Check(ledger.Failed("x", "b", "wj", "no way") && ledger.Best("y", "b", "wj") == null && ledger.Best("w", "b", "wj") == null,
+                    "a move failed from two places is out from every place");
                 ledger.AtTreeLevel(11);
                 Check(ledger.Best("a", "b", "wj")?.Ticks == 100, "a failure holds only at its tree group");
                 ledger.AtTreeLevel(7);
@@ -146,9 +150,9 @@ namespace IGTAP.EngineSim.Cli
                 ledger.Save(file);
                 MoveTable back = MoveTable.Read(file);
                 back.AtTreeLevel(7);
-                Check(back.Best("a", "b", "wj") == null && back.Failures.Count() == 1, "Save then Read keeps the failure");
+                Check(back.Best("a", "b", "wj") == null && back.Failures.Count() == ledger.Failures.Count(), "Save then Read keeps the failures");
                 ledger.Save(file);
-                Check(MoveTable.Read(file).Failures.Count() == 1, "a second Save keeps one failure, not two");
+                Check(MoveTable.Read(file).Failures.Count() == ledger.Failures.Count(), "a second Save keeps each failure once");
                 File.WriteAllText(file, File.ReadAllText(file).Replace(MoveTable.Build, "another-build"));
                 Check(!MoveTable.Read(file).Failures.Any(), "a failure from another engine build is dropped");
                 File.Delete(file);
