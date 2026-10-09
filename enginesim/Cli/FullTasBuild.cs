@@ -434,9 +434,11 @@ namespace IGTAP.EngineSim.Cli
                 return sim;
             };
             string archiveFile = Path.Combine(_archiveDir, "piece-" + (target.Goal + 1) + "-" + ArchiveHash(prefix, goals.Select(g => g.label)).ToString("x16") + ".json");
-            for (int attempt = 1; attempt <= 2 && !TimeUp; attempt++)
+            for (int attempt = 1; attempt <= (_unattended ? 1 : 2) && !TimeUp; attempt++)
             {
                 double budget = attempt == 1 ? budgetMinutes : budgetMinutes * 3;
+                long ticks = _unattended ? Math.Min(PieceTicks, _stepTicks) : 0;
+                if (_unattended && ticks <= 0) { Log($"{title}: the step's search budget is spent"); return null; }
                 int id = ++_windowId;
                 Emit(new { type = "window", id, kind = "piece", first = reached, limit = (then ?? target).Goal + 1, attempt, budget = Math.Round(budget * 60, 1),
                     start = reached == 0 ? 0.0 : Seconds(at.Goal.PhysicsTicks[reached - 1]), target = beat.HasValue ? Seconds(beat.Value) : (double?)null, savedStarts = seeds.Count, piece = span });
@@ -445,7 +447,8 @@ namespace IGTAP.EngineSim.Cli
                 // Every route the search improved on, fastest first: one that doesn't reproduce in the run (a replay from a
                 // cached state can differ from one from the start) leaves the others.
                 List<List<InputTick>> routes = Explore(id, title, span, create, caps, seeds, archiveFile, long.MaxValue, budget, stallMinutes, null,
-                    goals.Select(g => g.label).ToList(), out List<InputTick> best, resume: target.Extra == null && _pieceState == null);
+                    goals.Select(g => g.label).ToList(), out List<InputTick> best, resume: target.Extra == null && _pieceState == null, budgetTicks: ticks);
+                if (_unattended) _stepTicks -= _lastSearchTicks;
                 if (best != null) routes.Add(best);
                 Step step = null;
                 foreach (List<InputTick> found in Enumerable.Reverse(routes).Distinct(SequenceComparer.Instance).Take(40))

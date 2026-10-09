@@ -79,6 +79,14 @@ namespace IGTAP.EngineSim.Cli
         readonly double _minutes, _windowMinutes, _stallMinutes;
         /// <summary>--piece-minutes: a piece search's budget (the buy table's runs set it to their --entry-minutes).</summary>
         double _pieceMinutes;
+        /// <summary>The unattended economy loop (fulltas with no flags, fulltas-plan --try): budgets in simulated ticks, no wall clock
+        /// (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md, sections 2-3). Off for every other caller.</summary>
+        internal bool _unattended;
+        internal const long PieceTicks = 20_000_000, StepTicks = 2 * PieceTicks, PieceStallTicks = 2_000_000;
+        /// <summary>The current step's search ticks left (unattended); each piece search takes what it simulated.</summary>
+        long _stepTicks = long.MaxValue;
+        /// <summary>The ticks the last Explore simulated.</summary>
+        long _lastSearchTicks;
         readonly bool _submit, _fresh, _resetStudy;
         /// <summary>--lookahead N: a polish or repair window searches on N goals past its own and is scored there (arrival at the
         /// goal after next), so a way that reaches its own goal later but faster, and gains after it, is found and kept.</summary>
@@ -682,7 +690,7 @@ namespace IGTAP.EngineSim.Cli
                 splits = Enumerable.Range(1, r.Progress).Select(k => r.LiveSecondsAt(k)).ToArray() };
         }
 
-        bool TimeUp { get { return _stopRequested || _clock.Elapsed.TotalMinutes >= _minutes; } }
+        bool TimeUp { get { return _stopRequested || !_unattended && _clock.Elapsed.TotalMinutes >= _minutes; } }
 
         // The process's, not a run's: a farm loop's lap repair runs a FullTas before the loop's own, and one watcher reads stdin for both.
         static volatile bool _stopRequested;
@@ -910,7 +918,7 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         List<List<InputTick>> Explore(int id, string title, string span, Func<Simulation> create, string caps, List<List<InputTick>> seeds,
             string archiveFile, long baseline, double budgetMinutes, double stallMinutes, List<InputTick> closestPrefix, ICollection<string> goals,
-            out List<InputTick> bestInputs, Func<OfflineSolver, List<List<InputTick>>> walks = null, int? penaltyFrom = null, bool resume = true)
+            out List<InputTick> bestInputs, Func<OfflineSolver, List<List<InputTick>>> walks = null, int? penaltyFrom = null, bool resume = true, long budgetTicks = 0)
         {
             var found = new List<List<InputTick>>();
             ReloadAvoids(goals);
@@ -931,6 +939,7 @@ namespace IGTAP.EngineSim.Cli
             // A class's window ranks its finds by score inside the window (FullTasClasses.cs); the baseline is the best's score there.
             solver.Penalty = WindowPenalty(penaltyFrom);
             TimeSpan begin = _clock.Elapsed, last = begin;
+            long ticksAtLast = 0;
             bool finished = false;
             long windowBest = long.MaxValue;
             // Guards found, finished, last and windowBest: the solver raises Improved from its workers (outside its own lock).
@@ -942,6 +951,7 @@ namespace IGTAP.EngineSim.Cli
                 lock (window)
                 {
                     last = _clock.Elapsed;
+                    ticksAtLast = Interlocked.Read(ref solver.Ticks);
                     finished = true;
                     if (atGoal < windowBest)
                     {
@@ -975,10 +985,12 @@ namespace IGTAP.EngineSim.Cli
             Status();
             Thread[] threads = solver.Start(_threads);
             TimeSpan shown = begin, emitted = begin, saved = begin;
-            while (!TimeUp && (_clock.Elapsed - begin).TotalMinutes < budgetMinutes)
+            bool Over() => budgetTicks > 0 ? Interlocked.Read(ref solver.Ticks) >= budgetTicks : (_clock.Elapsed - begin).TotalMinutes >= budgetMinutes;
+            while (!TimeUp && !Over())
             {
                 Thread.Sleep(250);
-                lock (window) if (finished && (_clock.Elapsed - last).TotalMinutes >= stallMinutes) break;
+                lock (window)
+                    if (finished && (budgetTicks > 0 ? Interlocked.Read(ref solver.Ticks) - ticksAtLast >= PieceStallTicks : (_clock.Elapsed - last).TotalMinutes >= stallMinutes)) break;
                 if ((_clock.Elapsed - shown).TotalSeconds >= 15)
                 {
                     shown = _clock.Elapsed;
@@ -990,6 +1002,7 @@ namespace IGTAP.EngineSim.Cli
                             found.AddRange(walked);
                             finished = true;
                             last = _clock.Elapsed;
+                            ticksAtLast = Interlocked.Read(ref solver.Ticks);
                         }
                 }
                 if ((_clock.Elapsed - emitted).TotalSeconds >= 1)
@@ -1009,6 +1022,7 @@ namespace IGTAP.EngineSim.Cli
             Solve.SaveMemory(archiveFile, solver.Export(10000));
             solver.Stop();
             foreach (Thread t in threads) t.Join(60000);
+            _lastSearchTicks = Interlocked.Read(ref solver.Ticks);
             List<InputTick> best;
             lock (solver.Shared) best = solver.Shared.Inputs;
             bestInputs = best;

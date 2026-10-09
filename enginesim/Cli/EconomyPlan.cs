@@ -1458,6 +1458,7 @@ namespace IGTAP.EngineSim.Cli
         int TrySteps(int kept, int targetIndex, string steps, Func<string, FullTasGoal> goalOf, MoveTable moves)
         {
             if (targetIndex < 0) throw new ArgumentException("--try: --target must be a goal of the run after --from");
+            _unattended = true;
             LoadSeeds();
             _planBase = _runGoals;
             var (at, route) = BuildFrom(_runGoals.Goals, kept, targetIndex);
@@ -1514,7 +1515,9 @@ namespace IGTAP.EngineSim.Cli
                         + $"NP {before[2]:G4} -> {after[2]:G4}; clones {screens}");
                     continue;
                 }
+                _stepTicks = StepTicks;
                 var played = PlayStep(new PlanStep(kind, arg, ticks), z, goalOf, out FullTasGoal[] goals, out _, stood: kind is "buy" or "atoms", levels: levels);
+                _stepTicks = long.MaxValue;
                 if (played == null)
                 {
                     Console.WriteLine($"try {arg}: doesn't play from tick {from} ({clock.Elapsed.TotalSeconds:0.0} s): {_whyNot}");
@@ -1693,8 +1696,9 @@ namespace IGTAP.EngineSim.Cli
                 (List<InputTick> inputs, SimSnapshot state, long tick)? played;
                 FullTasGoal[] goals;
                 long walked;
+                _stepTicks = _unattended ? StepTicks : long.MaxValue;
                 try { played = PlayStep(s, z, goalOf, out goals, out walked, i < plan.Stands.Length && plan.Stands[i], i < plan.Levels.Length ? plan.Levels[i] : 1); }
-                finally { _playBy = long.MaxValue; }
+                finally { _playBy = long.MaxValue; _stepTicks = long.MaxValue; }
                 long planEnd = plan.Ends[i];
                 int planTicks = s.Ticks + restarts.Sum(r => r.Ticks);
                 string[] froms = restarts.Select(r => r.Arg).Prepend(from).ToArray();
