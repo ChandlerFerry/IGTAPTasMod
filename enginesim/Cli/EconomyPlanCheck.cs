@@ -97,6 +97,8 @@ namespace IGTAP.EngineSim.Cli
 
         static int Ticks(string a, string b) => a == b && a != "clone" ? 0 : Walk.TryGetValue((a, b), out int t) || Walk.TryGetValue((b, a), out t) ? t : 300;
 
+        static string Describe(Move m) => m == null ? "none" : $"{m.Ticks} ticks ({m.Source}{(m.Estimated ? ", estimated" : "")})";
+
         static IEnumerable<PlanOption> Options(Toy toy, string place, bool stand = false)
         {
             yield return new PlanOption(new Step("lap", "lap:1", Ticks(place, "c1") + 100), "c1", Array.Empty<string>(), "1", false, new[] { "start:1", "finish:1" });
@@ -142,6 +144,19 @@ namespace IGTAP.EngineSim.Cli
                 line.Failed("mid", "buy:t", "wj", "no way");
                 Check(line.Best("far", "buy:t", "wj") == null && line.Best("mid", "buy:t", "wj") == null && line.Best("close", "buy:t", "wj") == null
                     && line.Best("near", "buy:t", "wj") != null, "failed from the middle: out from as far, farther or a little nearer; offered from much nearer");
+            }
+            // A walk nothing measured is the measured walks' typical slowness over its lower bound: places on a line 100 u apart, a speed of
+            // 10 u a tick (10 ticks a step at best), five measured walks of 30 ticks a step: an unmeasured 4-step walk is 120, not 40.
+            {
+                string spots = Path.Combine(Path.GetTempPath(), "plan-selftest-walks.json");
+                string Place(int i) => $"{{\"id\":\"buy:p{i}\",\"kind\":\"box\",\"box\":\"buy:p{i}\",\"x\":{i * 100},\"y\":0,\"caps\":\"wj\"}}";
+                string Walk(int i) => $"{{\"from\":\"buy:p{i}\",\"to\":\"buy:p{i + 1}\",\"caps\":\"wj\",\"ticks\":30,\"source\":\"measured\",\"estimated\":false}}";
+                File.WriteAllText(spots, "{\"places\":[" + string.Join(",", Enumerable.Range(0, 10).Select(Place)) + "],\"speeds\":{\"wj\":10},\"moves\":["
+                    + string.Join(",", Enumerable.Range(0, 5).Select(Walk)) + "]}");
+                MoveTable walks = MoveTable.Read(spots);
+                File.Delete(spots);
+                Move far = walks.Best("buy:p5", "buy:p9", "wj");
+                Check(far != null && far.Estimated && far.Ticks == 120, $"an unmeasured walk at the measured walks' pace: {Describe(far)} (120)");
             }
             // The ledger (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md, section 1): a failed move is a fact at its
             // key, never offered again, saved, and dropped by another engine build.

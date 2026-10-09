@@ -270,6 +270,7 @@ namespace IGTAP.EngineSim.Cli
             }
             _moves[key] = m;
             _chains.Clear();
+            _walkFactors.Clear();
             if (!_targets.TryGetValue((m.From, caps), out List<string> to)) _targets[(m.From, caps)] = to = new List<string>();
             if (!to.Contains(m.To)) to.Add(m.To);
         }
@@ -325,8 +326,31 @@ namespace IGTAP.EngineSim.Cli
             if (!_places.TryGetValue(from, out Place a) || !_places.TryGetValue(to, out Place b) || !_speeds.TryGetValue(caps, out double v) || v <= 0) return -1;
             double walked = Walked(a, b);
             if (double.IsPositiveInfinity(walked)) return -1;
-            return Math.Max((int)Math.Ceiling(walked / v), Floor(from, to, caps));
+            return Math.Max((int)Math.Ceiling(walked / v * WalkFactor(caps)), Floor(from, to, caps));
         }
+
+        /// <summary>How much slower than its lower bound (the straight line at the top path speed) a walk the engine played is, the median
+        /// over the measured walks between two places with these unlocks (at least WalkSamples; 1 with fewer), 1 to 10: an unmeasured walk
+        /// is its lower bound times this. The bound alone ran 5.5 times short in Area 2 (Zip%'s walk to buytree9: 666 ticks for 120), and
+        /// every such step made a plan the build couldn't keep.</summary>
+        double WalkFactor(string caps)
+        {
+            if (_walkFactors.TryGetValue(caps, out double f)) return f;
+            var ratios = new List<double>();
+            if (_speeds.TryGetValue(caps, out double v) && v > 0)
+                foreach (var kv in _moves)
+                {
+                    Move m = kv.Value;
+                    if (kv.Key.caps != caps || m.Estimated || m.Source != "measured" && m.Source != "best" || m.Ticks <= 0
+                        || !_places.TryGetValue(m.From, out Place a) || !_places.TryGetValue(m.To, out Place b)) continue;
+                    double line = Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y)) / v;
+                    if (line >= 1) ratios.Add(m.Ticks / line);
+                }
+            ratios.Sort();
+            return _walkFactors[caps] = ratios.Count < WalkSamples ? 1 : Math.Clamp(ratios[ratios.Count / 2], 1, 10);
+        }
+        readonly Dictionary<string, double> _walkFactors = new Dictionary<string, double>();
+        const int WalkSamples = 5;
 
         /// <summary>The walkable distance from a to b (<see cref="Walk"/>), never under the straight line; the straight line on a
         /// table with no run; infinite where the walk finds no way.</summary>
