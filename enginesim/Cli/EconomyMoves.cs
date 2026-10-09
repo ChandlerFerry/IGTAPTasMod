@@ -455,6 +455,14 @@ namespace IGTAP.EngineSim.Cli
             _places[id] = new Place(id, kind, kind == "box" ? id : null, Math.Round(x, 2), Math.Round(y, 2), caps);
         }
 
+        /// <summary>A quick restart's landing (world frame) as a place: its id (one per spot within PlaceReach).</summary>
+        internal string AddLanding(double x, double y, string caps)
+        {
+            string id = RestartId(x, y);
+            AddPlace(id, x, y, caps);
+            return id;
+        }
+
         /// <summary>A box's place (world frame) where neither the best nor the buy table stood: its unlocks unknown (no caps), every
         /// move to and from it an estimate until realize measures one.</summary>
         internal void AddBoxPlace(string label, double x, double y) => AddPlace(label, x, y, null);

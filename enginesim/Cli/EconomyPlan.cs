@@ -1878,6 +1878,21 @@ namespace IGTAP.EngineSim.Cli
                     // Kept at once: a stage stopped or crashing before realize returns would lose it (and search it again).
                     if (learned && _factsFile != null) moves.Save(_factsFile);
                     if (_unattended && !learned) { z.Why = why + "; already known not to play, nothing new to plan on"; continue; }
+                    // No way on from here and no quick restart known from it: one played to learn where it lands, so the next plan has a
+                    // way out (Zip% at the orb unlock's box, far below Course 7: every walk back to Course 6 failed, a box at a time).
+                    if (_unattended && !moves.Restarts(from, caps).Any())
+                    {
+                        var list = _kept.Concat(z.Planned).ToList();
+                        Track(list);
+                        foreach (var (pre, landed) in Restarts(z.State.WithGoal(Fresh(list.Count, list.Count)), z.Inputs, list.Count).Take(1))
+                        {
+                            var (spot, _) = Where(landed);
+                            string landing = moves.AddLanding(spot.x, spot.y, caps);
+                            moves.Measured(new Move(from, landing, pre.Count - 1, "measured", false), caps);
+                            if (_factsFile != null) moves.Save(_factsFile);
+                            Log($"realize: a quick restart from {from} lands at {landing}: the next plan may take it");
+                        }
+                    }
                     // The stage's own target: the next stage starts on what was learned, where an enabler (a refill orb for a box no way
                     // reaches) is weighed first; a re-plan to the target here would only try it from elsewhere, a search a time.
                     if (_unattended && s.Kind == "target") { z.Why = why + "; the next stage weighs the enablers"; continue; }
