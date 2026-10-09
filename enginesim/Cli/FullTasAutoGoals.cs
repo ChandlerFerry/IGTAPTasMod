@@ -289,6 +289,15 @@ namespace IGTAP.EngineSim.Cli
                 if (label.StartsWith(kind + ":", StringComparison.Ordinal) && int.TryParse(label.AsSpan(kind.Length + 1), NumberStyles.None, CultureInfo.InvariantCulture, out int n)
                     && _eval.Courses.Any(c => c.courseNumber == n))
                     return (new JsonObject { ["label"] = label, ["kind"] = kind, ["course"] = n }, new FullTasGoal { label = label, kind = kind, course = n });
+            // An area goal: at:x,y,w,h in game-world coordinates (no entry side: fulltas-plan --try's reach check).
+            if (label.StartsWith("at:", StringComparison.Ordinal))
+            {
+                string[] v = label.Substring(3).Split(',');
+                if (v.Length != 4 || !v.All(t => float.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out _))) return null;
+                float[] r = v.Select(t => float.Parse(t, CultureInfo.InvariantCulture)).ToArray();
+                return (new JsonObject { ["label"] = label, ["kind"] = FullTasGoal.At, ["course"] = 0, ["x"] = r[0], ["y"] = r[1], ["w"] = r[2], ["h"] = r[3] },
+                    new FullTasGoal { label = label, kind = FullTasGoal.At, x = r[0], y = r[1], w = r[2], h = r[3] });
+            }
             if (!label.StartsWith("reward:", StringComparison.Ordinal)) return null;
             string token = label.Substring("reward:".Length);
             JsonElement c = Bonuses().FirstOrDefault(e => string.Equals(e.GetProperty("name").GetString(), token, StringComparison.OrdinalIgnoreCase));

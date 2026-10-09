@@ -759,16 +759,17 @@ namespace IGTAP.EngineSim.Cli
             var before = targets.Take(targets.Length - 1).ToHashSet();
             var bought = targets.ToDictionary(t => t, t => economy.Level(t));
             var rewards = bonuses.ToHashSet();
-            var built = new Dictionary<(string place, string caps, int tree), List<(PlanOption option, string[] boxes)>>();
+            var built = new Dictionary<(string place, string caps, int tree, int orbs), List<(PlanOption option, string[] boxes)>>();
             upgradeBox[] treeBoxes = TreeBoxes(sim);
 
             string Estimate(string from, Move m, string caps) => $"{from} -> {m.To} [{caps}] {m.Ticks} ticks";
             List<(PlanOption option, string[] boxes)> Built(string place, string caps)
             {
                 // The tree's level as FullTas.TreeLevel counts it: the tree boxes bought.
-                int tree = MoveTable.TreeGroup(TreeLevel(treeBoxes));
-                if (built.TryGetValue((place, caps, tree), out var list)) return list;
+                int tree = MoveTable.TreeGroup(TreeLevel(treeBoxes)), orbs = OrbLevel(sim);
+                if (built.TryGetValue((place, caps, tree, orbs), out var list)) return list;
                 moves.AtTreeLevel(tree);
+                moves.AtOrbs(orbs);
                 Caps.TryParse(caps, out Caps have);
                 list = new List<(PlanOption, string[])>();
                 bool laps = false;
@@ -844,7 +845,7 @@ namespace IGTAP.EngineSim.Cli
                     if ((!laps || economy.AtomPaid(o.Buys)) && o.Buys.Length > 0 && o.Step.Kind != "reward") list[i] = (o with { Stand = true, Patient = true }, list[i].boxes);
                     else if (standAtTarget && o.Target) list[i] = (o with { Stand = true }, list[i].boxes);
                 }
-                return built[(place, caps, tree)] = list;
+                return built[(place, caps, tree, orbs)] = list;
             }
             List<PlanOption> Options(string place, bool standOnly)
             {
@@ -909,6 +910,10 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>The targets with the boxes whose buys grow a tree box target's tree down to it (Shop.TreeWay) put first, the ones
         /// the state at <paramref name="sim"/> hasn't bought, root first: a tree box is bought only once its segment has grown.</summary>
+        /// <summary>The refill orbs' level (unlockJiggleDrops + moreRefreshOrbs, the run's own: Simulation.RefillOrbState).</summary>
+        internal static int OrbLevel(Simulation sim) => sim.Shop.Economy is Economy e
+            ? (int)(e.GlobalOf(globalStats.globalUpgradeSet.unlockJiggleDrops) + e.GlobalOf(globalStats.globalUpgradeSet.moreRefreshOrbs)) : 0;
+
         /// <summary>The tree boxes of the run's world (buytree0-27), each once.</summary>
         internal static upgradeBox[] TreeBoxes(Simulation sim) => FullTasGoal.Boxes.Where(b => b.token.StartsWith("buytree", StringComparison.Ordinal))
             .Select(b => sim.Shop.Box(FullTasGoal.BoxId(b.path, b.sibling))).Where(b => b != null).Distinct().ToArray();
@@ -1211,6 +1216,34 @@ namespace IGTAP.EngineSim.Cli
         const int NotEconomy = 4;
         /// <summary>A target this far off in ticks of GP income for the atoms it needs is out of reach (an enabler first).</summary>
         const double EnablerHorizon = 50000;
+        /// <summary>
+        /// A target realize found no way to in this world (a failed fact for it at the tree's group and the orbs' level) gets the cheapest
+        /// box that adds a refill orb level, offered and under its cap: the orbs change what the player can reach (Zip%'s zip movers' box,
+        /// 512 u past every search: the orb beside it needs unlockJiggleDrops + moreRefreshOrbs over 1). (null, null): none needed or none.
+        /// </summary>
+        (string label, string why) ReachEnabler(string target, Func<string, FullTasGoal> goalOf, ISet<string> offer, MoveTable moves, double[] rates)
+        {
+            moves.AtTreeLevel(MoveTable.TreeGroup(EconomyPlan.TreeLevel(EconomyPlan.TreeBoxes(_eval))));
+            moves.AtOrbs(EconomyPlan.OrbLevel(_eval));
+            int failed = moves.FailuresHere(target);
+            if (failed == 0) return (null, null);
+            var orbBoxes = new HashSet<globalStats.globalUpgradeSet> { globalStats.globalUpgradeSet.unlockJiggleDrops, globalStats.globalUpgradeSet.moreRefreshOrbs };
+            (string label, double ticks) best = (null, double.PositiveInfinity);
+            foreach (string label in offer.Where(l => l.StartsWith("buy:", StringComparison.Ordinal)).OrderBy(l => l, StringComparer.Ordinal))
+            {
+                if (!(goalOf(label)?.boxes is [string id]) || !(_eval.Shop.Box(id) is upgradeBox box) || !orbBoxes.Contains(box.globalUpgrade)) continue;
+                if (!(_eval.Shop.Need(new[] { id }, 1, shown: false) is double[] cost)) continue;
+                double ticks = 0;
+                for (int c = 0; c < cost.Length && c < rates.Length; c++)
+                {
+                    double missing = cost[c] - _eval.Shop.Holds((globalStats.Currencies)c);
+                    if (missing > 0) ticks = Math.Max(ticks, missing / Math.Max(rates[c], 1e-6));
+                }
+                if (ticks < best.ticks) best = (label, ticks);
+            }
+            return best.label == null ? (null, null) : (best.label, $"no way to it from {failed} place(s) at orb level {EconomyPlan.OrbLevel(_eval)}: a refill orb level first");
+        }
+
         /// <summary>The best's income is read over its last goals spanning at least this many ticks.</summary>
         const long IncomeSpan = 5000;
 
@@ -1240,10 +1273,11 @@ namespace IGTAP.EngineSim.Cli
         /// triple threat: globalStats.RecalcNpRewardPerTick, AtomColliderSystem.determineAtomTier) soonest paid for at today's income,
         /// offered, its door open and under its cap; (null, why) when the target is in reach or no such box is.
         /// </summary>
-        (string label, string why) Enabler(int kept, SimSnapshot at, string target, Func<string, FullTasGoal> goalOf, ISet<string> offer)
+        (string label, string why) Enabler(int kept, SimSnapshot at, string target, Func<string, FullTasGoal> goalOf, ISet<string> offer, MoveTable moves)
         {
             double[] rates = RecentIncome(kept);
             Read(at);
+            if (ReachEnabler(target, goalOf, offer, moves, rates) is var (reach, reachWhy) && reach != null) return (reach, reachWhy);
             int np = (int)globalStats.Currencies.AtomicPower, gp = (int)globalStats.Currencies.GreenPower;
             if (!(goalOf(target)?.boxes is string[] targetBoxes) || !(_eval.Shop.Need(targetBoxes, 1, shown: false) is double[] price) || price[np] <= 0) return (null, null);
             if (price[np] <= Math.Max(_eval.NpCapAfterPending(), _eval.Shop.Holds(globalStats.Currencies.AtomicPower))) return (null, null);
@@ -1445,7 +1479,7 @@ namespace IGTAP.EngineSim.Cli
                 _stageReport = new { target = targets[^1], from = kept, stop = $"{targets[^1]} is paid for at goal {kept}: the reach solve's" };
                 return NotEconomy;
             }
-            if (stage && only != null && Enabler(kept, at, targets[^1], GoalOf, only) is var (enabler, why) && enabler != null)
+            if (stage && only != null && Enabler(kept, at, targets[^1], GoalOf, only, moves) is var (enabler, why) && enabler != null)
             {
                 // In memory only: the run's definition takes the enabler with the install that buys it, so a stage that doesn't
                 // leaves nothing behind and the next stage chooses afresh.
@@ -1838,6 +1872,7 @@ namespace IGTAP.EngineSim.Cli
                     // makes it again on this engine build; a failure that teaches nothing new ends the stage (it would loop).
                     Read(z.State);
                     moves.AtTreeLevel(MoveTable.TreeGroup(EconomyPlan.TreeLevel(EconomyPlan.TreeBoxes(_eval))));
+                    moves.AtOrbs(EconomyPlan.OrbLevel(_eval));
                     bool learned = false;
                     foreach (string f in froms) learned |= moves.Failed(f, to, caps, why);
                     // Kept at once: a stage stopped or crashing before realize returns would lose it (and search it again).

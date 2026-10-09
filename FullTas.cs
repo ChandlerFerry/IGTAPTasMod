@@ -82,6 +82,9 @@ namespace IGTAPTasMod
             ("buycd9", "Courses/course 9/localUpgrades/Clone Dust", 3),
             ("buyatomlevel9", "Courses/course 9/localUpgrades/EnableTeleporters (1)", 5),
             ("buyclonemult9", "Courses/course 9/localUpgrades/CloneMult", 6),
+            // Course 7's free box enabling the jump and dash refresh orbs (unlockJiggleDrops); the orb by the zip movers' box also
+            // needs a refresh orb level (buytree20's MoreOrbs): JiggleDropScript.SetActiveVisualState.
+            ("buyorbs7", "Courses/course 7/localUpgrades/UnlockJiggleDrop", 3),
             ("buyreward10", "Courses/course 10/localUpgrades/Cash", 0),
             ("buyfree10a", "Courses/course 10/localUpgrades/Cash (1)", 1),
             ("buyfree10b", "Courses/course 10/localUpgrades/Cash (2)", 2),

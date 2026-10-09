@@ -78,7 +78,18 @@ namespace IGTAP.EngineSim.Cli
         /// buytree6 and buyclonegp8 from round Course 6, searched again a budget each).</summary>
         internal static readonly string Build = FactsVersion + "-" + FullTas.PieceTicks + "-" + FullTas.StepTicks;
         const int FactsVersion = 1;
-        int Group => Math.Max(0, _treeGroup);
+        /// <summary>A fact's world key: the tree's group and the refill orbs' level (a failure without the orbs says nothing about with them).</summary>
+        int Group => Math.Max(0, _treeGroup) + OrbKey * _orbs;
+        const int OrbKey = 1000;
+        int _orbs;
+
+        /// <summary>The refill orbs' level the facts read and write under (unlockJiggleDrops + moreRefreshOrbs).</summary>
+        internal void AtOrbs(int orbs)
+        {
+            if (orbs == _orbs) return;
+            _orbs = orbs;
+            _chains.Clear();
+        }
 
         /// <summary>Records that the move doesn't play here; true when it is a new fact.</summary>
         internal bool Failed(string from, string to, string caps, string why)
@@ -91,6 +102,9 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>The move failed from here, or from a place no farther from its target (the walkable distance, <see cref="Walked"/>):
         /// a farther start is no easier, so an unreachable box is tried once a distance, nearer each time (Zip%'s buyfree6b, tried from
         /// each place around Course 6 in turn, about 9 minutes each), and a nearer place still gets its try.</summary>
+        /// <summary>The places a move into this To failed from in this world (the tree's group, the orbs' level), any unlocks.</summary>
+        internal int FailuresHere(string to) => _failed.Keys.Count(k => k.to == to && k.tree == Group);
+
         internal bool HasFailed(string from, string to, string caps)
         {
             if (_failed.ContainsKey((from, to, caps, Group))) return true;
