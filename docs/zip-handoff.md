@@ -32,6 +32,63 @@ from the repo (`--install` writes `runs/Zip%.json`). Each stage plans to the nex
 
 Write the expected result before running; if a check hasn't answered in 5 minutes, stop it and think.
 
+## Adversarial review (required)
+
+One read-only reviewer agent found in nine minutes what this session lost hours to: a planner that could never buy
+`buytree0` (green chance stuck at 1%), tree transitions offered at levels where they can't play, a tree box bought in mid-air,
+a wall-clock lap give-up. Most of it was basics: a model that disagrees with the game, a cheap lever never taken.
+
+**When to run it.** Spawn it in the background with the Agent tool. Keep working while it reads, but don't start a long engine
+run until its report is in:
+- before the first long run of a session (stages, a beam over 10 minutes, any `--realize`);
+- after every batch of planner, realize or engine changes, before trusting them;
+- whenever the build's numbers part from the plan's (`planned ... GP, built ... GP`), or a step stalls, and the cause isn't
+  obvious within 5 minutes.
+
+**What to do with the report.**
+1. Check each finding against the game source or a `--try` before acting. The reviewer can be wrong too.
+2. Fix the cheap, certain ones first and commit each.
+3. Put the rest in "Open issues" below, ranked.
+4. Never start a long run with a known modelling bug in it.
+
+**The prompt** (paste it as is; fill in `<FROM>`, the last commit the previous review covered):
+
+```
+You are an adversarial reviewer. Find mistakes, wrong assumptions and missed opportunities in ongoing work on a game TAS
+toolchain. Be skeptical and concrete; no praise. READ-ONLY: do not edit files, build, run IGTAP.EngineSim.exe or anything
+CPU-heavy, or call the game's HTTP API. Reading, grep and git log/show/diff are fine.
+
+Repo: C:\Users\deafwave\Downloads\IGTAP\IGTAPTasMod. Read README.md "### Rules" (non-negotiable), AGENTS.md and
+docs/zip-handoff.md first. Ground truth for game mechanics: the decompiled game in obj/fulldecomp-steam/*.cs. The offline
+engine: enginesim/ (Runtime/ = game logic re-hosted, Cli/ = planners and searches).
+
+Goal: the Zip% Full-TAS run reaches buy:buytree16 (the zip movers) in as few game ticks as possible. Pipeline:
+`fulltas-plan --stages`: a beam-search economy planner (EconomyPlan.cs: Search, PlanFrom, Estimate/NpWait, SimEconomy,
+EconomyMoves.cs MoveTable) plans steps (lap:N, record:N, buy:box, all:box, atoms:N, restart@); realize (EconomyPlan.cs
+Realize/PlayStep/Waited; FullTasPlan.cs Lap/SavedLap/RecordLap/SeedLaps; FullTasBuild.cs Reaches/Cut/AdvanceFrom/SolvePiece)
+builds the plan into inputs in the full simulation and replans when the build drifts.
+
+Review `git log --oneline <FROM>..HEAD` with each diff, and any uncommitted diff under enginesim/ (other agents' uncommitted
+work in other files: ignore unless it breaks this). Read docs/zip-handoff.md's "Measured" and "Open issues" and challenge
+them.
+
+Hunt for, in order:
+(a) the plan's economy (SimEconomy/EconomyDrive: the player placed at a place, laps as Idle + Finish) disagreeing with the
+    game or the build: places that don't reach their box, on/off-screen clones, finish effects, prices, caps, resets;
+(b) economic levers the planner can't see or undervalues: buytree0 levels, green/clone boxes, buytree10/11 (courses exempt
+    from atom resets), atom-level and NP boxes, comp boost; anything --only, Offered/Gates/Never, the pre-check or the beam
+    width keeps from ever being chosen;
+(c) README rule violations (strict buys rule 38, stray buys, no state writes, offline = game);
+(d) compute that does nothing: searches that can't succeed, retries without a change, quadratic replays, unbounded waits;
+(e) plain code bugs in the diffs, and regressions for the runs that share this code (Tree%, TouchGrass-ANY%,
+    FalseEnding%-280).
+
+Report: a ranked list (most costly first) of concrete issues, each with file:line, what's wrong, evidence (code or game
+source), and a fix. Then the 3 highest-value next actions toward buytree16. Under ~900 words.
+```
+
+Last review: covered `bdc4278..70d99f0`. Findings fixed in `70d99f0`; the rest are open issues 1-8 below.
+
 ## Measured this session (don't re-derive)
 
 - **Saved course routes after a quick restart** replay only on the category start's exact state: the restart's landing moves
@@ -242,6 +299,8 @@ Continues [issue #26](https://github.com/ChandlerFerry/IGTAPTasMod/issues/26).
 
 ## Process lessons (the expensive ones)
 
+- **Run the adversarial review** (top of this file) before long runs and after each batch of changes. It caught in minutes
+  what cost the 2026-10-08 session hours.
 - **Test one step, not the whole build (the feedback loop).**
   - A change to how realize plays a step is checked on that step alone: `--try STEPS` for laps, buys and atom touches
     (seconds to minutes from the best's state at `--from`), `--join` for a saved route. Never by restarting a whole `--realize`: its beam and every
