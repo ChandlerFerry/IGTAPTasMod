@@ -518,7 +518,9 @@ namespace IGTAP.EngineSim.Cli
                         wait = Math.Max(wait, np);
                         continue;
                     }
-                    double rate = Math.Max(Rate(n, a, c), model != null && c < model.Length ? model[c] : 0);
+                    // GP at the clones' own rate (AtomRate): a state that touched the atom box mid-way to a GP price ranked as if its reset
+                    // courses still paid, and the beam drifted into touches (Zip%'s buyatomlevel9 stage: every stand for its 6M GP stalled).
+                    double rate = AtomRate(n, a, c, model);
                     // A price over the currency's cap (Area 2's NP, capped at NpCapTicks of its rate) is reached only by raising the
                     // rate (atoms): ranked by that rate, the cap's. The window's earnings stop at the cap, so every state read as no
                     // income and Cash broke the ties (Zip%'s plan to buytree5 laid up 3.3M Cash at NP's cap, 693, for 30 minutes).
@@ -527,7 +529,6 @@ namespace IGTAP.EngineSim.Cli
                         rate = ceiling[c] / NpCapTicks;
                         capped = true;
                     }
-                    if (rate <= 0) rate = Rate(n, root, c);
                     if (rate <= 0) { result.NoIncome++; wait = Math.Max(wait, NoIncome); continue; }
                     wait = Math.Max(wait, missing / rate);
                 }
