@@ -297,7 +297,7 @@ namespace IGTAP.EngineSim
 
         /// <summary>The global upgrades native code the engine steps reads from globalStats' static dictionary:
         /// PlatformMover.IE_AdvanceToNextState (PlatformMover.cs:134) and JiggleDropScript.FixedUpdate (JiggleDropScript.cs:88).</summary>
-        static readonly G[] StaticReads = { G.zipMoversUnlocked, G.unlockJiggleDrops };
+        static readonly G[] StaticReads = { G.zipMoversUnlocked, G.unlockJiggleDrops, G.unlockTeleporters };
 
         /// <summary>The run's values of <see cref="StaticReads"/> into the static dictionary (a buy, a restore, the start): _global
         /// stays the run's own.</summary>
@@ -928,7 +928,13 @@ namespace IGTAP.EngineSim
                     _sim.Touch(door);
                     door.ForceNextPhase();
                     return true;
-                case G.unlockTeleporters: return Unmodeled("teleporters (TeleporterScript.updateVisuals, upgradeBox.cs:767-769: TeleporterScript reads the static dictionary)");
+                case G.unlockTeleporters:
+                    // upgradeBox.cs:767-769: one level, not effectMult; TeleporterScript reads the static dictionary (WriteStatic).
+                    _global[(int)G.unlockTeleporters] += 1.0;
+                    WriteStatic();
+                    if (BoxObjectReferenceField.GetValue(box) is GameObject teleporter && (object)teleporter != null)
+                        teleporter.GetComponent<TeleporterScript>()?.updateVisuals();
+                    return true;
             }
             _global = (double[])_global.Clone();
             double effectMult = (double)BoxEffectMultField.GetValue(box);

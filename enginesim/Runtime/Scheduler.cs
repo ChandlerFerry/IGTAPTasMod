@@ -52,6 +52,13 @@ namespace IGTAP.EngineSim
         /// presentation or real-time work turbo never runs within a run (enginesim/README.md).
         /// </summary>
         public Predicate<MonoBehaviour> Continues;
+        /// <summary>
+        /// Targets whose Invokes run in the Update phase of their tick's first rendered frame (after the frame's Updates, as the
+        /// atom grid's call: <see cref="FireInUpdate"/>), not at the tick's start: one started
+        /// with no delay inside a physics step runs in that step's frame. A TeleporterScript's manualUpdate, whose teleport
+        /// moves the player.
+        /// </summary>
+        public Predicate<MonoBehaviour> InUpdate;
         /// <summary>Called before a coroutine step changes its target (Simulation.Touch keeps the target's fields in snapshots).</summary>
         public Action<MonoBehaviour> Stepping;
         /// <summary>A coroutine yielded something this scheduler doesn't model.</summary>
@@ -209,7 +216,13 @@ namespace IGTAP.EngineSim
         /// Fires the due invokes in queue order; a repeating one goes back at the end. Behaves as an index loop over the list
         /// that removes each fired entry (see <see cref="_kept"/>), in one pass.
         /// </summary>
-        public void FireDue()
+        public void FireDue() => Fire(false, Tick);
+
+        /// <summary>The due Invokes of <see cref="InUpdate"/> targets, in the Update phase of the tick's first rendered frame: one
+        /// started in this tick's step (due next tick) runs now.</summary>
+        public void FireInUpdate() => Fire(true, Tick + 1);
+
+        void Fire(bool inUpdate, int now)
         {
             _kept = _next = _skip = 0;
             try
@@ -217,12 +230,12 @@ namespace IGTAP.EngineSim
                 while (_next < Queue.Count)
                 {
                     Pending p = Queue[_next++];
-                    if (p.Due > Tick)
+                    if (p.Due > now || (InUpdate != null && InUpdate(p.Target)) != inUpdate)
                     {
                         Queue[_kept++] = p;
                         continue;
                     }
-                    if (p.Repeat >= 0f) Queue.Add(new Pending { Due = Tick + Math.Max(1, Mathf.FloorToInt(p.Repeat / Time.fixedDeltaTime)), Target = p.Target, Method = p.Method, Repeat = p.Repeat });
+                    if (p.Repeat >= 0f) Queue.Add(new Pending { Due = now + Math.Max(1, Mathf.FloorToInt(p.Repeat / Time.fixedDeltaTime)), Target = p.Target, Method = p.Method, Repeat = p.Repeat });
                     if (!p.Target) continue;
                     Resolve(p.Target.GetType(), p.Method)?.Invoke(p.Target);
                 }

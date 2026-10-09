@@ -2823,13 +2823,14 @@ route over only when they beat the record.
 - Real-time playback warns on the overlay when it drops frames: Update-driven state (clone pay, purchases waiting on
   it) can then differ from the route's.
 
-## Teleporters (not modelled yet)
+## Teleporters
 
-The game has a teleporter network, and no run uses it yet: buying its box ends an offline run (`Economy.cs`, `Unmodeled`).
+The game has a teleporter network. Turbo and the offline engine play it as 1x does: the box's buy, the pads' visits, the
+stick poll and the teleport.
 
-- **The box:** `Courses/course 9/localUpgrades/EnableTeleporters` at (19481.6, 6909.6), `unlockTeleporters`, base cost 2M GP
-  (20M at its tier, as the user saw), cap 1. Its neighbour `EnableTeleporters (1)` is an atom-level box (`buyatomlevel9`),
-  despite the name.
+- **The box:** `buy:buyteleporters`, `Courses/course 9/localUpgrades/EnableTeleporters` at (19481.6, 6909.6),
+  `unlockTeleporters`, base cost 2M GP (20M at its tier). Its neighbour `EnableTeleporters (1)` is an atom-level box
+  (`buyatomlevel9`), despite the name.
 - **How a teleporter works** (`TeleporterScript`): entering its trigger adds its `ID` to `globalStats.visitedTeleporters`,
   even before the unlock when `PickUpCpWhileInactive` is set (every Area 2 and zone 3 teleporter, none of Area 1's).
   With `unlockTeleporters`, standing in it polls `InputAction("Move")` every 0.02 s (`InvokeRepeating("manualUpdate")`):
@@ -2843,9 +2844,16 @@ The game has a teleporter network, and no run uses it yet: buying its box ends a
   - Area 1 loop (visits register only once unlocked): 101 (23606, 13076) → 105 (-1525, -202) → 104 (2871, 1973) → 103
     (5704, 7058) → 102 (16639, 11761) → 101.
   - 200 (24522, 13076) ↔ 201 (29557, 16887) ↔ 202 (28751, 26199, zone 3).
-- **Needed before a run can use them:**
-  - the plugin feeds the route's stick to `InputAction("Move")` too, at 1x and in turbo. Only `Movement.NormaliseInput` is
-    patched now, so `TeleporterScript` reads the real controller (an input patch, allowed by README rule 39);
-  - the engine models the box's buy (the global and `updateVisuals`) and keeps `visitedTeleporters` in its snapshots;
-  - the engine, turbo and 1x are checked against each other on a teleport (a probe, a tech demo);
-  - the planner's walks and the search's distance field know the teleport edges, so a plan prices them.
+- **How the legs play it:**
+  - the poll runs in the Update phase of each tick's first rendered frame, after the Updates, as the atom grid's call;
+    the first in the frame of the tick the player entered (the engine's `Scheduler.InUpdate`/`FireInUpdate`, turbo's
+    `TurboRunner.Polls`, kept in turbo snapshots). The teleport's write is taken as an Update's;
+  - the poll reads the run's stick: the plugin's `ReadTeleporterStick` (an input patch) at 1x and in turbo, the shim's
+    `InputAction` offline;
+  - the engine models the buy (`Economy.BoughtGlobal`, the static dictionary's `unlockTeleporters`, `updateVisuals`) and
+    keeps a pad's fields and `visitedTeleporters` in snapshots (`hooks.txt`'s `OnTeleporter`; snapshot format 10);
+  - `fulltas-plan --try` takes `stick:X/Y@T` (T ticks of a stick, then where the player is): from Zip%'s end,
+    `buy:buyteleporters,stick:1/0@20,stick:0/0@4,stick:0/-1@4` walks into pad 2 and comes out at pad 1, (19679.3, 6648.3) to
+    (21396.0, 3031.4).
+- **Not checked yet:** a 1x probe of a teleport against the engine (the poll's frame is reasoned from Unity's player loop
+  and the atom grid's measured order), and the planner's walks don't take teleport edges yet.

@@ -105,6 +105,39 @@ namespace IGTAPTasMod
             PatchWallClock("Movement.TimeStop.IE_TimeStop", coroutine == null ? null : AccessTools.EnumeratorMoveNext(coroutine));
             PatchWallClock("cameraMover.LateUpdate", AccessTools.Method(typeof(cameraMover), "LateUpdate"));
             PatchWallClock("ObjectBobber.FixedUpdate", AccessTools.Method(typeof(ObjectBobber), "FixedUpdate"));
+            _harmony.Patch(AccessTools.Method(typeof(TeleporterScript), "manualUpdate"),
+                transpiler: new HarmonyMethod(AccessTools.Method(typeof(TasPlugin), nameof(ReadTeleporterStick))));
+        }
+
+        static readonly AccessTools.FieldRef<TeleporterScript, Movement> TeleporterPlayer = AccessTools.FieldRefAccess<TeleporterScript, Movement>("player");
+
+        /// <summary>
+        /// TeleporterScript.manualUpdate reads the Move action itself, not the player's input: during a run it reads the run's stick
+        /// (what Movement.NormaliseInput gets, BeforeNormaliseInput), as the offline engine's InputAction does. An input patch.
+        /// </summary>
+        private static IEnumerable<CodeInstruction> ReadTeleporterStick(IEnumerable<CodeInstruction> instructions)
+        {
+            MethodInfo stick = AccessTools.Method(typeof(TasPlugin), nameof(TeleporterStick));
+            int replaced = 0;
+            foreach (CodeInstruction instruction in instructions)
+            {
+                if (!(instruction.operand is MethodInfo m && m.Name == nameof(InputAction.ReadValue) && m.DeclaringType == typeof(InputAction)))
+                {
+                    yield return instruction;
+                    continue;
+                }
+                replaced++;
+                yield return new CodeInstruction(System.Reflection.Emit.OpCodes.Ldarg_0).MoveLabelsFrom(instruction);
+                yield return new CodeInstruction(System.Reflection.Emit.OpCodes.Call, stick);
+            }
+            if (replaced != 1) Log.LogWarning("TeleporterScript.manualUpdate: expected one Move read, replaced " + replaced + ".");
+        }
+
+        private static Vector2 TeleporterStick(InputAction action, TeleporterScript teleporter)
+        {
+            Movement player = TeleporterPlayer(teleporter);
+            if (Instance != null && Instance._engine.IsRunning && player != null && !IsMenuPlayer(player)) return Instance._engine.StickFor(player);
+            return action.ReadValue<Vector2>();
         }
 
         private void PatchWallClock(string name, MethodInfo target)

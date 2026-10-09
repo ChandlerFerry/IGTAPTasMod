@@ -80,6 +80,8 @@ namespace IGTAPTasMod
             ("buyclone9", "Courses/course 9/localUpgrades/Clones (1)", 1),
             ("buygreen9", "Courses/course 9/localUpgrades/GP", 2),
             ("buycd9", "Courses/course 9/localUpgrades/Clone Dust", 3),
+            // The teleporters' unlock (unlockTeleporters, TeleporterScript); its neighbour "(1)" is an atom-level box.
+            ("buyteleporters", "Courses/course 9/localUpgrades/EnableTeleporters", 4),
             ("buyatomlevel9", "Courses/course 9/localUpgrades/EnableTeleporters (1)", 5),
             ("buyclonemult9", "Courses/course 9/localUpgrades/CloneMult", 6),
             // Course 7's free box enabling the jump and dash refresh orbs (unlockJiggleDrops); the orb by the zip movers' box also

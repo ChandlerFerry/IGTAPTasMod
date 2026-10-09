@@ -56,3 +56,8 @@ prefix PlatformMover::MakeIntangible OnMakeIntangible
 replace AtomColliderSystem::callAddNewAtom OnAtomTick
 # Area 1's OnLoad (a zone load back into zone 1) writes its courses' boxes' cost scaling: the host keeps them in snapshots first.
 prefix OvergrowthLoadScript::OnLoad OnOvergrowthLoad
+# A teleporter's trigger and its failsafe change its fields, the destination's and globalStats.visitedTeleporters: the
+# host hook keeps them in snapshots (Simulation.Touch).
+prefix TeleporterScript::OnTriggerEnter2D OnTeleporter
+prefix TeleporterScript::OnTriggerExit2D OnTeleporter
+prefix TeleporterScript::TeleGlitchFailsafe OnTeleporterFailsafe

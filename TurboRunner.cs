@@ -78,6 +78,14 @@ namespace IGTAPTasMod
         static readonly MethodInfo OriginLateUpdate = AccessTools.Method(typeof(FloatingOrigin), "LateUpdate");
         static readonly AccessTools.FieldRef<FloatingOrigin, bool> OriginRebasing = AccessTools.FieldRefAccess<FloatingOrigin, bool>("RebaseInProgress");
         static readonly List<(int due, MonoBehaviour target, string method)> Pending = new List<(int, MonoBehaviour, string)>();
+        /// <summary>
+        /// The teleporters polling the stick (TeleporterScript's InvokeRepeating("manualUpdate", 0, 0.02) from its trigger, until
+        /// its exit's CancelInvoke): the tick each runs next, in the Update phase of that tick's first rendered frame, after the
+        /// Updates, as the atom grid's call; one started in a tick's step runs in that tick's frame. The engine's
+        /// Scheduler.FireInUpdate the same.
+        /// </summary>
+        static readonly List<(int due, TeleporterScript target)> Polls = new List<(int, TeleporterScript)>();
+        const string PollCall = "manualUpdate";
         static readonly List<Routine> Routines = new List<Routine>();
         static readonly AccessTools.FieldRef<WaitForSeconds, float> WaitSeconds = AccessTools.FieldRefAccess<WaitForSeconds, float>("m_Seconds");
         static readonly Func<object, object> CloneObject = (Func<object, object>)Delegate.CreateDelegate(typeof(Func<object, object>),
@@ -357,6 +365,12 @@ namespace IGTAPTasMod
         /// <summary>The collider's OnEnable in a run (AtomColliderSystem.cs:111-115): its InvokeRepeating on the run's ticks, as an Invoke.</summary>
         static bool BeforeInvokeRepeating(MonoBehaviour __instance, string methodName, float time)
         {
+            if (Active && __instance is TeleporterScript teleporter && methodName == PollCall)
+            {
+                Polls.RemoveAll(p => p.target == teleporter);
+                Polls.Add((_tick + Mathf.FloorToInt(time / Time.fixedDeltaTime), teleporter));
+                return false;
+            }
             if (!Active || !(__instance is AtomColliderSystem collider) || methodName != AtomCall) return true;
             _atomCollider = collider;
             // Its 0 delay calls it in the frame's own pass (a zone load's frame, k = 2), then in the first frame of every 20th
@@ -372,6 +386,7 @@ namespace IGTAPTasMod
             if (!Active) return true;
             if (__instance is AtomColliderSystem && methodName == AtomCall) { _atomDue = -1; _atomNow = false; _atomUnseen = false; }
             Pending.RemoveAll(p => p.target == __instance && p.method == methodName);
+            if (methodName == PollCall) Polls.RemoveAll(p => p.target == __instance);
             return false;
         }
 
@@ -603,6 +618,8 @@ namespace IGTAPTasMod
             public float rotation, angularVelocity;
             public (Vector2 offset, Vector2 size, int exclude, bool enabled)[] colliders;
             public (int due, MonoBehaviour target, string method)[] pending;
+            /// <summary>The teleporters polling the stick (<see cref="Polls"/>), each's next tick from the snapshot's.</summary>
+            public (int due, TeleporterScript target)[] polls;
             /// <summary>Behaviours whose Start a run drew that Unity hasn't run (<see cref="StartPass"/>).</summary>
             public Behaviour[] startsModelled;
             public Economy economy;
@@ -1010,7 +1027,7 @@ namespace IGTAPTasMod
                 rotation = body.rotation, angularVelocity = body.angularVelocity,
                 colliders = Array.ConvertAll(movement.GetComponents<BoxCollider2D>(),
                     c => (c.offset, c.size, (int)c.excludeLayers, c.enabled)),
-                pending = pending, startsModelled = _startsModelled.ToArray(), economy = economy ? CaptureEconomy(next) : null, vman = Vman.Capture(),
+                pending = pending, polls = Polls.Select(p => (p.due - next, p.target)).ToArray(), startsModelled = _startsModelled.ToArray(), economy = economy ? CaptureEconomy(next) : null, vman = Vman.Capture(),
                 camera = movement.cam != null ? FieldState.Capture(movement.cam) : null,
                 origin = origin != null ? origin.currentOrigin : Vector3.zero, rebasing = _rebase != null,
                 stepFrom = Active ? _stepFrom : body.position, stepTo = Active ? _stepTo : body.position,
@@ -1355,6 +1372,8 @@ namespace IGTAPTasMod
             _frame = 0;
             _atomNow = false;
             if (resume != null) Pending.AddRange(resume.pending);
+            Polls.Clear();
+            if (resume?.polls != null) Polls.AddRange(resume.polls);
             if (resume != null) RestoreRoutines(resume.routines);
             else
             {
@@ -1492,6 +1511,23 @@ namespace IGTAPTasMod
                                 _atomDue += atomRepeat;
                                 if (_atomCollider != null) CallInvoked(_atomCollider, AtomCall);
                             }
+                            if (k == 0 && repeat == repeats && Polls.Count > 0)
+                            {
+                                Vector3 before = player.position;
+                                foreach (var (due, teleporter) in Polls.ToArray())
+                                {
+                                    if (due > _tick) continue;
+                                    int i = Polls.IndexOf((due, teleporter));
+                                    if (i >= 0) Polls[i] = (_tick + 1, teleporter);
+                                    if (teleporter != null) CallInvoked(teleporter, PollCall);
+                                }
+                                // A teleport's write, as an Update's.
+                                if (player.position != before)
+                                {
+                                    if (k < alphas.Length - 1 || repeat > 0) Physics2D.SyncTransforms();
+                                    _stepFrom = _stepTo = player.position;
+                                }
+                            }
                             // The frame's yield-null resumes after its Updates (a zone load, ZoneLoader.IE_Load), then the grid's
                             // first call when the load's OnEnable started it: InvokeRepeating's 0 delay runs in that same pass.
                             Resume(Wait.Frame, frameDt);
@@ -1529,6 +1565,10 @@ namespace IGTAPTasMod
                 }
                 Routines.Clear();
                 HandAtomGrid(_atomDue >= 0 ? _atomDue + 1 - _tick : _atomUnseen ? (int?)null : -1);
+                // The teleporters' polls back to Unity, on the same ticks.
+                foreach (var (due, teleporter) in Polls)
+                    if (teleporter != null) teleporter.InvokeRepeating(PollCall, Mathf.Max(0f, (due - _tick) * Time.fixedDeltaTime), Time.fixedDeltaTime);
+                Polls.Clear();
                 if (_rebase != null)
                 {
                     FloatingOrigin origin = TasPlugin.CurrentFloatingOrigin();

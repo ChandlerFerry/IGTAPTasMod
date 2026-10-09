@@ -1717,6 +1717,25 @@ namespace IGTAP.EngineSim.Cli
                     continue;
                 }
                 _stepTicks = StepTicks;
+                if (kind == "stick")
+                {
+                    // stick:X/Y@T: T ticks of that stick, no button, from the build: whether a stretch plays at all (a teleporter's
+                    // up or down, a drop), then where the player is.
+                    float[] v = arg.Substring(6).Split('/').Select(s => float.Parse(s, CultureInfo.InvariantCulture)).ToArray();
+                    var add = Enumerable.Repeat(new InputTick { x = v[0], y = v[1] }, ticks).ToList();
+                    SimSnapshot next = AdvanceFrom(z.State, z.Inputs.Count, add);
+                    if (next == null) { Console.WriteLine($"try {text}: the run ended"); return 3; }
+                    z.Inputs = z.Inputs.Concat(add).ToList();
+                    z.State = next;
+                    z.Tick += ticks;
+                    Read(next);
+                    Vector3 p = _eval.Player.transform.position;
+                    WorldPos w = _eval.ToWorld(new ScenePos(p.x, p.y));
+                    globalStats stats = Singleton<globalStats>.Instance;
+                    Console.WriteLine($"try {text}: at ({w.x:0.0}, {w.y:0.0}); teleporters {(globalStats.globalUpgradeDict.TryGetValue(globalStats.globalUpgradeSet.unlockTeleporters, out double tp) ? tp : 0)}, "
+                        + $"visited [{string.Join(" ", stats?.visitedTeleporters ?? new List<int>())}]");
+                    continue;
+                }
                 var played = PlayStep(new PlanStep(kind, arg, ticks), z, goalOf, out FullTasGoal[] goals, out _, stood: kind is "buy" or "atoms", levels: levels);
                 _stepTicks = long.MaxValue;
                 if (played == null)

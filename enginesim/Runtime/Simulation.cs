@@ -276,7 +276,13 @@ namespace IGTAP.EngineSim
             // TreeSegmentActivationComponent.IE_Grow (Shop.GrowTree): the segment's ground off until its trunks have grown, its box
             // falling into place.
             // ZoneLoader.IE_Load: a zone activator's load, two yields after its trigger (zoneChanger.OnTriggerEnter2D).
-            Scheduler.Continues = t => t is PlatformMover || t is TreeSegmentActivationComponent || t is ZoneLoader;
+            Scheduler.Continues = t => t is PlatformMover || t is TreeSegmentActivationComponent || t is ZoneLoader || t is TeleporterScript;
+            Scheduler.InUpdate = t => t is TeleporterScript;
+            Hooks.Teleporter = teleporter =>
+            {
+                Touch((MonoBehaviour)teleporter);
+                if (Singleton<globalStats>.Instance is globalStats stats) Touch(stats);
+            };
             Scheduler.Stepping = Touch;
             Scheduler.Unmodeled = what => { if (Engine.IsRunning) Engine.Abort("Unmodeled: " + what); };
             Shop = new Shop(this, world);
@@ -1115,17 +1121,26 @@ namespace IGTAP.EngineSim
                         Player.transform.StoreWorldPosition(Vector3.Lerp(_stepFrom, _stepTo, alphas[k]));
                         _update();
                     }
-                    if (player && Physics.PlayerTransformDirty)
+                    void TakeWrite()
                     {
+                        if (!player || !Physics.PlayerTransformDirty) return;
                         // At 1x the write reaches the body at the next frame's start. After the tick's last frame that is the
                         // next tick's step, so its FixedUpdate still queries the body where it was (the squish check's
                         // Collider2D.Distance) and the sync before the step moves it.
                         if (k < alphas.Length - 1 || repeat > 0) Physics.SyncTransforms();
                         _stepFrom = _stepTo = Player.transform.m_Position;
                     }
+                    TakeWrite();
                     float dt = repeat == repeats ? Frames.Step(ticks, k) : 0f;
                     Shop.StepClones(dt);
-                    if (k == 0 && repeat == repeats) Shop.Economy?.GridFrame();
+                    if (k == 0 && repeat == repeats)
+                    {
+                        Shop.Economy?.GridFrame();
+                        // A teleporter's poll (TeleporterScript.manualUpdate), an Invoke as the grid's: its teleport writes the
+                        // player's transform. Turbo's TurboRunner.Polls the same.
+                        Scheduler.FireInUpdate();
+                        TakeWrite();
+                    }
                     if (player) OnFrame?.Invoke(alphas[k], repeat > 0);
                     Scheduler.FrameDeltaTime = dt;
                     // The frame's yield-null resumes after its Updates (a zone load, ZoneLoader.IE_Load, in its third frame), then

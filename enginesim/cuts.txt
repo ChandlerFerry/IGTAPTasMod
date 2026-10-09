@@ -12,9 +12,6 @@ GenericSpriteDisabler::OnTriggerEnter2D
 GenericSpriteDisabler::OnTriggerExit2D
 LoadingPopupScript::OnTriggerEnter2D
 LoadingPopupScript::OnTriggerExit2D
-# Teleporter prompts/visited list: teleporting needs a stick-up input the solver never gives.
-TeleporterScript::OnTriggerEnter2D
-TeleporterScript::OnTriggerExit2D
 # End-game credits cutscene.
 FakeCreditsControlScript::OnTriggerEnter2D
 # Tutorial text fade (DOTween on TMP_Text colour).
