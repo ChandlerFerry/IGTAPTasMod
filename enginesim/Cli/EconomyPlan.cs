@@ -1483,7 +1483,10 @@ namespace IGTAP.EngineSim.Cli
                     if (waited == null) { Console.WriteLine($"try {text}: the run ended standing"); return 3; }
                     (z.Inputs, z.State, z.Tick) = (z.Inputs.Concat(standing).ToList(), waited, z.Tick + ticks);
                     Read(z.State);
-                    Console.WriteLine($"try {text}: the build stood {ticks} ticks: Cash {_eval.Shop.Holds(globalStats.Currencies.Cash):G4}, GP {_eval.Shop.Holds(globalStats.Currencies.GreenPower):G4}");
+                    Economy model = _eval.Shop.Economy;
+                    double[] rate = model?.CloneRates(0.02f) ?? new double[7];
+                    Console.WriteLine($"try {text}: the build stood {ticks} ticks: Cash {_eval.Shop.Holds(globalStats.Currencies.Cash):G4}, GP {_eval.Shop.Holds(globalStats.Currencies.GreenPower):G4}"
+                        + $"; green chance {model?.GlobalOf(globalStats.globalUpgradeSet.greenCloneClance):G4}%, clone rates a tick: Cash {rate[0]:G4}, GP {rate[1]:G4}; {model?.DescribeClones()}");
                     continue;
                 }
                 if (kind == "idle" || kind == "finish")

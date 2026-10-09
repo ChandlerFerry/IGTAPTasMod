@@ -621,6 +621,10 @@ namespace IGTAP.EngineSim
         /// × CloneDustGpCdMult. Bigness and fastness rolls left out (a lower bound). The planner ranks an investment by it at once,
         /// before the money it brings shows over a window.
         /// </summary>
+        /// <summary>Each course's clones as the model holds them (fulltas-plan --try's wait@ line).</summary>
+        internal string DescribeClones() => string.Join(" ", _clones.Where(c => c.V.Count > 0).Select(c =>
+            $"{c.Course?.courseNumber}:{c.V.Count}/{c.V.PathLength:0.##}s {(c.V.OnScreen ? "on" : "off")} gp {c.Course?.gpReward:G3} counter {c.V.Green:0.#} div {c.V.OffscreenDivisor:0.##}{(c.Script.isActiveAndEnabled ? "" : " inactive")}"));
+
         internal double[] CloneRates(float dt)
         {
             var rates = new double[7];
