@@ -957,7 +957,15 @@ namespace IGTAP.EngineSim.Cli
             _restored = null;
             string[] ids = Ids(label);
             if (ids.Length != 1) throw new InvalidOperationException($"{label}: {ids.Length} boxes, the planner buys one a tick");
-            return _sim.EconomyBuy(ids[0], At(label));
+            // Touched from the box's touch spot when the place doesn't reach it: a place is where the player stood when a run bought
+            // the box (from its side, jumping through), and Zip%'s buytree0 place stands 135 u off the box's trigger, so the planner
+            // never bought a second level (each +1% green clone chance: five more made six times the GP).
+            Vector2 at = At(label);
+            // A tree box only once bought (at rest on its spot): one just grown drops from 2000 u above for ~100 ticks, and its touch
+            // spot would buy it in mid-air.
+            if (_sim.Shop.Box(ids[0]) is upgradeBox box && (box.TimesUsed > 0 || !ids[0].Contains("TreeArea", StringComparison.Ordinal))
+                && !_sim.Reaches(box, at) && _sim.TouchSpot(box) is Vector2 spot) at = spot;
+            return _sim.EconomyBuy(ids[0], at);
         }
 
         public void Finish(string course)
@@ -1443,14 +1451,26 @@ namespace IGTAP.EngineSim.Cli
             foreach (string text in steps.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
                 int atSign = text.IndexOf('@');
-                string arg = atSign < 0 ? text : text.Substring(0, atSign);
-                int ticks = atSign < 0 ? 300 : int.Parse(text.Substring(atSign + 1), CultureInfo.InvariantCulture);
+                string arg = (atSign < 0 ? text : text.Substring(0, atSign)).TrimEnd('!');
+                int ticks = atSign < 0 ? 300 : int.Parse(text.Substring(atSign + 1).TrimEnd('!'), CultureInfo.InvariantCulture);
                 string kind = arg.Substring(0, arg.IndexOf(':'));
+                arg = arg.TrimEnd('!');
                 int levels = kind == "atoms" ? int.Parse(arg.Substring(6), CultureInfo.InvariantCulture) : 1;
                 var clock = Stopwatch.StartNew();
                 long from = z.Tick;
                 // idle:PLACE: the plan's economy (SimEconomy.Idle: the player put at the place) from here, for comparing with the build's;
                 // the build's state isn't moved.
+                // where:PLACE: the movement table's place against its box's touch spot now (the plan's buys touch at the place).
+                if (kind == "where")
+                {
+                    string place = arg.Substring(6);
+                    Read(z.State);
+                    string have = moves.Places.TryGetValue(place, out Place pl) ? $"{pl.X:0.0},{pl.Y:0.0}" : "none";
+                    string spot = goalOf(place)?.boxes is [string id] && _eval.Shop.Box(id) is upgradeBox box && _eval.TouchSpot(box) is Vector2 t
+                        ? $"{_eval.ToWorld(new ScenePos(t.x, t.y)).x:0.0},{_eval.ToWorld(new ScenePos(t.x, t.y)).y:0.0} (active {box.gameObject.activeInHierarchy}, used {box.TimesUsed}/{box.Cap})" : "none";
+                    Console.WriteLine($"try {text}: the table's place {have}; the box's touch spot {spot}");
+                    continue;
+                }
                 if (kind == "idle" || kind == "finish")
                 {
                     var economy = new SimEconomy(_eval, moves, label => goalOf(label)?.boxes);
@@ -1470,6 +1490,24 @@ namespace IGTAP.EngineSim.Cli
                 {
                     Console.WriteLine($"try {arg}: doesn't play from tick {from} ({clock.Elapsed.TotalSeconds:0.0} s): {_whyNot}");
                     return 3;
+                }
+                // A step marked ! is replayed 25 inputs at a time: the player, the courses whose clones are on screen, and the GP.
+                if (text.Contains('!'))
+                {
+                    Track(_kept.Concat(z.Planned).Concat(goals).ToList());
+                    SimSnapshot s = z.State.WithGoal(Fresh(_goals, _kept.Length + z.Planned.Count));
+                    var added = played.Value.inputs.Skip(z.Inputs.Count).ToList();
+                    var marks = new List<string>();
+                    for (int k = 0; k < added.Count && s != null; k += 25)
+                    {
+                        s = AdvanceFrom(s, z.Inputs.Count + k, added.Skip(k).Take(25).ToList());
+                        if (s == null) break;
+                        Read(s);
+                        string on = string.Join("+", _eval.World.All<clonesScript>().Where(c => _eval.Shop.Economy?.OnScreenOf(c) == true).Select(c => c.GetComponentInParent<courseScript>()?.courseNumber));
+                        var p = _eval.PlayerWorld;
+                        marks.Add($"{k + 25}:{p.x:0},{p.y:0} on {on} GP {_eval.Shop.Holds(globalStats.Currencies.GreenPower):G4}");
+                    }
+                    Console.WriteLine($"try {text} trail: " + string.Join(" | ", marks));
                 }
                 (z.Inputs, z.State, z.Tick) = played.Value;
                 z.Planned.AddRange(goals);
@@ -1685,7 +1723,9 @@ namespace IGTAP.EngineSim.Cli
                 z.Inputs = inputs;
                 z.State = state;
                 z.Planned.AddRange(goals);
-                if (goals.Any(g => g.label.StartsWith("buy:buytree", StringComparison.Ordinal))) moves.Blocked.Clear();
+                // Only a tree box's first buy grows a segment (a new way); its later levels grow nothing.
+                if (goals.Any(g => g.label.StartsWith("buy:buytree", StringComparison.Ordinal) && !_kept.Concat(z.Planned.Take(z.Planned.Count - goals.Length)).Any(k => k.label == g.label)))
+                    moves.Blocked.Clear();
                 double cash = Cash(state), gp = _eval.Shop.Holds(globalStats.Currencies.GreenPower);
                 string planGp = i < plan.Held.Length && plan.Held[i]?.Length > 1 ? plan.Held[i][1].ToString("G4", CultureInfo.InvariantCulture) : "?";
                 long off = end - planEnd;
