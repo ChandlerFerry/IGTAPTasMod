@@ -89,7 +89,7 @@ namespace IGTAP.EngineSim.Cli
             table.AddBest(stops);
             if (buyTableFile != null) table.AddBuyTable(buyTableFile);
             foreach (var (id, at) in run.CourseGates()) table.AddPlace(id, at.x, at.y, null);
-            if (routesFile != null) { table.AddSavedLaps(routesFile); table.AddSavedTransitions(routesFile); }
+            if (routesFile != null) { table.AddSavedLaps(routesFile); table.AddSavedTransitions(routesFile, run.TreeLevel(best)); }
             movesFile ??= run.MovesFile;
             if (File.Exists(movesFile))
                 foreach (var kv in Read(movesFile)._moves)
@@ -486,6 +486,18 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
+        /// <summary>The Tree's levels whose boxes change the world, each standing for the levels up to it (tools/tree-transitions.py's
+        /// LEVELS; README ### Rules 21).</summary>
+        static readonly int[] TreeLevels = { 0, 1, 2, 3, 5, 6, 7, 10, 11, 12, 13, 14, 15, 16, 17, 19, 20, 22, 27 };
+
+        /// <summary>A tree<paramref name="level"/>to<paramref name="course"/> route plays at tree level <paramref name="at"/>: its level's
+        /// group (the first listed level at or over it), or for Courses 7 and 9 level 0 at levels 1 and 2 (they play as 0).</summary>
+        internal static bool TreeLevelPlays(int level, int course, int at)
+        {
+            int group = TreeLevels.FirstOrDefault(l => l >= at, TreeLevels[^1]);
+            return group == level || (course == 7 || course == 9) && level == 0 && at <= 2;
+        }
+
         static readonly Regex TransitionName = new Regex(@"^tree\d+to(\d+)_(" + Caps.LabelPattern + @") (\d+(?:\.\d+)?)$");
 
         /// <summary>
@@ -495,7 +507,7 @@ namespace IGTAP.EngineSim.Cli
         /// are reached so (a tree box's quick restart lands at bonus 11's checkpoint); walked from another course's finish the plan
         /// priced them as a grid walk realize can't play (Zip%'s first Course 7 lap from Course 6, 12 minutes of search for none).
         /// </summary>
-        void AddSavedTransitions(string routesFile)
+        void AddSavedTransitions(string routesFile, int treeLevel)
         {
             string coursesFile = Path.Combine(Path.GetDirectoryName(routesFile), "courses.json");
             if (!File.Exists(routesFile) || !File.Exists(coursesFile)) return;
@@ -519,6 +531,10 @@ namespace IGTAP.EngineSim.Cli
             }
             foreach (var (name, course, caps, ticks) in transitions)
             {
+                // Only the transition of the run's own tree level (README ### Rules 21): its route is exact inputs over that tree, and
+                // a grown tree cuts it (Zip% at level 7: tree0to7 and tree0to9 priced Courses 7 and 9's laps realize couldn't play).
+                int level = int.Parse(name.Substring(4, name.IndexOf("to", StringComparison.Ordinal) - 4), CultureInfo.InvariantCulture);
+                if (!TreeLevelPlays(level, course, treeLevel)) continue;
                 JsonElement? from = courses.RootElement.EnumerateArray().Cast<JsonElement?>().FirstOrDefault(c => c.Value.TryGetProperty("name", out JsonElement cn)
                     && cn.ValueKind == JsonValueKind.String && cn.GetString() == name);
                 if (from == null) continue;
@@ -570,6 +586,9 @@ namespace IGTAP.EngineSim.Cli
 
     sealed partial class FullTas
     {
+        /// <summary>The Tree's level at the best's last goal: the tree boxes it bought (each box once; README ### Rules 21's level).</summary>
+        internal int TreeLevel(Route best) => _labels.Take(best.Progress).Where(l => l.StartsWith("buy:buytree", StringComparison.Ordinal)).Distinct().Count();
+
         internal string RoutesFile => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(_trace)), "..", "routes.json");
         internal string BuyTableFile => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(_trace)), "fulltas", _name + ".buytable.json");
         internal string MovesFile => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(_trace)), "fulltas", _name + ".moves.json");

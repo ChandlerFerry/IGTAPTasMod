@@ -118,6 +118,11 @@ namespace IGTAP.EngineSim.Cli
                 Console.WriteLine((ok ? "PASS " : "FAIL ") + what);
                 if (!ok) fails++;
             }
+            // Tree transitions by the run's tree level (README ### Rules 21): a level's group, Courses 7/9's level 0 at 1-2, none past.
+            Check(MoveTable.TreeLevelPlays(0, 7, 0) && MoveTable.TreeLevelPlays(0, 7, 2) && MoveTable.TreeLevelPlays(3, 9, 3)
+                && !MoveTable.TreeLevelPlays(0, 7, 3) && !MoveTable.TreeLevelPlays(3, 7, 7) && !MoveTable.TreeLevelPlays(0, 6, 1)
+                && MoveTable.TreeLevelPlays(10, 8, 8) && MoveTable.TreeLevelPlays(10, 8, 10) && !MoveTable.TreeLevelPlays(10, 8, 7)
+                && MoveTable.TreeLevelPlays(27, 10, 30), "tree transitions play only at their tree level's group");
             var toy = new Toy();
             PlanResult plan = EconomyPlan.Search(toy, 0, "c1", p => Options(toy, p), 1000000, 60);
             Console.WriteLine($"planner: {(plan.Done ? "tick " + plan.Tick : "not done")}, {plan.States} states, {plan.Dropped} dominated dropped: "
