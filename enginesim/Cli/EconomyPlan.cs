@@ -1229,8 +1229,13 @@ namespace IGTAP.EngineSim.Cli
             if (gpTicks <= EnablerHorizon) return (null, null);
             string why = k > EconomyPlan.MaxAtomsCount ? $"no {EconomyPlan.MaxAtomsCount} atoms make NP's cap {price[np]:G3}"
                 : $"{k} atoms for NP's cap {price[np]:G3}, {gpNeed:G3} GP, {gpTicks:G3} ticks of GP at {rates[gp]:G3} a tick";
+            // NP's own equation, and a course kept through atom touches (each touch resets Courses 6 and 7: the GP and Cash the later
+            // enablers cost start again from nothing, which nothing in the beam's estimate values).
             var raises = new HashSet<globalStats.globalUpgradeSet>
-                { globalStats.globalUpgradeSet.atomLevelChance, globalStats.globalUpgradeSet.increasedNuclearPower, globalStats.globalUpgradeSet.tripleThreatIncrease };
+            {
+                globalStats.globalUpgradeSet.atomLevelChance, globalStats.globalUpgradeSet.increasedNuclearPower, globalStats.globalUpgradeSet.tripleThreatIncrease,
+                globalStats.globalUpgradeSet.exemptCourseFromAtomPrestige,
+            };
             double npRate = Singleton<globalStats>.Instance?.NPrewardPerTick ?? 0;
             (string label, double ticks) best = (null, double.PositiveInfinity);
             foreach (string label in offer.Where(l => l.StartsWith("buy:", StringComparison.Ordinal)).OrderBy(l => l, StringComparer.Ordinal))
@@ -1243,7 +1248,9 @@ namespace IGTAP.EngineSim.Cli
                 {
                     double missing = cost[c] - _eval.Shop.Holds((globalStats.Currencies)c);
                     if (missing <= 0) continue;
-                    double rate = c == np ? (cost[c] <= _eval.NpCapAfterPending() ? npRate : 0) : rates[c];
+                    // A currency earning nothing now (just after a touch) ranks the box by its price, as a trickle: the stage that targets
+                    // it plans the income too. An NP price over NP's cap can't be waited for.
+                    double rate = c == np ? (cost[c] <= _eval.NpCapAfterPending() ? npRate : 0) : Math.Max(rates[c], 1e-6);
                     ticks = Math.Max(ticks, rate > 0 ? missing / rate : double.PositiveInfinity);
                 }
                 if (ticks < best.ticks) best = (label, ticks);
@@ -1447,7 +1454,7 @@ namespace IGTAP.EngineSim.Cli
                 Realization z = Realize(plan, start, route, startTick, place, prefix, moves, (s, p, pre) => PlanFrom(s, p, pre, moves, settings, goalOf), goalOf);
                 moves.Save(movesFile);
                 var (run, goals, _) = z.Done ? Join(z.Planned, z.Inputs, all, kept, targetIndex) : (null, null, null);
-                if (run != null && run.Progress < goals.Length)
+                if (run != null && run.Progress < kept + z.Planned.Count)
                     Log($"realize {name}: the joined route replays to goal {run.Progress} of {goals.Length} ({(run.Progress < goals.Length ? goals[run.Progress] : "")} next): {run.EndReason}");
                 realized.Add((name, z, run, goals ?? all.Take(kept).Concat(z.Planned).Select(g => g.label).ToArray()));
                 if (run == null && z.Inputs != null)
