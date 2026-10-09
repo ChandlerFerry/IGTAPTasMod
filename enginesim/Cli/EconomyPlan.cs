@@ -1324,8 +1324,6 @@ namespace IGTAP.EngineSim.Cli
             PlanSettings settings, Func<string, FullTasGoal> goalOf, string outFile)
         {
             if (targetIndex < 0) throw new ArgumentException("the target is no goal of the run after --from: realize joins the best's way on after it");
-            _maxRounds = Solve.Option(args, "--rounds", _maxRounds);
-            _offTicks = Solve.Option(args, "--off-ticks", _offTicks);
             LoadSeeds();
             _planBase = _runGoals;
             FullTasGoal[] all = _runGoals.Goals;
@@ -1592,9 +1590,10 @@ namespace IGTAP.EngineSim.Cli
             public readonly List<object> Log = new List<object>();
         }
 
-        /// <summary>Realize plans again at most this many times (--rounds); a step built more than this many ticks from its plan's tick
-        /// (--off-ticks: a long stretch's plan takes minutes to make again, worth it only for a larger drift) is planned again from.</summary>
-        int _maxRounds = 3, _offTicks = 10;
+        /// <summary>A step built more than this many ticks off its plan's tick is planned again from, once per goal position (a long
+        /// stretch's plan takes minutes to make again, worth it only for a larger drift); an atom touch short of its atoms stands this
+        /// much past the plan.</summary>
+        const int DriftTicks = 300;
         /// <summary>The target's wait for its last Cash (the plan's stand) is at most this many ticks.</summary>
         const int TargetWait = 3000;
         /// <summary>A step the plan stood for where no lap earns (Area 2's NP waits) waits at most this many ticks.</summary>
@@ -1613,7 +1612,7 @@ namespace IGTAP.EngineSim.Cli
         /// lap's or record lap's walk to the gate, a lap's course run, a record lap's new best time. When a step ends more than
         /// --off-ticks from the plan's tick for it, or doesn't play (a strict buy strays, the Cash isn't there on arrival, no way), the
         /// rest is planned again from the build's real state on the measured moves (<paramref name="replan"/>: its place, and the
-        /// <paramref name="prefix"/> steps not played yet), at most _maxRounds times (--rounds); after that, or when a re-plan finds none, the plan plays on as it is, and a step
+        /// <paramref name="prefix"/> steps not played yet), after a failure that adds a fact to the table (MoveTable.Failed), and once per goal position after a drift; when a re-plan finds none, the plan plays on as it is, and a step
         /// that doesn't play stops it. The target short of Cash waits where the step before left the player (the plan's stand),
         /// then takes the builder's way to its box.
         /// </summary>
@@ -1625,13 +1624,14 @@ namespace IGTAP.EngineSim.Cli
             var restarts = new List<PlanStep>();
             string from = place;
             int i = 0;
+            // Goal positions a drift or a slow walk was planned again from: once each, so drift can't loop.
+            var driftAt = new HashSet<int>();
             z.PlanTicks.Add(plan.Done ? plan.Tick : -1);
             if (!plan.Done) { z.Why = "the plan isn't done: " + plan.Why; return z; }
             if (plan.Tick > tickCap) { z.Why = $"the plan's target on tick {plan.Tick} comes after the cap, tick {tickCap}"; return z; }
             Log($"realize: round 0, the plan's target on tick {plan.Tick}");
             bool Again(string why)
             {
-                if (z.Rounds == _maxRounds) return false;
                 z.Rounds++;
                 var list = _kept.Concat(z.Planned).ToList();
                 Track(list);
@@ -1639,7 +1639,7 @@ namespace IGTAP.EngineSim.Cli
                 z.PlanTicks.Add(next.Done ? next.Tick : -1);
                 Log($"realize: round {z.Rounds}, planned again from {from} on tick {z.Tick} ({why}): " + (next.Done ? $"the target on tick {next.Tick}" : "no plan (" + next.Why + ")"));
                 z.Log.Add(new { round = z.Rounds, from, tick = z.Tick, why, plan = next.Done ? next.Tick : -1, estimated = next.Estimated });
-                // No plan (a search out of time): the plan plays on as it is, as after _maxRounds; a step that doesn't play stops it.
+                // No plan: the plan plays on as it is; a step that doesn't play stops it.
                 if (!next.Done) return false;
                 if (next.Tick > tickCap) { z.Why = $"round {z.Rounds}: the plan's target on tick {next.Tick} comes after the cap, tick {tickCap}"; return false; }
                 plan = next;
@@ -1704,6 +1704,11 @@ namespace IGTAP.EngineSim.Cli
                 {
                     string why = $"{s.Kind} {s.Arg} from {from} on tick {z.Tick} doesn't play ({_whyNot})";
                     Log("realize: " + why);
+                    // A fact under every place the step started from (its restarts' landings too, where the plan stood), so no plan
+                    // makes it again on this engine build; a failure that teaches nothing new ends the stage (it would loop).
+                    bool learned = false;
+                    foreach (string f in froms) learned |= moves.Failed(f, to, caps, why);
+                    if (!learned) { z.Why = why + "; already known not to play, nothing new to plan on"; continue; }
                     z.Log.Add(new { round = z.Rounds, kind = s.Kind, step = s.Arg, from, planTicks, plan = planEnd, built = -1L, why, estimated });
                     if (!Again(why)) z.Why ??= why;
                     continue;
@@ -1720,13 +1725,12 @@ namespace IGTAP.EngineSim.Cli
                 // A step built far slower than planned isn't kept: its walk is measured above, so the plan made again from here
                 // prices it as built and takes another way, or takes it knowingly (Zip% after buytree0, 2026-10-07: a library walk
                 // of 4,884 ticks for the plan's 227 was kept and set the whole build back 93 s).
-                if (walked > Math.Max(3L * planTicks, planTicks + 500L))
+                if (walked > Math.Max(3L * planTicks, planTicks + 500L) && driftAt.Add(z.Planned.Count))
                 {
                     string why = $"{s.Kind} {s.Arg} from {from} on tick {z.Tick} walked {walked} ticks for the plan's {planTicks}; not kept";
                     Log("realize: " + why);
                     z.Log.Add(new { round = z.Rounds, kind = s.Kind, step = s.Arg, from, planTicks, plan = planEnd, built = -1L, why, estimated });
-                    if (!Again(why)) z.Why ??= why;
-                    continue;
+                    if (Again(why)) continue;
                 }
                 float after = course > 0 ? BestPath(state, course) : 0f;
                 if (s.Kind == "record" && after < record) moves.Measured(new Move("start:" + course, "record:" + course, (int)Math.Round(after / _dt), "measured", false), caps);
@@ -1745,7 +1749,7 @@ namespace IGTAP.EngineSim.Cli
                 restarts.Clear();
                 i++;
                 if (s.Kind == "target") { z.Done = true; break; }
-                if (Math.Abs(off) > _offTicks) Again($"built {off:+0;-0} ticks off the plan");
+                if (Math.Abs(off) > DriftTicks && driftAt.Add(z.Planned.Count)) Again($"built {off:+0;-0} ticks off the plan");
             }
             return z;
         }
@@ -1814,14 +1818,14 @@ namespace IGTAP.EngineSim.Cli
                 // from here asked for the same atoms again, round after round. The next plan sees the atoms bought.
                 if (need > 1)
                 {
-                    played = Waited(z, goals, s.Ticks, Math.Max(25, Math.Min(StandWait, s.Ticks + _offTicks)), need);
+                    played = Waited(z, goals, s.Ticks, Math.Max(25, Math.Min(StandWait, s.Ticks + DriftTicks)), need);
                     if (played == null)
                     {
                         Read(z.State);
                         double[] price = _eval.Shop.Need(boxes, need, shown: false);
                         int gp = (int)globalStats.Currencies.GreenPower;
                         Log($"realize: {goals[^1].label}: the plan's {need} atoms ({(price == null ? "?" : price[gp].ToString("G4", CultureInfo.InvariantCulture))} GP) not paid for by "
-                            + $"{s.Ticks + _offTicks} ticks (GP {_eval.Shop.Holds(globalStats.Currencies.GreenPower):G4} on tick {z.Tick}); touching with what it holds");
+                            + $"{s.Ticks + DriftTicks} ticks (GP {_eval.Shop.Holds(globalStats.Currencies.GreenPower):G4} on tick {z.Tick}); touching with what it holds");
                     }
                 }
                 if (played == null && Affordable(z.State, boxes) == true) played = Play(z.State, z.Inputs, z.Planned, goals, true);
