@@ -1878,6 +1878,9 @@ namespace IGTAP.EngineSim.Cli
                     // Kept at once: a stage stopped or crashing before realize returns would lose it (and search it again).
                     if (learned && _factsFile != null) moves.Save(_factsFile);
                     if (_unattended && !learned) { z.Why = why + "; already known not to play, nothing new to plan on"; continue; }
+                    // The stage's own target: the next stage starts on what was learned, where an enabler (a refill orb for a box no way
+                    // reaches) is weighed first; a re-plan to the target here would only try it from elsewhere, a search a time.
+                    if (_unattended && s.Kind == "target") { z.Why = why + "; the next stage weighs the enablers"; continue; }
                     z.Log.Add(new { round = z.Rounds, kind = s.Kind, step = s.Arg, from, planTicks, plan = planEnd, built = -1L, why, estimated });
                     if (!Again(why)) z.Why ??= why;
                     continue;
