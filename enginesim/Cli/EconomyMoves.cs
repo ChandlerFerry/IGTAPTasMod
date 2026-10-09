@@ -78,21 +78,30 @@ namespace IGTAP.EngineSim.Cli
             + typeof(MoveTable).Assembly.ManifestModule.ModuleVersionId.ToString("N") + "-" + FullTas.PieceTicks + "-" + FullTas.StepTicks;
         int Group => Math.Max(0, _treeGroup);
 
-        /// <summary>Records that the move doesn't play here; true when it is a new fact. Failed from two places, it is out from
-        /// every place (from "*"): what no search reaches from two places is out of reach (Zip%'s buyfree6b, tried from each place
-        /// in turn, about 9 minutes each).</summary>
+        /// <summary>Records that the move doesn't play here; true when it is a new fact.</summary>
         internal bool Failed(string from, string to, string caps, string why)
         {
             if (!_failed.TryAdd((from, to, caps, Group), why)) return false;
-            if (from != AnyPlace && _failed.Keys.Count(k => k.to == to && k.caps == caps && k.tree == Group && k.from != AnyPlace) >= 2)
-                _failed.TryAdd((AnyPlace, to, caps, Group), "failed from two places; the last: " + why);
             _chains.Clear();
             return true;
         }
 
-        const string AnyPlace = "*";
+        /// <summary>The move failed from here, or from a place no farther from its target (the walkable distance, <see cref="Walked"/>):
+        /// a farther start is no easier, so an unreachable box is tried once a distance, nearer each time (Zip%'s buyfree6b, tried from
+        /// each place around Course 6 in turn, about 9 minutes each), and a nearer place still gets its try.</summary>
+        internal bool HasFailed(string from, string to, string caps)
+        {
+            if (_failed.ContainsKey((from, to, caps, Group))) return true;
+            if (!_places.TryGetValue(from, out Place a) || !_places.TryGetValue(TargetPlace(to), out Place t)) return false;
+            double here = Walked(a, t);
+            foreach (var k in _failed.Keys)
+                if (k.to == to && k.caps == caps && k.tree == Group && _places.TryGetValue(k.from, out Place f) && here >= Walked(f, t)) return true;
+            return false;
+        }
 
-        internal bool HasFailed(string from, string to, string caps) => _failed.ContainsKey((from, to, caps, Group)) || _failed.ContainsKey((AnyPlace, to, caps, Group));
+        /// <summary>Where a move into this To is headed: a lap or record lap's gate, a box set's first box, else the place itself.</summary>
+        static string TargetPlace(string to) => to.StartsWith("lap:", StringComparison.Ordinal) || to.StartsWith("record:", StringComparison.Ordinal)
+            ? "start:" + to.Substring(to.IndexOf(':') + 1) : to.Split(SetJoin)[0];
 
         internal IEnumerable<(string from, string to, string caps, int tree, string why)> Failures =>
             _failed.OrderBy(kv => kv.Key.from, StringComparer.Ordinal).ThenBy(kv => kv.Key.to, StringComparer.Ordinal)

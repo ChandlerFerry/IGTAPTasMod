@@ -127,6 +127,22 @@ namespace IGTAP.EngineSim.Cli
                 && EconomyPlan.AreaTwoOffer.Contains("buy:buyatomlevel9") && EconomyPlan.AreaTwoOffer.Contains("buy:buyreward6") && EconomyPlan.AreaTwoOffer.Contains("lap:7")
                 && !EconomyPlan.AreaTwoOffer.Contains("lap:10") && !EconomyPlan.AreaTwoOffer.Contains("buy:buyreward5") && !EconomyPlan.AreaTwoOffer.Contains("buy:buywj"),
                 $"the Area 2 offer: {EconomyPlan.AreaTwoOffer.Count} boxes and laps, Area 1's out");
+            // A failure from a place rules the move out from every place at least as far from its target (the walkable distance;
+            // a straight line on a table with no run), not from a nearer one: Zip%'s buyfree6b failed from Course 6, 7,000 u off, and
+            // is 3,400 u from Course 7's landing.
+            {
+                string spots = Path.Combine(Path.GetTempPath(), "plan-selftest-spots.json");
+                File.WriteAllText(spots, "{\"places\":[" + string.Join(",", new[] { ("buy:t", 0), ("near", 100), ("mid", 500), ("far", 1000) }
+                    .Select(p => $"{{\"id\":\"{p.Item1}\",\"kind\":\"box\",\"box\":\"{p.Item1}\",\"x\":{p.Item2},\"y\":0,\"caps\":\"wj\"}}"))
+                    + "],\"speeds\":{\"wj\":10},\"moves\":[]}");
+                MoveTable line = MoveTable.Read(spots);
+                File.Delete(spots);
+                line.AtTreeLevel(7);
+                Check(line.Best("far", "buy:t", "wj") != null && line.Best("near", "buy:t", "wj") != null, "an untried move is estimated from near and far");
+                line.Failed("mid", "buy:t", "wj", "no way");
+                Check(line.Best("far", "buy:t", "wj") == null && line.Best("mid", "buy:t", "wj") == null && line.Best("near", "buy:t", "wj") != null,
+                    "failed from the middle: out from as far or farther, still offered from nearer");
+            }
             // The ledger (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md, section 1): a failed move is a fact at its
             // key, never offered again, saved, and dropped by another engine build.
             {
@@ -140,8 +156,6 @@ namespace IGTAP.EngineSim.Cli
                 Check(ledger.Chain("a", "c", "wj") < 0, "no chain runs through a failed move");
                 ledger.Measured(new Move("y", "b", 80, "measured", false), "wj");
                 Check(ledger.Best("y", "b", "wj")?.Ticks == 80, "a move failed from one place is still offered from another");
-                Check(ledger.Failed("x", "b", "wj", "no way") && ledger.Best("y", "b", "wj") == null && ledger.Best("w", "b", "wj") == null,
-                    "a move failed from two places is out from every place");
                 ledger.AtTreeLevel(11);
                 Check(ledger.Best("a", "b", "wj")?.Ticks == 100, "a failure holds only at its tree group");
                 ledger.AtTreeLevel(7);
