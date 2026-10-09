@@ -1232,6 +1232,7 @@ namespace IGTAP.EngineSim.Cli
             foreach (string label in offer.Where(l => l.StartsWith("buy:", StringComparison.Ordinal)).OrderBy(l => l, StringComparer.Ordinal))
             {
                 if (!(goalOf(label)?.boxes is [string id]) || !(_eval.Shop.Box(id) is upgradeBox box) || !orbBoxes.Contains(box.globalUpgrade)) continue;
+                if (moves.HasFailed(MoveTable.TrapFrom, label, PlayerCaps.Of(_eval).Id)) continue;
                 if (!(_eval.Shop.Need(new[] { id }, 1, shown: false) is double[] cost)) continue;
                 double ticks = 0;
                 for (int c = 0; c < cost.Length && c < rates.Length; c++)
@@ -1242,6 +1243,27 @@ namespace IGTAP.EngineSim.Cli
                 if (ticks < best.ticks) best = (label, ticks);
             }
             return best.label == null ? (null, null) : (best.label, $"no way to it from {failed} place(s) at orb level {EconomyPlan.OrbLevel(_eval)}: a refill orb level first");
+        }
+
+        /// <summary>A place is a trap after failed walks to this many targets from it, a quick restart landing back at it.</summary>
+        const int TrapFailures = 3;
+        /// <summary>This stage plans from before a trap (<see cref="Trapped"/>): it installs once it reaches its target, its goals fewer.</summary>
+        bool _rollback;
+
+        /// <summary>Why the place of goal <paramref name="kept"/> is a trap in its world, or null: failed walks to TrapFailures targets from
+        /// it and every quick restart known from it landing back beside it (within 300 u).</summary>
+        string Trapped(int kept, MoveTable moves)
+        {
+            string place = _labels[kept - 1];
+            if (!moves.Places.TryGetValue(place, out Place p)) return null;
+            Read(GoalState(kept).at);
+            string caps = PlayerCaps.Of(_eval).Id;
+            moves.AtTreeLevel(MoveTable.TreeGroup(EconomyPlan.TreeLevel(EconomyPlan.TreeBoxes(_eval))));
+            moves.AtOrbs(EconomyPlan.OrbLevel(_eval));
+            List<string> landings = moves.Restarts(place, caps).ToList();
+            if (landings.Count == 0 || landings.Any(l => !moves.Places.TryGetValue(l, out Place q) || Math.Abs(q.X - p.X) > 300 || Math.Abs(q.Y - p.Y) > 300)) return null;
+            int failed = moves.FailuresFrom(landings.Append(place).ToHashSet());
+            return failed < TrapFailures ? null : $"walks to {failed} targets failed from it and a quick restart lands back beside it";
         }
 
         /// <summary>The best's income is read over its last goals spanning at least this many ticks.</summary>
@@ -1440,6 +1462,7 @@ namespace IGTAP.EngineSim.Cli
             Open();
             string trySteps = Solve.Option<string>(args, "--try", null);
             bool stage = trySteps == null;
+            _rollback = false;
             if (stage && _best.Progress == _goals)
             {
                 Log($"unattended: the best reaches all {_goals} goals");
@@ -1473,6 +1496,29 @@ namespace IGTAP.EngineSim.Cli
             HashSet<string> only = GoalOf(targets[^1])?.boxes is [string targetBox] && targetBox.StartsWith("zone 2/", StringComparison.Ordinal) ? EconomyPlan.AreaTwoOffer : null;
 
             MoveTable moves = MoveTable.Load(this, File.Exists(BuyTableFile) ? BuyTableFile : null, RoutesFile, _best, movesFile);
+            // A trap at the best's end (no way on from its place, a quick restart landing back at it): the stage plans from the goal
+            // before it, without it, and its box is a trap in this world (Zip%'s orb unlock bought first: the pit's way out is a
+            // sequence-1 orb, usable only with a refresh orb level too).
+            if (stage && kept > 1 && Trapped(kept, moves) is string trapWhy)
+            {
+                string trap = _labels[kept - 1];
+                // Keyed on the world before the trap's buy: where the reach enabler chooses again.
+                Read(GoalState(kept - 1).at);
+                moves.AtTreeLevel(MoveTable.TreeGroup(EconomyPlan.TreeLevel(EconomyPlan.TreeBoxes(_eval))));
+                moves.AtOrbs(EconomyPlan.OrbLevel(_eval));
+                moves.Failed(MoveTable.TrapFrom, trap, PlayerCaps.Of(_eval).Id, trapWhy);
+                moves.Save(movesFile);
+                var goals = _runGoals.Goals.ToList();
+                goals.RemoveAt(kept - 1);
+                _runGoals = _runGoals.For(goals.ToArray());
+                _labels = goals.Select(g => g.label).ToArray();
+                _goals = _labels.Length;
+                kept--;
+                nextBuy = Array.FindIndex(_labels, kept, l => l.StartsWith("buy:", StringComparison.Ordinal));
+                targets = new[] { _labels[nextBuy] };
+                _rollback = true;
+                Log($"unattended: goal {kept + 1} {trap} is a trap ({trapWhy}); planning from goal {kept} without it");
+            }
             SimSnapshot at = GoalState(kept).at;
             if (stage && Affordable(at, GoalOf(targets[^1])?.boxes ?? Array.Empty<string>()) == true)
             {
@@ -1573,7 +1619,8 @@ namespace IGTAP.EngineSim.Cli
             // With no whole route, the one that gets furthest (its goals so far, total -1): the next stretch is planned or solved from it.
             var written = whole.run != null ? (whole.name, whole.run, whole.goals)
                 : realized.Where(r => r.run != null).Select(r => (r.name, r.run, r.goals)).Concat(partials).OrderByDescending(r => r.run.Progress).FirstOrDefault();
-            if (written.run != null && written.run.Progress > _best.Progress) Install(written.run, written.goals);
+            bool reached = realized.FirstOrDefault().z?.Done == true;
+            if (written.run != null && (written.run.Progress > _best.Progress || _rollback && reached)) Install(written.run, written.goals);
             else Log($"install: no route reaches further than the best's goal {_best.Progress}");
             Realization z0 = realized.FirstOrDefault().z;
             _stageReport = new

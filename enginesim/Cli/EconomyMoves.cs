@@ -102,6 +102,12 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>The move failed from here, or from a place no farther from its target (the walkable distance, <see cref="Walked"/>):
         /// a farther start is no easier, so an unreachable box is tried once a distance, nearer each time (Zip%'s buyfree6b, tried from
         /// each place around Course 6 in turn, about 9 minutes each), and a nearer place still gets its try.</summary>
+        /// <summary>The From of a fact that a box is a trap in this world (a place no way leaves: FullTas.Trapped).</summary>
+        internal const string TrapFrom = "trap";
+
+        /// <summary>The targets moves from this place failed to in this world (the tree's group, the orbs' level), any unlocks.</summary>
+        internal int FailuresFrom(ICollection<string> from) => _failed.Keys.Where(k => from.Contains(k.from) && k.tree == Group).Select(k => k.to).Distinct().Count();
+
         /// <summary>The places a move into this To failed from in this world (the tree's group, the orbs' level), any unlocks.</summary>
         internal int FailuresHere(string to) => _failed.Keys.Count(k => k.to == to && k.tree == Group);
 

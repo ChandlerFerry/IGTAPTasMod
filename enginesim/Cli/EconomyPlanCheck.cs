@@ -185,6 +185,17 @@ namespace IGTAP.EngineSim.Cli
                 File.WriteAllText(file, File.ReadAllText(file).Replace(MoveTable.Build, "another-build"));
                 Check(!MoveTable.Read(file).Failures.Any(), "a failure from another engine build is dropped");
                 File.Delete(file);
+                // A trap: failures counted from the place and its restart landings, at this world only; a trap mark is a box's fact.
+                Check(ledger.FailuresFrom(new HashSet<string> { "a", "y" }) == 1, "failures from several places count each target once");
+                ledger.Failed("y", "c", "wj", "no way");
+                Check(ledger.FailuresFrom(new HashSet<string> { "a", "y" }) == 2, "a second target from the trap's places counts");
+                ledger.AtOrbs(1);
+                Check(ledger.FailuresFrom(new HashSet<string> { "a", "y" }) == 0, "failures hold only at their orb level");
+                ledger.AtOrbs(0);
+                ledger.Failed(MoveTable.TrapFrom, "buy:t", "wj", "trap");
+                Check(ledger.HasFailed(MoveTable.TrapFrom, "buy:t", "wj"), "a trap mark holds at its world");
+                ledger.AtOrbs(1);
+                Check(!ledger.HasFailed(MoveTable.TrapFrom, "buy:t", "wj"), "a trap mark holds only at its orb level");
             }
             var toy = new Toy();
             PlanResult plan = EconomyPlan.Search(toy, 0, "c1", p => Options(toy, p), 1000000, 60);
