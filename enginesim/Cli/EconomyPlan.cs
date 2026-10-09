@@ -759,7 +759,8 @@ namespace IGTAP.EngineSim.Cli
             var before = targets.Take(targets.Length - 1).ToHashSet();
             var bought = targets.ToDictionary(t => t, t => economy.Level(t));
             var rewards = bonuses.ToHashSet();
-            var built = new Dictionary<(string place, string caps, int tree, int orbs), List<(PlanOption option, string[] boxes)>>();
+            var built = new Dictionary<(string place, string caps, int tree, int orbs, int hops), List<(PlanOption option, string[] boxes)>>();
+            Teleports tele = Teleports.For(sim);
             upgradeBox[] treeBoxes = TreeBoxes(sim);
 
             string Estimate(string from, Move m, string caps) => $"{from} -> {m.To} [{caps}] {m.Ticks} ticks";
@@ -767,9 +768,11 @@ namespace IGTAP.EngineSim.Cli
             {
                 // The tree's level as FullTas.TreeLevel counts it: the tree boxes bought.
                 int tree = MoveTable.TreeGroup(TreeLevel(treeBoxes)), orbs = OrbLevel(sim);
-                if (built.TryGetValue((place, caps, tree, orbs), out var list)) return list;
+                List<(int from, int to, bool up)> hops = tele.Hops(sim);
+                if (built.TryGetValue((place, caps, tree, orbs, hops.Count), out var list)) return list;
                 moves.AtTreeLevel(tree);
                 moves.AtOrbs(orbs);
+                moves.AtTeleports(tele, hops);
                 Caps.TryParse(caps, out Caps have);
                 list = new List<(PlanOption, string[])>();
                 bool laps = false;
@@ -845,7 +848,7 @@ namespace IGTAP.EngineSim.Cli
                     if ((!laps || economy.AtomPaid(o.Buys)) && o.Buys.Length > 0 && o.Step.Kind != "reward") list[i] = (o with { Stand = true, Patient = true }, list[i].boxes);
                     else if (standAtTarget && o.Target) list[i] = (o with { Stand = true }, list[i].boxes);
                 }
-                return built[(place, caps, tree, orbs)] = list;
+                return built[(place, caps, tree, orbs, hops.Count)] = list;
             }
             List<PlanOption> Options(string place, bool standOnly)
             {
@@ -1224,7 +1227,7 @@ namespace IGTAP.EngineSim.Cli
         (string label, string why) ReachEnabler(string target, Func<string, FullTasGoal> goalOf, ISet<string> offer, MoveTable moves, double[] rates)
         {
             moves.AtTreeLevel(MoveTable.TreeGroup(EconomyPlan.TreeLevel(EconomyPlan.TreeBoxes(_eval))));
-            moves.AtOrbs(EconomyPlan.OrbLevel(_eval));
+            moves.AtOrbs(EconomyPlan.OrbLevel(_eval)); moves.AtTeleports(Teleports.For(_eval), Teleports.For(_eval).Hops(_eval));
             int failed = moves.FailuresHere(target);
             if (failed == 0) return (null, null);
             var orbBoxes = new HashSet<globalStats.globalUpgradeSet> { globalStats.globalUpgradeSet.unlockJiggleDrops, globalStats.globalUpgradeSet.moreRefreshOrbs };
@@ -1259,7 +1262,7 @@ namespace IGTAP.EngineSim.Cli
             Read(GoalState(kept).at);
             string caps = PlayerCaps.Of(_eval).Id;
             moves.AtTreeLevel(MoveTable.TreeGroup(EconomyPlan.TreeLevel(EconomyPlan.TreeBoxes(_eval))));
-            moves.AtOrbs(EconomyPlan.OrbLevel(_eval));
+            moves.AtOrbs(EconomyPlan.OrbLevel(_eval)); moves.AtTeleports(Teleports.For(_eval), Teleports.For(_eval).Hops(_eval));
             List<string> landings = moves.Restarts(place, caps).ToList();
             if (landings.Count == 0 || landings.Any(l => !moves.Places.TryGetValue(l, out Place q) || Math.Abs(q.X - p.X) > 300 || Math.Abs(q.Y - p.Y) > 300)) return null;
             int failed = moves.FailuresFrom(landings.Append(place).ToHashSet());
@@ -1506,7 +1509,7 @@ namespace IGTAP.EngineSim.Cli
                 // Keyed on the world before the trap's buy: where the reach enabler chooses again.
                 Read(GoalState(kept - 1).at);
                 moves.AtTreeLevel(MoveTable.TreeGroup(EconomyPlan.TreeLevel(EconomyPlan.TreeBoxes(_eval))));
-                moves.AtOrbs(EconomyPlan.OrbLevel(_eval));
+                moves.AtOrbs(EconomyPlan.OrbLevel(_eval)); moves.AtTeleports(Teleports.For(_eval), Teleports.For(_eval).Hops(_eval));
                 moves.Failed(MoveTable.TrapFrom, trap, PlayerCaps.Of(_eval).Id, trapWhy);
                 moves.Save(movesFile);
                 var goals = _runGoals.Goals.ToList();
@@ -1646,6 +1649,7 @@ namespace IGTAP.EngineSim.Cli
             _planBase = _runGoals;
             var (at, route) = BuildFrom(_runGoals.Goals, kept, targetIndex);
             var z = new Realization { Inputs = route, State = at, Tick = _best.GoalPhysics[kept - 1] };
+            string tryPlace = _labels[kept - 1];
             foreach (string text in steps.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
                 int atSign = text.IndexOf('@');
@@ -1736,7 +1740,15 @@ namespace IGTAP.EngineSim.Cli
                         + $"visited [{string.Join(" ", stats?.visitedTeleporters ?? new List<int>())}]");
                     continue;
                 }
+                // The step's move as realize hands it over (its hop chain, when cheaper).
+                Read(z.State);
+                moves.AtTreeLevel(MoveTable.TreeGroup(EconomyPlan.TreeLevel(EconomyPlan.TreeBoxes(_eval))));
+                moves.AtOrbs(EconomyPlan.OrbLevel(_eval)); moves.AtTeleports(Teleports.For(_eval), Teleports.For(_eval).Hops(_eval));
+                string tryTo = EconomyPlan.PlaceOf(new PlanStep(kind, arg, ticks));
+                _stepMove = (tryPlace, tryTo, PlayerCaps.Of(_eval).Id, moves);
                 var played = PlayStep(new PlanStep(kind, arg, ticks), z, goalOf, out FullTasGoal[] goals, out _, stood: kind is "buy" or "atoms", levels: levels);
+                _stepMove = default;
+                tryPlace = tryTo;
                 _stepTicks = long.MaxValue;
                 if (played == null)
                 {
@@ -1924,8 +1936,9 @@ namespace IGTAP.EngineSim.Cli
                 FullTasGoal[] goals;
                 long walked;
                 _stepTicks = _unattended ? StepTicks : long.MaxValue;
+                _stepMove = (from, to, caps, moves);
                 try { played = PlayStep(s, z, goalOf, out goals, out walked, i < plan.Stands.Length && plan.Stands[i], i < plan.Levels.Length ? plan.Levels[i] : 1); }
-                finally { _playBy = long.MaxValue; _stepTicks = long.MaxValue; }
+                finally { _playBy = long.MaxValue; _stepTicks = long.MaxValue; _stepMove = default; }
                 long planEnd = plan.Ends[i];
                 int planTicks = s.Ticks + restarts.Sum(r => r.Ticks);
                 string[] froms = restarts.Select(r => r.Arg).Prepend(from).ToArray();
@@ -1939,7 +1952,7 @@ namespace IGTAP.EngineSim.Cli
                     // makes it again on this engine build; a failure that teaches nothing new ends the stage (it would loop).
                     Read(z.State);
                     moves.AtTreeLevel(MoveTable.TreeGroup(EconomyPlan.TreeLevel(EconomyPlan.TreeBoxes(_eval))));
-                    moves.AtOrbs(EconomyPlan.OrbLevel(_eval));
+                    moves.AtOrbs(EconomyPlan.OrbLevel(_eval)); moves.AtTeleports(Teleports.For(_eval), Teleports.For(_eval).Hops(_eval));
                     bool learned = false;
                     foreach (string f in froms) learned |= moves.Failed(f, to, caps, why);
                     // Kept at once: a stage stopped or crashing before realize returns would lose it (and search it again).
@@ -2028,7 +2041,59 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>One plan step played with the builder from the realization's state (<see cref="Realize"/>); null when no way
         /// plays (_whyNot says where). <paramref name="walked"/>: its ticks less any wait for its Cash (-1: not known, the way
         /// waited inside it).</summary>
+        /// <summary>The move realize is playing (its places, unlocks and table): <see cref="ThroughPads"/> reads its hop chain.</summary>
+        (string from, string to, string caps, MoveTable moves) _stepMove;
+
         (List<InputTick> inputs, SimSnapshot state, long tick)? PlayStep(PlanStep s, Realization z, Func<string, FullTasGoal> goalOf, out FullTasGoal[] goals, out long walked,
+            bool stood = false, int levels = 1)
+        {
+            if (s.Kind == "lap" || s.Kind == "record" || !(ThroughPads(z, goalOf) is var (pads, pad)))
+                return PlayStepFrom(s, z, goalOf, out goals, out walked, stood, levels);
+            var played = PlayStepFrom(s, pads, goalOf, out goals, out walked, stood, levels);
+            if (played == null)
+            {
+                Log($"realize: {s.Arg} through {pad.label} doesn't play ({_whyNot}); walking instead");
+                return PlayStepFrom(s, z, goalOf, out goals, out walked, stood, levels);
+            }
+            goals = goals.Prepend(pad).ToArray();
+            if (walked >= 0) walked += pads.Tick - z.Tick;
+            return played;
+        }
+
+        /// <summary>
+        /// A step whose cheapest way is a hop chain (MoveTable.TeleportWay): the walk to its first pad (an area goal on the pad's
+        /// trigger) and the hops played, so the step's own search starts where the chain ends. Null when it isn't cheaper or doesn't
+        /// play (the step walks).
+        /// </summary>
+        (Realization z, FullTasGoal pad)? ThroughPads(Realization z, Func<string, FullTasGoal> goalOf)
+        {
+            var (from, to, caps, moves) = _stepMove;
+            if (moves == null || !(moves.TeleportWay(from, to, caps) is var (ticks, first, ups))) return null;
+            FullTasGoal at = goalOf(first.At);
+            if (at == null) return null;
+            var walk = Play(z.State, z.Inputs, z.Planned, new[] { at }, true);
+            if (walk == null) { Log($"realize: {to} through pad {first.Id}: no way to it ({_whyNot})"); return null; }
+            var (inputs, state, tick) = walk.Value;
+            List<InputTick> hops = Teleports.HopInputs(ups);
+            Track(_kept.Concat(z.Planned).Append(at).ToList());
+            SimSnapshot after = AdvanceFrom(state, inputs.Count, hops);
+            Teleports tele = Teleports.For(_eval);
+            int end = first.Id;
+            foreach (bool up in ups) end = (up ? tele.Pads[end].Up : tele.Pads[end].Down) ?? end;
+            var (spot, _) = after == null ? (default, 0) : Where(after);
+            if (after == null || !tele.Pads[end].Inside(spot.x, spot.y))
+            {
+                Log($"realize: {to} through pad {first.Id}: its {ups.Count} hop(s) didn't reach pad {end} (at {spot.x:0},{spot.y:0})");
+                return null;
+            }
+            Log($"realize: {to} through pads {first.Id} -> {end} ({ups.Count} hop(s), {ticks} ticks planned), pad reached on tick {tick}");
+            var through = new Realization { Inputs = inputs.Concat(hops).ToList(), State = after, Tick = tick + hops.Count };
+            through.Planned.AddRange(z.Planned);
+            through.Planned.Add(at);
+            return (through, at);
+        }
+
+        (List<InputTick> inputs, SimSnapshot state, long tick)? PlayStepFrom(PlanStep s, Realization z, Func<string, FullTasGoal> goalOf, out FullTasGoal[] goals, out long walked,
             bool stood = false, int levels = 1)
         {
             _whyNot = null;

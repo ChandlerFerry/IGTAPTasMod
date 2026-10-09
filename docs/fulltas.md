@@ -2855,5 +2855,13 @@ stick poll and the teleport.
   - `fulltas-plan --try` takes `stick:X/Y@T` (T ticks of a stick, then where the player is): from Zip%'s end,
     `buy:buyteleporters,stick:1/0@20,stick:0/0@4,stick:0/-1@4` walks into pad 2 and comes out at pad 1, (19679.3, 6648.3) to
     (21396.0, 3031.4).
+- **The planner and realize:** each pad is a place of the movement table (`tp:ID`, never a plan step), and a state's hops
+  (`MoveTable.AtTeleports`: `unlockTeleporters` bought, the destination visited) are part of a fact's world. A move's
+  estimate is the cheaper of the walk and a hop chain (`MoveTable.TeleportWay`: the walk to a pad, 5 ticks a hop, the walk
+  from the pad it ends at), and a move measured on foot gives way to a shorter chain. Realize plays a buy step whose way is
+  a chain as the walk to the pad (an area goal on the middle of its trigger, kept as a goal of the run), the hops (the stick
+  at rest 2 ticks, then up or down 3) and the step's own search from the last pad; a chain that doesn't play falls back to
+  the walk. From Zip%'s end, `--try buy:buyteleporters,buy:buyclone6` takes pads 2 -> 0 and buys `buyclone6` 47 ticks after
+  the box (its walk was estimated at 320). Laps don't take chains yet.
 - **Not checked yet:** a 1x probe of a teleport against the engine (the poll's frame is reasoned from Unity's player loop
-  and the atom grid's measured order), and the planner's walks don't take teleport edges yet.
+  and the atom grid's measured order).

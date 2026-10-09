@@ -158,6 +158,24 @@ namespace IGTAP.EngineSim.Cli
                 Move far = walks.Best("buy:p5", "buy:p9", "wj");
                 Check(far != null && far.Estimated && far.Ticks == 120, $"an unmeasured walk at the measured walks' pace: {Describe(far)} (120)");
             }
+            // A hop chain: two places 10,000 u apart at 10 u a tick, a pad beside each, the second visited. With the hop the way is the
+            // walks to and from the pads and the hop (10 + 5 + 10 ticks); without it, the walk (1,000).
+            {
+                string spots = Path.Combine(Path.GetTempPath(), "plan-selftest-pads.json");
+                File.WriteAllText(spots, "{\"places\":[{\"id\":\"buy:a\",\"kind\":\"box\",\"box\":\"buy:a\",\"x\":0,\"y\":0,\"caps\":\"wj\"},"
+                    + "{\"id\":\"buy:b\",\"kind\":\"box\",\"box\":\"buy:b\",\"x\":10000,\"y\":0,\"caps\":\"wj\"}],\"speeds\":{\"wj\":10},\"moves\":[]}");
+                MoveTable pads = MoveTable.Read(spots);
+                File.Delete(spots);
+                var tele = new Teleports();
+                tele.Pads[1] = new Teleports.Pad { Id = 1, X = 100, Y = 0, W = 100, H = 100, Up = 2 };
+                tele.Pads[2] = new Teleports.Pad { Id = 2, X = 9900, Y = 0, W = 100, H = 100, Down = 1 };
+                pads.AtTeleports(tele, new List<(int, int, bool)>());
+                Check(pads.Best("buy:a", "buy:b", "wj")?.Ticks == 1000, $"no hop: the walk ({Describe(pads.Best("buy:a", "buy:b", "wj"))}, 1000)");
+                pads.AtTeleports(tele, new List<(int, int, bool)> { (1, 2, true) });
+                Check(pads.Best("buy:a", "buy:b", "wj")?.Ticks == 10 + Teleports.HopTicks + 10 && pads.TeleportWay("buy:a", "buy:b", "wj")?.from.Id == 1,
+                    $"a hop: the walk to pad 1, the hop and the walk on ({Describe(pads.Best("buy:a", "buy:b", "wj"))}, {20 + Teleports.HopTicks})");
+                Check(pads.TeleportWay("buy:b", "buy:a", "wj") == null, "no hop back down from pad 2 (pad 1 not visited)");
+            }
             // The ledger (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md, section 1): a failed move is a fact at its
             // key, never offered again, saved, and dropped by another engine build.
             {

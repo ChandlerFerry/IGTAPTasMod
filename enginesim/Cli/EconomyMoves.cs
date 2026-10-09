@@ -79,9 +79,81 @@ namespace IGTAP.EngineSim.Cli
         internal static readonly string Build = FactsVersion + "-" + FullTas.PieceTicks + "-" + FullTas.StepTicks;
         const int FactsVersion = 1;
         /// <summary>A fact's world key: the tree's group and the refill orbs' level (a failure without the orbs says nothing about with them).</summary>
-        int Group => Math.Max(0, _treeGroup) + OrbKey * _orbs;
-        const int OrbKey = 1000;
+        int Group => Math.Max(0, _treeGroup) + OrbKey * _orbs + TeleKey * _teleKey;
+        const int OrbKey = 1000, TeleKey = 100000;
         int _orbs;
+
+        /// <summary>The teleporter network (null: none read) and the hops the state can make (<see cref="AtTeleports"/>).</summary>
+        Teleports _tele;
+        readonly List<(int from, int to, bool up)> _hops = new List<(int, int, bool)>();
+        /// <summary>A fact's teleporter key: 0 without hops, else one more than their number (hops only grow in a run).</summary>
+        int _teleKey;
+
+        /// <summary>The hops the facts and walks read under: each pad a place (`tp:ID`), a walk through a hop chain an estimate's
+        /// way (<see cref="TeleportWay"/>).</summary>
+        internal void AtTeleports(Teleports tele, List<(int from, int to, bool up)> hops)
+        {
+            if (tele != null && _tele == null)
+                foreach (Teleports.Pad p in tele.Pads.Values) AddPlace(p.Place, p.X, p.Y, null);
+            _tele ??= tele;
+            int key = hops.Count == 0 ? 0 : hops.Count + 1;
+            if (key == _teleKey) return;
+            _teleKey = key;
+            _hops.Clear();
+            _hops.AddRange(hops);
+            _hopWays = null;
+            _chains.Clear();
+        }
+
+        /// <summary>From each pad, the fewest hops to every pad its chain reaches (the direction of each), breadth first.</summary>
+        Dictionary<int, Dictionary<int, List<bool>>> _hopWays;
+        Dictionary<int, Dictionary<int, List<bool>>> HopWays()
+        {
+            if (_hopWays != null) return _hopWays;
+            _hopWays = new Dictionary<int, Dictionary<int, List<bool>>>();
+            foreach (int start in _hops.Select(h => h.from).Distinct())
+            {
+                var way = new Dictionary<int, List<bool>> { [start] = new List<bool>() };
+                var queue = new Queue<int>();
+                queue.Enqueue(start);
+                while (queue.Count > 0)
+                {
+                    int at = queue.Dequeue();
+                    foreach (var (from, to, up) in _hops)
+                        if (from == at && !way.ContainsKey(to)) { way[to] = way[at].Append(up).ToList(); queue.Enqueue(to); }
+                }
+                way.Remove(start);
+                _hopWays[start] = way;
+            }
+            return _hopWays;
+        }
+
+        /// <summary>
+        /// The cheapest way from one place to another through a hop chain when it beats the walk: the walk to a pad, its hops
+        /// (<see cref="Teleports.HopTicks"/> each) and the walk from the pad it ends at. Null without hops or when walking is no slower.
+        /// </summary>
+        internal (int ticks, Teleports.Pad from, List<bool> ups)? TeleportWay(string from, string to, string caps)
+        {
+            if (_hops.Count == 0 || _tele == null || !_places.TryGetValue(from, out Place a) || !_places.TryGetValue(to, out Place b)
+                || !_speeds.TryGetValue(caps, out double v) || v <= 0) return null;
+            double factor = WalkFactor(caps);
+            int Walk(Place x, Place y) { double w = Walked(x, y); return double.IsPositiveInfinity(w) ? int.MaxValue / 4 : (int)Math.Ceiling(w / v * factor); }
+            int direct = Walk(a, b);
+            (int ticks, Teleports.Pad from, List<bool> ups)? best = null;
+            foreach (var (start, ways) in HopWays())
+            {
+                if (!_tele.Pads.TryGetValue(start, out Teleports.Pad p) || !_places.TryGetValue(p.Place, out Place pp)) continue;
+                int toPad = Walk(a, pp);
+                if (toPad >= direct) continue;
+                foreach (var (end, ups) in ways)
+                {
+                    if (!_tele.Pads.TryGetValue(end, out Teleports.Pad q) || !_places.TryGetValue(q.Place, out Place qp)) continue;
+                    int ticks = toPad + ups.Count * Teleports.HopTicks + Walk(qp, b);
+                    if (ticks < direct && (best == null || ticks < best.Value.ticks)) best = (ticks, p, ups);
+                }
+            }
+            return best;
+        }
 
         /// <summary>The refill orbs' level the facts read and write under (unlockJiggleDrops + moreRefreshOrbs).</summary>
         internal void AtOrbs(int orbs)
@@ -170,7 +242,9 @@ namespace IGTAP.EngineSim.Cli
         public Move Best(string from, string to, string caps)
         {
             if (HasFailed(from, to, caps)) return null;
-            if (_moves.TryGetValue((from, to, caps), out Move m)) return m;
+            // A move measured before the hops it could take (the walk the best made): the hop chain's way when it is shorter.
+            if (_moves.TryGetValue((from, to, caps), out Move m))
+                return TeleportWay(from, to, caps) is var (via, _, _) && via < m.Ticks ? new Move(from, to, via, "estimate", true) : m;
             int ticks = Guess(from, to, caps);
             return ticks < 0 ? null : new Move(from, to, ticks, "estimate", true);
         }
@@ -186,7 +260,7 @@ namespace IGTAP.EngineSim.Cli
                     if (seen.Add(to)) yield return to;
             foreach (Place p in _places.Values.OrderBy(p => p.Id, StringComparer.Ordinal))
             {
-                if (p.Kind == "restart" || p.Kind == "start") continue;
+                if (p.Kind == "restart" || p.Kind == "start" || p.Kind == "pad") continue;
                 string[] tos = p.Kind == "gate" ? new[] { p.Id, "lap:" + p.Id.Substring(6), "record:" + p.Id.Substring(6) } : new[] { p.Id };
                 foreach (string to in tos)
                     if (to != from && !seen.Contains(to) && Guess(from, to, caps) >= 0 && seen.Add(to)) yield return to;
@@ -347,6 +421,7 @@ namespace IGTAP.EngineSim.Cli
             if (missed == false) return -1;
             if (!_places.TryGetValue(from, out Place a) || !_places.TryGetValue(to, out Place b) || !_speeds.TryGetValue(caps, out double v) || v <= 0) return -1;
             double walked = Walked(a, b);
+            if (TeleportWay(from, to, caps) is var (viaPads, _, _)) return Math.Max(viaPads, Floor(from, to, caps));
             if (double.IsPositiveInfinity(walked)) return -1;
             return Math.Max((int)Math.Ceiling(walked / v * WalkFactor(caps)), Floor(from, to, caps));
         }
@@ -459,7 +534,8 @@ namespace IGTAP.EngineSim.Cli
             if (caps != null) _caps.Add(caps);
             if (_places.ContainsKey(id)) return;
             string kind = id == "start" ? "start" : id.StartsWith("start:", StringComparison.Ordinal) ? "gate" : id.StartsWith("finish:", StringComparison.Ordinal) ? "finish"
-                : id.StartsWith("restart@", StringComparison.Ordinal) ? "restart" : id.StartsWith("at:", StringComparison.Ordinal) ? "at" : "box";
+                : id.StartsWith("restart@", StringComparison.Ordinal) ? "restart" : id.StartsWith("at:", StringComparison.Ordinal) ? "at"
+                : id.StartsWith("tp:", StringComparison.Ordinal) ? "pad" : "box";
             _places[id] = new Place(id, kind, kind == "box" ? id : null, Math.Round(x, 2), Math.Round(y, 2), caps);
         }
 
