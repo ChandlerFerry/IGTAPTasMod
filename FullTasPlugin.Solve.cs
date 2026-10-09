@@ -51,6 +51,19 @@ namespace IGTAPTasMod
             offline.inputs = file.inputs.GetRange(0, keep);
             offline.segments = ResetSegments(offline.inputs, file.inputTicks, offline.reached);
             offline.idles = file.idles?.Where(i => i.goal >= 1 && i.goal <= offline.reached && i.arrive?.Length == 2 && i.afford?.Length == 2).ToList();
+            offline.waits = new int[offline.reached];
+            for (int g = 0; g < offline.reached; g++)
+            {
+                int from = g == 0 ? 0 : (int)Math.Min(file.inputTicks[g - 1], offline.inputs.Count), to = (int)Math.Min(file.inputTicks[g], offline.inputs.Count);
+                for (int i = from, length = 0; i <= to; i++)
+                {
+                    SolverTick t = i < to ? offline.inputs[i] : null;
+                    bool still = t != null && t.x == 0f && t.y == 0f && !t.held && !t.press && !t.release && !t.dash && !t.reset && t.dashJump == 0;
+                    if (still) { length++; continue; }
+                    if (length >= 25) offline.waits[g] += length;
+                    length = 0;
+                }
+            }
             return offline;
         }
 

@@ -351,7 +351,7 @@ namespace IGTAPTasMod
                 return new { name = r.name, start = r.start, savestate = r.savestate, section = r.Section, goals = labels, error = error,
                     breaker = FullTasBreakerGoal(labels),
                     best = best == null ? null : new { routeId = best.id, name = best.name, time = float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture), splits = splits },
-                    offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits, segments = offline.segments, idles = offline.idles },
+                    offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits, segments = offline.segments, idles = offline.idles, waits = offline.waits },
                     closest = closest == null ? null : new { reached = closest.reached, next = closest.next, distance = closest.distance, ticks = closest.inputs.Count },
                     classes = FullTasClassesWebState(r), human = r.Human, candidates = FullTasCandidatesWebState(r, labels),
                     playable = best != null || offline != null && offline.inputs.Count > 0, stretches = FullTasStretches(r.name),

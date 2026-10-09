@@ -345,6 +345,8 @@ namespace IGTAPTasMod
         }
         sealed class FullTasOffline
         {
+            /// <summary>Per goal reached, the ticks its stretch stands still (idle-input runs of 25 or more): a wait, not the stretch's.</summary>
+            public int[] waits;
             public List<SolverTick> inputs;
             public int reached;
             public List<FullTasSplit> splits;

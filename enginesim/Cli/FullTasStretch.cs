@@ -17,6 +17,8 @@ namespace IGTAP.EngineSim.Cli
         /// stretch's best from its file). The best way so far is kept in fulltas/&lt;run&gt;.stretch-&lt;N&gt;.json with its arrival
         /// tick and the run's, and announced as a `stretch` event.
         /// </summary>
+        static bool IsStill(InputTick t) => t.x == 0f && t.y == 0f && !t.held && !t.press && !t.release && !t.dash && t.dashJump == 0 && !t.reset;
+
         int StretchSearch(int goal)
         {
             string from = Open();
@@ -41,6 +43,18 @@ namespace IGTAP.EngineSim.Cli
                 Track(goals);
                 Log($"stretch: goal {goal - 1} {_labels[goal - 1]} waits {idle.AffordPhysics - idle.ArrivePhysics} ticks for its Cash under its box: "
                     + $"the stretch is the walk to the box ({target}), the run's arrival on tick {runTick}");
+            }
+            // A stretch that opens with a wait (quick restarts and 25 or more still inputs: waiting for Cash) starts where it moves:
+            // the wait is the idles' to optimize, not the stretch's (ZipEscape%'s buytree7: 1,800 still ticks, then 316 moving).
+            {
+                int i = prefixLength, still = 0;
+                while (i < end && (best.Inputs[i].reset || IsStill(best.Inputs[i]))) { if (!best.Inputs[i].reset) still++; i++; }
+                if (still >= 25 && i < end)
+                {
+                    startTick += i - prefixLength;
+                    Log($"stretch: goal {goal - 1} opens with {i - prefixLength} still or restart inputs (a wait): searched from input {i}, tick {startTick}");
+                    prefixLength = i;
+                }
             }
             List<InputTick> prefix = best.Inputs.GetRange(0, prefixLength);
             // --minutes is the whole session: TimeUp stops it (Stop too).
