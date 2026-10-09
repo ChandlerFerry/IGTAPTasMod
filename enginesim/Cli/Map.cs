@@ -309,10 +309,14 @@ namespace IGTAP.EngineSim.Cli
             }
             OfflineSolver.ForcedPath avoid = Solve.FullTasPaths(name, null, labels);
             if (stretch >= 0) avoid.Avoid.RemoveAll(b => !b.Live(stretch));
-            Dictionary<long, float> visits = stretch >= 0 || FullTas.StartChanged(dir, name, FullTas.StartKey(header).ToString("x16")) ? new Dictionary<long, float>()
-                : FullTas.ReadVisits(FullTas.VisitsFile(dir, name), labels) ?? new Dictionary<long, float>();
+            Dictionary<long, float> visits = (FullTas.StartChanged(dir, name, FullTas.StartKey(header).ToString("x16")) ? null
+                : FullTas.ReadVisits(FullTas.VisitsFile(dir, name), labels)) ?? new Dictionary<long, float>();
             const float cell = FullTas.VisitCell;
 
+            // A stretch's box is its path and goal's; the explored cells drawn are those inside it.
+            if (stretch >= 0 && Bounds(paths, Array.Empty<long>(), cell, goals.Select(g => g.box)) is var (sx0, sy0, sx1, sy1))
+                visits = visits.Where(v => (v.Key >> 32) * cell >= sx0 && ((v.Key >> 32) + 1) * cell <= sx1 && (int)v.Key * cell >= sy0 && ((int)v.Key + 1) * cell <= sy1)
+                    .ToDictionary(v => v.Key, v => v.Value);
             var (x0, y0, x1, y1) = Bounds(paths, visits.Keys, cell, goals.Select(g => g.box))
                 ?? throw new InvalidOperationException("Nothing to draw: no best, no explored cells and no at: goals for Full-TAS " + name);
             using JsonDocument world = JsonDocument.Parse(File.ReadAllText(worldPath), new JsonDocumentOptions { MaxDepth = 256 });

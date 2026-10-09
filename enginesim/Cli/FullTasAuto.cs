@@ -830,6 +830,8 @@ namespace IGTAP.EngineSim.Cli
             }
             foreach (var j in jobs) foreach (Thread t in j.threads) t.Join(60000);
             foreach (var j in jobs) GraftTally(j.solver);
+            // The studio's explored map (a stretch's view) reads the visits file: every window's cells.
+            SaveVisits(MergedVisits(jobs.Select(j => j.solver)));
             double search = CpuSeconds() - c0, wall = (_clock.Elapsed - w0).TotalSeconds;
             Log($"auto: {jobs.Count} windows side by side on {per} threads each: {search:0} CPU s, {wall:0} s; "
                 + string.Join(", ", jobs.Select(j => $"goals {j.k}-{j.limit}{(j.solver.Mined != null ? $" ({j.solver.TechGrafted} grafts of {j.solver.Runs} runs)" : "")} {(j.found.Count > 0 ? $"{j.found.Count} faster (goal {j.limit} at {j.bestAt[0]} against {j.baseline})" : "nothing faster")}")));

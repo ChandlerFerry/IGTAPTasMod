@@ -999,6 +999,8 @@ namespace IGTAP.EngineSim.Cli
                 nearest[i] = closest?.Distance ?? float.NaN;
                 closests[i] = closest?.Inputs;
             });
+            // The studio's explored map (a stretch's view) reads the visits file: every worker's cells.
+            SaveVisits(MergedVisits(solvers));
             var found = new List<List<InputTick>>();
             for (int i = 0; i < SearchWorkers; i++)
                 foreach (var (inputs, how, _) in finds[i])
@@ -1289,6 +1291,16 @@ namespace IGTAP.EngineSim.Cli
             foreach (JsonElement c in root.GetProperty("cells").EnumerateArray())
                 visits[((long)c[0].GetInt32() << 32) | (uint)c[1].GetInt32()] = c[2].GetSingle();
             return visits;
+        }
+
+        /// <summary>The cells several solvers explored, each at its earliest arrival.</summary>
+        static Dictionary<long, float> MergedVisits(IEnumerable<OfflineSolver> solvers)
+        {
+            var merged = new Dictionary<long, float>();
+            foreach (OfflineSolver s in solvers)
+                foreach (var v in s.Visits())
+                    if (!merged.TryGetValue(v.Key, out float t) || v.Value < t) merged[v.Key] = v.Value;
+            return merged;
         }
 
         void SaveVisits(Dictionary<long, float> window)

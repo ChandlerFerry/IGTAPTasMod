@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { goalSpan, liveSeconds, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
+import { FullTasSolvePanel, goalSpan, liveSeconds, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
 
 type Run = { name: string; section: string; goals: string[]; best: { splits: FullTasSplit[] } | null;
   offline?: { reached: number; splits: FullTasSplit[] } | null };
@@ -38,7 +38,10 @@ export function FullTasTransitions({ runs, solve, lastResult, busy, onMap, onCom
           onClick={() => onCommand("/fulltas/solve", { name, focus: [picked.goal, picked.goal] })}>Improve this stretch</button>
         <button className="danger" disabled={!solve.running} onClick={() => onCommand("/fulltas/stop")}>Stop</button>
       </span></div>}
-    <p className="hint">{solve.running ? `Running · ${solve.name ?? ""} · ${solve.status}` : lastResult?.text ?? "Idle"}</p>
+    {/* The solve's progress as the Full-TAS tab shows it: runs, ticks, runs a second, windows, finds, gate checks. */}
+    <FullTasSolvePanel solve={solve} goals={run?.goals ?? []} run={solve.name ?? name} lastResult={lastResult} canPlay={false} onPlay={() => {}}
+      route={run ? { progress: splits.length, time: splits.length ? liveSeconds(splits[splits.length - 1]) : null, splits: splits.map(liveSeconds) } : null}
+      picked={picked ? [picked.goal, picked.goal] : null} onPick={g => setGoal(g)}/>
     <div className="routeList">{shown.map(s => <div className={`routeRow ${s.goal === goal ? "active" : ""}`} key={s.goal}>
       <button className="routeItem" onClick={() => setGoal(s.goal)}><div><strong>{goalSpan([s.goal, s.goal])}: {s.to}</strong>
         <small>from {s.from} · {s.ticks} ticks ({s.seconds.toFixed(2)} s)</small></div></button></div>)}</div>
