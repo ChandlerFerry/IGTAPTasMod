@@ -1,6 +1,45 @@
+# Zip% handoff (2026-10-08, third session): the unattended pipeline
+
+Read this, then the third session's measurements below it.
+
+- **Run it:** `IGTAP.EngineSim fulltas <trace>` with the trace alone, from the repo. No flags and nothing to decide
+  (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md, plan docs/superpowers/plans/2026-10-08-fulltas-unattended.md).
+  - Stage after stage it plans to the next buy, realizes it, and installs whenever the build gets further.
+  - It ends at the run's last goal, at a goal that belongs to the reach solve, or after two stages in a row with no progress.
+  - Report: `fulltas\<run>.report.json` beside the trace. Per stage it gives the plan ticks per round, the build, the
+    install, the failed moves learned, and the stop.
+- **What makes it unattended:**
+  - Failed moves are saved facts (`moves.json` `failed`, keyed by from, to, unlocks, tree group and engine build) that no
+    plan offers again.
+  - A move that failed from two places is out from every place.
+  - One fixed search budget per step, in simulated ticks.
+  - Piece searches are deterministic: 16 single-worker solvers with fixed seeds. Checked: the same 20,001,132 ticks
+    simulated with and without 24 busy processes alongside.
+  - The planner is capped by states (1M, beam 4), not seconds; the same plan came out on three runs.
+- **The shared engine** (`enginesim\Cli\bin\Release\net10.0`) is built with it.
+- **Acceptance (stage 1, from goal 987):**
+  - The plan reached `buytree7` on tick 75,157 (5 min).
+  - Realize leveled `buytree0` seven times (green chance 1% → 8%).
+  - `buyfree6b`, the free global Cash box the plan leaned on, can't be reached. Its search failed from `buytree0` and from
+    `buyclone6`, so it is now out from every place.
+  - Without that box, the re-plan found no plan within 1M states. It was stuck under the NP cap, at 471k of 78 NP a tick
+    against `buytree7`'s 620k, after an atom touch had reset its clones.
+  - The stage installed its build anyway: goals 991 → 1002.
+  - Stage 2 then started by itself.
+- **Next:**
+  - The beam's economy strategy is the bottleneck: the NP rate needs atoms, and atoms reset Courses 6/7.
+  - Read the report's stops before changing anything.
+  - Open issues 2-4 of the second session below still hold.
+  - Deferred from the final review:
+    - `ExploreFixed` keeps the last 40 finds, not the fastest.
+    - It ignores a stop request.
+    - It peaks at about 24 GiB.
+    - `AreaTwoOffer` doesn't guard against buying a later goal's box early.
+    - `docs/fulltas.md` still describes the removed `fulltas-plan` flags.
+
 # Zip% handoff (2026-10-08, third session): what changed
 
-Read this, then the second session's notes below it.
+The measurements behind the pipeline above.
 
 - **Measured (don't re-derive):**
   - **GP isn't dead, it's lumpy.** At goal 987, Course 6's 16 clones are off screen and spawn once a second, so at 1% green

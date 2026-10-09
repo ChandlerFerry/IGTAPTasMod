@@ -1367,12 +1367,13 @@ namespace IGTAP.EngineSim.Cli
             // With no whole route, the one that gets furthest (its goals so far, total -1): the next stretch is planned or solved from it.
             var written = whole.run != null ? (whole.name, whole.run, whole.goals)
                 : realized.Where(r => r.run != null).Select(r => (r.name, r.run, r.goals)).Concat(partials).OrderByDescending(r => r.run.Progress).FirstOrDefault();
+            string targetLabel = _labels[targetIndex];   // before Install, which takes the installed route's goal list
             if (written.run != null && written.run.Progress > _best.Progress) Install(written.run, written.goals);
             else Log($"install: no route reaches further than the best's goal {_best.Progress}");
             Realization z0 = realized.FirstOrDefault().z;
             _stageReport = new
             {
-                target = _labels[targetIndex], from = kept, fromTick = startTick, planTicks = z0?.PlanTicks, built = z0 != null && z0.Done ? z0.Tick : -1,
+                target = targetLabel, from = kept, fromTick = startTick, planTicks = z0?.PlanTicks, built = z0 != null && z0.Done ? z0.Tick : -1,
                 installed = _installed, reaches = written.run?.Progress, stop = z0?.Why,
                 failed = moves.Failures.Where(f => !failuresBefore.Contains(f)).Select(f => new { f.from, f.to, f.caps, f.tree, f.why }).ToList(),
                 // A stop: every failed move the plan couldn't use (spec section 4), not only this stage's.
