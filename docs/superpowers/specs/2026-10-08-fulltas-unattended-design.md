@@ -72,15 +72,17 @@ a lap step's worst case is 2 × `PieceTicks`.
 
 - **Planner:** the exact search and the beam are bounded by states expanded (constants, sized from today's runs), not seconds.
   Auto mode's "beam with what the exact search left" becomes the exact search to its state cap, then the beam to its own.
-- **Piece search (`Explore`):** a fresh archive each search (no resume from disk: that made a result depend on earlier runs), a
-  fixed worker count (8, not `ProcessorCount`), each worker its own seeded RNG, run in
-  generations: every worker plays a fixed batch of runs from the archive as it stood at the generation's start, then the
-  batches are merged in worker order. The budget is simulated ticks summed over the generations. Same seed, same archive in,
-  same result out, whatever the threads' timing.
+- **Piece search (`Explore`):** a fresh archive each search (no resume from disk: that made a result depend on earlier runs),
+  16 independent solvers of one worker each (not `ProcessorCount`), seeds 1-16, fixed archive and state-cache budgets so
+  eviction is the same on any machine. Each worker ends itself at a run boundary once its share of the simulated ticks is
+  spent (or after a stall in ticks), and the finds are merged in solver order after all end. Nothing crosses between the
+  solvers while they run, so the threads' timing can't change the result. (Generations over one shared archive would
+  search better per tick, but need a rewrite of the solver's archive; the independent solvers came first.)
 - **No `TimeUp`, no `PlanOver`.** A stage ends when its plan is built or fails; the run ends per section 4.
 
 Explore is shared with every other solve (course Improve, the reach solve, Tree%, TouchGrass-ANY%, FalseEnding%-280); the
-generational merge applies to all of them. They are re-checked (Testing).
+unattended path is opt-in, and the shared solver's changes (fixed budgets, a worker's own end) are off unless set. They are
+re-checked (Testing).
 
 ### 4. The loop
 

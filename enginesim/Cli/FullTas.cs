@@ -909,6 +909,58 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
+        const int SearchWorkers = 16;
+
+        /// <summary>
+        /// Explore, unattended (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md, section 3): SearchWorkers solvers of
+        /// one worker each, seeds 1.., a fixed archive budget, no archive resume and no walks, each to its share of the ticks (or
+        /// PieceStallTicks / SearchWorkers after a find without a faster one), the worker ending itself (OfflineSolver.TickLimit);
+        /// their finds in solver order, the grafts' tallies after all end. Nothing depends on the threads' timing, so the same start
+        /// gives the same routes.
+        /// </summary>
+        List<List<InputTick>> ExploreFixed(string title, string span, Func<Simulation> create, string caps, List<List<InputTick>> seeds,
+            OfflineSolver.ForcedPath path, long baseline, long budgetTicks, bool resume, out List<InputTick> bestInputs)
+        {
+            long share = budgetTicks / SearchWorkers, stall = PieceStallTicks / SearchWorkers;
+            var finds = new List<(List<InputTick> inputs, string how, long atGoal)>[SearchWorkers];
+            var bests = new List<InputTick>[SearchWorkers];
+            var ticks = new long[SearchWorkers];
+            TechGrafts grafts = _mined ?? AutoGrafts(caps);
+            Log($"{title} {span}: {SearchWorkers} fixed searches of {share} ticks each");
+            System.Threading.Tasks.Parallel.For(0, SearchWorkers, new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = SearchWorkers }, i =>
+            {
+                var mine = finds[i] = new List<(List<InputTick>, string, long)>();
+                var solver = new OfflineSolver(create, caps, seeds, null, path, VisitCell, grafts, rng: 1 + i) { ArchiveBudget = 1L << 29, StateBudget = 1L << 30, TickLimit = share, StallTicks = stall };
+                if (_mined == null) TuneGrafts(solver, 0, 0, 0);
+                solver.Resume = resume ? _states.Index : null;
+                solver.NoResets = _noResets;
+                solver.Improved += (time, runTicks, inputs, how) =>
+                {
+                    long atGoal = runTicks - Simulation.StrictFinishTicks;
+                    if (atGoal < baseline) lock (mine) mine.Add((inputs, how, atGoal));
+                };
+                // The worker ends itself (TickLimit, StallTicks): no stop from this thread, whose timing would decide where.
+                foreach (Thread t in solver.Start(1)) t.Join();
+                solver.Stop();
+                lock (solver.Shared) bests[i] = solver.Shared.Inputs;
+                ticks[i] = Interlocked.Read(ref solver.Ticks);
+            });
+            var found = new List<List<InputTick>>();
+            for (int i = 0; i < SearchWorkers; i++)
+                foreach (var (inputs, how, _) in finds[i])
+                {
+                    found.Add(inputs);
+                    _findModes?.Add(how);
+                    GraftFind(how);
+                }
+            _lastSearchTicks = ticks.Sum();
+            bestInputs = Enumerable.Range(0, SearchWorkers).Where(i => bests[i] != null)
+                .Select(i => (inputs: bests[i], at: finds[i].Count == 0 ? long.MaxValue : finds[i].Min(f => f.atGoal), i))
+                .OrderBy(b => b.at).ThenBy(b => b.i).Select(b => b.inputs).FirstOrDefault();
+            Log($"{title} {span}: {found.Count} finds, {_lastSearchTicks} ticks simulated");
+            return found;
+        }
+
         /// <summary>
         /// One offline search from <paramref name="create"/>'s start for its goals, for up to <paramref name="budgetMinutes"/>, ended
         /// early once it has found a route and gone <paramref name="stallMinutes"/> without a faster one. Returns the routes faster than
@@ -923,6 +975,7 @@ namespace IGTAP.EngineSim.Cli
             var found = new List<List<InputTick>>();
             ReloadAvoids(goals);
             OfflineSolver.ForcedPath path = WithStrays(create, goals);
+            if (_unattended && budgetTicks > 0) return ExploreFixed(title, span, create, caps, seeds, path, baseline, budgetTicks, resume, out bestInputs);
             OfflineSolver.Memory memory = _fresh ? null : Solve.LoadMemory(archiveFile);
             if (memory != null)
                 Log($"Resuming from {Path.GetFileName(archiveFile)}: {memory.Sources.Sum(s => s.Cells.Count)} cells over {memory.Sources.Count} prefixes, "

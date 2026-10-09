@@ -150,6 +150,16 @@ namespace IGTAP.EngineSim
         /// <summary>Mined patterns drawn per grafted contact.</summary>
         public int MinedDraws = 1;
         /// <summary>The share of explore runs with a contact that get a mined graft (a Full-TAS window's per-window cap).</summary>
+        /// <summary>The archive's byte budget (0: a quarter of the machine's memory). Fixed, the eviction is the same on any machine.</summary>
+        public long ArchiveBudget;
+        /// <summary>The cached states' byte budget (0: half the machine's memory over the workers); many solvers at once set it.</summary>
+        public long StateBudget;
+        /// <summary>A one-worker solver's own end (0: off): its worker stops at a run boundary once Ticks reaches TickLimit, or once a
+        /// best exists and StallTicks passed since the last improvement; a stop from outside lands wherever the clock says.</summary>
+        public long TickLimit, StallTicks;
+        long _improvedAt;
+        internal bool Spent => TickLimit > 0 && (Interlocked.Read(ref Ticks) >= TickLimit
+            || StallTicks > 0 && Volatile.Read(ref Shared.Version) > 0 && Interlocked.Read(ref Ticks) - Interlocked.Read(ref _improvedAt) >= StallTicks);
         public double GraftRate = .5;
         /// <summary>Run input ticks (from the search's start) whose contacts a graft prefers, 3 picks in 4 (a waste audit's span); null: any.</summary>
         public (int lo, int hi)? GraftFocus;
@@ -237,9 +247,9 @@ namespace IGTAP.EngineSim
             var threads = new Thread[workers];
             _workers = new Worker[workers];
             long available = AvailableMemory();
-            _stateBudget = available / 2 / workers;
+            _stateBudget = StateBudget > 0 ? StateBudget : available / 2 / workers;
             StatesPerWorker = (int)Math.Max(512, _stateBudget / Worker.StartStateBytes);
-            _archiveBudget = available / 4;
+            _archiveBudget = ArchiveBudget > 0 ? ArchiveBudget : available / 4;
             _cellBytes = CellBytes(workers);
             _partitions = Enumerable.Range(0, workers).Select(i => _loaded == null ? new List<Memory.Source>()
                 : _loaded.Where((s, k) => k % workers == i).ToList()).ToArray();
@@ -441,6 +451,7 @@ namespace IGTAP.EngineSim
             while (!_reports.IsEmpty && Monitor.TryEnter(_reporting))
                 try
                 {
+                Interlocked.Exchange(ref _improvedAt, Interlocked.Read(ref Ticks));
                     while (_reports.TryDequeue(out var r)) Improved?.Invoke(r.time, r.runTicks, r.inputs, r.how);
                 }
                 finally { Monitor.Exit(_reporting); }
@@ -802,7 +813,7 @@ namespace IGTAP.EngineSim
 
             public void Loop()
             {
-                while (!_owner._stop)
+                while (!_owner._stop && !_owner.Spent)
                 {
                     AdoptShared();
                     int generation = _owner._exportGeneration;

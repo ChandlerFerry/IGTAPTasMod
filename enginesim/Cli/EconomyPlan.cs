@@ -1544,7 +1544,7 @@ namespace IGTAP.EngineSim.Cli
                 (z.Inputs, z.State, z.Tick) = played.Value;
                 z.Planned.AddRange(goals);
                 Read(z.State);
-                Console.WriteLine($"try {arg}: tick {from} -> {z.Tick}, {z.Tick - from} ticks; Cash {_eval.Shop.Holds(globalStats.Currencies.Cash):G4}, "
+                Console.WriteLine($"try {arg}: tick {from} -> {z.Tick}, {z.Tick - from} ticks; inputs {SnapshotIndex.Hash(z.Inputs, z.Inputs.Count):x16}; Cash {_eval.Shop.Holds(globalStats.Currencies.Cash):G4}, "
                     + $"GP {_eval.Shop.Holds(globalStats.Currencies.GreenPower):G4}, NP {_eval.Shop.Holds(globalStats.Currencies.AtomicPower):G4}"
                     + $" ({Singleton<globalStats>.Instance.NPrewardPerTick:G4} a tick) ({clock.Elapsed.TotalSeconds:0.0} s)");
             }
