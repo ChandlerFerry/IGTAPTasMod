@@ -1,4 +1,85 @@
-# Zip% handoff (2026-10-07): every lesson from the buytree0 → zip movers push
+# Zip% handoff (2026-10-08, second session): state, tools, and what's open
+
+Read this section first; the 2026-10-07 notes below it are history (still useful for the planner's internals).
+
+## State
+
+- **Installed best** (`fulltas/Zip%.json` in the config folder, `runs/Zip%.json`: 991 goals): goals 1-513 as before, then the
+  stages from goal 513 built by this session: `buytree5` on tick 50,130 (goal 826), `buytree6` on tick 52,115 (goal 831), then
+  Course 6/7 investment and tree-box levels to about tick 58,000-60,000 (goal ~987). Next goal: `buy:buytree7` (goal 988),
+  then `buytree12`, `buytree13`, `buytree16`.
+- The tree is at about level 7 (buytree0-6 bought), `buytree0` (green clone chance) still at level 1 in the installed route:
+  the planner could never buy it until `70d99f0` (below). Expect the next stages to level it.
+- **Nothing is running.** The last engine build is `C:	mp\igtap\zip\eng53` (HEAD `70d99f0`).
+
+## Resume
+
+```
+& C:	mp\igtap\zip\eng53\IGTAP.EngineSim.exe fulltas-plan $tracesulltas-Zip%.json --stages --mode beam --beam 4 --minutes 30 --rounds 4 --off-ticks 300 --only <list> --piece-minutes 2
+```
+
+`<list>`: the full `--only` list below without `lap:9,record:9` (Course 9 is closed under strict buys, see open issue 3). Run
+from the repo (`--install` writes `runs/Zip%.json`). Each stage plans to the next tree goal, realizes, and installs. Watch the
+`realize: ... planned ... (C Cash, G GP), built ... (C Cash, G GP)` lines: they show where the plan and the build part.
+
+## The feedback loop (use it; full `--realize` reruns cost 10-15 minutes before they reach the step you changed)
+
+`fulltas-plan <trace> --from <goal> --target <a later goal> --try STEPS` plays steps from the best's state at `--from`:
+- realize's own steps: `lap:7`, `record:6`, `buy:box`, `all:box`, `atoms:N`, each with an optional `@T` (planned ticks) and `!`
+  (a trail: player, courses on screen, GP every 25 inputs);
+- `wait@T`: the build stands T ticks (full simulation); `idle:PLACE@T` / `finish:N@T`: the plan's economy (SimEconomy) does;
+- `where:PLACE`: the movement table's place against the box's touch spot.
+
+Write the expected result before running; if a check hasn't answered in 5 minutes, stop it and think.
+
+## Measured this session (don't re-derive)
+
+- **Saved course routes after a quick restart** replay only on the category start's exact state: the restart's landing moves
+  with the motion before it (sub-unit), and the 280 fps frame phase matters. Course 7's 8.78 from its own start trace,
+  restarted after k idle ticks: only k=4 of 0-80 finishes. Realize therefore repairs: gate walk, restart onto the course,
+  the saved route as a search seed (seconds), then the farm loop from the finish (Course 6 1.35 s loop: 61-63 ticks a lap;
+  Course 7 11.33 s loop: 521 ticks).
+- **Economy fidelity:** plan economy and build agree tick for tick when standing (`idle` vs `wait`: same Cash and GP over 10,000
+  ticks). Courses' clones go off screen by LoD exactly as the game; no zone unloads courses in Area 2.
+- **GP:** only green clones pay it (counter += greenCloneClance per spawn, a green at 100). Off screen a green pays
+  gpReward x size / divisor (~11.7 x at Course 6's 0.94 s path): lumps of hundreds of GP. Lapping a course keeps its own
+  on-screen clones from paying. With buytree0 at level 1 (1% chance) GP income is tiny; five more levels gave ~6x.
+- **Course 9 under strict buys:** the way there from the tree passes buytree0's box; with NP held the touch buys a level, a
+  stray buy that ends a strict run (rule 38).
+
+## Open issues, ranked (from the session and an adversarial review; not fixed)
+
+1. **Tree transitions ignore the tree level** (`EconomyMoves.AddSavedTransitions`): every `tree<L>to<C>` is a `lap:C` move from
+   bonus 11's landing whatever the level (README rule 21: Courses 7/9 keep levels 0 and 3 only). Gate by the run's tree
+   level, or drop them past level 4 and leave lap:C to measured moves. This drove the Course 7/9 lap churn.
+2. **`CloneRates` (the beam estimate's GP rate) uses the on-screen spawn rate** (Count/PathLength) and no ceiling; off screen
+   a course spawns once a second and pays ceil(x)/divisor. The estimate mis-ranks Courses 7-9's clones.
+3. **Course 9 / `buyatomlevel9`** (the earlier study: every zip-mover plan buys it; a GLOBAL box, kept through atom touches):
+   either set `"buys": "loose"` in `runs/Zip%.json` (the user's call) or plan `buy:buytree0` as the goal right before the
+   Course 9 path when NP allows (it's the best NP buy anyway); at buytree0's cap (20 levels, ~1e24 NP) the stray is gone.
+4. **Atom touches wipe Course 6's local upgrades** (upgradeBox.cs:688-695); since goal 513 the goals hold ~70 buygreen6, ~64
+   buyclone6, ~77 buyreward6 for 4 touches. Nothing in `Estimate` charges a touch for that, so `buytree10` (exempt Course 6,
+   750k NP) never ranks. Charge the rebuy, or make buytree10 an intermediate target.
+5. **`LapGiveUp` is wall-clock** (`stepClock`): blocking depends on machine load (other agents share the CPU). Use sim ticks or
+   plays.
+6. **Plan vs build GP**: with `ExpectedGreens` (planning only) the beam no longer chases lucky green lumps, but the build's GP
+   still runs well under the plan's away from Course 6 in some steps (`all:` steps buying fewer levels than planned compounds
+   it). Read the per-step GP columns; `--explain` (a plan replay that prints each course's clones at big GP steps) was
+   written and lost in a checkout, worth re-adding.
+7. Smaller: `SavedLap`'s `_lapMisses` never clear on tree growth; `Waited`'s downward pass replays from the stand's start
+   each 5 ticks; a failing `Lap()` costs up to 12x5 saved-lap plays plus RecordLap twice plus a search.
+8. Not run after this session's changes: `tools/validate.py`, `tools/tech-check.py`, and replays of Tree%, TouchGrass-ANY%,
+   FalseEnding%-280 (they share realize's code).
+
+## This session's commits (oldest first)
+
+`3c81ca0` farm restart laps first; `7b464b1` NP priced in atoms (NpWait); `de867f0` goals reset; `7624af8` farm loop laps
+whole; `37d057a`/`5ec2199` category checks, phase-aware restarts; `c308876` AdvanceFrom past the last goal (laps were cut
+away); `3d40618` NP over cap replans; `481832d`/`30d8383` GP logging, `--try`; `30ff670`/`d291018` stand waits linear;
+`eda98b0` gate walk before record lap; `1448dff`/`fe2c10c` lap blocking; `c92b20a` `finish:` diag; `dd40f83` ExpectedGreens;
+`70d99f0` buys from the box's touch spot (buytree0), review fixes.
+
+# History: Zip% handoff (2026-10-07), every lesson from the buytree0 → zip movers push
 
 Read this before touching Zip% again. The plan when resuming: **start over from goal 513 (`buy:buytree0`, tick 36328)**
 and rebuild Area 2 with every course, fixing each problem below as it shows up instead of letting a loop run on it.
