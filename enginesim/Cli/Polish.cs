@@ -29,6 +29,9 @@ namespace IGTAP.EngineSim.Cli
     {
         const float Tie = .0001f;
         const int StateEvery = 2;
+        /// <summary>The inputs whose states the workers record: the polished range and the state just before it. A Full-TAS
+        /// route's whole length (ZipEscape%: 62,757 inputs, a state every two on 30 workers) ran the machine out of memory.</summary>
+        int _keepFrom, _keepTo = int.MaxValue;
 
         public sealed class Result
         {
@@ -116,6 +119,8 @@ namespace IGTAP.EngineSim.Cli
         /// lands on changes with them), keeping the result only if it is strictly better.</summary>
         public Result Run(List<InputTick> seed, int maxSweeps = 50, int from = 0, int to = int.MaxValue)
         {
+            _keepFrom = Math.Max(0, from - StateEvery);
+            _keepTo = to;
             _floor = null;
             Result best = Sweeps(seed, maxSweeps, from, to, Lead);
             if (!Lead || from != 0 || to <= 0 || seed.Count == 0 || seed[0].reset) return best;
@@ -569,7 +574,7 @@ namespace IGTAP.EngineSim.Cli
                 RunResult r = _sim.Run(inputs, from, tick =>
                 {
                     if (_avoided) return false;
-                    if (states != null && tick < states.Length && tick % StateEvery == 0)
+                    if (states != null && tick < states.Length && tick % StateEvery == 0 && tick >= _owner._keepFrom && tick <= _owner._keepTo)
                     {
                         SimSnapshot state = _sim.Capture(tick);
                         state.Waypoints = _waypoints;
