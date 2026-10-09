@@ -238,6 +238,15 @@ namespace IGTAPTasMod
                     string from = Text(body, "from").Trim();
                     if (from.Split('+').Any(s => s.Length > 0 && !FullTasGoal.SideNames.Contains(s)))
                         throw new InvalidOperationException($"from: sides {string.Join(", ", FullTasGoal.SideNames)} joined with +, not {from}.");
+                    // "stretch": the box cuts while one run heads for that one goal (its number from 0; the block's "forGoal"), not
+                    // every goal with its label.
+                    if (body["stretch"] != null && body["stretch"].Type == JTokenType.Integer)
+                    {
+                        int only = (int)body["stretch"];
+                        if (runs.Length != 1) throw new InvalidOperationException("stretch: one run's goal (its number is that run's).");
+                        if (only < 0 || only >= defs[0].goals.Count) throw new InvalidOperationException($"stretch: {defs[0].name} has goals 0 to {defs[0].goals.Count - 1}, not {only}.");
+                        return new { ok = true, changed = EditFullTasAvoids(runs, b, Truthy(body, "remove"), null, null, from.Length > 0 ? from : null, only) };
+                    }
                     return new { ok = true, changed = EditFullTasAvoids(runs, b, Truthy(body, "remove"), forGoal, after, from.Length > 0 ? from : null) };
                 }
                 case "/api/fulltas/move-goal":
@@ -269,12 +278,15 @@ namespace IGTAPTasMod
                         request.StatusCode = 404;
                         return new { ok = false, error = "No trace for " + run.name + " yet: capture its start or improve it once first." };
                     }
-                    string output = Path.Combine(EngineSimDir, "map-fulltas-" + run.name + ".json");
+                    // "stretch": one goal's stretch alone (its number from 0): the best's path to it from the goal before, its avoid boxes.
+                    int stretch = body["stretch"] != null && body["stretch"].Type == JTokenType.Integer ? (int)body["stretch"] : -1;
+                    string output = Path.Combine(EngineSimDir, "map-fulltas-" + run.name + (stretch >= 0 ? "-goal" + stretch : "") + ".json");
                     if (MapInFlight(output, body)) return RunEngineSimMap(request, null, output, true);
                     // The run's goals as they are now: the trace holds the goals it was captured with, older after a goals edit.
                     string goalsFile = Path.Combine(EngineSimDir, "map-fulltas-" + run.name + ".goals.json");
                     File.WriteAllText(goalsFile, JsonConvert.SerializeObject(ResolveFullTasGoals(run).Select(g => g.label)));
-                    return RunEngineSimMap(request, "map " + Quote(trace) + " --goals " + Quote(goalsFile) + " --out " + Quote(output), output, true);
+                    return RunEngineSimMap(request, "map " + Quote(trace) + " --goals " + Quote(goalsFile) + " --out " + Quote(output)
+                        + (stretch >= 0 ? " --stretch " + stretch.ToString(CultureInfo.InvariantCulture) : ""), output, true);
                 }
             }
             request.StatusCode = 404;

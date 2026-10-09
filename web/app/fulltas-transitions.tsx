@@ -12,7 +12,7 @@ type Run = { name: string; section: string; goals: string[]; best: { splits: Ful
  * "Improve selected"). The next goal the best doesn't reach yet is listed but can't be improved (a focus is on reached goals).
  */
 export function FullTasTransitions({ runs, solve, lastResult, busy, onMap, onCommand }: { runs: Run[]; solve: FullTasSolveState;
-  lastResult?: FullTasOutcome | null; busy: boolean; onMap: (run: string) => void; onCommand: (path: string, body?: unknown) => Promise<boolean> }) {
+  lastResult?: FullTasOutcome | null; busy: boolean; onMap: (run: string, stretch: number) => void; onCommand: (path: string, body?: unknown) => Promise<boolean> }) {
   const [name, setName] = useState(() => runs.find(r => r.section === "wip")?.name ?? runs[0]?.name ?? "");
   const [goal, setGoal] = useState<number | null>(null);
   const [all, setAll] = useState(false);
@@ -33,7 +33,7 @@ export function FullTasTransitions({ runs, solve, lastResult, busy, onMap, onCom
     {picked && <div className="ftFocus on">
       <span><b>{goalSpan([picked.goal, picked.goal])}</b>: {picked.from} → {picked.to}, {picked.ticks} ticks ({picked.seconds.toFixed(2)} s)</span>
       <span className="buttonRow">
-        <button className="secondary" onClick={() => onMap(name)} title="The run's map: draw avoid boxes there and scope them to only this goal.">Show map</button>
+        <button className="secondary" onClick={() => onMap(name, picked.goal - 1)} title="This stretch alone on the map: the best's path through it and its avoid boxes; each box drawn there cuts for this stretch only.">Show stretch</button>
         <button className="primary" disabled={busy} title={`Searches only windows starting at ${goalSpan([picked.goal, picked.goal])}, until Stop.`}
           onClick={() => onCommand("/fulltas/solve", { name, focus: [picked.goal, picked.goal] })}>Improve this stretch</button>
         <button className="danger" disabled={!solve.running} onClick={() => onCommand("/fulltas/stop")}>Stop</button>

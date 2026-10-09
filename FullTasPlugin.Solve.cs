@@ -402,7 +402,7 @@ namespace IGTAPTasMod
         /// that rule's optional block "for" the goal: it cuts only while a run heads for that goal; with <paramref name="after"/>
         /// (a goal label), the block "after" it: it cuts once a run has reached that goal. <paramref name="from"/> ("left+bottom",
         /// ...) makes it one-way, the block's "from": it cuts only a move into it across those sides. Remove takes it out of all.</summary>
-        int EditFullTasAvoids(string[] runs, float[] b, bool remove, string goal = null, string after = null, string from = null)
+        int EditFullTasAvoids(string[] runs, float[] b, bool remove, string goal = null, string after = null, string from = null, int? only = null)
         {
             float[] wanted = NormalizedBox(b);
             Func<JToken, bool> same = SameBox(wanted);
@@ -437,17 +437,19 @@ namespace IGTAPTasMod
                         paths.Add(rule);
                     }
                     var avoid = (JArray)rule["avoid"];
-                    if (goal != null || after != null || from != null)
+                    if (goal != null || after != null || from != null || only != null)
                     {
                         if (!(rule["optional"] is JArray optional)) rule["optional"] = optional = new JArray();
                         JObject block = optional.OfType<JObject>().FirstOrDefault(o => (string)o["for"] == goal && (string)o["after"] == after
-                            && (string)o["from"] == from && o["offFor"] == null && o["avoid"] is JArray);
+                            && (string)o["from"] == from && (int?)o["forGoal"] == only && o["offFor"] == null && o["avoid"] is JArray);
                         if (block == null)
                         {
-                            string name = (goal != null ? "for " + goal : after != null ? "after " + after : "always") + (from != null ? " from " + from : "");
+                            string name = (only != null ? "goal " + only : goal != null ? "for " + goal : after != null ? "after " + after : "always") + (from != null ? " from " + from : "");
                             block = new JObject { ["name"] = name, ["note"] = "Drawn on the Full-TAS map: cuts "
-                                + (goal != null ? "only while a run heads for " + goal : after != null ? "once a run has reached " + after : "for every goal")
+                                + (only != null ? "only while the run heads for goal " + only : goal != null ? "only while a run heads for " + goal
+                                    : after != null ? "once a run has reached " + after : "for every goal")
                                 + (from != null ? ", only a move into it across its " + from + " side" : "") + "." };
+                            if (only != null) block["forGoal"] = only;
                             if (goal != null) block["for"] = goal;
                             if (after != null) block["after"] = after;
                             if (from != null) block["from"] = from;

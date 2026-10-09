@@ -274,7 +274,10 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>forced-paths.json's rules (a course's and category's boxes, a Full-TAS run's avoid boxes). The studio edits the
         /// file while a solve runs, so it is read again whenever it has changed.</summary>
         sealed record PathRule(int? Course, string[] Capabilities, string[] Fulltas, float[][] Via, float[][] Avoid, bool Guide, PathBlock[] Optional);
-        sealed record PathBlock(string Name, string Note, bool Default, float[][] Via, float[][] Avoid, string[] OffFor, string After, string From, string For);
+        /// <param name="ForGoal">The goal (its number from 0, as the studio shows it) the block cuts for alone: only while a run
+        /// heads for that one goal, where For cuts while heading for every goal with its label.</param>
+        sealed record PathBlock(string Name, string Note, bool Default, float[][] Via, float[][] Avoid, string[] OffFor, string After, string From, string For,
+            int? ForGoal = null);
         sealed record PathsFile(PathRule[] Paths);
         static Tuple<DateTime, PathRule[]> _pathRules;
 
@@ -313,6 +316,11 @@ namespace IGTAP.EngineSim.Cli
                 foreach (PathBlock block in rule.Optional ?? Array.Empty<PathBlock>())
                 {
                     if (goals != null && block.OffFor != null && block.OffFor.Any(goals.Contains)) continue;
+                    if (block.ForGoal is int only)
+                    {
+                        AddBoxes(forced, null, block.Avoid, only, Sides(block), only + 1);
+                        continue;
+                    }
                     if (block.For != null)
                     {
                         if (labels == null) { if (goals == null) AddBoxes(forced, null, block.Avoid, 0, Sides(block)); continue; }

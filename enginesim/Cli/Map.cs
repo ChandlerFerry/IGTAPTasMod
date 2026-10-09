@@ -50,7 +50,9 @@ namespace IGTAP.EngineSim.Cli
             string output = Solve.Option(args, "--out", (string)null) ?? throw new ArgumentException("map needs --out <file>");
             int threads = int.Parse(Solve.Option(args, "--threads", (string)null) ?? Math.Max(1, Environment.ProcessorCount - 2).ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
             JsonElement header = Solve.ReadHeader(trace);
-            if (header.TryGetProperty("fulltas", out JsonElement fulltas)) return FullTasMap(trace, header, fulltas, Solve.Option(args, "--goals", (string)null), output);
+            if (header.TryGetProperty("fulltas", out JsonElement fulltas))
+                return FullTasMap(trace, header, fulltas, Solve.Option(args, "--goals", (string)null), output,
+                    int.Parse(Solve.Option(args, "--stretch", "-1"), CultureInfo.InvariantCulture));
             int course = header.GetProperty("course").GetInt32();
             string caps = header.GetProperty("capabilities").GetString();
             string label = course + "_" + caps;
@@ -252,7 +254,9 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        static int FullTasMap(string trace, JsonElement header, JsonElement fulltas, string goalsFile, string output)
+        /// <param name="stretch">One stretch alone (the goal heading for, numbered from 0 as the studio shows it; -1: the whole
+        /// run): the best's path from the goal before it to it, the box around that, its goal and the avoid boxes that cut there.</param>
+        static int FullTasMap(string trace, JsonElement header, JsonElement fulltas, string goalsFile, string output, int stretch = -1)
         {
             string name = fulltas.GetProperty("name").GetString();
             // The trace's goals are the ones it was captured with; --goals (the run's goals now, a JSON array of labels) wins,
@@ -289,7 +293,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 var path = new Path { Name = routeName, Kind = kind };
                 sim.Goals.Limit = traced.Length;
-                RunResult r = sim.Run(inputs, extraTicks: 1000000, onStep: _ => Step(path, sim, sim.Elapsed(sim.TimingCourse())));
+                RunResult r = sim.Run(inputs, extraTicks: 1000000, onStep: _ => { if (stretch < 0 || sim.Progress == stretch) Step(path, sim, sim.Elapsed(sim.TimingCourse())); });
                 path.Finished = r.Progress == traced.Length;
                 path.Time = r.Progress == 0 ? 0f : r.GoalPhysicsTicks[r.Progress - 1] * dt;
                 path.Name += $" ({r.Progress}/{traced.Length} goals)";
@@ -299,13 +303,14 @@ namespace IGTAP.EngineSim.Cli
             var goals = new List<(int index, string label, float[] box)>();
             for (int i = 0; i < labels.Length; i++)
             {
-                if (!labels[i].StartsWith("at:", StringComparison.Ordinal)) continue;
+                if (!labels[i].StartsWith("at:", StringComparison.Ordinal) || stretch >= 0 && i != stretch) continue;
                 float[] v = labels[i].Substring(3).Split(',').Take(4).Select(s => float.Parse(s, CultureInfo.InvariantCulture)).ToArray();
                 goals.Add((i + 1, labels[i], new[] { v[0] - v[2] / 2, v[1] - v[3] / 2, v[0] + v[2] / 2, v[1] + v[3] / 2 }));
             }
             OfflineSolver.ForcedPath avoid = Solve.FullTasPaths(name, null, labels);
-            Dictionary<long, float> visits = (FullTas.StartChanged(dir, name, FullTas.StartKey(header).ToString("x16")) ? null
-                : FullTas.ReadVisits(FullTas.VisitsFile(dir, name), labels)) ?? new Dictionary<long, float>();
+            if (stretch >= 0) avoid.Avoid.RemoveAll(b => !b.Live(stretch));
+            Dictionary<long, float> visits = stretch >= 0 || FullTas.StartChanged(dir, name, FullTas.StartKey(header).ToString("x16")) ? new Dictionary<long, float>()
+                : FullTas.ReadVisits(FullTas.VisitsFile(dir, name), labels) ?? new Dictionary<long, float>();
             const float cell = FullTas.VisitCell;
 
             var (x0, y0, x1, y1) = Bounds(paths, visits.Keys, cell, goals.Select(g => g.box))
@@ -315,7 +320,8 @@ namespace IGTAP.EngineSim.Cli
             TreeGround tree = Grown(world.RootElement, origin, x0, y0, x1, y1);
             var result = new
             {
-                course = 0, capabilities = header.GetProperty("capabilities").GetString(), label = "fulltas/" + name, fulltas = name,
+                course = 0, capabilities = header.GetProperty("capabilities").GetString(), label = "fulltas/" + name + (stretch >= 0 ? $" goal {stretch}" : ""), fulltas = name,
+                stretch = stretch >= 0 ? stretch : (int?)null,
                 bounds = new[] { x0, y0, x1, y1 },
                 states = WorldStates(world.RootElement).states,
                 solids = Solids(world.RootElement, origin, x0, y0, x1, y1),
