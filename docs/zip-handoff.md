@@ -243,6 +243,16 @@ was `buytree20` (MoreOrbs), then `buyorbs7` (bonus17's pit), then out of the pit
 blocker was an engine and turbo fidelity bug: refill orbs never came on after a Full-TAS buy (`docs/fidelity-log.md`,
 2026-10-09). The notes below are the history of how it got here.
 
+The new stretch, traced (`fulltas --check --ticks-out`, mid-air refills matched to the nearest orb):
+
+- **Out of bonus17's pit (goal 1713, tick 130304):** an orb chain, all sequence 0. JumpResetter (20225, -2339) on tick 130464,
+  DashResetter (20356, -1413) on 130577, DashResetter (1) (20810, -1424) on 130600, FullResetter (22492, -1451) on 130770.
+  Then wall refills to Course 6's gate (goal 1714, tick 131093), a lap, and `buyclone6`.
+- **Up to the zip movers' box:** after the wait for its Cash, wall refills up the shaft at x 24900-25900, then FullResetter (4)
+  (25214, 5505, sequence 1: it needs `buytree20`'s MoreOrbs as well as `buyorbs7`) on tick 134802. Its dash reaches the box,
+  bought on tick 134888.
+- **Trick:** "orb chain out of the pit", the refill orbs `buyorbs7` unlocks, each one coming on as it comes on camera.
+
 - **Goals 1-513 are good.** They replay the same offline, in turbo and at 1x (probe-checked through tick 36643). Goal 513 is
   `buy:buytree0` on tick 36328.
 - **Everything after 513 is throwaway.** The installed best (`fulltas/Zip%.json` in the config folder) reaches goal 703
