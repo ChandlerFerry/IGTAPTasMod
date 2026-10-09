@@ -123,6 +123,32 @@ namespace IGTAP.EngineSim.Cli
                 && !MoveTable.TreeLevelPlays(0, 7, 3) && !MoveTable.TreeLevelPlays(3, 7, 7) && !MoveTable.TreeLevelPlays(0, 6, 1)
                 && MoveTable.TreeLevelPlays(10, 8, 8) && MoveTable.TreeLevelPlays(10, 8, 10) && !MoveTable.TreeLevelPlays(10, 8, 7)
                 && MoveTable.TreeLevelPlays(27, 10, 30), "tree transitions play only at their tree level's group");
+            // The ledger (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md, section 1): a failed move is a fact at its
+            // key, never offered again, saved, and dropped by another engine build.
+            {
+                var ledger = new MoveTable();
+                ledger.AtTreeLevel(7);
+                ledger.Measured(new Move("a", "b", 100, "measured", false), "wj");
+                ledger.Measured(new Move("b", "c", 50, "measured", false), "wj");
+                Check(ledger.Best("a", "b", "wj")?.Ticks == 100, "a played move is offered");
+                Check(ledger.Failed("a", "b", "wj", "no way") && !ledger.Failed("a", "b", "wj", "again"), "a failure is a new fact once");
+                Check(ledger.Best("a", "b", "wj") == null, "a failed move is never offered");
+                Check(ledger.Chain("a", "c", "wj") < 0, "no chain runs through a failed move");
+                ledger.AtTreeLevel(11);
+                Check(ledger.Best("a", "b", "wj")?.Ticks == 100, "a failure holds only at its tree group");
+                ledger.AtTreeLevel(7);
+                string file = Path.Combine(Path.GetTempPath(), "plan-selftest-ledger.json");
+                File.Delete(file);
+                ledger.Save(file);
+                MoveTable back = MoveTable.Read(file);
+                back.AtTreeLevel(7);
+                Check(back.Best("a", "b", "wj") == null && back.Failures.Count() == 1, "Save then Read keeps the failure");
+                ledger.Save(file);
+                Check(MoveTable.Read(file).Failures.Count() == 1, "a second Save keeps one failure, not two");
+                File.WriteAllText(file, File.ReadAllText(file).Replace(MoveTable.Build, "another-build"));
+                Check(!MoveTable.Read(file).Failures.Any(), "a failure from another engine build is dropped");
+                File.Delete(file);
+            }
             var toy = new Toy();
             PlanResult plan = EconomyPlan.Search(toy, 0, "c1", p => Options(toy, p), 1000000, 60);
             Console.WriteLine($"planner: {(plan.Done ? "tick " + plan.Tick : "not done")}, {plan.States} states, {plan.Dropped} dominated dropped: "

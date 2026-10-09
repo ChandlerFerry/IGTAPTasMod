@@ -1704,22 +1704,6 @@ namespace IGTAP.EngineSim.Cli
                 {
                     string why = $"{s.Kind} {s.Arg} from {from} on tick {z.Tick} doesn't play ({_whyNot})";
                     Log("realize: " + why);
-                    // No way there (not short of Cash): the plan made again goes elsewhere until a tree box grows the way (Zip%
-                    // after buytree0: buytree2, whose way up comes with buytree1, was planned and searched for round after round).
-                    if (s.Kind != "target" && s.Kind != "lap" && s.Kind != "record" && _whyNot?.Contains("Cash") != true && _whyNot?.Contains("paid") != true)
-                    {
-                        moves.Blocked.Add(to);
-                        Log($"realize: {to} blocked until a tree box grows a segment");
-                    }
-                    // A lap whose course's gate no way reached: its laps and record laps too, until a tree box grows a way (Zip%'s Course 9
-                    // at tree level 7: a lap:9 planned again each round, its gate searched 8 minutes a time). Not on a slow failure's wall
-                    // time: blocks clear only when a segment grows, and one slow step under load blocked Course 6 for a stage.
-                    else if (course > 0 && _whyNot?.StartsWith("start:" + course + " ", StringComparison.Ordinal) == true)
-                    {
-                        moves.Blocked.Add("lap:" + course);
-                        moves.Blocked.Add("record:" + course);
-                        Log($"realize: lap:{course} and record:{course} blocked until a tree box grows a segment");
-                    }
                     z.Log.Add(new { round = z.Rounds, kind = s.Kind, step = s.Arg, from, planTicks, plan = planEnd, built = -1L, why, estimated });
                     if (!Again(why)) z.Why ??= why;
                     continue;
@@ -1749,9 +1733,6 @@ namespace IGTAP.EngineSim.Cli
                 z.Inputs = inputs;
                 z.State = state;
                 z.Planned.AddRange(goals);
-                // Only a tree box's first buy grows a segment (a new way); its later levels grow nothing.
-                if (goals.Any(g => g.label.StartsWith("buy:buytree", StringComparison.Ordinal) && !_kept.Concat(z.Planned.Take(z.Planned.Count - goals.Length)).Any(k => k.label == g.label)))
-                    moves.Blocked.Clear();
                 double cash = Cash(state), gp = _eval.Shop.Holds(globalStats.Currencies.GreenPower);
                 string planGp = i < plan.Held.Length && plan.Held[i]?.Length > 1 ? plan.Held[i][1].ToString("G4", CultureInfo.InvariantCulture) : "?";
                 long off = end - planEnd;

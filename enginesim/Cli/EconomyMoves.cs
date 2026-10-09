@@ -69,6 +69,26 @@ namespace IGTAP.EngineSim.Cli
         readonly Dictionary<(string from, string caps), Dictionary<string, int>> _chains = new Dictionary<(string, string), Dictionary<string, int>>();
         /// <summary>The buy table's entries whose search found no way (<see cref="Missed"/>).</summary>
         readonly HashSet<(string from, string to, string caps)> _misses = new HashSet<(string, string, string)>();
+        /// <summary>Moves realize tried from a real state and couldn't build, by (from, to, unlocks, tree group), with why: never
+        /// offered again on this engine build (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md, section 1).</summary>
+        readonly Dictionary<(string from, string to, string caps, int tree), string> _failed = new Dictionary<(string, string, string, int), string>();
+        /// <summary>This engine build (the Runtime assembly's MVID): a failure from another build is dropped on Read.</summary>
+        internal static readonly string Build = typeof(Simulation).Assembly.ManifestModule.ModuleVersionId.ToString("N");
+        int Group => Math.Max(0, _treeGroup);
+
+        /// <summary>Records that the move doesn't play here; true when it is a new fact.</summary>
+        internal bool Failed(string from, string to, string caps, string why)
+        {
+            if (!_failed.TryAdd((from, to, caps, Group), why)) return false;
+            _chains.Clear();
+            return true;
+        }
+
+        internal bool HasFailed(string from, string to, string caps) => _failed.ContainsKey((from, to, caps, Group));
+
+        internal IEnumerable<(string from, string to, string caps, int tree, string why)> Failures =>
+            _failed.OrderBy(kv => kv.Key.from, StringComparer.Ordinal).ThenBy(kv => kv.Key.to, StringComparer.Ordinal)
+                .ThenBy(kv => kv.Key.caps, StringComparer.Ordinal).ThenBy(kv => kv.Key.tree).Select(kv => (kv.Key.from, kv.Key.to, kv.Key.caps, kv.Key.tree, kv.Value));
         /// <summary>The best's goal stops (0: the run's start), from the replay Load built the table on.</summary>
         List<FullTas.Stop> _goals;
         /// <summary>The walkable distance (world units) to a place from each of these places (FullTas.WalkField: the engine's
@@ -92,19 +112,19 @@ namespace IGTAP.EngineSim.Cli
             if (routesFile != null) { table.AddSavedLaps(routesFile); table.AddSavedTransitions(routesFile); table.AtTreeLevel(run.TreeLevel(best)); }
             movesFile ??= run.MovesFile;
             if (File.Exists(movesFile))
-                foreach (var kv in Read(movesFile)._moves)
+            {
+                MoveTable saved = Read(movesFile);
+                foreach (var kv in saved._moves)
                     if (kv.Value.Source == "measured") table.Put(kv.Value, kv.Key.caps);
+                foreach (var f in saved.Failures) table._failed[(f.from, f.to, f.caps, f.tree)] = f.why;
+            }
             return table;
         }
-
-        /// <summary>Places realize found no way to (its step there didn't play for want of a way, not of Cash): no move leads there
-        /// until it clears them (a tree box bought grows the way up). Not saved.</summary>
-        public readonly HashSet<string> Blocked = new HashSet<string>();
 
         /// <summary>The most trusted move from here to there with these unlocks, else an estimate; null when neither is known.</summary>
         public Move Best(string from, string to, string caps)
         {
-            if (Blocked.Contains(to)) return null;
+            if (HasFailed(from, to, caps)) return null;
             if (_moves.TryGetValue((from, to, caps), out Move m)) return m;
             int ticks = Guess(from, to, caps);
             return ticks < 0 ? null : new Move(from, to, ticks, "estimate", true);
@@ -152,6 +172,7 @@ namespace IGTAP.EngineSim.Cli
                 foreach (var kv in old._moves)
                     if (kv.Value.Source == "measured") Put(kv.Value, kv.Key.caps);
                 foreach (Place p in old._places.Values) _places.TryAdd(p.Id, p);
+                foreach (var f in old.Failures) _failed.TryAdd((f.from, f.to, f.caps, f.tree), f.why);
                 foreach (var v in old._speeds)
                     if (!_speeds.TryGetValue(v.Key, out double s) || v.Value > s) _speeds[v.Key] = v.Value;
             }
@@ -168,6 +189,10 @@ namespace IGTAP.EngineSim.Cli
                         ["from"] = kv.Value.From, ["to"] = kv.Value.To, ["caps"] = kv.Key.caps, ["ticks"] = kv.Value.Ticks,
                         ["source"] = kv.Value.Source, ["estimated"] = kv.Value.Estimated,
                     }).ToArray()),
+                ["failed"] = new JsonArray(Failures.Select(f => (JsonNode)new JsonObject
+                {
+                    ["from"] = f.from, ["to"] = f.to, ["caps"] = f.caps, ["tree"] = f.tree, ["why"] = f.why, ["build"] = Build,
+                }).ToArray()),
             };
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(file)));
             Solve.WriteShared(file, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
@@ -188,6 +213,9 @@ namespace IGTAP.EngineSim.Cli
             foreach (JsonNode m in json["moves"].AsArray())
                 table.Put(new Move(m["from"].GetValue<string>(), m["to"].GetValue<string>(), m["ticks"].GetValue<int>(), m["source"].GetValue<string>(),
                     m["estimated"].GetValue<bool>()), m["caps"].GetValue<string>());
+            foreach (JsonNode f in json["failed"]?.AsArray() ?? new JsonArray())
+                if (f["build"]?.GetValue<string>() == Build)
+                    table._failed[(f["from"].GetValue<string>(), f["to"].GetValue<string>(), f["caps"].GetValue<string>(), f["tree"].GetValue<int>())] = f["why"].GetValue<string>();
             return table;
         }
 
@@ -337,7 +365,7 @@ namespace IGTAP.EngineSim.Cli
                     {
                         Move m = _moves[(at, next, caps)];
                         string end = EndOf(next);
-                        if (m.Estimated || end == null || dist.TryGetValue(end, out int was) && was <= d + m.Ticks) continue;
+                        if (m.Estimated || end == null || HasFailed(at, next, caps) || dist.TryGetValue(end, out int was) && was <= d + m.Ticks) continue;
                         dist[end] = d + m.Ticks;
                         queue.Enqueue(end, d + m.Ticks);
                     }
