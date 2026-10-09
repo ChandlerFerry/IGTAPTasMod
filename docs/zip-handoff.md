@@ -10,12 +10,12 @@ Read this section first; the 2026-10-07 notes below it are history (still useful
   then `buytree12`, `buytree13`, `buytree16`.
 - The tree is at about level 7 (buytree0-6 bought), `buytree0` (green clone chance) still at level 1 in the installed route:
   the planner could never buy it until `70d99f0` (below). Expect the next stages to level it.
-- **Nothing is running.** The last engine build is `C:	mp\igtap\zip\eng53` (HEAD `70d99f0`).
+- **Nothing is running.** The last engine build is `C:\tmp\igtap\zip\eng53` (HEAD `70d99f0`).
 
 ## Resume
 
 ```
-& C:	mp\igtap\zip\eng53\IGTAP.EngineSim.exe fulltas-plan $tracesulltas-Zip%.json --stages --mode beam --beam 4 --minutes 30 --rounds 4 --off-ticks 300 --only <list> --piece-minutes 2
+& C:\tmp\igtap\zip\eng53\IGTAP.EngineSim.exe fulltas-plan $traces\fulltas-Zip%.json --stages --mode beam --beam 4 --minutes 30 --rounds 4 --off-ticks 300 --only <list> --piece-minutes 2
 ```
 
 `<list>`: the full `--only` list below without `lap:9,record:9` (Course 9 is closed under strict buys, see open issue 3). Run
