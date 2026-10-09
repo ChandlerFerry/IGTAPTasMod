@@ -484,3 +484,13 @@ at all (which orbs are on, which doors are open).
 Regression check after the orb fix (`6ccbdf5`), each installed best replayed with `--check` on the engine before and after:
 Tree% 763.73 s, TouchGrass-ANY% 699.12 s and FalseEnding%-280 353.29 s reach every goal in the same ticks on both. VMAN's
 installed route dies at action 191 (goal 2 of 23) on both, so that break predates the change.
+
+Plan check (2026-10-09, `docs/superpowers/plans/2026-10-08-fulltas-unattended.md`): tasks 1-6 are `c1a0a83`, `6c42009`,
+`a6e5e4e`, `8b9fa7b`, `2133a0d`, `0a45893` (review fixes `b2622d3`), task 7's acceptance `66564b7`. Task 7 step 2, re-run
+on the redeployed plugin: `tools/validate.py` 178 OK, 2 FAIL (bonus7's two OM routes, failing the same way on Oct 3 and 4);
+`tools/tech-check.py` every demo in `techs.json` MATCH, 4 TRACE FAILED as on Oct 4 (demos set in a category their course
+doesn't run).
+
+The other classes, the 2899.60 route judged in each: `nmg` rejected (pauselift, major, at tick 11136, 211 major spans);
+`human-major` and `human-nmg` end at action 15 (a third jump press with both jump buttons down). Each needs its own solve
+(`fulltas <trace> --class <class>`), a new task.
