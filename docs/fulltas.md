@@ -2822,3 +2822,30 @@ route over only when they beat the record.
 - The offline search seeds its laps with the saved standalone course, bonus and transition routes.
 - Real-time playback warns on the overlay when it drops frames: Update-driven state (clone pay, purchases waiting on
   it) can then differ from the route's.
+
+## Teleporters (not modelled yet)
+
+The game has a teleporter network, and no run uses it yet: buying its box ends an offline run (`Economy.cs`, `Unmodeled`).
+
+- **The box:** `Courses/course 9/localUpgrades/EnableTeleporters` at (19481.6, 6909.6), `unlockTeleporters`, base cost 2M GP
+  (20M at its tier, as the user saw), cap 1. Its neighbour `EnableTeleporters (1)` is an atom-level box (`buyatomlevel9`),
+  despite the name.
+- **How a teleporter works** (`TeleporterScript`): entering its trigger adds its `ID` to `globalStats.visitedTeleporters`,
+  even before the unlock when `PickUpCpWhileInactive` is set (every Area 2 and zone 3 teleporter, none of Area 1's).
+  With `unlockTeleporters`, standing in it polls `InputAction("Move")` every 0.02 s (`InvokeRepeating("manualUpdate")`):
+  once the stick has been under 0.2 in y since entering, y over 0.7 goes to `upTeleporter` and under -0.7 to
+  `downTeleporter`, if that one was visited. The teleport loads the destination's zone (`ZoneLoader.LoadZone`), moves
+  the player by the offset between the two `teleportPosition`s (its place relative to the pad kept) and translates the
+  camera; `TeleGlitchFailsafe` puts the player on the destination pad if they're not in its trigger 3 physics steps later.
+- **The network** (ID, position, up / down):
+  - Area 2 chain: -1 (25249, -2287) ↔ 0 (24931, -397) ↔ 1 (21470, 3124) ↔ 2 (19753, 6740) ↔ 3 (28710, 5876) ↔ 4 (24064,
+    13076, zone 1). -1 has no down, 4 no up.
+  - Area 1 loop (visits register only once unlocked): 101 (23606, 13076) → 105 (-1525, -202) → 104 (2871, 1973) → 103
+    (5704, 7058) → 102 (16639, 11761) → 101.
+  - 200 (24522, 13076) ↔ 201 (29557, 16887) ↔ 202 (28751, 26199, zone 3).
+- **Needed before a run can use them:**
+  - the plugin feeds the route's stick to `InputAction("Move")` too, at 1x and in turbo. Only `Movement.NormaliseInput` is
+    patched now, so `TeleporterScript` reads the real controller (an input patch, allowed by README rule 39);
+  - the engine models the box's buy (the global and `updateVisuals`) and keeps `visitedTeleporters` in its snapshots;
+  - the engine, turbo and 1x are checked against each other on a teleport (a probe, a tech demo);
+  - the planner's walks and the search's distance field know the teleport edges, so a plan prices them.
