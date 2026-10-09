@@ -376,7 +376,7 @@ export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay
       <div className={`ftStat ${sessionDelta ? "good" : ""}`}><p>{autoStart ? "This Improve" : "This search"}</p><strong>{sessionDelta ?? "—"}</strong>
         <span>{records.length ? recordsText : autoStart ? solve.running ? "no improvement yet" : "no improvement found" : session ? "no record yet" : outdated ? "goals changed" : "not started"}</span></div>
       {autoStart
-        ? <div className="ftStat"><p>Searching</p><strong>{pull ? `Goal ${pull.goal - 1}` : solve.running ? "Starting" : "—"}</strong>
+        ? <div className="ftStat"><p>Searching</p><strong>{pull ? `Goal ${pull.goal - 1}` : solve.running ? String(allEvents.filter(e => e.type === "starting").at(-1)?.text ?? "Starting") : "—"}</strong>
           <span>{pull ? `${LEVERS[pull.lever] ?? pull.lever} · ` : ""}{focused ? `only ${goalSpan(focused)}` : "whole run"}</span></div>
         : <div className="ftStat"><p>Phase</p><strong>{!session ? "—" : polishing ? "Polish" : phase === "build" ? "Build" : "Reach"}</strong>
           <span>{!session ? "" : polishing ? (best && best.progress < of ? `goals 0–${best.progress - 1}/${of - 1}` : "whole-run checked") : best ? `next: goal ${best.progress}/${of - 1}` : ""}</span></div>}

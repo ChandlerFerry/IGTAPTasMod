@@ -574,6 +574,7 @@ namespace IGTAP.EngineSim.Cli
             _states = new FullTasStates(_archiveDir, _fresh, Path.ChangeExtension(_trace, ".world.json"));
             if (_states.Index.Count > 0) Log($"goal states: {_states.Index.Count} in {Path.Combine("archive", "fulltas-" + _runKey, "states")}");
 
+            Starting("Loading the run: replaying its best");
             _best = Padded(Evaluate(Solve.ReadInputs(header)));
             string from = Path.GetFileName(_trace);
             // A classed solve starts from the run's major best too when it ranks better in the class.
@@ -688,6 +689,9 @@ namespace IGTAP.EngineSim.Cli
 
         static readonly JsonSerializerOptions EventJson = new JsonSerializerOptions { NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals };
         static void Emit(object e) { Console.WriteLine("@fulltas " + JsonSerializer.Serialize(e, EventJson)); }
+
+        /// <summary>What a solve is doing before its first window (the studio's Searching line shows it instead of "Starting").</summary>
+        static void Starting(string text) { Emit(new { type = "starting", text }); }
 
         double Seconds(long ticks) { return Math.Round(ticks * _dt, 4); }
 

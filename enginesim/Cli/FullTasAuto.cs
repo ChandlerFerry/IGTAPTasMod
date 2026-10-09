@@ -275,6 +275,7 @@ namespace IGTAP.EngineSim.Cli
             Log($"auto: parts {(_parts.Count == 0 ? "none" : string.Join(",", AllParts.Where(Part)))}");
             if (Part("lib"))
             {
+                Starting($"Tracing the best's goal states ({_best.Progress} goals)");
                 _lib = new StateLibrary(_goals, Solve.Option(args, "--library-runs", 150));
                 double t0 = CpuSeconds();
                 TraceRun(_best.Inputs, "the starting best");
@@ -287,14 +288,18 @@ namespace IGTAP.EngineSim.Cli
             if (!_fresh) LoadRefs();
             foreach (var (file, r) in refs) Collect(r, "--ref " + Path.GetFileName(file));
             if (_lib != null && _lib.Runs > 1) TryStitch("the known routes at the start");
+            Starting("Reading the run's memory");
             if (!_fresh) LoadMemory();
             // The speed probes (a minute and a half on FalseEnding's 300 goals) are kept per run and start state: a restart reads
             // them back and only adds the best's own path (docs/fulltas.md, "Auto").
+            Starting("Measuring the run's speeds");
             if (_fresh || !LoadSpeeds()) { MeasureSpeeds(); SaveSpeeds(); }
             else Sustained(Profile(_best.Inputs, false), "the best's path");
             double m0 = CpuSeconds();
+            Starting($"Building the model (each goal's cost to go, {_goals} goals)");
             BuildModel();
             PrintModel("start");
+            Starting("Picking the first window");
             Log($"auto: model built in {CpuSeconds() - m0:0.0} CPU s; the loop starts at {_clock.Elapsed.TotalSeconds:0} s");
             MakeParts();
             RefitParts();
