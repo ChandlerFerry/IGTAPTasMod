@@ -217,6 +217,17 @@ namespace IGTAP.EngineSim
             Economy?.AtomFrame(dt);
         }
 
+        /// <summary>The first <paramref name="levels"/> levels of the box from its base cost (an atom box reset by the collider's clear,
+        /// upgradeBox.onPrestige(force)), in its currency.</summary>
+        internal double FromBase(string box, int levels)
+        {
+            upgradeBox b = Box(box);
+            if (b == null) return double.PositiveInfinity;
+            double cost = b.baseUpgradeCost, sum = 0;
+            for (int i = 0; i < levels; i++) { sum += cost; cost = NextCost(cost, b); }
+            return sum;
+        }
+
         /// <summary>The levels a running buy-max routine on the box still buys (0: none running).</summary>
         internal int BuyMaxLeft(upgradeBox box) { int left = 0; foreach (BuyMaxRoutine r in _buyMax) if (r.Box == box) left += r.Left; return left; }
 

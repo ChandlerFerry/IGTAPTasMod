@@ -412,14 +412,20 @@ namespace IGTAP.EngineSim
         /// to one of t + 1, FinishCrafting's counts), and the NP FinishCrafting adds when a tier forms the collider never had
         /// (NPrewardPerTick × 1000 then), with its cap (NPrewardCap's; none with NpCapIsSoftcap). Null without the collider or its effect values.
         /// </summary>
-        internal (double rate, double cap, double bonus)? NpAfterAtoms(int extra)
+        internal (double rate, double cap, double bonus)? NpAfterAtoms(int extra) => NpAfterAtoms(extra, null, 0, false);
+
+        /// <summary>NpAfterAtoms had <paramref name="with"/> been raised by <paramref name="by"/> first (a box's effect), and, with
+        /// <paramref name="cleared"/>, the collider cleared (an atom-level box's buy: AtomColliderSystem.ClearAtoms): what an enabler
+        /// would leave the atoms to do.</summary>
+        internal (double rate, double cap, double bonus)? NpAfterAtoms(int extra, G? with, double by, bool cleared)
         {
+            double Level(G g) => Global(g) + (with == g ? by : 0);
             Dictionary<G, double> effect = globalStats.globalUpgradeEffectDict;
             if ((object)_atomCollider == null || effect == null || !effect.TryGetValue(G.atomLevelChance, out double chance)
                 || !effect.TryGetValue(G.increasedNuclearPower, out double nuclear) || !effect.TryGetValue(G.tripleThreatIncrease, out double triple)) return null;
-            double boxes = 1.0 + Global(G.increasedNuclearPower) * (nuclear / 100.0) + Global(G.tripleThreatIncrease) * (triple / 100.0);
-            var counts = new List<int>(_atoms);
-            double counter = _tierUpCounter, bonus = 0;
+            double boxes = 1.0 + Level(G.increasedNuclearPower) * (nuclear / 100.0) + Level(G.tripleThreatIncrease) * (triple / 100.0);
+            var counts = cleared ? new List<int>() : new List<int>(_atoms);
+            double counter = cleared ? 0 : _tierUpCounter, bonus = 0;
             double Rate()
             {
                 double effective = 0, white = 0;
@@ -443,10 +449,10 @@ namespace IGTAP.EngineSim
                     }
             }
             Craft();
-            for (int i = 0; i < _waitingAtoms + extra; i++)
+            for (int i = 0; i < (cleared ? 0 : _waitingAtoms) + extra; i++)
             {
                 int tier = 0;
-                counter += Global(G.atomLevelChance) * chance;
+                counter += Level(G.atomLevelChance) * chance;
                 while (counter >= 100.0) { counter -= 100.0; tier++; }
                 while (counts.Count <= tier) counts.Add(0);
                 counts[tier]++;
@@ -455,6 +461,9 @@ namespace IGTAP.EngineSim
             double rate = Rate();
             return (rate, Global(G.NpCapIsSoftcap) != 0.0 ? double.PositiveInfinity : rate * 50.0 * 120.0 * _vmanMult, bonus);
         }
+
+        /// <summary>A box's effectMult (its effect per level).</summary>
+        internal static double EffectMult(upgradeBox box) => (double)BoxEffectMultField.GetValue(box);
 
         /// <summary>The grid's callAddNewAtom calls so far (--ticks-out, a diagnostic: not in snapshots).</summary>
         internal int GridCalls;

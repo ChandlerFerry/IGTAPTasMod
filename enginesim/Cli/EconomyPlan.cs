@@ -1278,6 +1278,19 @@ namespace IGTAP.EngineSim.Cli
                     }
                 return double.PositiveInfinity;
             }
+            // The GP the atoms still need for the target's NP cap after a box's effect (its upgrade raised; an atom-level box also clears
+            // the collider and resets the atoms' price to base), in ticks of the recent GP income: what an enabler buys the climb.
+            double AtomsTicksAfter(globalStats.globalUpgradeSet u, double by, double gpLeft)
+            {
+                bool cleared = u == globalStats.globalUpgradeSet.atomLevelChance;
+                for (int n = 1; n <= EconomyPlan.MaxAtomsCount; n++)
+                    if (model.NpAfterAtoms(n, u, by, cleared) is var (_, cap, _) && cap >= price[np])
+                    {
+                        double gpFor = cleared ? _eval.Shop.FromBase(atomId, n) : _eval.Shop.Need(new[] { atomId }, n, shown: false)?[gp] ?? double.PositiveInfinity;
+                        return Math.Max(0, gpFor - gpLeft) / Math.Max(rates[gp], 1e-6);
+                    }
+                return double.PositiveInfinity;
+            }
             (string label, double ticks) best = (null, double.PositiveInfinity);
             foreach (string label in offer.Where(l => l.StartsWith("buy:", StringComparison.Ordinal)).OrderBy(l => l, StringComparer.Ordinal))
             {
@@ -1292,6 +1305,8 @@ namespace IGTAP.EngineSim.Cli
                     if (c == np) { ticks = Math.Max(ticks, NpTicks(cost[c], missing)); continue; }
                     ticks = Math.Max(ticks, missing / Math.Max(rates[c], 1e-6));
                 }
+                // To the target through this box: paying for it, then the atoms its effect leaves (the GP held less its own GP price).
+                ticks += AtomsTicksAfter(box.globalUpgrade, Economy.EffectMult(box), _eval.Shop.Holds(globalStats.Currencies.GreenPower) - cost[gp]);
                 if (ticks < best.ticks) best = (label, ticks);
             }
             return best.label == null ? (null, why + "; no box raising NP's equation can be paid for") : (best.label, why);
@@ -1481,6 +1496,8 @@ namespace IGTAP.EngineSim.Cli
             LoadSeeds();
             _planBase = _runGoals;
             FullTasGoal[] all = _runGoals.Goals;
+            // From the stage's own goals: realize's Track calls and Install replace _labels.
+            string targetLabel = all[targetIndex].label;
             var (start, route) = BuildFrom(all, kept, targetIndex);
             long startTick = _best.GoalPhysics[kept - 1];
             var realized = new List<(string name, Realization z, Route run, string[] goals)>();
@@ -1516,7 +1533,6 @@ namespace IGTAP.EngineSim.Cli
             // With no whole route, the one that gets furthest (its goals so far, total -1): the next stretch is planned or solved from it.
             var written = whole.run != null ? (whole.name, whole.run, whole.goals)
                 : realized.Where(r => r.run != null).Select(r => (r.name, r.run, r.goals)).Concat(partials).OrderByDescending(r => r.run.Progress).FirstOrDefault();
-            string targetLabel = _labels[targetIndex];   // before Install, which takes the installed route's goal list
             if (written.run != null && written.run.Progress > _best.Progress) Install(written.run, written.goals);
             else Log($"install: no route reaches further than the best's goal {_best.Progress}");
             Realization z0 = realized.FirstOrDefault().z;
