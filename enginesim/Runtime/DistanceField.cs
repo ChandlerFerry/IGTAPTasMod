@@ -42,6 +42,10 @@ namespace IGTAP.EngineSim
         const int SeedRings = 16;
         /// <summary>Margin around the region the field covers, so wanderings grow it only every half of it in new ground.</summary>
         const float Margin = 512f;
+        /// <summary>A box target's region reaches this far round it: a box's way can be a long detour (Zip%'s buyfree6b: 8,930 u walked for
+        /// 3,500 straight), which a region of start and target alone cuts off (the field read no way at all).</summary>
+        const float BoxMargin = 4096f;
+        readonly HashSet<int> _boxKeys = new HashSet<int>();
         /// <summary>The most cells one field holds; a bigger region coarsens the cell instead.</summary>
         const int MaxCells = 1 << 18;
         const int CachedFields = 4;
@@ -137,7 +141,8 @@ namespace IGTAP.EngineSim
             int version = Version();
             lock (_gate)
             {
-                Grow(at.AsVector2(), boxes);
+                Grow(at.AsVector2(), _boxKeys.Contains(key)
+                    ? boxes.Select(r => new Rect(r.xMin - BoxMargin, r.yMin - BoxMargin, r.width + 2f * BoxMargin, r.height + 2f * BoxMargin)).ToList() : boxes);
                 Field field = null;
                 for (int i = 0; i < _built.Count; i++)
                     if (_built[i].Version == version && _built[i].Target == key && _built[i].Region == _region) { field = _built[i]; _built.RemoveAt(i); break; }
@@ -161,12 +166,14 @@ namespace IGTAP.EngineSim
             {
                 FullTasGoal goal = goals.Current;
                 bool gate = goal != null && (goal.kind == FullTasGoal.Start || goal.kind == FullTasGoal.Finish) && goal.course != 0;
-                if (goal == null || goal.kind != FullTasGoal.At && !gate) { key = 0; boxes = null; return false; }
+                bool box = goal != null && (goal.kind == FullTasGoal.Buy || goal.kind == FullTasGoal.Reward) && goal.boxes?.Length > 0;
+                if (goal == null || goal.kind != FullTasGoal.At && !gate && !box) { key = 0; boxes = null; return false; }
                 key = goals.Next;
+                if (box) _boxKeys.Add(key);
                 while (_goalBoxes.Count <= key) _goalBoxes.Add(null);
                 boxes = _goalBoxes[key];
                 if (boxes == null)
-                    _goalBoxes[key] = boxes = gate ? GateBoxes(goal.course, goal.kind == FullTasGoal.Start)
+                    _goalBoxes[key] = boxes = gate ? GateBoxes(goal.course, goal.kind == FullTasGoal.Start) : box ? TouchBoxes(goal.boxes)
                         : new List<Rect> { new Rect(goal.x - goal.w / 2f, goal.y - goal.h / 2f, goal.w, goal.h) };
                 return boxes.Count > 0;
             }
@@ -187,6 +194,22 @@ namespace IGTAP.EngineSim
             key = start ? -2 : -3;
             boxes = _gates ?? (_gates = GateBoxes(start ? _sim.TargetStart : _sim.TargetCourse, start));
             return boxes.Count > 0;
+        }
+
+        /// <summary>A buy or reward goal's boxes as where the player stands to touch each (Simulation.TouchSpot, else the box itself),
+        /// 80 u square, in the capture frame: a piece search for a box far off (Zip%'s buyfree6b, 2,700 u from Course 7) is guided there
+        /// as an at: goal is.</summary>
+        List<Rect> TouchBoxes(string[] ids)
+        {
+            var boxes = new List<Rect>();
+            foreach (string id in ids)
+                if (_sim.Shop.Box(id) is upgradeBox b)
+                {
+                    Vector2 spot = _sim.TouchSpot(b) ?? new Vector2(b.transform.position.x, b.transform.position.y);
+                    CapturePos c = _sim.ToCapture(new ScenePos(spot.x, spot.y));
+                    boxes.Add(new Rect(c.x - 40f, c.y - 40f, 80f, 80f));
+                }
+            return boxes;
         }
 
         /// <summary>

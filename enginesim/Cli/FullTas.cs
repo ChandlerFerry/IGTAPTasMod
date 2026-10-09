@@ -928,7 +928,11 @@ namespace IGTAP.EngineSim.Cli
             var finds = new List<(List<InputTick> inputs, string how, long atGoal)>[SearchWorkers];
             var bests = new List<InputTick>[SearchWorkers];
             var ticks = new long[SearchWorkers];
+            var nearest = new float[SearchWorkers];
             Log($"{title} {span}: {SearchWorkers} fixed searches of {share} ticks each");
+            // Walkable-distance guidance to the goal (an at: rect, a gate, a box's touch spot): without it a box thousands of units
+            // off is a blind search.
+            DistanceField.Enabled = true;
             // Built one after another, each with its own graft set (AutoGrafts makes one a call; a shared one's Prepare swaps its
             // arrays under the others' workers), then started together.
             var solvers = new OfflineSolver[SearchWorkers];
@@ -954,6 +958,7 @@ namespace IGTAP.EngineSim.Cli
                 solver.Stop();
                 lock (solver.Shared) bests[i] = solver.Shared.Inputs;
                 ticks[i] = Interlocked.Read(ref solver.Ticks);
+                nearest[i] = solver.Closest()?.Distance ?? float.NaN;
             });
             var found = new List<List<InputTick>>();
             for (int i = 0; i < SearchWorkers; i++)
@@ -967,7 +972,7 @@ namespace IGTAP.EngineSim.Cli
             bestInputs = Enumerable.Range(0, SearchWorkers).Where(i => bests[i] != null)
                 .Select(i => (inputs: bests[i], at: finds[i].Count == 0 ? long.MaxValue : finds[i].Min(f => f.atGoal), i))
                 .OrderBy(b => b.at).ThenBy(b => b.i).Select(b => b.inputs).FirstOrDefault();
-            Log($"{title} {span}: {found.Count} finds, {_lastSearchTicks} ticks simulated");
+            Log($"{title} {span}: {found.Count} finds, {_lastSearchTicks} ticks simulated; nearest the goal: {string.Join(" ", nearest.Select(d => d.ToString("0")))}");
             return found;
         }
 

@@ -576,7 +576,7 @@ namespace IGTAP.EngineSim
         public static float GoalDistance(Simulation sim)
         {
             FullTasGoal goal = sim.Goals.Current;
-            if (goal == null || goal.kind != FullTasGoal.At) return float.NaN;
+            if (goal == null) return float.NaN;
             CapturePos p = sim.PlayerAtCapture;
             if (DistanceField.Enabled) return DistanceField.For(sim).Distance(p);
             float dx = Math.Max(0f, Math.Abs(p.x - goal.x) - goal.w / 2f), dy = Math.Max(0f, Math.Abs(p.y - goal.y) - goal.h / 2f);
@@ -593,6 +593,9 @@ namespace IGTAP.EngineSim
             if (than == null || progress != than.Progress) return than == null || progress > than.Progress;
             float d = float.IsNaN(cell.Distance) ? float.PositiveInfinity : cell.Distance;
             float old = float.IsNaN(than.Cell.Distance) ? float.PositiveInfinity : than.Cell.Distance;
+            // A buy or reward goal: the walkable distance to its box's touch spot, with the field on (DistanceField.TouchBoxes).
+            if (goal.kind == FullTasGoal.Buy || goal.kind == FullTasGoal.Reward) return DistanceField.Enabled ? DistanceField.For(sim).Distance(p) : float.NaN;
+            if (goal.kind != FullTasGoal.At) return float.NaN;
             return d < old || d == old && cell.Rank < than.Cell.Rank;
         }
 

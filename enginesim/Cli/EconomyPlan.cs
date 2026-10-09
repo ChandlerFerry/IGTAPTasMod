@@ -1413,7 +1413,10 @@ namespace IGTAP.EngineSim.Cli
                     string have = moves.Places.TryGetValue(place, out Place pl) ? $"{pl.X:0.0},{pl.Y:0.0}" : "none";
                     string spot = goalOf(place)?.boxes is [string id] && _eval.Shop.Box(id) is upgradeBox box && _eval.TouchSpot(box) is Vector2 t
                         ? $"{_eval.ToWorld(new ScenePos(t.x, t.y)).x:0.0},{_eval.ToWorld(new ScenePos(t.x, t.y)).y:0.0} (active {box.gameObject.activeInHierarchy}, used {box.TimesUsed}/{box.Cap})" : "none";
-                    Console.WriteLine($"try {text}: the table's place {have}; the box's touch spot {spot}");
+                    string fromPlace = _labels[kept - 1];
+                    Move est = moves.Best(fromPlace, place, PlayerCaps.Of(_eval).Id);
+                    string walked = moves.Places.TryGetValue(fromPlace, out Place fp) && moves.Places.TryGetValue(place, out Place tp) ? moves.Walked(fp, tp).ToString("0") : "?";
+                    Console.WriteLine($"try {text}: the table's place {have}; the box's touch spot {spot}; the plan's move from {fromPlace}: {est?.Ticks.ToString() ?? "none"} ({est?.Source}), walk {walked} u");
                     continue;
                 }
                 // wait@T: the build stands still T ticks (the full simulation), to compare with the plan's idle:.
