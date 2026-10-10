@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.Json.Nodes;
 using IGTAPTasMod;
@@ -23,6 +24,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 EconomyGoals();
                 PlanEdits();
                 MadeGoals();
+                Library();
                 Console.WriteLine($"run-selftest: {_passed} checks passed");
                 return 0;
             }
@@ -77,6 +79,41 @@ namespace IGTAP.EngineSim.Cli.Runs
             JsonObject a = RunGoals.HeaderEntry(at, "z12345");
             Check(a["rect"].AsArray().Select(v => (float)v).SequenceEqual(new[] { 1f, 2f, 30f, 40f }) && (int)a["from"] == FullTasGoal.FromLeft, "an area goal's header entry");
             Check(!RunGoals.Editable("buy:buytree5") && RunGoals.Editable("buy:buyatom") && RunGoals.Editable("farm:6"), "only economy goals are editable");
+        }
+
+        static Segment Seg(string to, string unlocks, float x, float y, int phase, params InputTick[] inputs) =>
+            new Segment { To = to, Unlocks = unlocks, X = x, Y = y, Phase = phase, Facing = 1, Inputs = inputs.ToList(), Ticks = inputs.Length, Source = "test" };
+
+        static void Library()
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "igtap-run-selftest-" + Environment.ProcessId);
+            Directory.CreateDirectory(dir);
+            string file = Path.Combine(dir, "lib.segments.json");
+            var run = new InputTick { x = 1f };
+            var jump = new InputTick { x = 1f, held = true, press = true };
+            var dash = new InputTick { x = 0f, dash = true, turnX = 0.35f, turnY = 1f };
+            var reset = new InputTick { reset = true };
+            SegmentLibrary lib = SegmentLibrary.Load(file, Array.Empty<string>());
+            Segment s1 = Seg("farm:6", "WJ", 100, 100, 0, reset, run, jump, dash);
+            Check(lib.Add(s1) && !lib.Add(Seg("farm:6", "WJ", 140, 90, 2, reset, run, jump, dash)) && lib.Count == 1, "the same inputs to the same goal with the same unlocks are one segment");
+            Check(lib.Candidates("farm:6", "WJ", 120, 100, 0, 1).Count == 1, "a segment starting 20 u away is a candidate");
+            Check(lib.Candidates("farm:6", "WJ", 200, 100, 0, 1).Count == 0, "one 100 u away isn't");
+            Check(lib.Candidates("farm:6", "WJ_DS", 100, 100, 0, 1).Count == 0 && lib.Candidates("farm:7", "WJ", 100, 100, 0, 1).Count == 0, "another goal or other unlocks aren't");
+            Segment s2 = Seg("farm:6", "WJ", 110, 100, 3, run, run), s3 = Seg("farm:6", "WJ", 105, 100, 0, run, jump);
+            lib.Add(s2);
+            lib.Add(s3);
+            Check(lib.Candidates("farm:6", "WJ", 100, 100, 3, 1).Select(c => c.X).SequenceEqual(new[] { 100f, 105f, 110f }), "candidates nearest first");
+            Check(lib.Candidates("farm:6", "WJ", 100, 100, 0, 1, 2).Count == 2, "at most max candidates");
+            Check(lib.Candidates("farm:6", "WJ", 5000, 100, 0, 1, radius: float.MaxValue).Count == 3, "any distance for seeds");
+            lib.Save();
+            SegmentLibrary back = SegmentLibrary.Load(file, Array.Empty<string>());
+            Segment b1 = back.Candidates("farm:6", "WJ", 100, 100, 0, 1)[0];
+            Check(back.Count == 3 && b1.Inputs.SequenceEqual(s1.Inputs) && b1.Ticks == 4 && b1.Source == "test", "save and load keep each segment's inputs");
+            var facts = new SegmentFacts(Path.Combine(dir, "lib.failures.json"));
+            facts.Record("farm:6|WJ|100,100|0", 1000, "no finds");
+            Check(facts.Failed("farm:6|WJ|100,100|0", 1000) && !facts.Failed("farm:6|WJ|100,100|0", 4000) && !facts.Failed("other", 1000), "a failure holds for its budget, not a bigger one");
+            Check(new SegmentFacts(Path.Combine(dir, "lib.failures.json")).Failed("farm:6|WJ|100,100|0", 1000), "failures are kept on disk");
+            Directory.Delete(dir, true);
         }
     }
 }
