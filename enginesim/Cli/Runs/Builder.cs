@@ -281,7 +281,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 return;
             }
             _sim.Restore(start);
-            if (buy && _sim.Shop.Affordable(goal.boxes) != true)
+            if (buy && !Payable(goal.boxes))
             {
                 WaitStep(built, goals, j, start, inputBase, c, afterReset);
                 return;
@@ -305,6 +305,9 @@ namespace IGTAP.EngineSim.Cli.Runs
         }
 
         const int MinWait = 8;
+
+        // A buy-max touch keeps buying every level it can pay for, a step at a time: a new touch can buy only once it's done.
+        bool Payable(string[] boxes) => _sim.Shop.BuyMaxLeft(boxes) == 0 && _sim.Shop.Affordable(boxes) == true;
 
         // A class without major techs plays no pause (the pauselift); techs-used checks the rest before a best is kept.
         bool Allowed(List<InputTick> inputs) => !Glitches.NoMajors(_run.Class) || inputs.All(t => t.pause == 0);
@@ -384,6 +387,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 if (best is var (bi, ba))
                 {
                     File(built, j, c, bi, ba, "search");
+                    _lib.Save();
                     Log($"search: goal {j + 1} {label} found ({finds.Count} finds)");
                     return (bi, ba);
                 }
@@ -426,7 +430,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             {
                 _sim.Run(idle, null, t =>
                 {
-                    if (_sim.Progress > j || _sim.Shop.Affordable(goal.boxes) == true) { affordAt = t; return false; }
+                    if (_sim.Progress > j || Payable(goal.boxes)) { affordAt = t; return false; }
                     if (t % IncomeWindow != 0) return true;
                     bool? active = _sim.Shop.Affordable(goal.boxes);
                     if (active == null) { if ((inactive += IncomeWindow) >= InactiveCap) { why = $"{label}'s box never came on"; return false; } return true; }
