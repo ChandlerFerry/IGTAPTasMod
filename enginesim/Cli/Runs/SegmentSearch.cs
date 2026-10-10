@@ -51,15 +51,17 @@ namespace IGTAP.EngineSim.Cli.Runs
             return sim;
         }
 
-        public List<List<InputTick>> Find(byte[] state, List<InputTick> prefix, FullTasGoal[] goals, int goal, List<List<InputTick>> seeds, long budgetTicks, out string nearest)
+        // The run definition's avoid boxes go with goal ids: a plan that adds, drops or moves goals has them at its own places.
+        internal OfflineSolver.ForcedPath Avoids(string[] ids, int goal) => Solve.FullTasPaths(_run.Name, ids, new HashSet<int> { goal });
+
+        public List<List<InputTick>> Find(byte[] state, List<InputTick> prefix, FullTasGoal[] goals, string[] ids, int goal, List<List<InputTick>> seeds, long budgetTicks, out string nearest)
         {
-            string[] ids = _run.HeaderIds.Length == goals.Length ? _run.HeaderIds : null;
             (string caps, OfflineSolver.ForcedPath path) = Solve.OnThread(() =>
             {
                 Simulation sim = At(state, prefix, goals, goal);
                 sim.Restore(sim.Start);
                 string[] boxes = goals[goal].boxes ?? Array.Empty<string>();
-                OfflineSolver.ForcedPath p = Solve.FullTasPaths(_run.Name, ids, ids == null ? null : new HashSet<int> { goal });
+                OfflineSolver.ForcedPath p = Avoids(ids, goal);
                 // Stray buys end a strict run: the search is steered round the boxes it could buy, never cut off from a graze.
                 if (!_run.Loose) foreach (var (a, b, _) in sim.StrayTriggers(new HashSet<string>(boxes))) p.Discourage.Add(new OfflineSolver.Box(a, b));
                 return (sim.Shop.AfterBuys(PlayerCaps.Of(sim), boxes).Id, p);

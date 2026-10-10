@@ -371,7 +371,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             {
                 Log($"search: goal {j + 1} {label} from ({c.X:0}, {c.Y:0}) with {c.Unlocks}, {budget / 1_000_000}M ticks, {seeds.Count} seeds");
                 built.Searches++;
-                List<List<InputTick>> finds = _search.Find(bytes, prefix, goals, j, seeds, budget, out string nearest);
+                List<List<InputTick>> finds = _search.Find(bytes, prefix, goals, built.Plan.Ids, j, seeds, budget, out string nearest);
                 if (_search.Stopped)
                 {
                     built.Failure = new Failure { Kind = "stopped", Goal = j, Label = label, Text = "stopped during a search" };

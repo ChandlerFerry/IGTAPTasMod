@@ -30,6 +30,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 OneXAlign();
                 if (Solve.Option<string>(args, "--ticks-self", null) is string ticksOut) OneXSelf(ticksOut);
                 ResumeKeepsEarlyPress();
+                AvoidsByPlanIds();
                 string trace = Solve.Option<string>(args, "--trace", null), best = Solve.Option<string>(args, "--best", null);
                 if (trace != null && best != null && args.Contains("--confirm-live")) ConfirmLive(trace, best);
                 if (trace != null && best != null && args.Contains("--harvest-vs-straight")) HarvestVsStraight(trace, best, Solve.Option(args, "--rebuild-from", 300));
@@ -152,8 +153,8 @@ namespace IGTAP.EngineSim.Cli.Runs
                 return (pick, new SnapshotStore(sim).Save(at), inputs.Take(consumed).ToList());
             });
             var search = new SegmentSearch(ctx);
-            List<List<InputTick>> a = search.Find(state, prefix, ctx.HeaderGoals, k, new List<List<InputTick>>(), 2_000_000, out string nearA);
-            List<List<InputTick>> b = search.Find(state, prefix, ctx.HeaderGoals, k, new List<List<InputTick>>(), 2_000_000, out _);
+            List<List<InputTick>> a = search.Find(state, prefix, ctx.HeaderGoals, ctx.HeaderIds, k, new List<List<InputTick>>(), 2_000_000, out string nearA);
+            List<List<InputTick>> b = search.Find(state, prefix, ctx.HeaderGoals, ctx.HeaderIds, k, new List<List<InputTick>>(), 2_000_000, out _);
             Check(a.Count > 0, $"a search finds goal {k + 1} {ctx.HeaderGoals[k].label} of {ctx.Name} from its state ({nearA})");
             Check(a.Count == b.Count && a[0].SequenceEqual(b[0]), "the same search finds the same routes");
         }
@@ -207,6 +208,27 @@ namespace IGTAP.EngineSim.Cli.Runs
                 && events[^1].Contains("\"goal\":2"), "a split one tick off: refused, naming goal 2");
             Check(!Confirm.Compare(b, Verdict("{\"splits\":[{\"ticks\":100,\"held\":0}]}"), e => events.Add(JsonSerializer.Serialize(e)), _ => { }),
                 "the game short of the engine's goals: refused");
+        }
+
+        // A goal's avoid boxes follow it to its place in an edited plan (one goal more before it), not stay at its old index.
+        static void AvoidsByPlanIds()
+        {
+            string root = TechGrafts.SourceRoot();
+            if (root == null) return;
+            foreach (string file in Directory.GetFiles(Path.Combine(root, "runs"), "*.json").OrderBy(f => f, StringComparer.Ordinal))
+            {
+                string name = Path.GetFileNameWithoutExtension(file);
+                Solve.RunAvoids def = Solve.RunDefinitionAvoids(name);
+                string[] ids = def?.Goals?.Select(g => g.Id).ToArray();
+                int i = ids == null ? -1 : Array.FindIndex(def.Goals, g => g.Avoid?.Any(b => b.Boxes?.Length > 0) == true);
+                if (i < 0) continue;
+                float[] box = def.Goals[i].Avoid.First(b => b.Boxes?.Length > 0).Boxes[0];
+                RunPlan plan = new RunPlan(ids, def.Goals.Select(g => g.Goal).ToArray()).Insert(0, "farm:1");
+                var search = new SegmentSearch(new RunContext { Name = name, HeaderIds = ids });
+                bool At(int after) => search.Avoids(plan.Ids, i + 1).Avoid.Any(b => b.After == after && b.X0 == Math.Min(box[0], box[2]) && b.Y0 == Math.Min(box[1], box[3]));
+                Check(At(i + 1) && !At(i), $"{name}: goal {i + 1} {def.Goals[i].Goal}'s avoid boxes are on it at its place {i + 2} in a plan with a goal put before it");
+                return;
+            }
         }
 
         static void ConfirmLive(string trace, string best)
