@@ -13,7 +13,8 @@ namespace IGTAP.EngineSim.Cli.Runs
     // value is that gain per tick it costs (the lap, or the wait to afford the box, and the walk there).
     static class Income
     {
-        const int Window = 1000, LapGuess = 1500;
+        internal const int Window = 1000;
+        const int LapGuess = 1500;
         // ponytail: walks costed as a straight line at this speed (u a tick); a distance field if the ranking misorders.
         const float Speed = 8f;
         static readonly FieldInfo BestPathTime = typeof(courseScript).GetField("bestPathTime", BindingFlags.Instance | BindingFlags.NonPublic);

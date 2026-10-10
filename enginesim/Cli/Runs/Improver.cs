@@ -259,7 +259,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             return null;
         }
 
-        const int TopProducers = 6, MaxLaps = 12, ResetBack = 8;
+        const int TopProducers = 6, MaxLaps = 12, ResetBack = 8, CoverCap = 120_000;
         Built _incomeOf;
 
         // A no-income failure is met by what makes its currency where the best stands before that goal (Income: the economy drive's
@@ -294,7 +294,12 @@ namespace IGTAP.EngineSim.Cli.Runs
             void Add(string what, RunPlan q) { if (seen.Add(Key(q))) moves.Add(new Move(what, q)); }
             // Bought while the income still came: before the step that cut it.
             if (cut >= 0 && RunGoals.Editable(p.Labels[f])) Add($"goal {f + 1} {p.Labels[f]} before goal {cut + 1} {p.Labels[cut]}, which cut its {cur} income", p.Move(f, cut));
-            foreach (Income.Producer pr in producers.Take(TopProducers))
+            // A producer that would take longer than CoverCap ticks to pay the shortfall only climbs by slivers of the price
+            // (ZipEscape%'s buyteleporters: 2E+07 GreenPower against Course 8's 105 a lap): it needs an economy, not a move.
+            var payable = producers.Where(pr => pr.Gain > 0 && shortBy / pr.Gain * Math.Max(pr.Ticks, Income.Window) <= CoverCap).ToList();
+            if (payable.Count < producers.Count)
+                Log($"income: {producers.Count - payable.Count} producer(s) of {cur} can't pay {shortBy:G4} within {CoverCap} ticks" + (payable.Count == 0 ? $": goal {f + 1} {p.Labels[f]} needs a {cur} economy built before it" : ""));
+            foreach (Income.Producer pr in payable.Take(TopProducers))
             {
                 string why = $"income: {pr.Gain:G3} {cur} in {pr.Ticks:0} ticks";
                 int course = FullTasGoal.CourseOf(pr.Label);
