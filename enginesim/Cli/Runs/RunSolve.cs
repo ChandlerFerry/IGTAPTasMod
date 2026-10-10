@@ -53,6 +53,13 @@ namespace IGTAP.EngineSim.Cli.Runs
                 using JsonDocument d = JsonDocument.Parse(File.ReadAllText(file));
                 route = Solve.ReadInputs(d.RootElement);
                 from = Path.GetFileName(file);
+                // The run's own best keeps its plan's goals: an incomplete best never reaches the gate, so the header doesn't have them.
+                if (file == run.RunFile && d.RootElement.TryGetProperty("goals", out JsonElement saved))
+                {
+                    var own = new RunPlan(saved.EnumerateArray().Select(g => g.GetProperty("id").GetString()).ToArray(),
+                        saved.EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray());
+                    if (!own.Same(plan) && FullTasGoal.EditRefused(plan.Labels, own.Labels) == null) plan = own;
+                }
                 break;
             }
             Log($"solve-run {run.Name}: {plan.Count} goals, {threads} threads, engine {BuildInfo.Commit}, from {from} ({route.Count} inputs), {lib.Count} library segments");
@@ -64,6 +71,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 (savedReached, savedLive, startJson) = Solve.OnThread(() =>
                 {
                     Simulation sim = run.Make();
+                    sim.UseGoals(sim.Goals.For(run.GoalsOf(plan)));
                     RunResult r = sim.Run(route, null, null, 1000000);
                     double[] splits = Enumerable.Range(0, r.Progress).Select(g => Math.Round(MacroEngine.LiveSeconds(r.GoalPhysicsTicks[g], r.GoalHeldFrames[g]), 4)).ToArray();
                     return (r.Progress, r.Progress == plan.Count ? splits[^1] : double.MaxValue, (object)new { progress = r.Progress, time = r.Progress == 0 ? (double?)null : splits[^1], splits });
