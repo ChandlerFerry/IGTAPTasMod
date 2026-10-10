@@ -1682,9 +1682,9 @@ namespace IGTAP.EngineSim.Cli
             if (!Directory.Exists(dir)) return;
             foreach (Seed course in _seeds.ToList())
             {
-                string finish = course.Goals.FirstOrDefault(g => g.StartsWith("finish:", StringComparison.Ordinal));
-                if (course.At != null || !course.Standing || finish == null) continue;
-                string prefix = finish.Substring("finish:".Length) + "_" + course.Caps.Id + "-";
+                string lap = course.Goals.FirstOrDefault(FullTasGoal.IsLap);
+                if (course.At != null || !course.Standing || lap == null) continue;
+                string prefix = FullTasGoal.CourseOf(lap) + "_" + course.Caps.Id + "-";
                 var files = Directory.GetFiles(dir, prefix + "*-human.json")
                     .Select(f => (file: f, time: float.TryParse(Path.GetFileName(f).Substring(prefix.Length).Split('-')[0], NumberStyles.Float,
                         CultureInfo.InvariantCulture, out float t) ? t : float.MaxValue))
@@ -1712,7 +1712,7 @@ namespace IGTAP.EngineSim.Cli
             foreach (string path in _seedFiles) _seeds.Add(ReadSeed(path));
             var chains = new List<Seed>();
             foreach (Seed t in _seeds.Where(s => s.Name.StartsWith("tree", StringComparison.Ordinal) && s.Goals is [string g] && g.StartsWith("start:", StringComparison.Ordinal)))
-                foreach (Seed c in _seeds.Where(s => s.Standing && s.Goals is [string a, string b] && a == t.Goals[0] && b == "finish:" + a.Substring(6)))
+                foreach (Seed c in _seeds.Where(s => s.Standing && s.Goals.Contains(FullTasGoal.Record + ":" + FullTasGoal.CourseOf(t.Goals[0]))))
                     // Idle before the second restart, not after: the course's route plays right after the landing, on its frame phase
                     // (the grid repeats every 5 ticks; FullTasPlan.RecordLap's Phased).
                     for (int pad = 0; pad < 5; pad++)
@@ -1749,7 +1749,7 @@ namespace IGTAP.EngineSim.Cli
             var goals = new List<string>();
             if (root.TryGetProperty("goals", out JsonElement g) && g.ValueKind == JsonValueKind.Array) goals.AddRange(g.EnumerateArray().Select(e => e.GetString()));
             else if (root.TryGetProperty("course", out JsonElement c) && c.ValueKind == JsonValueKind.Number && c.GetInt32() > 0)
-                goals.AddRange(new[] { "start:" + c.GetInt32(), "finish:" + c.GetInt32() });
+                goals.AddRange(new[] { "record:" + c.GetInt32(), "farm:" + c.GetInt32() });
             else if (root.TryGetProperty("token", out JsonElement t) && t.ValueKind == JsonValueKind.String && t.GetString().StartsWith("bonus", StringComparison.OrdinalIgnoreCase))
                 goals.Add("reward:" + t.GetString().ToLowerInvariant());
             return new Seed

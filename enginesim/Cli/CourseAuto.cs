@@ -594,7 +594,7 @@ namespace IGTAP.EngineSim.Cli
                 ["goals"] = new JsonArray((goals ?? run.Goals).Select(g =>
                 {
                     var o = new JsonObject { ["label"] = g.label, ["kind"] = g.kind };
-                    if (g.kind == FullTasGoal.Start || g.kind == FullTasGoal.Finish) o["course"] = g.course;
+                    if (g.IsCourse) o["course"] = g.course;
                     if (g.kind == FullTasGoal.At) o["rect"] = new JsonArray(g.x, g.y, g.w, g.h);
                     if (g.from != 0) o["from"] = g.from;
                     return (JsonNode)o;

@@ -101,7 +101,7 @@ namespace IGTAP.EngineSim.Cli
 
         static IEnumerable<PlanOption> Options(Toy toy, string place, bool stand = false)
         {
-            yield return new PlanOption(new Step("lap", "lap:1", Ticks(place, "c1") + 100), "c1", Array.Empty<string>(), "1", false, new[] { "start:1", "finish:1" });
+            yield return new PlanOption(new Step("lap", "lap:1", Ticks(place, "c1") + 100), "c1", Array.Empty<string>(), "1", false, new[] { "record:1" });
             if (toy.Clones)
                 yield return new PlanOption(new Step("buy", "buy:clone", Ticks(place, "clone")), "clone", new[] { "clone" }, null, false, new[] { "buy:clone" });
             if (toy.Capture().Mult == 1)
@@ -368,12 +368,12 @@ namespace IGTAP.EngineSim.Cli
             played = EconomyPlan.Play(toy, 0, stand);
             Check(played == 800, $"a patient stand on a clone paying 800 every 800 ticks: {(played == null ? "gave up after " + toy.Played + " ticks" : "bought on " + played)} (800)");
             (toy.Lump, toy.Cost) = (0, 2000);
-            // The goals part's stretches on FalseEnding%-280's skeleton: Course 1's laps have no start, the area goals end a stretch's
+            // The goals part's stretches on FalseEnding%-280's skeleton: its laps record: and farm: goals, the area goals end a stretch's
             // reach back, a reward inside one is offered.
-            string stretches = string.Join("; ", FullTas.Stretches(new[] { "start:1", "finish:1", "buy:buyreward", "buy:buywj", "start:2", "reward:bonus1", "finish:2",
+            string stretches = string.Join("; ", FullTas.Stretches(new[] { "record:1", "buy:buyreward", "buy:buywj", "start:2", "reward:bonus1", "farm:2",
                 "buy:buyds", "at:1", "reward:bonus2", "at:2", "reward:bonus3", "start:3", "buy:buyreward3", "buy:buystatue", "buy:buyclone2", "buy:buydj", "at:3" })
                 .Select(s => $"{s.kept}-{s.target}" + string.Concat(s.bonuses.Select(b => " " + b))));
-            Check(stretches == "4-7 reward:bonus1; 12-14; 15-16", $"goals stretches: {stretches} (4-7 reward:bonus1; 12-14; 15-16)");
+            Check(stretches == "3-6 reward:bonus1; 11-13; 14-15", $"goals stretches: {stretches} (3-6 reward:bonus1; 11-13; 14-15)");
             // fulltas-plan --install's header splice: the goals replaced (brackets and quotes in labels too), the rest byte for byte.
             string trace = Path.Combine(Path.GetTempPath(), $"plan-selftest-{Environment.ProcessId}.json");
             string Header(string goals) => "{\"course\":0,\"fulltas\":{\"name\":\"T\",\"goals\":" + goals + ",\"buys\":\"strict\"},\"ticks\":[{\"goals\":[1]}]}";

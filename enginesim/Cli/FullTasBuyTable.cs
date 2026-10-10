@@ -75,7 +75,8 @@ namespace IGTAP.EngineSim.Cli
             var boxes = new List<FullTasGoal>();
             foreach (FullTasGoal g in span)
                 if ((g.kind == FullTasGoal.Buy || g.kind == FullTasGoal.Reward) && !boxes.Any(b => b.label == g.label)) boxes.Add(g);
-            var gates = span.Where(g => g.kind == FullTasGoal.Start).GroupBy(g => g.label).Select(g => g.First()).ToList();
+            var gates = span.Where(g => g.kind == FullTasGoal.Start || g.kind == FullTasGoal.Record)
+                .Select(g => g.kind == FullTasGoal.Start ? g : RunGoal("start:" + g.course, FullTasGoal.Start, g.course)).GroupBy(g => g.label).Select(g => g.First()).ToList();
             var only = new List<(List<FullTasGoal> set, string[] labels)>();
             foreach (string t in (Solve.Option<string>(args, "--targets", null) ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                 only.Add((TargetGoals(t), new[] { t }));
@@ -109,7 +110,7 @@ namespace IGTAP.EngineSim.Cli
                 }));
             }
             var (at, route) = GoalState(kept);
-            AddPlace(at, route.Count, _labels[kept - 1] + " (the phase's start)", "start", null, -1, _best.GoalPhysics[kept - 1]);
+            AddPlace(at, route.Count, MoveTable.PlaceOf(_labels[kept - 1]) + " (the phase's start)", "start", null, -1, _best.GoalPhysics[kept - 1]);
             for (int k = kept; k < until && k <= _best.Progress; k++)
             {
                 int end = (int)Math.Min(_best.GoalInput[k - 1], _best.Inputs.Count);
@@ -134,7 +135,7 @@ namespace IGTAP.EngineSim.Cli
                 string label = _labels[k - 1];
                 long reached = _best.GoalPhysics[k - 1];
                 if (label.StartsWith("start:", StringComparison.Ordinal)) AddPlace(at, route.Count, label + " gate", "gate", null, -1, reached);
-                else if (label.StartsWith("finish:", StringComparison.Ordinal)) AddPlace(at, route.Count, label + " (the finish)", "finish", null, -1, reached);
+                else if (FullTasGoal.IsLap(label)) AddPlace(at, route.Count, MoveTable.PlaceOf(label) + " (the finish)", "finish", null, -1, reached);
                 else if (label.StartsWith("buy:", StringComparison.Ordinal) || label.StartsWith("reward:", StringComparison.Ordinal))
                     AddPlace(at, route.Count, label, "box", label, -1, reached);
             }
@@ -208,11 +209,11 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>A --targets id's goals: `reward:<bonus>` its reward box (the run's goal, else as the game resolves it, NewGoal),
-        /// `lap:N` Course N's gate and finish.</summary>
+        /// `lap:N` Course N's gate and finish (start:N, farm:N).</summary>
         List<FullTasGoal> TargetGoals(string target)
         {
             if (target.StartsWith("lap:", StringComparison.Ordinal) && int.TryParse(target.Substring(4), out int course))
-                return new List<FullTasGoal> { RunGoal("start:" + course, FullTasGoal.Start, course), RunGoal("finish:" + course, FullTasGoal.Finish, course) };
+                return LapGoals(course).ToList();
             if (target.StartsWith("reward:", StringComparison.Ordinal))
                 return new List<FullTasGoal> { _runGoals.Goals.FirstOrDefault(g => g.label == target) ?? NewGoal(target)?.goal
                     ?? throw new ArgumentException($"--targets {target}: no such bonus in courses.json, or no box near its end") };

@@ -197,6 +197,10 @@ namespace IGTAP.EngineSim.Cli
         /// nearer is no better start (Zip%'s buyclonegp8, searched again from each box round Course 6, 3-5 minutes a time).</summary>
         const double NearerBy = 0.75;
 
+        /// <summary>The place a run goal stands at: a lap's (record:N, farm:N) its course's finish, `finish:N`; else the goal's own
+        /// label.</summary>
+        internal static string PlaceOf(string label) => FullTasGoal.IsLap(label) ? "finish:" + FullTasGoal.CourseOf(label) : label;
+
         /// <summary>Where a move into this To is headed: a lap or record lap's gate, a box set's first box, else the place itself.</summary>
         static string TargetPlace(string to) => to.StartsWith("lap:", StringComparison.Ordinal) || to.StartsWith("record:", StringComparison.Ordinal)
             ? "start:" + to.Substring(to.IndexOf(':') + 1) : to.Split(SetJoin)[0];
@@ -569,7 +573,7 @@ namespace IGTAP.EngineSim.Cli
             for (int i = 0; i < stops.Count; i++)
             {
                 FullTas.Stop s = stops[i];
-                ids[i] = s.Goal ? s.Id : RestartId(s.X, s.Y);
+                ids[i] = s.Id ?? RestartId(s.X, s.Y);
                 AddPlace(ids[i], s.X, s.Y, s.Caps);
                 if (s.Goal) _goals.Add(s);
             }
@@ -582,7 +586,7 @@ namespace IGTAP.EngineSim.Cli
             for (int i = 0; i < stops.Count; i++)
             {
                 if (i > 0) Split(i - 1, i);
-                if (!stops[i].Goal) continue;
+                if (stops[i].Id == null) continue;
                 if (lastGoal >= 0 && lastGoal != i - 1) Split(lastGoal, i);
                 lastGoal = i;
             }
@@ -594,10 +598,11 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
+        /// <summary>The next stop that is a place of its own (a goal, a record lap's gate), past restart landings.</summary>
         static int NextGoal(List<FullTas.Stop> stops, int i)
         {
             for (int j = i + 1; j < stops.Count; j++)
-                if (stops[j].Goal) return j;
+                if (stops[j].Id != null) return j;
             return -1;
         }
 
@@ -813,12 +818,13 @@ namespace IGTAP.EngineSim.Cli
             };
         }
 
-        /// <summary>Where the best stood: the run's start, each goal it reached and each quick restart's landing, with the unlocks it
-        /// held there. Tick: where the next move starts, the goal's physics tick, or a landing's: the count when the reset input is
-        /// played (it takes no physics tick: the buy table's press and land are one tick), X, Y one tick later. Arrive: where a move
-        /// into it ends, the tick itself but at an economy buy (FullTasGoal.IsEconomy, a `buy:`), where it is the first physics
-        /// step after the stop before at which the player's touch of each of the goal's boxes could buy (the box's trigger stay,
-        /// Simulation.BoxTouched, with the box's cooldown over: only Cash could stop it).</summary>
+        /// <summary>Where the best stood: the run's start, each goal it reached (its place, MoveTable.PlaceOf), each record: lap's gate
+        /// crossing (start:N, not a goal) and each quick restart's landing (no id), with the unlocks it held there. Tick: where the
+        /// next move starts, the goal's physics tick, or a landing's: the count when the reset input is played (it takes no physics
+        /// tick: the buy table's press and land are one tick), X, Y one tick later. Arrive: where a move into it ends, the tick
+        /// itself but at an economy buy (FullTasGoal.IsEconomy, a `buy:`), where it is the first physics step after the stop before
+        /// at which the player's touch of each of the goal's boxes could buy (the box's trigger stay, Simulation.BoxTouched, with
+        /// the box's cooldown over: only Cash could stop it).</summary>
         internal readonly record struct Stop(string Id, bool Goal, long Tick, long Arrive, float X, float Y, string Caps);
 
         /// <summary>The best replayed from the start (Profile): its stops in tick order, and the top path speed per unlock set (the
@@ -861,8 +867,11 @@ namespace IGTAP.EngineSim.Cli
                 long arrive = tick;
                 if (arrivals.TryGetValue(k - 1, out var first) && first.Count == _runGoals.Goals[k - 1].boxes.Length)
                     arrive = Math.Min(tick, first.Values.Max());
-                stops.Add(new Stop(_labels[k - 1], true, tick, arrive, s[at].X, s[at].Y, s[at].Caps));
+                stops.Add(new Stop(MoveTable.PlaceOf(_labels[k - 1]), true, tick, arrive, s[at].X, s[at].Y, s[at].Caps));
             }
+            for (int i = 0; i < s.Count; i++)
+                if (s[i].Armed && (i == 0 || !s[i - 1].Armed || s[i - 1].Progress != s[i].Progress))
+                    stops.Add(new Stop("start:" + _runGoals.Goals[s[i].Progress].course, false, s[i].Tick, s[i].Tick, s[i].X, s[i].Y, s[i].Caps));
             int early = stops.Count(t => t.Arrive < t.Tick), economy = stops.Count(t => t.Goal && IsArrivalGoal(t.Id));
             Log($"moves: {early} of {economy} economy buys arrive before their buy ({stops.Sum(t => t.Tick - t.Arrive)} ticks of waiting at a box left to the economy)");
             long end = best.Progress == 0 ? 0 : best.GoalPhysics[best.Progress - 1];
@@ -933,7 +942,11 @@ namespace IGTAP.EngineSim.Cli
             Route best = run._best;
             MoveTable table = MoveTable.Load(run, null, run.RoutesFile, best, Path.Combine(dir, "none.moves.json"));
             string[] labels = run._labels;
-            string Name(int k) => k == 0 ? "start" : labels[k - 1];
+            // A goal's place (a lap's its course's finish), and where the table files the best's way into it: a record: lap's as
+            // `lap:N` from the goal before (its gate crossing a stop of its own).
+            string Name(int k) => k == 0 ? "start" : MoveTable.PlaceOf(labels[k - 1]);
+            string Into(int k) => k > 0 && labels[k - 1].StartsWith(FullTasGoal.Record + ":", StringComparison.Ordinal) ? "lap:" + FullTasGoal.CourseOf(labels[k - 1]) : Name(k);
+            bool Same(int g, int k) => (g == 1 ? "start" : labels[g - 2]) == (k == 1 ? "start" : labels[k - 2]) && labels[g - 1] == labels[k - 1];
             long Tick(int k) => k == 0 ? 0 : best.GoalPhysics[k - 1];
             long Arrive(int k) => table.GoalStop(k).Value.Arrive;
             // The best's own way between two goals as the table files it (an economy buy's to the arrival; null: none, the end came
@@ -953,12 +966,12 @@ namespace IGTAP.EngineSim.Cli
             for (int k = k1 + 1; k <= k2; k++)
             {
                 string caps = table.CapsAtGoal(k - 1);
-                long fewest = Enumerable.Range(1, best.Progress).Where(g => Name(g - 1) == Name(k - 1) && Name(g) == Name(k) && table.CapsAtGoal(g - 1) == caps && Split(g) != null)
+                long fewest = Enumerable.Range(1, best.Progress).Where(g => Same(g, k) && table.CapsAtGoal(g - 1) == caps && Split(g) != null)
                     .Min(g => Split(g).Value);
-                Move m = table.Best(Name(k - 1), Name(k), caps);
+                Move m = table.Best(Name(k - 1), Into(k), caps);
                 bool arrival = IsArrivalGoal(Name(k));
                 Check(m != null && m.Source == "best" && !m.Estimated && m.Ticks == fewest && (arrival || Arrive(k) == Tick(k)),
-                    $"{Name(k - 1)} -> {Name(k)} [{caps}]: {Describe(m)}, the best's fewest {fewest} (this goal's {Tick(k) - Tick(k - 1)} to the "
+                    $"{Name(k - 1)} -> {Into(k)} [{caps}]: {Describe(m)}, the best's fewest {fewest} (this goal's {Tick(k) - Tick(k - 1)} to the "
                     + (arrival ? $"buy, {Arrive(k) - Tick(k - 1)} to the arrival)" : "goal)"));
             }
             // An economy buy the best waited for in its box: the move ends at the arrival, the wait is the economy's.
@@ -967,9 +980,9 @@ namespace IGTAP.EngineSim.Cli
             else
             {
                 string caps = table.CapsAtGoal(w - 1);
-                long fewest = Enumerable.Range(1, best.Progress).Where(g => Name(g - 1) == Name(w - 1) && Name(g) == Name(w) && table.CapsAtGoal(g - 1) == caps && Split(g) != null)
+                long fewest = Enumerable.Range(1, best.Progress).Where(g => Same(g, w) && table.CapsAtGoal(g - 1) == caps && Split(g) != null)
                     .Min(g => Split(g).Value);
-                Move m = table.Best(Name(w - 1), Name(w), caps);
+                Move m = table.Best(Name(w - 1), Into(w), caps);
                 Check(m != null && m.Ticks == fewest && fewest <= Arrive(w) - Tick(w - 1),
                     $"goal {w} {Name(w - 1)} -> {Name(w)} [{caps}]: {Tick(w) - Tick(w - 1)} ticks to the buy, {Arrive(w) - Tick(w - 1)} to the arrival "
                     + $"(the box touched with its cooldown over on tick {Arrive(w)}, bought on {Tick(w)}); the table's {Describe(m)}, the pair's fewest {fewest}");
@@ -1019,12 +1032,12 @@ namespace IGTAP.EngineSim.Cli
             string landing = table.Places.Values.Where(p => p.Kind == "restart" && !table.Restarts(from, at).Contains(p.Id)).Select(p => p.Id).FirstOrDefault();
             if (landing == null) Console.WriteLine("SKIP no restart landing the best didn't reach from " + from);
             else Check(table.Best(from, landing, at) == null && !targets.Contains(landing), $"{from} -> {landing} [{at}]: {Describe(table.Best(from, landing, at))}, not a target");
-            int lapFinish = Enumerable.Range(1, best.Progress).FirstOrDefault(g => labels[g - 1].StartsWith("finish:", StringComparison.Ordinal)
-                && table.Restarts(labels[g - 1], table.CapsAtGoal(g)).Any());
+            int lapFinish = Enumerable.Range(1, best.Progress).FirstOrDefault(g => FullTasGoal.IsLap(labels[g - 1])
+                && table.Restarts(Name(g), table.CapsAtGoal(g)).Any());
             if (lapFinish == 0) Console.WriteLine("SKIP the best never restarts after a finish");
             else
             {
-                string fin = labels[lapFinish - 1], finCaps = table.CapsAtGoal(lapFinish);
+                string fin = Name(lapFinish), finCaps = table.CapsAtGoal(lapFinish);
                 Check(table.Restarts(fin, finCaps).All(r => table.Best(fin, r, finCaps)?.Source == "best"),
                     $"Restarts({fin}) [{finCaps}]: " + string.Join(", ", table.Restarts(fin, finCaps).Select(r => r + " " + Describe(table.Best(fin, r, finCaps)))));
             }
@@ -1114,7 +1127,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 Check(table.Places.ContainsKey(id), $"course place {id}");
                 string n = id.Substring(id.IndexOf(':') + 1);
-                if (!id.StartsWith("start:", StringComparison.Ordinal) || labels.Contains(id)) continue;
+                if (!id.StartsWith("start:", StringComparison.Ordinal) || labels.Any(l => FullTasGoal.CourseOf(l).ToString(CultureInfo.InvariantCulture) == n)) continue;
                 Check(table.Targets(id, lastCaps).Contains("lap:" + n) && table.Best(id, "lap:" + n, lastCaps)?.Estimated == true,
                     $"lap:{n}, a course the best never ran, from its gate [{lastCaps}]: {Describe(table.Best(id, "lap:" + n, lastCaps))}");
             }

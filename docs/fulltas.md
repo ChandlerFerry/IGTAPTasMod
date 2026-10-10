@@ -37,13 +37,14 @@ runs are versioned with the code; the studio's goal edits and adopted records wr
 disk (or `fulltas-plan --install`'s, [below](#install-and-stages)) is picked up within a second, never mid-run:
 
 ```json
-{ "name": "main", "goals": ["start:1", "finish:1", "buy:buyreward", "start:1", "finish:1", "buy:buywj", "start:2"] }
+{ "name": "main", "goals": ["record:1", "buy:buyreward", "record:1", "buy:buywj", "start:2"] }
 ```
 
 | Goal | Reached when |
 |---|---|
-| `start:N` | Course N's start gate starts its timer (it wasn't timing). |
-| `finish:N` | The player's own finish at course N's end gate. |
+| `record:N` | A lap of Course N: its start gate starts its timer (it wasn't timing) while this is the next goal, then the player's own finish at its end gate. Reached at the finish; crossing the gate is no goal of its own. |
+| `farm:N` | The player's own finish at Course N's end gate: a lap from a quick restart onto the course or the end gate's drop into the next lap, its gate crossed before the goal before. |
+| `start:N` | Course N's start gate starts its timer (it wasn't timing), and nothing more: a gate crossed to set the course's reset point, not a lap. |
 | `buy:buyreward+buyclone` | The game bought each of these boxes (any order). Course 1: `buyreward`, `buyclone`, `buywj`, `buyomni` (the Vman speedrun's free omnidirectional dash + 1 dash, there only in Vman with `VmanStartsWithOmniDash`); Course 2: `buyreward2`, `buyclone2`, `buyclonemult2`, `buyglobalreward2`, `buyds`; Course 3: `buyreward3`, `buyclone3`, `buyclonemult3`, `buyfast3`, `buyglobalreward3`, `buydj`, `buyfree3`, `buyclonespeed`, `buystatue`; Course 4: `buyreward4`, `buyclone4`, `buyclonemult4`, `buybig4`, `buyfast4`, `buymaxsize4`, `buyglobalreward4`, `buyswap`, `buyfree4a`, `buyfree4b`, `buyfree4c`, `buyprestige4`; Course 5: `buyreward5`, `buyclone5`, `buyclonemult5`, `buyglobalreward5`, `buybig5`, `buyfast5`, `buyprestige5` (trips the breaker), `buyblockswap5` (swap coloured blocks when dashing; the box sits on Course 4's row and appears only after the breaker trips), `buyfree5` (secret #2). Area 2: Course 6 `buyreward6`, `buygreen6`, `buyclone6`, `buyfree6a`–`buyfree6e` (the free global cash boxes); Course 7 `buyreward7`, `buyclone7`, `buyclonemult7`, `buygreen7`; Course 8 `buyclonecd8`, `buyclonegp8`, `buycd8` (clone dust on), `buycddigits8`; Course 9 `buyreward9`, `buyclone9`, `buygreen9`, `buycd9`, `buyteleporters` (the teleporters' unlock), `buyatomlevel9`, `buyclonemult9`; Course 10 `buyreward10`, `buyfree10a`, `buyfree10b`, `buyclone10`, `buyclonemult10`, `buywatts10`, `buynp10`, `buyatomlevel10`, `buygreen10`; the atom box `buyatom`; the upgrade tree `buyplant` and `buytree<N>` (TreePart N's box: `buytree16` activates the zip movers, `buytree23` the OmniDash box); Tree 2's `buyplant2` (Course 10's buy max, despite its PlantTreeBox object name; `buytree27`'s "MoreOrbs" is Course 9's buy max). The table is `FullTasGoal.Boxes` (`FullTas.cs`), shared with enginesim. |
 | `reward:<bonus>` | The game buys that bonus's reward box (the upgrade box nearest its end rect in `courses.json`: the bonus's unlock). `<bonus>` is a courses.json bonus name — `bonusN`, or a named one like `unlockJumpDash`. |
 | `at:x,y,w,h` | An area goal: the player's colliders touch the rect centred on (x, y), w by h, in game-world coordinates (`courses.json`'s frame, the studio map's readout; see [`enginesim/README.md`](../enginesim/README.md)) (checked after each tick, as a bonus's end rect is). A search aid: it splits a long stretch into windows, and dropping it lets the search find another way. Not the game's checkpoints (`checkpointScript`), which set where a death or quick restart off a course respawns. |
@@ -473,10 +474,12 @@ it. From goal 501 a restart, `2.04` and one local repair (two ticks held) reach 
 (727.67 s) 3 minutes into the solve.
 
 For the respawn to be the checkpoint, the lap's quick restart has to come before the gate. So a lap after buys is
-`finish:N` alone, not `start:N, finish:N`: with `start:N` the search walks into the gate first and the restart lands at
-the reset point. `TouchGrass-ANY%`'s Course 5 laps play `5_WJ_DS_DJ farm 15.0571 from its quick restart` this way, after
-a tap right and 6 or 8 idle ticks (13.34 s on the course timer). The first lap of a course, reached from elsewhere, keeps
-its `start:N`.
+`farm:N`, not `record:N`: with `record:N` the search walks into the gate first and the restart lands at the reset point.
+`TouchGrass-ANY%`'s Course 5 laps play `5_WJ_DS_DJ farm 15.0571 from its quick restart` this way, after a tap right and 6
+or 8 idle ticks (13.34 s on the course timer). The first lap of a course, reached from elsewhere, is a `record:N`.
+
+Every lap is a goal: a run never finishes a course for Cash between two goals. A buy the loop builder can't pay for gets
+a `record:N` put in before it ([Loop builder](#loop-builder)), and the economy planner's laps are its plan's goals.
 
 ## Seed
 
@@ -824,7 +827,7 @@ human classes' score adds 5 s a frame-perfect input and 20 s a back-to-back pair
   command line (`The filename or extension is too long`).
 - By default the search polishes the goals the best reaches (all of them once it's complete); a best that reaches none
   is reached first. `--unsolved`: a complete route first: until every goal is reached, only the first goal not reached
-  yet is worked on. A loop goal (`buy:`, `start:`, `finish:`) is built from pieces (below). Any other goal is searched
+  yet is worked on. A loop goal (`buy:`, `start:`, `record:`, `farm:`) is built from pieces (below). Any other goal is searched
   (`reach` windows): from the last reached goal, then redoing one, two, three goals before it, each round with a longer
   budget (`--window-minutes` × round). A reach window ends as soon as it finds a route to its goal: that route is
   spliced in and saved right away, and the next window searches on from it (the rest of the budget isn't spent). After
@@ -843,7 +846,7 @@ human classes' score adds 5 s a frame-perfect input and 20 s a back-to-back pair
   a faster way is kept as it is (no repair of later goals), and its goals are filed as library pieces, so the next laps
   build from it. The reach takes the first way to a goal; `FalseEnding%-280` built that way laps Course 1 in 4.48 s
   (a detour right to x 3274) where 1.62 s laps exist, and patching the laps in afterwards shifts the Cash, the clones
-  and the RNG under every later goal. A buy short of Cash takes an extra lap of its course whenever the lap and the buy
+  and the RNG under every later goal. A buy short of Cash gets a lap goal of its course put in whenever the lap and the buy
   get there before standing under the box for the clones' income does, or when no hop there buys it (`LapSooner`:
   goal 97, `buy:buyclone2`, stood 16 s where a Course 2 lap and the walk back take 4; `buy:buystatue` searched a wait for
   12 minutes). With 30 s, its rebuild (`--unsolved --reach-polish 30`, from goal 3, about 45 minutes on 7 threads)
@@ -880,7 +883,7 @@ human classes' score adds 5 s a frame-perfect input and 20 s a back-to-back pair
   recapture keeps the start but renumbers the instance ids a state holds). A window starts from the stored state at its prefix's end
   instead of replaying the run up to there, and an archive cell replays its prefix from the later of its worker's own
   ancestor and a stored goal state on the same inputs, except in a piece search whose start isn't the replayed prefix's
-  (an extra lap's own goals; the buy table's or the plan's goal list and Cash): a stored state holds the run's goal list
+  (a lap's gate as a goal of its own; the buy table's or the plan's goal list and Cash): a stored state holds the run's goal list
   and Cash, so there every cell replays from its worker's own states. A state is a byte-for-byte snapshot walk (`enginesim/README.md`
   "Memory"); one whose world this can't write is simply not kept, and the run replays to it as before.
 - A complete, faster run goes to `offline-best\fulltas-<run>-<time>.json` and to the gate (`/api/fulltas/submit`).
@@ -1713,7 +1716,7 @@ them together from pieces instead:
   `FalseEnding-Any%`'s rebuild reached its second `start:1` 3 ticks early, at a gate height where only a 222-tick
   `finish:1` piece played, so every rebuild was slower than the best and was thrown away.
 - Polish searches a piece from the state the best plays it in. When the best's next step is the run's next goal, the
-  search runs through that goal too and is scored there (a `piece` window for `start:1 + finish:1`, say), with the best's
+  search runs through that goal too and is scored there (a `piece` window for `record:1 + buy:buyreward`, say), with the best's
   tick there as its "To beat": a way that reaches its own goal later but the next one sooner is kept and filed as two
   pieces, and the pair rule above lets the rebuild take it.
 - When no piece reaches it, the goal is searched once (a `piece` window of up to `--piece-minutes`, default 3; three
@@ -1721,14 +1724,20 @@ them together from pieces instead:
   The build takes the first way found once a quarter minute passes without a faster one (polish searches the pieces
   it plays for longer), and files it for reuse. A way that quick restarts within its first 25 ticks is filed from the
   restart on, so every later restart to that spot reuses it.
-- A buy the run can't pay for yet (`Shop.Affordable`: the boxes' costs against the run's Cash now) gets an extra lap of
-  its course first (the course of the last `start:`/`finish:` goal before it), up to 64, until it can. An extra lap isn't
-  one of the run's goals (an event that isn't the next goal changes nothing): its
-  gate and its finish are built as two steps, each checked against a goal of its own (`FullTasTracker.For`,
-  `Simulation.UseGoals`), from the same `start:N` and `finish:N` pieces as the run's own laps. A lap step is cut at the
-  first input by which its goal is reached; a lap with dashes plays more physics ticks than inputs (a dash's ticks
-  read no input of their own), so the check runs on past the cut's inputs rather than stopping at as many ticks.
-- A lap's gate is picked by its finish (`KnownLap`), the run's own `start:N` before `finish:N` and an extra lap's alike:
+- A buy the run can't pay for yet (`Shop.Affordable`: the boxes' costs against the run's Cash now) gets a lap of its
+  course first (the course of the last course goal before it), up to 64 in a row, until it can: a `record:N` put into the
+  run's goals before the buy (`InsertLap`, a goals edit as `--auto`'s goals part makes: the run file's `goalsFrom` keeps the
+  list it came from, so the gate adopts the new goals with the route), then built as any goal. Only the frontier build
+  does: a rebuild keeps the best's goals (it stops short instead), and so does a classed solve. A lap that isn't a goal
+  would hide its Cash in the next buy's stretch (`ZipEscape%`'s goal 354, `buy:buyclone5` to `buy:buyclonemult5`, was
+  744 ticks with a Course 5 lap in it).
+- A `record:N` is built as two library steps: its gate, checked against a `start:N` goal of its own (`FullTasTracker.For`,
+  `Simulation.UseGoals`: crossing it reaches no run goal, it arms the lap), then its finish, reaching the run's goal, from
+  the `farm:N` pieces (a way to Course N's finish). A lap step is cut at the first input by which its goal is reached; a
+  lap with dashes plays more physics ticks than inputs (a dash's ticks read no input of their own), so the check runs on
+  past the cut's inputs rather than stopping at as many ticks. A lap found whole (a search, a faster polish piece, the
+  best's harvest) is filed under `record:N` and as its two steps too.
+- A lap's gate is picked by its finish (`KnownLap`):
   of the gate's library ways, the one whose finish comes soonest by a library piece, and the finish pieces played as they
   are or after a restart pad (their way crosses the gate). With none, the gate and finish are searched as one piece,
   seeded with the finish pieces after the gate's ways and after restarts. When nothing replays, each restart pad is also
@@ -1741,7 +1750,7 @@ them together from pieces instead:
   until it buys, then a piece search, and laps only when neither buys it. Boxes buy on a touch of their trigger, a strip
   along their underside (`buydj`'s is 6 units tall, 140 above the floor), so standing under one never buys: the hops do.
   Put an area goal under the box before the buy (`FalseEnding2-Any%`: `at:7951,6950,120,50` then `buy:buydj`). The course
-  it would lap is the last `start:`/`finish:` goal's, which after a trip is the wrong one: `FalseEnding2-Any%`'s build lapped
+  it would lap is the last course goal's, which after a trip is the wrong one: `FalseEnding2-Any%`'s build lapped
   Course 2 five times for `buydj` from Course 3's shaft before this.
 - Every purchase is a goal on a strict run (the default; [Loose buys](#loose-buys) lifts it): a route buys only the box of
   its next goal (`Simulation.StrictBuys`, on for every Full-TAS simulation: the builder, every search window and the saved
@@ -1819,8 +1828,11 @@ finish, and the movement table reads it as a move to that id.
 
 `MoveTable` (`enginesim/Cli/EconomyMoves.cs`) is the economy planner's movement model: physics ticks between places, per
 unlock set (the caps id, such as `wjds`). A place is the goal the run stands at (`start:N` a course's gate, `finish:N` its
-finish, a `buy:` or `reward:` box, an `at:` area goal; a goal buying several boxes at once, `buy:a+b`, is one place),
-`start` the run's start, or `restart@x,y` a quick restart's landing (one id per spot, within 48 u), in the world frame.
+finish: a `record:N` or `farm:N` goal's place, a `buy:` or `reward:` box, an `at:` area goal; a goal buying several boxes at
+once, `buy:a+b`, is one place), `start` the run's start, or `restart@x,y` a quick restart's landing (one id per spot, within
+48 u), in the world frame. A `record:N` lap's gate crossing in the best is a `start:N` stop of its own (`BestStops`), so its
+walk to the gate and its gate-to-finish run are measured as the best's. A plan's `lap:N` and `record:N` steps both put a
+`record:N` goal into the run.
 A move goes to a place; to a box set, the buy table's ordered sets (`buy:a + buy:b`: one walk buying a then b, ending
 at b's place; not the goal `buy:a+b`, a place and key of its own); to `lap:N` (Course N's gate then its finish; it ends
 at `finish:N`); or to `record:N` (from Course N's gate, a lap on its saved record's path, the clones' path; it ends at

@@ -110,7 +110,7 @@ namespace IGTAP.EngineSim.Cli
             if (targetIndex < 0) throw new ArgumentException($"no goal {targetLabel} after goal {kept}");
             if (kept < 1) throw new ArgumentException("the plan starts after a goal (its place)");
             var (at, route) = BuildFrom(all, kept, targetIndex);
-            string place = all[kept - 1].label;
+            string place = MoveTable.PlaceOf(all[kept - 1].label);
             MoveTable moves = MoveTable.Load(this, File.Exists(BuyTableFile) ? BuyTableFile : null, RoutesFile, _best, MovesFile);
             if (!moves.Places.ContainsKey(place)) throw new InvalidOperationException($"goal {kept} {place} is no place of the movement table");
             // Each label resolved once: NewGoal restores the start to find a reward box, which mid-search would leave the economy there.
@@ -183,12 +183,10 @@ namespace IGTAP.EngineSim.Cli
         (SimSnapshot at, List<InputTick> route) BuildFrom(FullTasGoal[] all, int kept, int targetIndex)
         {
             if (_best.Progress < kept) throw new InvalidOperationException($"the best reaches goal {_best.Progress}, not the planned stretch's start (goal {kept})");
-            int course = all.Skip(kept).Take(targetIndex - kept).FirstOrDefault(g => g.kind == FullTasGoal.Start || g.kind == FullTasGoal.Finish)?.course ?? 0;
+            int course = all.Skip(kept).Take(targetIndex - kept).FirstOrDefault(g => g.IsCourse)?.course ?? 0;
             var (at, route) = GoalState(kept);
             Harvest(at, route, kept, Math.Min(targetIndex + 1, _best.Progress));
-            var byLabel = new Dictionary<string, FullTasGoal>();
-            foreach (FullTasGoal g in all) byLabel.TryAdd(g.label, g);
-            if (course > 0) SeedLaps(at, route, kept, new[] { byLabel["start:" + course], byLabel["finish:" + course] });
+            if (course > 0) SeedLaps(at, route, kept, LapGoals(course));
             _kept = all.Take(kept).ToArray();
             _borrow = (all.Select(g => g.label).ToArray(), kept, Math.Min(targetIndex, _best.Progress - 1));
             // Piece searches replay the plan so far on fresh simulations: they track the plan's goals, as the evaluator does.
@@ -380,7 +378,7 @@ namespace IGTAP.EngineSim.Cli
         {
             Read(at);
             IGTAPTasMod.Caps have = PlayerCaps.Of(_eval);
-            Seed fastest = _seeds.Where(s => (s.Standing || s.Restart || s.Loop && restart && loops) && s.Caps.IsSubsetOf(have) && NamedWithin(s.Name, have) && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label))
+            Seed fastest = _seeds.Where(s => (s.Standing || s.Restart || s.Loop && restart && loops) && s.Caps.IsSubsetOf(have) && NamedWithin(s.Name, have) && Laps(s, lap))
                 .OrderBy(s => !restart ? (s.Restart ? 1 : 0) : s.Loop ? 0 : s.Restart ? 1 : 2).ThenBy(s => NamedTime(s.Name)).FirstOrDefault();
             return fastest == null ? new List<Seed>() : new List<Seed> { fastest };
         }
@@ -410,6 +408,16 @@ namespace IGTAP.EngineSim.Cli
             int space = name.LastIndexOf(' ');
             return space >= 0 && double.TryParse(name.AsSpan(space + 1), NumberStyles.Float, CultureInfo.InvariantCulture, out double t) ? t : double.PositiveInfinity;
         }
+
+        /// <summary>A lap's goals as the realizer plays them: Course N's gate (start:N), then its finish (farm:N); the run's goal for
+        /// them is record:N.</summary>
+        FullTasGoal[] LapGoals(int course)
+        {
+            return new[] { RunGoal("start:" + course, FullTasGoal.Start, course), RunGoal(FullTasGoal.Farm + ":" + course, FullTasGoal.Farm, course) };
+        }
+
+        /// <summary>Whether a saved route laps a lap's course (a course route's seed has its record: and farm: goals).</summary>
+        static bool Laps(Seed s, FullTasGoal[] lap) => s.Goals.Contains(FullTasGoal.Record + ":" + lap[1].course);
 
         /// <summary>The lap pieces SeedLaps filed: a course's goal, its route and the restart's landing spot.</summary>
         readonly HashSet<string> _lapsSeeded = new HashSet<string>();
@@ -476,8 +484,15 @@ namespace IGTAP.EngineSim.Cli
                 {
                     int end = (int)Math.Min(_best.GoalInput[k], _best.Inputs.Count);
                     if (end > length)
-                        Keep(new Step { Inputs = _best.Inputs.GetRange(length, Math.Min(end + 2, _best.Inputs.Count) - length) }, at, _best.Inputs.GetRange(0, length),
-                            new Target { Goal = k, Key = _labels[k] });
+                    {
+                        var step = new Step { Inputs = _best.Inputs.GetRange(length, Math.Min(end + 2, _best.Inputs.Count) - length) };
+                        Keep(step, at, _best.Inputs.GetRange(0, length), new Target { Goal = k, Key = _labels[k] });
+                        if (_runGoals.Goals[k].kind == FullTasGoal.Record)
+                        {
+                            var (gate, finish) = LapParts(k, _runGoals.Goals[k].course);
+                            KeepParts(step, at, _best.Inputs.GetRange(0, length), gate, finish);
+                        }
+                    }
                     // The goal after the last is never played to (a run's last goal ends it: no state after it).
                     if (k == until - 1) break;
                     SimSnapshot next = null;
@@ -776,7 +791,7 @@ namespace IGTAP.EngineSim.Cli
             var spot = Where(at.WithGoal(Fresh(_goals, 0))).at;
             string here = $"{spot.x:0},{spot.y:0}";
             var runs = _seeds.Where(s => (s.Loop || s.Restart) && s.Caps.IsSubsetOf(have) && NamedWithin(s.Name, have)
-                    && s.Goals.Contains(lap[0].label) && s.Goals.Contains(lap[1].label) && !_lapMisses.Contains(s.Name + "|" + here))
+                    && Laps(s, lap) && !_lapMisses.Contains(s.Name + "|" + here))
                 .OrderBy(s => s.Loop ? 0 : 1).ThenBy(s => NamedTime(s.Name)).Take(MaxSavedLaps).ToList();
             if (runs.Count == 0) return null;
             var list = _kept.Concat(planned).Concat(lap).ToList();

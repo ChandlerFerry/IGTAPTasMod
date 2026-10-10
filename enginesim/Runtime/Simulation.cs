@@ -832,7 +832,7 @@ namespace IGTAP.EngineSim
                     goal.x = rect[0].GetSingle(); goal.y = rect[1].GetSingle(); goal.w = rect[2].GetSingle(); goal.h = rect[3].GetSingle();
                 }
                 if (g.TryGetProperty("from", out JsonElement from)) goal.from = from.GetInt32();
-                if (goal.kind == FullTasGoal.Start || goal.kind == FullTasGoal.Finish)
+                if (goal.IsCourse)
                 {
                     if (!Courses.Any(c => c.courseNumber == goal.course)) throw new InvalidOperationException("Goal " + goal.label + ": course " + goal.course + " is not active in this world export.");
                 }
@@ -1513,7 +1513,7 @@ namespace IGTAP.EngineSim
             {
                 bool nextWasTracking = _targetStartCourse != null && Tracking(_targetStartCourse);
                 FullTasGoal goal = Goals?.Current;
-                courseScript startGoal = goal != null && goal.kind == FullTasGoal.Start ? Course(goal.course) : null;
+                courseScript startGoal = goal != null && (goal.kind == FullTasGoal.Start || goal.kind == FullTasGoal.Record) ? Course(goal.course) : null;
                 bool startWasTracking = startGoal != null && Tracking(startGoal);
                 EconomyTickStart();
                 (float px0, float px1, float py0, float py1) = Goals != null ? PlayerBounds() : default;

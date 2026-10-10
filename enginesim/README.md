@@ -517,7 +517,7 @@ finish ended.
 `--auto` (`Cli\CourseAuto.cs`) runs the Full-TAS `--auto` loop ([`docs/fulltas.md`](../docs/fulltas.md#auto), its parts
 included) on a course. The course becomes a Full-TAS run: its goals are waypoints along the best's path
 (`CourseWaypoints.For`: area goals, the course's checkpoints and springs, forced-path `via` boxes; in record timing the
-start-gate crossing `start:<course>`) and the finish (`finish:<course>`; a bonus's reward rect, a transition's next
+start-gate crossing `start:<course>`) and the finish (`farm:<course>`; a bonus's reward rect, a transition's next
 `start:`). Waypoints are checkpoints, not cut points: every window plays on from the state the route has there, so
 momentum carries through them, and a window is scored on its arrival. No waypoint, a checkpoint's included, goes inside
 a sideways out-and-back of the best's (300 units or more out within 150 ticks and back within a quarter of that, not
@@ -565,7 +565,7 @@ turning off a wall; `CourseWaypoints.Detours`): every window would have to keep 
 - **Farm loop** (`Cli\CourseLoop.cs`, README `### Rules` 30). The farm is the course's steady-state loop: a lead (the
   course start through its last lead finish) and the loop (the laps after it through the last one's finish), timed from
   the lead's last finish in live time (`TimerGoal` that finish, `FullTas.LoopTiming`: held frames count from it). The
-  goals: a `finish:<course>` per lead lap, then per loop lap the first lap's waypoints it passes in order and its finish,
+  goals: a `farm:<course>` per lead lap, then per loop lap the first lap's waypoints it passes in order and its finish,
   under a goal tracker so a finish doesn't end the run (`LoopSim`). `MeasureLoop` plays the lead and the loop 4 times: it
   repeats exactly when every loop finishes on its own last input and the last two cycles are equal; the farm time is a
   lap's share of that cycle. One that doesn't logs why (the first loop that broke: its death or end, or the input it
@@ -1314,7 +1314,8 @@ section.
   plays that guide's next inputs from there (splicing guides into each other). `--profile` prints the field along a route.
 - Full-TAS: `plan fulltas-<run>.json --route <run file or best> --from-goal N [--to-goal M]` plans goals N+1..M from the
   route's state at goal N (each worker replays the prefix; the run's avoid boxes for those goals; the route's own window
-  as the guide unless `--no-guide`; `start:`/`finish:` goals rank by their course gates' distance). The window's own
+  as the guide unless `--no-guide`; `start:`/`record:`/`farm:` goals rank by their course gates' distance, a `record:` lap
+  before its gate by the way through the gate to its finish). The window's own
   route is the exact guide (above), so a window plan ends no slower than the route's window. Every window finish the
   planner keeps is tried as a splice (its inputs cut where they reach goal M, the route's rest after its own goal M):
   ordered by arrival less the speed it carries (`--momentum-worth`, 60 u/s per physics tick; finishes up to

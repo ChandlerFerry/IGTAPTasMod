@@ -141,10 +141,10 @@ namespace IGTAPTasMod
         {
             string text = (token ?? "").Trim().ToLowerInvariant();
             Match m = FullTasToken.Match(text);
-            if (!m.Success) throw new InvalidOperationException("Unknown Full-TAS goal \"" + token + "\": start:<course>, finish:<course>, buy:<box>[+<box>...], reward:<bonus> (a courses.json bonus name, such as bonus3 or unlockJumpDash) or at:<x>,<y>,<width>,<height>[,from=<side>[+<side>...]].");
+            if (!m.Success) throw new InvalidOperationException("Unknown Full-TAS goal \"" + token + "\": start:<course>, record:<course>, farm:<course>, buy:<box>[+<box>...], reward:<bonus> (a courses.json bonus name, such as bonus3 or unlockJumpDash) or at:<x>,<y>,<width>,<height>[,from=<side>[+<side>...]].");
             string kind = m.Groups[1].Value, arg = m.Groups[2].Value.Trim();
             var goal = new FullTasGoal { kind = kind };
-            if (kind == FullTasGoal.Start || kind == FullTasGoal.Finish)
+            if (goal.IsCourse)
             {
                 if (!int.TryParse(arg, NumberStyles.None, CultureInfo.InvariantCulture, out int course)
                     || !_courses.Any(c => c.id == course && !c.IsBonus && !c.IsTransition))

@@ -210,7 +210,7 @@ namespace IGTAPTasMod
                     target = _courses.Find(c => !c.IsTransition && string.Equals(c.Token, token, StringComparison.OrdinalIgnoreCase));
                     if (target == null) continue;
                     if (target.IsBonus) goals.Add("reward:" + token);
-                    else { goals.Add("start:" + target.id); goals.Add("finish:" + target.id); course = target.id; }
+                    else { goals.Add("record:" + target.id); goals.Add("farm:" + target.id); course = target.id; }
                 }
                 // Every goal stays whether or not the run's goals have it: the economy planner laps any course it can reach, and --auto's
                 // place lever splices any category route in where the run passes (Zip% passes bonus 11's way through the atom room).

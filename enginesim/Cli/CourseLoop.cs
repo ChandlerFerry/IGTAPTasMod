@@ -507,7 +507,7 @@ namespace IGTAP.EngineSim.Cli
             return best;
         }
 
-        static FullTasGoal FinishGoal(int course) { return new FullTasGoal { kind = FullTasGoal.Finish, course = course, label = "finish:" + course }; }
+        static FullTasGoal FinishGoal(int course) { return new FullTasGoal { kind = FullTasGoal.Farm, course = course, label = "farm:" + course }; }
 
         /// <summary>
         /// `solve --auto --farm` on a gated course (README ### Rules 30): the farm loop to start from (<see cref="StartLoop"/>: a

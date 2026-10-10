@@ -105,6 +105,8 @@ namespace IGTAP.EngineSim.Cli
             public int Breaks;
             /// <summary>The last goal reached is a buy whose buy-max touch is still buying (a level a physics tick).</summary>
             public bool Buying;
+            /// <summary>The next goal is a record: lap whose gate is crossed (FullTasTracker.Armed).</summary>
+            public bool Armed;
         }
 
         static readonly string[] AutoLevers = { "polish", "window", "lookahead", "span", "dropreset", "graft", "plan", "waste", "place" };
@@ -1382,7 +1384,7 @@ namespace IGTAP.EngineSim.Cli
                 float d = field == null || p >= _goals ? float.NaN : field.Distance(c);
                 s.Add(new Sample { Tick = _eval.Engine.PhysicsTicks, Input = (int)_eval.Engine.RunTicks, Progress = p, X = w.x, Y = w.y, CX = c.x, CY = c.y,
                     Dist = float.IsInfinity(d) ? float.NaN : d, Speed = (_eval.Player.Velocity + _eval.Player.momentum).magnitude, Cash = _eval.Shop.CashNow, Caps = caps,
-                    Breaks = breaks, Buying = last?.kind == FullTasGoal.Buy && _eval.Shop.Buying(last.boxes) });
+                    Breaks = breaks, Buying = last?.kind == FullTasGoal.Buy && _eval.Shop.Buying(last.boxes), Armed = _eval.Goals.Armed });
             });
             return s;
         }
@@ -1615,9 +1617,8 @@ namespace IGTAP.EngineSim.Cli
             var laps = new List<(int finish, int to, double earned, long slack)>();
             for (int i = 0; i < rows.Count; i++)
             {
-                string label = rows[i].Label;
-                int j = label.StartsWith("start:", StringComparison.Ordinal) && i + 1 < rows.Count && rows[i + 1].Label == "finish:" + label.Substring(6) ? i + 1 : i;
-                if (!rows[j].Economy || !rows[j].Label.StartsWith("finish:", StringComparison.Ordinal)) continue;
+                int j = i;
+                if (!rows[j].Economy || !FullTasGoal.IsLap(rows[j].Label)) continue;
                 long t0 = i == 0 ? 0 : _best.GoalPhysics[i - 1], t1 = _best.GoalPhysics[j];
                 int a = IndexAt(t0), b = IndexAt(t1);
                 if (s[b].Breaks > s[a].Breaks) { i = j; continue; }

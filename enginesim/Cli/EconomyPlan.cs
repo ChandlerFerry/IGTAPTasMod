@@ -804,7 +804,7 @@ namespace IGTAP.EngineSim.Cli
                         if (course <= 0) continue;
                         laps = true;
                         list.Add((new PlanOption(new Step(lap ? "lap" : "record", to, m.Ticks), "finish:" + n, Array.Empty<string>(), n + "@" + course, false,
-                            new[] { "start:" + n, "finish:" + n }, estimated.ToArray()), null));
+                            new[] { FullTasGoal.Record + ":" + n }, estimated.ToArray()), null));
                         continue;
                     }
                     if (to.StartsWith("restart@", StringComparison.Ordinal))
@@ -1266,7 +1266,7 @@ namespace IGTAP.EngineSim.Cli
         /// it and every quick restart known from it landing back beside it (within 300 u).</summary>
         string Trapped(int kept, MoveTable moves)
         {
-            string place = _labels[kept - 1];
+            string place = MoveTable.PlaceOf(_labels[kept - 1]);
             if (!moves.Places.TryGetValue(place, out Place p)) return null;
             Read(GoalState(kept).at);
             string caps = PlayerCaps.Of(_eval).Id;
@@ -1586,7 +1586,7 @@ namespace IGTAP.EngineSim.Cli
                 targets = new[] { enabler };
                 _eval.Restore(at);
             }
-            string place = _labels[kept - 1];
+            string place = MoveTable.PlaceOf(_labels[kept - 1]);
             if (!moves.Places.ContainsKey(place)) throw new InvalidOperationException($"goal {kept} {place} is no place of the movement table");
             string[] tree = EconomyPlan.TreeTargets(_eval, targets, GoalOf);
             if (tree.Length > targets.Length) Log($"plan: the tree's way to {targets[^1]}: " + string.Join(", ", tree.Take(tree.Length - 1)));
@@ -1693,7 +1693,7 @@ namespace IGTAP.EngineSim.Cli
             _planBase = _runGoals;
             var (at, route) = BuildFrom(_runGoals.Goals, kept, targetIndex);
             var z = new Realization { Inputs = route, State = at, Tick = _best.GoalPhysics[kept - 1] };
-            string tryPlace = _labels[kept - 1];
+            string tryPlace = MoveTable.PlaceOf(_labels[kept - 1]);
             foreach (string text in steps.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
                 int atSign = text.IndexOf('@');
@@ -1714,7 +1714,7 @@ namespace IGTAP.EngineSim.Cli
                     string have = moves.Places.TryGetValue(place, out Place pl) ? $"{pl.X:0.0},{pl.Y:0.0}" : "none";
                     string spot = goalOf(place)?.boxes is [string id] && _eval.Shop.Box(id) is upgradeBox box && _eval.TouchSpot(box) is Vector2 t
                         ? $"{_eval.ToWorld(new ScenePos(t.x, t.y)).x:0.0},{_eval.ToWorld(new ScenePos(t.x, t.y)).y:0.0} (active {box.gameObject.activeInHierarchy}, used {box.TimesUsed}/{box.Cap})" : "none";
-                    string fromPlace = _labels[kept - 1];
+                    string fromPlace = MoveTable.PlaceOf(_labels[kept - 1]);
                     Move est = moves.Best(fromPlace, place, PlayerCaps.Of(_eval).Id);
                     string walked = moves.Places.TryGetValue(fromPlace, out Place fp) && moves.Places.TryGetValue(place, out Place tp) ? moves.Walked(fp, tp).ToString("0") : "?";
                     Console.WriteLine($"try {text}: the table's place {have}; the box's touch spot {spot}; the plan's move from {fromPlace}: {est?.Ticks.ToString() ?? "none"} ({est?.Source}), walk {walked} u");
@@ -1740,7 +1740,7 @@ namespace IGTAP.EngineSim.Cli
                 // STEPS, as fulltas-plan --compare did), its schedule printed; a question about the beam's choices, nothing played.
                 if (kind == "plan")
                 {
-                    string place = _labels[kept - 1];
+                    string place = MoveTable.PlaceOf(_labels[kept - 1]);
                     string[] targets = { _labels[targetIndex] };
                     HashSet<string> only = goalOf(targets[0])?.boxes is [string tb] && tb.StartsWith("zone 2/", StringComparison.Ordinal) ? EconomyPlan.AreaTwoOffer : null;
                     var settings = new PlanSettings(targets, Array.Empty<string>(), "beam", EconomyPlan.UnattendedWidth, EconomyPlan.BeamStates, double.PositiveInfinity, false, only, null);
@@ -2146,11 +2146,13 @@ namespace IGTAP.EngineSim.Cli
             if (s.Kind == "lap" || s.Kind == "record")
             {
                 int n = int.Parse(s.Arg.Substring(s.Arg.IndexOf(':') + 1), CultureInfo.InvariantCulture);
-                goals = new[] { goalOf("start:" + n), goalOf("finish:" + n) };
+                // Played as its gate and its finish (LapGoals), the run's goal the lap: record:N.
+                FullTasGoal[] parts = LapGoals(n);
+                goals = new[] { goalOf(FullTasGoal.Record + ":" + n) };
                 // A record lap's way may skip the gate's own piece (a restart onto the course): no walk to the gate to measure.
-                if (s.Kind == "record" && RecordLap(z.State, z.Inputs, z.Planned, goals, n, improve: false, gateBy: z.Tick + Math.Max(3L * s.Ticks, s.Ticks + 500L)) is var (ri, rs, rt)) { _playedTicks = null; walked = rt - z.Tick; return (ri, rs, rt); }
+                if (s.Kind == "record" && RecordLap(z.State, z.Inputs, z.Planned, parts, n, improve: false, gateBy: z.Tick + Math.Max(3L * s.Ticks, s.Ticks + 500L)) is var (ri, rs, rt)) { _playedTicks = null; walked = rt - z.Tick; return (ri, rs, rt); }
                 if (s.Kind == "record") Log($"realize: {s.Arg}: no record lap plays from here (the saved course routes, --seed); a lap instead");
-                var lap = Lap(z.State, z.Inputs, z.Planned, goals);
+                var lap = Lap(z.State, z.Inputs, z.Planned, parts);
                 walked = lap == null ? 0 : lap.Value.tick - z.Tick;
                 return lap;
             }

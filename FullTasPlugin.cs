@@ -271,7 +271,7 @@ namespace IGTAPTasMod
         int _fullTasDifficultyDone;
         int? _fullTasDifficultyOf;
 
-        static readonly Regex FullTasToken = new Regex(@"^(start|finish|buy|reward|at):(.+)$");
+        static readonly Regex FullTasToken = new Regex(@"^(start|record|farm|buy|reward|at):(.+)$");
         static readonly Regex FullTasRouteName = new Regex(@"^fulltas/([A-Za-z0-9%-]+)_NONE ", RegexOptions.IgnoreCase);
         /// <summary>A saved Full-TAS route of any class (README "Route names"): `fulltas/&lt;run&gt;_NONE [&lt;class&gt; ]&lt;time&gt;`, no class for major.</summary>
         static readonly Regex FullTasClassRoute = new Regex(@"^fulltas/(?<run>[A-Za-z0-9%-]+)_NONE (?:(?<class>nmg|human-major|human-nmg) )?(?<time>[\d.]+)$", RegexOptions.IgnoreCase);

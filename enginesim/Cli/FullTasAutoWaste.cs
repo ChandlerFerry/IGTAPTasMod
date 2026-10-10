@@ -333,8 +333,7 @@ namespace IGTAP.EngineSim.Cli
             for (int g = 0; g < goals; g++)
             {
                 string label = _labels[g];
-                if (label.StartsWith("start:", StringComparison.Ordinal) && g + 1 < goals && _labels[g + 1] == "finish:" + label.Substring(6)) { laps.Add((g, g + 1, label.Substring(6))); g++; }
-                else if (label.StartsWith("finish:", StringComparison.Ordinal)) laps.Add((g, g, label.Substring(7)));
+                if (FullTasGoal.IsLap(label)) laps.Add((g, g, FullTasGoal.CourseOf(label).ToString(CultureInfo.InvariantCulture)));
             }
             for (int l = 0; l < laps.Count;)
             {

@@ -5,7 +5,9 @@ namespace IGTAPTasMod
 {
     internal sealed class FullTasGoal
     {
-        public const string Start = "start", Finish = "finish", Buy = "buy", Reward = "reward", At = "at";
+        // Course N's goals: start:N its start gate crossed; record:N a lap, its start gate crossed while it's the next goal, then
+        // its finish; farm:N its finish (a lap from a quick restart or the end gate's drop, its gate crossed before the goal before).
+        public const string Start = "start", Record = "record", Farm = "farm", Buy = "buy", Reward = "reward", At = "at";
         public string label;
         public string kind;
         public int course;
@@ -15,6 +17,25 @@ namespace IGTAPTasMod
         public const int FromLeft = 1, FromRight = 2, FromBottom = 4, FromTop = 8;
         public static readonly string[] SideNames = { "left", "right", "bottom", "top" };
         public const float RewardBoxRange = 400f;
+
+        /// <summary>A course goal: start:, record: or farm: (its course's gates).</summary>
+        public bool IsCourse { get { return kind == Start || kind == Record || kind == Farm; } }
+
+        /// <summary>Whether a goal label is a lap (record:N or farm:N): one that finishes a course.</summary>
+        public static bool IsLap(string label)
+        {
+            return label.StartsWith(Record + ":", StringComparison.Ordinal) || label.StartsWith(Farm + ":", StringComparison.Ordinal);
+        }
+
+        /// <summary>The course a start:, record: or farm: label names; 0 for any other label.</summary>
+        public static int CourseOf(string label)
+        {
+            int colon = label.IndexOf(':');
+            if (colon < 0) return 0;
+            string kind = label.Substring(0, colon);
+            return (kind == Start || kind == Record || kind == Farm) && int.TryParse(label.Substring(colon + 1), System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out int n) ? n : 0;
+        }
 
         // Every box a Full-TAS goal can buy (buy:<token>), by hierarchy path and sibling index (BoxId). Shared with enginesim, whose
         // economy planner names its purchases with these tokens.
@@ -146,7 +167,7 @@ namespace IGTAPTasMod
         /// <summary>
         /// The economy boxes: a course's repeatable income boxes (reward, clones, clone multiplier, global reward, fast, big and
         /// max-size clone chances, green reward). `fulltas --auto`'s goals part may drop, add, regroup or reorder these buy goals and
-        /// the laps (`start:N`, `finish:N`) around them; every other goal is the run's skeleton.
+        /// the laps and gates (`record:N`, `farm:N`, `start:N`) around them; every other goal is the run's skeleton.
         /// </summary>
         public static readonly HashSet<string> EconomyBoxes = new HashSet<string> {
             "buyreward", "buyclone", "buyreward2", "buyclone2", "buyclonemult2", "buyglobalreward2",
@@ -156,10 +177,10 @@ namespace IGTAPTasMod
             "buyreward6", "buygreen6", "buyclone6", "buyreward7", "buyclone7", "buyclonemult7", "buygreen7",
             "buyreward9", "buyclone9", "buygreen9", "buyclonemult9", "buyreward10", "buyclone10", "buyclonemult10", "buygreen10" };
 
-        /// <summary>A goal label the goals part may edit: a lap's gate or finish, or a buy of economy boxes only.</summary>
+        /// <summary>A goal label the goals part may edit: a lap or a start gate, or a buy of economy boxes only.</summary>
         public static bool IsEconomy(string label)
         {
-            if (label.StartsWith("start:", StringComparison.Ordinal) || label.StartsWith("finish:", StringComparison.Ordinal)) return true;
+            if (CourseOf(label) > 0) return true;
             if (!label.StartsWith("buy:", StringComparison.Ordinal)) return false;
             foreach (string token in label.Substring(4).Split('+'))
                 if (!EconomyBoxes.Contains(token)) return false;
@@ -225,6 +246,7 @@ namespace IGTAPTasMod
         public readonly FullTasGoal[] Goals;
         public int Next;
         public int Limit;
+        // The next goal's boxes bought, a bit each; a record: goal's (it has no boxes) 1 once its gate is crossed (Armed).
         int _bought;
         // Loose buys (runs/<run>.json "buys": "loose"; null when strict): every box a buy or reward goal names, the last goal that
         // names it, and the boxes bought before their goal came up (bit per box), which count toward it once it's current.
@@ -315,17 +337,23 @@ namespace IGTAPTasMod
 
         public FullTasGoal Current { get { return Next < Goals.Length && Next < Limit ? Goals[Next] : null; } }
 
+        /// <summary>A course's start gate crossed: reaches a start: goal, arms a record: goal (its finish reaches it then).</summary>
         public bool CourseStarted(int course, long input, long physics, long held)
         {
             FullTasGoal g = Current;
-            return g != null && g.kind == FullTasGoal.Start && g.course == course && Reach(input, physics, held);
+            if (g == null || g.course != course) return false;
+            if (g.kind == FullTasGoal.Record) _bought = 1;
+            return g.kind == FullTasGoal.Start && Reach(input, physics, held);
         }
 
         public bool CourseFinished(int course, long input, long physics, long held)
         {
             FullTasGoal g = Current;
-            return g != null && g.kind == FullTasGoal.Finish && g.course == course && Reach(input, physics, held);
+            return g != null && g.course == course && (g.kind == FullTasGoal.Farm || Armed) && Reach(input, physics, held);
         }
+
+        /// <summary>The next goal is a record: lap whose start gate is crossed.</summary>
+        public bool Armed { get { FullTasGoal g = Current; return g != null && g.kind == FullTasGoal.Record && _bought != 0; } }
 
         public bool Touched(long input, long physics, long held)
         {

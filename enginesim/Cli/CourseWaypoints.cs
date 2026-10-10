@@ -561,7 +561,7 @@ namespace IGTAP.EngineSim.Cli
                 float w = f[2].GetSingle(), h = f[3].GetSingle(), cx = f[0].GetSingle(), cy = f[1].GetSingle();
                 return Goal(new Rect { X0 = cx - w / 2f, X1 = cx + w / 2f, Y0 = cy - h / 2f, Y1 = cy + h / 2f });
             }
-            return new FullTasGoal { kind = FullTasGoal.Finish, course = sim.TargetCourse, label = "finish:" + sim.TargetCourse };
+            return new FullTasGoal { kind = FullTasGoal.Farm, course = sim.TargetCourse, label = "farm:" + sim.TargetCourse };
         }
 
         /// <summary>The trace's header without its own finish (a bonus's finish rect, a transition's next start): with goals, the

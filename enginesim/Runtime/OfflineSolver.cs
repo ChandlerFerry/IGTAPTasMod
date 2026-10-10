@@ -356,7 +356,7 @@ namespace IGTAP.EngineSim
         internal static long GoalKey(Simulation sim, colouredBlockSwapper swapper)
         {
             float behind = float.NaN;
-            return Worker.GoalCellKey(Worker.Place(sim, swapper, true, ref behind, false), sim.Progress);
+            return Worker.GoalCellKey(Worker.Place(sim, swapper, true, ref behind, false), sim.Progress, sim.Goals.Armed);
         }
 
         /// <summary>
@@ -1877,7 +1877,7 @@ namespace IGTAP.EngineSim
                 courseScript active = _sim.TimingCourse();
                 bool timing = _sim.TimedFromRunStart || active != null;
                 if (!timing && OutOfSetupReach()) return false;
-                long key = _goalMode ? GoalCellKey(Place(_sim, _swapper, true, ref behind, false), _sim.Progress)
+                long key = _goalMode ? GoalCellKey(Place(_sim, _swapper, true, ref behind, false), _sim.Progress, _sim.Goals.Armed)
                     : CellKey(Place(_sim, _swapper, false, ref behind, _owner._fresh) | (timing ? 0L : Motion(_sim.Player)), timing, _waypoints);
                 bool losing = false;
                 float elapsed = _sim.Elapsed(active);
@@ -2000,9 +2000,11 @@ namespace IGTAP.EngineSim
                 return timing ? -1 - key : key;
             }
 
-            internal static long GoalCellKey(long place, int progress)
+            // A record: lap's gate crossed is a cell of its own (the goal's progress is the same before it): it flips the cell x's top
+            // bit, 1.5 M units off any place a run goes.
+            internal static long GoalCellKey(long place, int progress, bool armed)
             {
-                return -1 - (((long)progress << ProgressShift) | place);
+                return -1 - (((long)progress << ProgressShift) | (armed ? place ^ 1L << 31 : place));
             }
 
             internal static int GoalProgress(long goalKey) { return (int)(((-1 - goalKey) >> ProgressShift) & 0x7FF); }

@@ -9,11 +9,12 @@ using Vector3 = UnityEngine.Vector3;
 
 namespace IGTAP.EngineSim.Cli
 {
-    // The loop builder (docs/fulltas.md, "Loop builder"): a run's buy:, start: and finish: goals are put together from pieces, short
-    // input stretches from one state to one goal, kept in a library shared by every run and reused wherever the player is in the same
-    // spot with the same unlocks. Every use is checked by playing it in the run. Only a goal no piece reaches is searched, once; a
-    // buy the run can't pay for yet gets an extra lap of its course first, never a wait at the box. Every run's best files all its
-    // goals there too (HarvestRuns), and each search window is seeded with the pieces that play its goals (PieceChain).
+    // The loop builder (docs/fulltas.md, "Loop builder"): a run's buy:, start:, record: and farm: goals are put together from pieces,
+    // short input stretches from one state to one goal, kept in a library shared by every run and reused wherever the player is in
+    // the same spot with the same unlocks (a record: lap as its gate's piece, start:N, and its finish's, farm:N). Every use is checked
+    // by playing it in the run. Only a goal no piece reaches is searched, once; a buy the run can't pay for yet gets a lap of its
+    // course first, a record: goal put into the run's goals before it, never a wait at the box. Every run's best files all its goals
+    // there too (HarvestRuns), and each search window is seeded with the pieces that play its goals (PieceChain).
     sealed partial class FullTas
     {
         const int MaxExtraLaps = 64, MaxPieceTries = 12, PieceVariants = 4;
@@ -81,7 +82,7 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         Func<SimSnapshot, SimSnapshot> _pieceState;
 
-        static bool IsLoop(FullTasGoal g) { return g.kind == FullTasGoal.Buy || g.kind == FullTasGoal.Start || g.kind == FullTasGoal.Finish; }
+        static bool IsLoop(FullTasGoal g) { return g.kind == FullTasGoal.Buy || g.IsCourse; }
 
         bool IsLoop(int goal) { return IsLoop(_runGoals.Goals[goal]); }
 
@@ -577,13 +578,13 @@ namespace IGTAP.EngineSim.Cli
             return true;
         }
 
-        /// <summary>The course a loop goal belongs to: the last start/finish goal before it (else the next one); 0 for none.</summary>
+        /// <summary>The course a loop goal belongs to: the last course goal before it (else the next one); 0 for none.</summary>
         int LoopCourse(int goal)
         {
             for (int g = goal - 1; g >= 0; g--)
-                if (_runGoals.Goals[g].kind == FullTasGoal.Start || _runGoals.Goals[g].kind == FullTasGoal.Finish) return _runGoals.Goals[g].course;
+                if (_runGoals.Goals[g].IsCourse) return _runGoals.Goals[g].course;
             for (int g = goal; g < _goals; g++)
-                if (_runGoals.Goals[g].kind == FullTasGoal.Start || _runGoals.Goals[g].kind == FullTasGoal.Finish) return _runGoals.Goals[g].course;
+                if (_runGoals.Goals[g].IsCourse) return _runGoals.Goals[g].course;
             return 0;
         }
 
@@ -594,18 +595,21 @@ namespace IGTAP.EngineSim.Cli
         /// finish: the gate's fastest way can leave the player where no finish is found (TrueEnding%'s goal 355, 2026-10-05: a Cash
         /// lap's gate crossed mid-air after three dashes, and 2.2 M runs found no finish from there).
         /// </summary>
-        string BuildStep(Built built, ref SimSnapshot at, Target target, List<List<InputTick>> extraSeeds, bool searchOnly, Target lapEnd = null)
+        string BuildStep(Built built, ref SimSnapshot at, Target target, List<List<InputTick>> extraSeeds, bool searchOnly, Target lapEnd = null,
+            (Target gate, Target finish)? parts = null)
         {
             Step step = searchOnly ? null : lapEnd != null ? KnownLap(at, built.Inputs, built.Reached, target, lapEnd) : BestKnown(at, built.Inputs, built.Reached, target);
             if (step == null)
             {
                 if (lapEnd != null) extraSeeds = extraSeeds.Concat(LapSeeds(at, built.Inputs, built.Reached, target, lapEnd)).ToList();
+                if (parts is var (gate, finish)) extraSeeds = extraSeeds.Concat(LapSeeds(at, built.Inputs, built.Reached, gate, finish)).ToList();
                 // The build takes the first way found (and a quarter minute's betterment); polish searches the pieces it plays.
                 step = SolvePiece(at, built.Inputs, built.Reached, target, _pieceMinutes, BuildStall, extraSeeds, lapEnd);
                 if (step == null) return target.Extra != null ? $"no way found to {target.Key} (an extra lap for Cash) before goal {target.Goal + 1} ({_labels[target.Goal]})"
                     : $"no way found to goal {target.Goal + 1} ({_labels[target.Goal]}) from goal {built.Reached}";
                 Keep(step, at, built.Inputs, target);
                 if (step.Then != null) Keep(step.Then, step.Next, built.Inputs.Concat(step.Inputs).ToList(), lapEnd);
+                if (parts is var (keepGate, keepFinish)) KeepParts(step, at, built.Inputs, keepGate, keepFinish);
             }
             return Append(built, ref at, step, target) ? null : $"the way to goal {target.Goal + 1} ({_labels[target.Goal]}) would quick restart twice in a row";
         }
@@ -686,8 +690,9 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// The run's next goal onto the build, after extra laps while it's a buy the run can't pay for. Null, or why not. With an old
-        /// route, its own way here is a candidate next to the library's (<see cref="Pick"/>); <paramref name="followOld"/> takes only that.
+        /// The run's next goal onto the build; a buy the run can't pay for yet gets a lap goal put in before it instead (<see
+        /// cref="InsertLap"/>, built next). Null, or why not. With an old route, its own way here is a candidate next to the
+        /// library's (<see cref="Pick"/>); <paramref name="followOld"/> takes only that.
         /// </summary>
         string BuildGoal(Built built, ref SimSnapshot at, Route old, bool followOld)
         {
@@ -702,18 +707,19 @@ namespace IGTAP.EngineSim.Cli
                 ? new List<List<InputTick>> { old.Inputs.Skip((int)old.GoalInput[goal - 1]).Take((int)(old.GoalInput[goal] - old.GoalInput[goal - 1]) + 2).ToList() }
                 : new List<List<InputTick>>();
             Target lapEnd = LapEnd(goal);
-            for (int laps = 0; ; laps++)
+            (Target gate, Target finish)? parts = g.kind == FullTasGoal.Record ? LapParts(goal, g.course) : null;
+            Step known = lapEnd != null ? KnownLap(at, built.Inputs, goal, target, lapEnd)
+                : parts is var (gate, finish) ? KnownRecord(at, built.Inputs, goal, target, gate, finish) : BestKnown(at, built.Inputs, goal, target);
+            if (mine != null) known = known == null ? mine : Pick(known, mine, built.Inputs, old, goal);
+            if (known != null) return Append(built, ref at, known, target) ? Advanced(built) : $"the way to goal {goal + 1} ({g.label}) would quick restart twice in a row";
+            _eval.Restore(at);
+            if (g.kind == FullTasGoal.Buy && _eval.Shop.Affordable(g.boxes) == false)
             {
-                Step known = lapEnd != null ? KnownLap(at, built.Inputs, goal, target, lapEnd) : BestKnown(at, built.Inputs, goal, target);
-                if (laps == 0 && mine != null) known = known == null ? mine : Pick(known, mine, built.Inputs, old, goal);
-                if (known != null) return Append(built, ref at, known, target) ? Advanced(built) : $"the way to goal {goal + 1} ({g.label}) would quick restart twice in a row";
-                _eval.Restore(at);
-                if (g.kind != FullTasGoal.Buy || _eval.Shop.Affordable(g.boxes) != false) break;
                 // Clone income that pays for the box within a few seconds beats a lap (FalseEnding2-Any%'s boosted Course 2 clones
                 // after the statue; its lap before buy:buydj took 14.6 s from start:3). Standing still first (the player already at
                 // the box: an area goal on it before the buy), then a search that may walk there and stand until it can pay; either
                 // is taken only when it buys the box, else the lap follows.
-                if (laps == 0 && AffordableWithin(at, built.Inputs, g, ShortWaitTicks) && !LapSooner(built, at, goal, target))
+                if (AffordableWithin(at, built.Inputs, g, ShortWaitTicks) && !LapSooner(built, at, goal, target))
                 {
                     Step stand = Stand(at, built.Inputs.Count, target);
                     if (stand != null && Append(built, ref at, stand, target))
@@ -726,10 +732,7 @@ namespace IGTAP.EngineSim.Cli
                 }
                 int course = LoopCourse(goal);
                 if (course == 0) return $"goal {goal + 1} ({g.label}): short of Cash, and no course to lap for it";
-                if (laps == MaxExtraLaps) return $"goal {goal + 1} ({g.label}): still short of Cash after {MaxExtraLaps} extra laps";
-                string stuck = ExtraLap(built, ref at, goal, course);
-                if (stuck != null) return stuck;
-                Log($"build: extra lap of Course {course} before goal {goal + 1} ({g.label}): short of Cash");
+                return InsertLap(ref at, goal, course, old);
             }
             if (g.boxes != null)
             {
@@ -739,20 +742,51 @@ namespace IGTAP.EngineSim.Cli
                 if (g.kind == FullTasGoal.Buy && _eval.Shop.Affordable(g.boxes) == null) return $"goal {goal + 1} ({g.label}) can't be bought: {state}";
                 Log($"build: searching goal {goal + 1} ({g.label}): {state}");
             }
-            string why = BuildStep(built, ref at, target, oldSeeds, true, lapEnd);
+            string why = BuildStep(built, ref at, target, oldSeeds, true, lapEnd, parts);
             return why ?? Advanced(built);
         }
 
         static string Advanced(Built built) { built.Reached++; return null; }
 
         /// <summary>
-        /// An extra lap of course before goal onto the build: its gate and finish, pieces of their own filed under the same labels
-        /// as the run's own laps (each reuses the other's), the gate's way picked by the finish. Null, or why not.
+        /// A lap of course put into the run's goals before goal, a buy it can't pay for yet: record:N, a goals edit as --auto's goals
+        /// part makes (the list it came from kept for the gate's goalsFrom), the build's state and the best moved onto the new goals,
+        /// so the build builds it next as any goal. Only on the frontier: a rebuild (an old route) or a classed solve keeps the
+        /// best's goals. Null, or why not.
         /// </summary>
-        string ExtraLap(Built built, ref SimSnapshot at, int goal, int course)
+        string InsertLap(ref SimSnapshot at, int goal, int course, Route old)
+        {
+            string label = FullTasGoal.Record + ":" + course, buy = $"goal {goal + 1} ({_labels[goal]})";
+            if (old != null || Classed) return $"{buy}: short of Cash, and a {(old != null ? "rebuild" : "classed solve")} keeps the best's goals (no lap put in)";
+            int laps = 0;
+            for (int k = goal - 1; k >= 0 && _labels[k] == label; k--) laps++;
+            if (laps >= MaxExtraLaps) return $"{buy}: still short of Cash after {laps} laps of Course {course}";
+            if (!_labels.Contains(label) && !_insertedGoals.ContainsKey(label))
+            {
+                if (NewGoal(label) is not { } made) return $"{buy}: short of Cash, and no lap goal {label} in this world";
+                _insertedGoals[label] = (0, made.header, made.goal);
+            }
+            string[] from = _labels;
+            _goalLineage.Add(from);
+            SwitchGoals(from.Take(goal).Append(label).Concat(from.Skip(goal)).ToArray());
+            FullTasTracker.State s = at.Goal;
+            long[] Grown(long[] a) => a.Take(goal).Append(-1L).Concat(a.Skip(goal)).ToArray();
+            at = at.WithGoal(new FullTasTracker.State { Next = s.Next, Banked = s.Banked, InputTicks = Grown(s.InputTicks), PhysicsTicks = Grown(s.PhysicsTicks),
+                HeldFrames = Grown(s.HeldFrames) });
+            _best = Evaluate(_best.Inputs);
+            Log($"build: {buy} is short of Cash: {label} put in before it ({from.Length} -> {_goals} goals)");
+            return null;
+        }
+
+        /// <summary>
+        /// A lap of course before goal played on a copy of the build (<see cref="LapSooner"/>'s trial): its gate and finish as goals of
+        /// their own, the run's set aside, their pieces the run's laps' (start:N, farm:N), the gate's way picked by the finish. Null,
+        /// or why not.
+        /// </summary>
+        string TrialLap(Built built, ref SimSnapshot at, int goal, int course)
         {
             Target Part(string label, string kind) => new Target { Goal = goal, Extra = new[] { RunGoal(label, kind, course) }, Key = label };
-            Target start = Part("start:" + course, FullTasGoal.Start), finish = Part("finish:" + course, FullTasGoal.Finish);
+            Target start = Part("start:" + course, FullTasGoal.Start), finish = Part("farm:" + course, FullTasGoal.Farm);
             return BuildStep(built, ref at, start, new List<List<InputTick>>(), false, finish)
                 ?? BuildStep(built, ref at, finish, new List<List<InputTick>>(), false);
         }
@@ -763,7 +797,37 @@ namespace IGTAP.EngineSim.Cli
             FullTasGoal g = _runGoals.Goals[goal];
             if (g.kind != FullTasGoal.Start || goal + 1 >= _goals) return null;
             FullTasGoal f = _runGoals.Goals[goal + 1];
-            return f.kind == FullTasGoal.Finish && f.course == g.course ? new Target { Goal = goal + 1, Key = f.label } : null;
+            return f.kind == FullTasGoal.Farm && f.course == g.course ? new Target { Goal = goal + 1, Key = f.label } : null;
+        }
+
+        /// <summary>A record: goal's parts in the library: its gate (start:N, a goal of its own: crossing it reaches no run goal) and
+        /// its finish (farm:N's pieces: the run's goal is reached there).</summary>
+        (Target gate, Target finish) LapParts(int goal, int course)
+        {
+            return (new Target { Goal = goal, Extra = new[] { RunGoal("start:" + course, FullTasGoal.Start, course) }, Key = "start:" + course },
+                new Target { Goal = goal, Key = FullTasGoal.Farm + ":" + course });
+        }
+
+        /// <summary>The library's fastest way through a record: goal: a whole lap filed under it, or its gate's way and then its finish's
+        /// (<see cref="KnownLap"/>) as one step. Null for none.</summary>
+        Step KnownRecord(SimSnapshot at, List<InputTick> route, int reached, Target target, Target gate, Target finish)
+        {
+            Step whole = BestKnown(at, route, reached, target), parts = KnownLap(at, route, reached, gate, finish);
+            if (parts != null) parts = new Step { Inputs = parts.Inputs.Concat(parts.Then.Inputs).ToList(), Physics = parts.Then.Physics, Next = parts.Then.Next };
+            return whole == null || parts != null && parts.Physics < whole.Physics ? parts : whole;
+        }
+
+        /// <summary>A record: lap's step filed as its parts too (<see cref="LapParts"/>): the gate's way, cut where it crosses, and the
+        /// rest to the finish, each checked by playing it.</summary>
+        void KeepParts(Step lap, SimSnapshot at, List<InputTick> route, Target gate, Target finish)
+        {
+            Step g = Reaches(at, route.Count, lap.Inputs, gate);
+            if (g == null || g.Inputs.Count >= lap.Inputs.Count) return;
+            List<InputTick> after = route.Concat(g.Inputs).ToList();
+            Step f = Reaches(g.Next, after.Count, lap.Inputs.Skip(g.Inputs.Count).ToList(), finish);
+            if (f == null) return;
+            Keep(g, at, route, gate);
+            Keep(f, g.Next, after, finish);
         }
 
         /// <summary>
@@ -778,7 +842,7 @@ namespace IGTAP.EngineSim.Cli
             // No hop under the box buys it: the lap, not a search for a wait (minutes, at buy:buystatue).
             if (stand == null) return true;
             var trial = new Built { Inputs = built.Inputs.ToList(), Reached = built.Reached };
-            if (ExtraLap(trial, ref at, goal, course) != null) return false;
+            if (TrialLap(trial, ref at, goal, course) != null) return false;
             Step buy = BestKnown(at, trial.Inputs, goal, target);
             if (buy == null || stand.Physics <= buy.Physics) return false;
             Log($"build: goal {goal + 1} ({_labels[goal]}): a lap of Course {course} first buys it at tick {buy.Physics}, standing at {stand.Physics}");
@@ -863,8 +927,10 @@ namespace IGTAP.EngineSim.Cli
             {
                 while (built.Reached < until && !TimeUp)
                 {
+                    int goals = _goals;
                     string stuck = BuildGoal(built, ref at, old, followOld);
                     if (stuck != null) { built.Stuck = stuck; break; }
+                    until += _goals - goals;
                     if (checkpoint != null && (_clock.Elapsed - saved).TotalSeconds >= 60) { saved = _clock.Elapsed; checkpoint(built); }
                 }
             }
@@ -980,6 +1046,11 @@ namespace IGTAP.EngineSim.Cli
                 if (faster == null || Scored(faster) >= beat) continue;
                 Log($"faster piece for {u.Target.Key}" + (pair ? " + " + next.Target.Key : "") + $" ({group.Count()} uses): {beat - Scored(faster)} ticks each");
                 Keep(faster, u.At, prefix, u.Target);
+                if (u.Target.Extra == null && _runGoals.Goals[u.Target.Goal] is { kind: FullTasGoal.Record } lap)
+                {
+                    var (gate, finish) = LapParts(u.Target.Goal, lap.course);
+                    KeepParts(faster, u.At, prefix, gate, finish);
+                }
                 if (pair) Keep(faster.Then, faster.Next, prefix.Concat(faster.Inputs).ToList(), next.Target);
                 improved = true;
             }

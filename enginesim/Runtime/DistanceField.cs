@@ -60,7 +60,12 @@ namespace IGTAP.EngineSim
         readonly colouredBlockSwapper _swapper;
         readonly HashSet<GameObject> _spikes = new HashSet<GameObject>();
         readonly Dictionary<ColliderData, List<ColliderData>> _sources = new Dictionary<ColliderData, List<ColliderData>>();
-        readonly List<List<Rect>> _goalBoxes = new List<List<Rect>>();
+        // Per goal (by reference: a builder's extra lap tracks goals of its own, numbered from 0 too), its key and boxes; a record:
+        // goal's start gates, and the way from them to its finish.
+        readonly Dictionary<FullTasGoal, (int key, List<Rect> boxes)> _goalBoxes = new Dictionary<FullTasGoal, (int, List<Rect>)>();
+        readonly Dictionary<FullTasGoal, (List<Rect> gates, float on)> _lapGates = new Dictionary<FullTasGoal, (List<Rect>, float)>();
+        /// <summary>A record: goal's start gate field's key: its goal's key plus this (goal keys count from 0).</summary>
+        const int GateKey = 1 << 30;
         readonly List<Field> _built = new List<Field>();
         readonly object _gate = new object();
         Vector2[] _points = new Vector2[0];
@@ -124,7 +129,19 @@ namespace IGTAP.EngineSim
         /// </summary>
         public float Distance(CapturePos at, int waypoints = int.MaxValue)
         {
-            return Target(waypoints, out int key, out List<Rect> boxes) ? Measure(at, key, boxes) : float.NaN;
+            if (!Target(waypoints, out int key, out List<Rect> boxes)) return float.NaN;
+            // A record: lap before its start gate: the way through the gate to the finish, so crossing the gate (the goal still
+            // the next) is no step back.
+            FullTasTracker goals = _sim.Goals;
+            FullTasGoal lap = goals?.Current;
+            if (lap == null || lap.kind != FullTasGoal.Record || goals.Armed) return Measure(at, key, boxes);
+            if (!_lapGates.TryGetValue(lap, out var gate))
+            {
+                List<Rect> gates = GateBoxes(lap.course, true);
+                float on = gates.Count == 0 ? 0f : gates.Min(r => Measure(new CapturePos(r.x + r.width / 2f, r.y + r.height / 2f), key, boxes));
+                _lapGates[lap] = gate = (gates, float.IsFinite(on) ? on : 0f);
+            }
+            return gate.gates.Count > 0 ? Measure(at, GateKey + key, gate.gates) + gate.on : Measure(at, key, boxes);
         }
 
         /// <summary>How far <paramref name="at"/> is from the target course's start gates (a course run whose timer isn't running
@@ -157,24 +174,25 @@ namespace IGTAP.EngineSim
         }
 
         /// <summary>Where the run heads now: its boxes, and a key naming them (-1: the finish box, -2: the finish start's gate,
-        /// -3: the course's end gate, -4 - i: forced-path box i, else the goal's index: an at: goal's rect, a start: or finish:
-        /// goal's course start or end gates), false while the current goal is none of those (a buy, a reward).</summary>
+        /// -3: the course's end gate, -4 - i: forced-path box i, else the goal's own: an at: goal's rect, a start: goal's course
+        /// start gates, a record: or farm: goal's end gates, a buy's or reward's box), false when it has none.</summary>
         bool Target(int waypoints, out int key, out List<Rect> boxes)
         {
             FullTasTracker goals = _sim.Goals;
             if (goals != null)
             {
                 FullTasGoal goal = goals.Current;
-                bool gate = goal != null && (goal.kind == FullTasGoal.Start || goal.kind == FullTasGoal.Finish) && goal.course != 0;
+                bool gate = goal != null && goal.IsCourse && goal.course != 0;
                 bool box = goal != null && (goal.kind == FullTasGoal.Buy || goal.kind == FullTasGoal.Reward) && goal.boxes?.Length > 0;
                 if (goal == null || goal.kind != FullTasGoal.At && !gate && !box) { key = 0; boxes = null; return false; }
-                key = goals.Next;
-                if (box) _boxKeys.Add(key);
-                while (_goalBoxes.Count <= key) _goalBoxes.Add(null);
-                boxes = _goalBoxes[key];
-                if (boxes == null)
-                    _goalBoxes[key] = boxes = gate ? GateBoxes(goal.course, goal.kind == FullTasGoal.Start) : box ? TouchBoxes(goal.boxes)
-                        : new List<Rect> { new Rect(goal.x - goal.w / 2f, goal.y - goal.h / 2f, goal.w, goal.h) };
+                if (!_goalBoxes.TryGetValue(goal, out var known))
+                {
+                    known = (_goalBoxes.Count, gate ? GateBoxes(goal.course, goal.kind == FullTasGoal.Start) : box ? TouchBoxes(goal.boxes)
+                        : new List<Rect> { new Rect(goal.x - goal.w / 2f, goal.y - goal.h / 2f, goal.w, goal.h) });
+                    _goalBoxes[goal] = known;
+                    if (box) _boxKeys.Add(known.key);
+                }
+                (key, boxes) = known;
                 return boxes.Count > 0;
             }
             if (waypoints >= 0 && waypoints < _via.Length)
