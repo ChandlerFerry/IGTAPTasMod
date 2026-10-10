@@ -63,6 +63,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 break;
             }
             Log($"solve-run {run.Name}: {plan.Count} goals, {threads} threads, engine {BuildInfo.Commit}, from {from} ({route.Count} inputs), {lib.Count} library segments");
+            if (route.Count > 0) plan = Solve.OnThread(() => AdoptStrays(run, plan, route));
             var improver = new Improver(run, lib, search, facts, threads) { Log = Log };
             var pending = new BlockingCollection<Built>(new ConcurrentQueue<Built>(), 1);
             // What the starting route does on this engine, not what it recorded (a fidelity fix can have broken it).
@@ -185,6 +186,43 @@ namespace IGTAP.EngineSim.Cli.Runs
             sim.UseGoals(sim.Goals.For(run.GoalsOf(plan)));
             return sim.Run(inputs, null, null, 1000000);
         });
+
+        const string StrayHead = "Bought ", StrayTail = ", which isn't the next goal's box";
+
+        // A route that buys an economy box its goal list doesn't name (a strict run's stray buy) gets that buy as a goal where it
+        // came, as long as the route then gets further: a goal list edited since the route was found otherwise ends it there
+        // (Zip%'s best stops at goal 808 on Course 6's Green reward).
+        internal static RunPlan AdoptStrays(RunContext run, RunPlan plan, List<InputTick> route)
+        {
+            Simulation sim = run.Make();
+            int Reach(RunPlan p, out string end)
+            {
+                sim.UseGoals(sim.Goals.For(run.GoalsOf(p)));
+                sim.Restore(sim.Start);
+                RunResult r = sim.Run(route, null, null, 1000000);
+                end = r.EndReason;
+                return r.Progress;
+            }
+            int reached = Reach(plan, out string why);
+            for (int adopted = 0; adopted < 50 && why != null && why.StartsWith(StrayHead, StringComparison.Ordinal) && why.Contains(StrayTail); adopted++)
+            {
+                string path = why.Substring(StrayHead.Length, why.IndexOf(StrayTail, StringComparison.Ordinal) - StrayHead.Length);
+                RunPlan best = null;
+                int bestReached = reached;
+                string bestWhy = null;
+                foreach (string token in FullTasGoal.Boxes.Where(b => b.path == path && FullTasGoal.EconomyBoxes.Contains(b.token)).Select(b => b.token).Distinct())
+                {
+                    RunPlan p = plan.Insert(reached, "buy:" + token);
+                    if (FullTasGoal.EditRefused(plan.Labels, p.Labels) != null) continue;
+                    int n = Reach(p, out string w);
+                    if (n > bestReached) (best, bestReached, bestWhy) = (p, n, w);
+                }
+                if (best == null) break;
+                Log($"the starting route buys {best.Labels[reached]} at goal {reached + 1}, which its goals don't name: adopted, it now reaches {bestReached} of {best.Count}");
+                (plan, reached, why) = (best, bestReached, bestWhy);
+            }
+            return plan;
+        }
 
         static object RouteJson(Built b) => new
         {
