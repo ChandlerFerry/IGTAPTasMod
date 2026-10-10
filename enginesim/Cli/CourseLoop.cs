@@ -552,7 +552,7 @@ namespace IGTAP.EngineSim.Cli
             int at = Array.IndexOf(rest, "--minutes");
             if (at >= 0 && at + 1 < rest.Length)
                 rest[at + 1] = Math.Max(0.25, minutes - run.Clock.Elapsed.TotalMinutes).ToString("0.##", CultureInfo.InvariantCulture);
-            var loop = new FullTas(FullArgs(synthetic, rest, run.Goals.Count).ToArray());
+            var loop = new FullTas(FullArgs(synthetic, rest, run.Goals).ToArray());
             loop._course = run;
             loop._committed = loop.CourseCommitted;
             if (run.WaypointsFile != null)

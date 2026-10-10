@@ -271,13 +271,10 @@ namespace IGTAP.EngineSim.Cli
             return blocks;
         }
 
-        /// <summary>forced-paths.json's rules (a course's and category's boxes, a Full-TAS run's avoid boxes). The studio edits the
-        /// file while a solve runs, so it is read again whenever it has changed.</summary>
-        sealed record PathRule(int? Course, string[] Capabilities, string[] Fulltas, float[][] Via, float[][] Avoid, bool Guide, PathBlock[] Optional);
-        /// <param name="ForGoal">The goal (its number from 0, as the studio shows it) the block cuts for alone: only while a run
-        /// heads for that one goal, where For cuts while heading for every goal with its label.</param>
-        sealed record PathBlock(string Name, string Note, bool Default, float[][] Via, float[][] Avoid, string[] OffFor, string After, string From, string For,
-            int? ForGoal = null);
+        /// <summary>forced-paths.json's rules: a course's and category's boxes (a Full-TAS run's are its definition's,
+        /// <see cref="FullTasPaths"/>). The studio edits the file while a solve runs, so it is read again whenever it has changed.</summary>
+        sealed record PathRule(int? Course, string[] Capabilities, float[][] Via, float[][] Avoid, bool Guide, PathBlock[] Optional);
+        sealed record PathBlock(string Name, string Note, bool Default, float[][] Via, float[][] Avoid, string From);
         sealed record PathsFile(PathRule[] Paths);
         static Tuple<DateTime, PathRule[]> _pathRules;
 
@@ -292,15 +289,36 @@ namespace IGTAP.EngineSim.Cli
             return read.Item2;
         }
 
+        /// <summary>A run definition's avoid block (runs/&lt;run&gt;.json "avoid"[], a goal's "avoid"[] and "avoidAfter"[]): its boxes
+        /// (world corners), the sides a move must cross into one to be cut ("from": "bottom", "left+top", ...; unset: any), and for
+        /// a run-wide block the goals (ids) while heading for which it is off.</summary>
+        internal sealed record AvoidBlock(float[][] Boxes, string From, string[] OffFor);
+        internal sealed record RunGoal(string Id, string Goal, AvoidBlock[] Avoid, AvoidBlock[] AvoidAfter);
+        internal sealed record RunAvoids(AvoidBlock[] Avoid, RunGoal[] Goals);
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Tuple<DateTime, RunAvoids>> _runAvoids =
+            new System.Collections.Concurrent.ConcurrentDictionary<string, Tuple<DateTime, RunAvoids>>();
+
+        /// <summary>The run definition's avoids (the source tree's runs/&lt;run&gt;.json), read again whenever the studio has changed it.</summary>
+        internal static RunAvoids RunDefinitionAvoids(string run)
+        {
+            string root = TechGrafts.SourceRoot();
+            string file = root == null ? null : Path.Combine(root, "runs", run + ".json");
+            if (file == null || !File.Exists(file)) return null;
+            DateTime written = File.GetLastWriteTimeUtc(file);
+            if (_runAvoids.TryGetValue(run, out var read) && read.Item1 == written) return read.Item2;
+            var def = JsonSerializer.Deserialize<RunAvoids>(File.ReadAllText(file), new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            _runAvoids[run] = Tuple.Create(written, def);
+            return def;
+        }
+
         /// <summary>
-        /// The avoid boxes of the run's Full-TAS rules for a window heading for <paramref name="goals"/>: each rule's "avoid", plus
-        /// its "optional" blocks except those whose "offFor" lists one of the goals (null goals: every block, as the map draws them).
-        /// A block's "after" (a goal label of the run, <paramref name="labels"/>) makes its boxes cut a run only once it has reached
-        /// that goal; without the run's labels, or when the run has no such goal, the block is off. A block's "for" (a goal label)
-        /// makes its boxes cut only while the run heads for that goal: from the goal before it until it is reached, at each place
-        /// the label has in the run (no labels: the map draws it; a run without the goal: off).
+        /// The run's avoid boxes (its definition's, runs/&lt;run&gt;.json) for a window heading for the goals at places
+        /// <paramref name="heading"/> of a run whose goals are <paramref name="ids"/> (null ids: the definition's own list; null heading:
+        /// every block on, as the map draws them). The run-wide blocks cut always, except one whose "offFor" names a goal headed for.
+        /// A goal's "avoid" blocks cut only while the run heads for it (from the goal before it until it is reached), its
+        /// "avoidAfter" blocks once it is reached; a goal the run's list doesn't have (an edit dropped it) takes its boxes with it.
         /// </summary>
-        internal static OfflineSolver.ForcedPath FullTasPaths(string run, ICollection<string> goals = null, IReadOnlyList<string> labels = null)
+        internal static OfflineSolver.ForcedPath FullTasPaths(string run, IReadOnlyList<string> ids = null, ICollection<int> heading = null)
         {
             var forced = new OfflineSolver.ForcedPath();
             // A course searched as a Full-TAS run (solve --auto): its course and category's rules, set when the run started.
@@ -310,33 +328,21 @@ namespace IGTAP.EngineSim.Cli
                 forced.Discourage.AddRange(course.Discourage);
                 return forced;
             }
-            foreach (PathRule rule in PathRules().Where(r => r.Fulltas != null && r.Fulltas.Contains(run)))
+            RunAvoids def = RunDefinitionAvoids(run);
+            if (def == null) return forced;
+            ids ??= (def.Goals ?? Array.Empty<RunGoal>()).Select(g => g.Id).ToList();
+            var at = new Dictionary<string, int>();
+            for (int i = 0; i < ids.Count; i++) at[ids[i]] = i;
+            foreach (AvoidBlock block in def.Avoid ?? Array.Empty<AvoidBlock>())
             {
-                AddBoxes(forced, null, rule.Avoid);
-                foreach (PathBlock block in rule.Optional ?? Array.Empty<PathBlock>())
-                {
-                    if (goals != null && block.OffFor != null && block.OffFor.Any(goals.Contains)) continue;
-                    if (block.ForGoal is int only)
-                    {
-                        AddBoxes(forced, null, block.Avoid, only, Sides(block), only + 1);
-                        continue;
-                    }
-                    if (block.For != null)
-                    {
-                        if (labels == null) { if (goals == null) AddBoxes(forced, null, block.Avoid, 0, Sides(block)); continue; }
-                        for (int i = 0; i < labels.Count; i++)
-                            if (labels[i] == block.For) AddBoxes(forced, null, block.Avoid, i, Sides(block), i + 1);
-                        continue;
-                    }
-                    int after = 0;
-                    if (block.After != null)
-                    {
-                        int index = labels == null ? -1 : labels.ToList().LastIndexOf(block.After);
-                        if (index < 0) continue;
-                        after = index + 1;
-                    }
-                    AddBoxes(forced, null, block.Avoid, after, Sides(block));
-                }
+                if (heading != null && block.OffFor != null && block.OffFor.Any(id => at.TryGetValue(id, out int i) && heading.Contains(i))) continue;
+                AddBoxes(forced, null, block.Boxes, 0, Sides(block.From));
+            }
+            foreach (RunGoal goal in def.Goals ?? Array.Empty<RunGoal>())
+            {
+                if (goal.Id == null || !at.TryGetValue(goal.Id, out int i)) continue;
+                foreach (AvoidBlock block in goal.Avoid ?? Array.Empty<AvoidBlock>()) AddBoxes(forced, null, block.Boxes, i, Sides(block.From), i + 1);
+                foreach (AvoidBlock block in goal.AvoidAfter ?? Array.Empty<AvoidBlock>()) AddBoxes(forced, null, block.Boxes, i + 1, Sides(block.From));
             }
             return forced;
         }
@@ -354,13 +360,17 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>A block's "from" ("bottom", "left+top", ...): its avoid boxes cut only a move into them across those edges
         /// (<see cref="OfflineSolver.Box.From"/>).</summary>
-        static int Sides(PathBlock block)
+        static int Sides(PathBlock block) => Sides(block.From, "forced-paths.json: block '" + block.Name + "'");
+
+        internal static int SidesOf(string sides) => Sides(sides);
+
+        static int Sides(string sides, string what = "an avoid block")
         {
             int from = 0;
-            foreach (string side in (block.From ?? "").Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            foreach (string side in (sides ?? "").Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
                 int bit = Array.IndexOf(IGTAPTasMod.FullTasGoal.SideNames, side);
-                if (bit < 0) throw new InvalidOperationException($"forced-paths.json: block '{block.Name}' from \"{side}\" is not a side ({string.Join(", ", IGTAPTasMod.FullTasGoal.SideNames)}, joined with \"+\")");
+                if (bit < 0) throw new InvalidOperationException($"{what}: from \"{side}\" is not a side ({string.Join(", ", IGTAPTasMod.FullTasGoal.SideNames)}, joined with \"+\")");
                 from |= 1 << bit;
             }
             return from;

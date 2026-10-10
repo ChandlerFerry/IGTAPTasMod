@@ -7,251 +7,1023 @@
     "TrueEnding-ANY%-v1-tail"
   ],
   "section": "complete",
+  "avoid": [
+    {
+      "boxes": [
+        [
+          5225.1,
+          2776.1,
+          5295.0,
+          3037.2
+        ],
+        [
+          5078.6,
+          1678.9,
+          5387.8,
+          1791.8
+        ],
+        [
+          11644.4,
+          7830.2,
+          11700.7,
+          8062.4
+        ],
+        [
+          10270.0,
+          7841.9,
+          10328.7,
+          8271.1
+        ],
+        [
+          11235.6,
+          10252.1,
+          11667.5,
+          11046.5
+        ]
+      ],
+      "note": "Drawn on the Full-TAS map."
+    }
+  ],
   "goals": [
-    "record:1",
-    "buy:buyreward",
-    "record:1",
-    "buy:buyreward",
-    "record:1",
-    "record:1",
-    "record:1",
-    "record:1",
-    "buy:buyreward",
-    "buy:buyreward",
-    "buy:buyreward",
-    "record:1",
-    "record:1",
-    "record:1",
-    "record:1",
-    "buy:buyreward",
-    "buy:buyclone",
-    "buy:buyclone",
-    "record:1",
-    "record:1",
-    "buy:buyreward",
-    "buy:buyclone",
-    "record:1",
-    "record:1",
-    "buy:buyreward",
-    "buy:buyreward",
-    "buy:buyreward",
-    "record:1",
-    "record:1",
-    "buy:buyreward",
-    "buy:buyclone",
-    "buy:buyclone",
-    "record:1",
-    "record:1",
-    "buy:buyreward",
-    "buy:buyclone",
-    "buy:buyclone",
-    "record:1",
-    "record:1",
-    "buy:buyreward",
-    "buy:buyclone",
-    "buy:buyclone",
-    "record:1",
-    "buy:buyreward",
-    "buy:buyclone",
-    "record:1",
-    "buy:buyreward",
-    "buy:buyreward",
-    "buy:buyreward",
-    "record:1",
-    "record:1",
-    "buy:buyreward",
-    "buy:buyreward",
-    "buy:buyreward",
-    "record:1",
-    "record:1",
-    "record:1",
-    "record:1",
-    "record:1",
-    "record:1",
-    "record:1",
-    "record:1",
-    "record:1",
-    "record:1",
-    "record:1",
-    "buy:buywj",
-    "record:2",
-    "reward:bonus1",
-    "start:2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "record:2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "record:2",
-    "buy:buyreward2",
-    "buy:buyclone2",
-    "buy:buyclone2",
-    "buy:buyclone2",
-    "record:2",
-    "buy:buyreward2",
-    "buy:buyclonemult2",
-    "buy:buyclone2",
-    "buy:buyreward2",
-    "record:2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyclone2",
-    "buy:buyclonemult2",
-    "buy:buyclone2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyclone2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyclone2",
-    "buy:buyclone2",
-    "buy:buyclone2",
-    "buy:buyclone2",
-    "buy:buyclone2",
-    "buy:buyreward2",
-    "buy:buyclone2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyclonemult2",
-    "buy:buyclone2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyclone2",
-    "buy:buyclone2",
-    "buy:buyclone2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyglobalreward2",
-    "buy:buyclone2",
-    "buy:buyclonemult2",
-    "buy:buyclone2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyclonemult2",
-    "buy:buyclone2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyclone2",
-    "buy:buyclone2",
-    "buy:buyclonemult2",
-    "buy:buyclone2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyreward2",
-    "buy:buyclone2",
-    "buy:buyglobalreward2",
-    "buy:buyclone2",
-    "buy:buyreward2",
-    "record:2",
-    "record:2",
-    "record:2",
-    "buy:buyds",
-    "at:4300,2850,400,700",
-    "at:6827.5,4537.8,250,328",
-    "reward:bonus2",
-    "reward:bonus5",
-    "at:7645,6050,230,1500",
-    "start:3",
-    "reward:bonus3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "record:3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "record:3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "buy:buyclone3",
-    "buy:buyreward3",
-    "record:3",
-    "buy:buyreward3",
-    "buy:buyclone3",
-    "buy:buyclonemult3",
-    "buy:buyclone3",
-    "buy:buyreward3",
-    "record:3",
-    "buy:buyclonemult3",
-    "buy:buyclone3",
-    "buy:buyclone3",
-    "buy:buyclone3",
-    "buy:buyclone3",
-    "buy:buyreward3",
-    "record:3",
-    "buy:buyclonemult3",
-    "buy:buyclone3",
-    "buy:buyclone3",
-    "buy:buyclone3",
-    "buy:buyclone3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "buy:buyclone3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "buy:buyclone3",
-    "buy:buyfast3",
-    "buy:buyclonemult3",
-    "buy:buyglobalreward3",
-    "buy:buyclone3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "buy:buyclonemult3",
-    "buy:buyclone3",
-    "buy:buyclone3",
-    "buy:buyclone3",
-    "buy:buyreward3",
-    "buy:buyglobalreward3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "buy:buyreward3",
-    "buy:buyclonemult3",
-    "buy:buyclonemult3",
-    "buy:buyglobalreward3",
-    "buy:buyfast3",
-    "buy:buyreward3",
-    "buy:buyclone3",
-    "buy:buyclone3",
-    "buy:buyreward3",
-    "buy:buyclone3",
-    "buy:buyfast3",
-    "buy:buyfast3",
-    "buy:buyfast3",
-    "buy:buyfast3",
-    "buy:buyfast3",
-    "buy:buyfast3",
-    "buy:buystatue",
-    "buy:buyclone2",
-    "buy:buyclonemult2",
-    "buy:buyreward2",
-    "record:2",
-    "buy:buydj",
-    "at:8570,8300,540,1200",
-    "at:9225,9585,950,1030",
-    "at:9139,10326,300,300",
-    "at:12500,11950,1000,500",
-    "at:19250,13219.2,1500,1880",
-    "at:20300.4,13753.8,100,1000",
-    "at:21240,15925,480,350",
-    "at:22200,15900,500,500",
-    "at:24067,13456,1440,1080"
+    {
+      "id": "kusakp",
+      "goal": "record:1"
+    },
+    {
+      "id": "gqd0ez",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "q8wfvp",
+      "goal": "record:1"
+    },
+    {
+      "id": "xtaran",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "nu29ir",
+      "goal": "record:1"
+    },
+    {
+      "id": "sawgpd",
+      "goal": "record:1"
+    },
+    {
+      "id": "vhrlop",
+      "goal": "record:1"
+    },
+    {
+      "id": "vhkhn8",
+      "goal": "record:1"
+    },
+    {
+      "id": "n7nlmy",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "uah90e",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "m0oyql",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "wxbnt2",
+      "goal": "record:1"
+    },
+    {
+      "id": "o4aier",
+      "goal": "record:1"
+    },
+    {
+      "id": "br59nw",
+      "goal": "record:1"
+    },
+    {
+      "id": "wzy1q3",
+      "goal": "record:1"
+    },
+    {
+      "id": "ew0j7d",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "nz1fs5",
+      "goal": "buy:buyclone"
+    },
+    {
+      "id": "z4r2e6",
+      "goal": "buy:buyclone"
+    },
+    {
+      "id": "x4wg3d",
+      "goal": "record:1"
+    },
+    {
+      "id": "b16am1",
+      "goal": "record:1"
+    },
+    {
+      "id": "j5z8bw",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "c7isxj",
+      "goal": "buy:buyclone"
+    },
+    {
+      "id": "djdfes",
+      "goal": "record:1"
+    },
+    {
+      "id": "qu7ac6",
+      "goal": "record:1"
+    },
+    {
+      "id": "i0phuy",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "w7oods",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "q5wx9c",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "oy3v75",
+      "goal": "record:1"
+    },
+    {
+      "id": "joktii",
+      "goal": "record:1"
+    },
+    {
+      "id": "a4kuq7",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "lz5eqd",
+      "goal": "buy:buyclone"
+    },
+    {
+      "id": "xgtfte",
+      "goal": "buy:buyclone"
+    },
+    {
+      "id": "spqhho",
+      "goal": "record:1"
+    },
+    {
+      "id": "w1k8pp",
+      "goal": "record:1"
+    },
+    {
+      "id": "e0hri8",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "boxcnm",
+      "goal": "buy:buyclone"
+    },
+    {
+      "id": "va1kq4",
+      "goal": "buy:buyclone"
+    },
+    {
+      "id": "j2gvhh",
+      "goal": "record:1"
+    },
+    {
+      "id": "yx9xdc",
+      "goal": "record:1"
+    },
+    {
+      "id": "diixob",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "z3clkz",
+      "goal": "buy:buyclone"
+    },
+    {
+      "id": "k9iohb",
+      "goal": "buy:buyclone"
+    },
+    {
+      "id": "l0yr5n",
+      "goal": "record:1"
+    },
+    {
+      "id": "mn4npi",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "o7b4bq",
+      "goal": "buy:buyclone"
+    },
+    {
+      "id": "m5kuy5",
+      "goal": "record:1"
+    },
+    {
+      "id": "okr85n",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "oty05m",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "o0qgfd",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "b8jj26",
+      "goal": "record:1"
+    },
+    {
+      "id": "sy86nh",
+      "goal": "record:1"
+    },
+    {
+      "id": "xvbb0z",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "trh4x2",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "z3x03a",
+      "goal": "buy:buyreward"
+    },
+    {
+      "id": "chr3ll",
+      "goal": "record:1"
+    },
+    {
+      "id": "c8qs58",
+      "goal": "record:1"
+    },
+    {
+      "id": "pps6la",
+      "goal": "record:1"
+    },
+    {
+      "id": "ih2d51",
+      "goal": "record:1"
+    },
+    {
+      "id": "h9xz61",
+      "goal": "record:1"
+    },
+    {
+      "id": "jcg0ao",
+      "goal": "record:1"
+    },
+    {
+      "id": "z9spys",
+      "goal": "record:1"
+    },
+    {
+      "id": "w6p0qu",
+      "goal": "record:1"
+    },
+    {
+      "id": "a08c35",
+      "goal": "record:1"
+    },
+    {
+      "id": "h7d99t",
+      "goal": "record:1"
+    },
+    {
+      "id": "ckx78n",
+      "goal": "record:1"
+    },
+    {
+      "id": "eaka0x",
+      "goal": "buy:buywj"
+    },
+    {
+      "id": "jvg56s",
+      "goal": "record:2"
+    },
+    {
+      "id": "p0jk6k",
+      "goal": "reward:bonus1"
+    },
+    {
+      "id": "zibhjg",
+      "goal": "start:2"
+    },
+    {
+      "id": "gikax5",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "gmb537",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "k480kj",
+      "goal": "record:2"
+    },
+    {
+      "id": "u4bvxd",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "ucp24f",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "mpj0es",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "virftp",
+      "goal": "record:2"
+    },
+    {
+      "id": "k8pliw",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "ujnk93",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "jhr0kz",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "ee6ujo",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "qg6jtb",
+      "goal": "record:2"
+    },
+    {
+      "id": "hkjj2p",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "aeeqmx",
+      "goal": "buy:buyclonemult2"
+    },
+    {
+      "id": "o8yq5m",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "la2685",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "g7j1c6",
+      "goal": "record:2"
+    },
+    {
+      "id": "zreebb",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "xmy6fi",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "p4p3cm",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "cwl1wm",
+      "goal": "buy:buyclonemult2"
+    },
+    {
+      "id": "dvwlw9",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "kuekmp",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "lb4vta",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "jhqeeh",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "v3qy8g",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "scwjg2",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "utyfa7",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "r3xlfj",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "su1062",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "wcq6le",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "glvtpn",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "uj9lzm",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "t0ccnu",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "g6ewei",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "izjthp",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "xd11bp",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "u9v2mf",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "ow16to",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "jda8tn",
+      "goal": "buy:buyclonemult2"
+    },
+    {
+      "id": "ezpefv",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "on6iqs",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "m4tsmv",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "o3txei",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "bc2y49",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "dk4g51",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "je4to5",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "q5hvsr",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "sgtg45",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "hif0bx",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "yjvkua",
+      "goal": "buy:buyglobalreward2"
+    },
+    {
+      "id": "eapfz8",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "dnfw40",
+      "goal": "buy:buyclonemult2"
+    },
+    {
+      "id": "mvnchh",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "f1lxcl",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "lmo43p",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "hcd2f1",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "alu82l",
+      "goal": "buy:buyclonemult2"
+    },
+    {
+      "id": "llqvl3",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "no2n3m",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "cdsryi",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "q1wmgq",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "n6kbm7",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "p357cw",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "zua5mx",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "bwxa1x",
+      "goal": "buy:buyclonemult2"
+    },
+    {
+      "id": "qwlflq",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "uii6iv",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "mxt46d",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "lc5u0q",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "rqmey1",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "eb5s6n",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "dbumij",
+      "goal": "buy:buyglobalreward2"
+    },
+    {
+      "id": "jkktgl",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "y6g7lx",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "ykll3v",
+      "goal": "record:2"
+    },
+    {
+      "id": "db5aic",
+      "goal": "record:2"
+    },
+    {
+      "id": "r7bnvc",
+      "goal": "record:2"
+    },
+    {
+      "id": "q73pmf",
+      "goal": "buy:buyds"
+    },
+    {
+      "id": "q5lb61",
+      "goal": "at:4300,2850,400,700"
+    },
+    {
+      "id": "wybc8m",
+      "goal": "at:6827.5,4537.8,250,328"
+    },
+    {
+      "id": "nf41ku",
+      "goal": "reward:bonus2"
+    },
+    {
+      "id": "db0lct",
+      "goal": "reward:bonus5"
+    },
+    {
+      "id": "ke5hbm",
+      "goal": "at:7645,6050,230,1500"
+    },
+    {
+      "id": "v59a48",
+      "goal": "start:3"
+    },
+    {
+      "id": "tkbna5",
+      "goal": "reward:bonus3"
+    },
+    {
+      "id": "s5snda",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "b20dhy",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "bc7f6r",
+      "goal": "record:3"
+    },
+    {
+      "id": "ra4dlj",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "h1796b",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "rgszm6",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "b5fnac",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "uloba6",
+      "goal": "record:3"
+    },
+    {
+      "id": "garv4d",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "h99nmr",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "eel8og",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "mgnlsf",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "exihxy",
+      "goal": "record:3"
+    },
+    {
+      "id": "ghglfo",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "n8cul1",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "eafyvw",
+      "goal": "buy:buyclonemult3"
+    },
+    {
+      "id": "aballu",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "kwrkjx",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "k09pw8",
+      "goal": "record:3"
+    },
+    {
+      "id": "fd8j49",
+      "goal": "buy:buyclonemult3"
+    },
+    {
+      "id": "lnj2lt",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "q7abv8",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "yrif8z",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "dvpjbx",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "vpzrve",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "a9yfpm",
+      "goal": "record:3"
+    },
+    {
+      "id": "y7ly64",
+      "goal": "buy:buyclonemult3"
+    },
+    {
+      "id": "mwizyh",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "epaote",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "xp7cbs",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "uacy23",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "fyohy0",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "ifwdr6",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "u54yik",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "wjxr7h",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "kxo3ol",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "thbhhq",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "fj6yc3",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "s5qmft",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "t36orh",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "ygyg0b",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "cmhwsl",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "pveaq4",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "fkgb5t",
+      "goal": "buy:buyfast3"
+    },
+    {
+      "id": "mlacrc",
+      "goal": "buy:buyclonemult3"
+    },
+    {
+      "id": "ay9hlt",
+      "goal": "buy:buyglobalreward3"
+    },
+    {
+      "id": "u8b0bt",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "kvw693",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "xj6rjc",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "wefkfd",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "rbth4g",
+      "goal": "buy:buyclonemult3"
+    },
+    {
+      "id": "e8e53v",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "jqojgi",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "dn2eg3",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "g10ily",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "vn4b0g",
+      "goal": "buy:buyglobalreward3"
+    },
+    {
+      "id": "qyvci8",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "wuoifp",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "ca6l34",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "lqis60",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "st0wb2",
+      "goal": "buy:buyclonemult3"
+    },
+    {
+      "id": "t58isj",
+      "goal": "buy:buyclonemult3"
+    },
+    {
+      "id": "ue4c10",
+      "goal": "buy:buyglobalreward3"
+    },
+    {
+      "id": "lw9mww",
+      "goal": "buy:buyfast3"
+    },
+    {
+      "id": "joggov",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "dbhk9z",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "lts4sh",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "owxdtz",
+      "goal": "buy:buyreward3"
+    },
+    {
+      "id": "kp5ush",
+      "goal": "buy:buyclone3"
+    },
+    {
+      "id": "t4c1eb",
+      "goal": "buy:buyfast3"
+    },
+    {
+      "id": "hd74ys",
+      "goal": "buy:buyfast3"
+    },
+    {
+      "id": "viwr20",
+      "goal": "buy:buyfast3"
+    },
+    {
+      "id": "dp5n5f",
+      "goal": "buy:buyfast3"
+    },
+    {
+      "id": "lwpdpp",
+      "goal": "buy:buyfast3"
+    },
+    {
+      "id": "mr04mn",
+      "goal": "buy:buyfast3"
+    },
+    {
+      "id": "hhlnjz",
+      "goal": "buy:buystatue"
+    },
+    {
+      "id": "bojoy7",
+      "goal": "buy:buyclone2"
+    },
+    {
+      "id": "cdhytv",
+      "goal": "buy:buyclonemult2"
+    },
+    {
+      "id": "xfn87k",
+      "goal": "buy:buyreward2"
+    },
+    {
+      "id": "fenjzg",
+      "goal": "record:2"
+    },
+    {
+      "id": "amviwd",
+      "goal": "buy:buydj"
+    },
+    {
+      "id": "ph0be3",
+      "goal": "at:8570,8300,540,1200"
+    },
+    {
+      "id": "qhouaq",
+      "goal": "at:9225,9585,950,1030"
+    },
+    {
+      "id": "k33l8e",
+      "goal": "at:9139,10326,300,300"
+    },
+    {
+      "id": "l9dage",
+      "goal": "at:12500,11950,1000,500"
+    },
+    {
+      "id": "lykvc3",
+      "goal": "at:19250,13219.2,1500,1880"
+    },
+    {
+      "id": "bs23h8",
+      "goal": "at:20300.4,13753.8,100,1000"
+    },
+    {
+      "id": "o59vg8",
+      "goal": "at:21240,15925,480,350"
+    },
+    {
+      "id": "fqe7wm",
+      "goal": "at:22200,15900,500,500"
+    },
+    {
+      "id": "sikfz3",
+      "goal": "at:24067,13456,1440,1080"
+    }
   ]
 }

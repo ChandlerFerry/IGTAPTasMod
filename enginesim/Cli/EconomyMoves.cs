@@ -810,7 +810,7 @@ namespace IGTAP.EngineSim.Cli
             return (to, from) =>
             {
                 DistanceField field = DistanceField.For(_eval);
-                field.SetAvoid(Solve.FullTasPaths(_name, new[] { to.Id }, _labels).Avoid);
+                field.SetAvoid(Avoids(new[] { to.Id }).Avoid);
                 CapturePos At(Place p) => _eval.ToCapture(new WorldPos((float)p.X, (float)p.Y));
                 float[] d = field.To(At(to), from.Select(At).ToList());
                 if (!logged) { logged = true; Log($"moves: walkable distances on a {field.LastCell:0.#} u grid ({from.Count} places)"); }

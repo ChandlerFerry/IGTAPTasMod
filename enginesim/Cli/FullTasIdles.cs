@@ -69,23 +69,6 @@ namespace IGTAP.EngineSim.Cli
             });
         }
 
-        /// <summary>The idles as the run file and the studio take them: { goal, arrive: [physics, held], afford: [physics, held] }.</summary>
-        object IdlesJson(Route r)
-        {
-            try
-            {
-                var list = new List<object>();
-                foreach (IdleSpan i in Idles(r))
-                    list.Add(new { goal = i.Goal, arrive = new[] { i.ArrivePhysics, i.ArriveHeld }, afford = new[] { i.AffordPhysics, i.AffordHeld } });
-                return list;
-            }
-            catch (InvalidOperationException ex)
-            {
-                Log("idles: not measured: " + ex.Message);
-                return null;
-            }
-        }
-
         /// <summary>
         /// The ticks the route stands idle waiting for its buys, counted from its inputs: the idle-input runs of IdleWaitRun ticks or
         /// more in each buy goal's stretch. What ranks two routes of the same live time (<see cref="Ahead"/>): the one that waits

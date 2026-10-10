@@ -295,8 +295,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 JsonElement root = saved.RootElement;
                 inputs = Solve.ReadInputs(root);
-                string[] solved = root.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
-                long[] goalInput = root.GetProperty("goalInputTicks").EnumerateArray().Select(t => t.GetInt64()).ToArray();
+                (string[] solved, long[] goalInput) = FullTas.SolvedGoals(root);
                 inputs = inputs.GetRange(0, FullTas.CurrentInputs(solved, goalInput, labels, inputs.Count));
             }
             Simulation sim = create();

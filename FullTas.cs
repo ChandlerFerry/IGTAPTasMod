@@ -8,6 +8,8 @@ namespace IGTAPTasMod
         // Course N's goals: start:N its start gate crossed; record:N a lap, its start gate crossed while it's the next goal, then
         // its finish; farm:N its finish (a lap from a quick restart or the end gate's drop, its gate crossed before the goal before).
         public const string Start = "start", Record = "record", Farm = "farm", Buy = "buy", Reward = "reward", At = "at";
+        /// <summary>The goal's id in its run (<see cref="FullTasGoalIds"/>); the plugin sets it, the engine keeps its own list.</summary>
+        public string id;
         public string label;
         public string kind;
         public int course;
@@ -238,6 +240,96 @@ namespace IGTAPTasMod
             if (!(u0 < e && u1 >= e)) return false;
             float v = va + (vb - va) * (e - u0) / (u1 - u0);
             return v >= v0 && v <= v1;
+        }
+    }
+
+    /// <summary>
+    /// A run's goal ids (runs/&lt;run&gt;.json "goals"[].id): what a file, a flag, the HTTP API or an event names a goal by, never its
+    /// place in the list, which a goals edit moves. A goal keeps its id across edits; a goal an edit makes gets a new one.
+    /// </summary>
+    internal static class FullTasGoalIds
+    {
+        static readonly Random Rng = new Random();
+        const string Letters = "abcdefghijklmnopqrstuvwxyz0123456789";
+
+        /// <summary>A new id: 6 letters and digits, a letter first, not one of <paramref name="taken"/>.</summary>
+        public static string New(ICollection<string> taken)
+        {
+            lock (Rng)
+                while (true)
+                {
+                    var c = new char[6];
+                    c[0] = Letters[Rng.Next(26)];
+                    for (int i = 1; i < c.Length; i++) c[i] = Letters[Rng.Next(Letters.Length)];
+                    string id = new string(c);
+                    if (taken == null || !taken.Contains(id)) return id;
+                }
+        }
+
+        /// <summary>
+        /// The ids of <paramref name="labels"/>, a goal list made from (<paramref name="oldIds"/>, <paramref name="oldLabels"/>): the
+        /// goals the two lists share (their longest common subsequence of labels) keep their ids, every other goal gets a new one.
+        /// </summary>
+        public static string[] Carry(IList<string> oldIds, IList<string> oldLabels, IList<string> labels)
+        {
+            int n = oldLabels?.Count ?? 0, m = labels.Count;
+            var ids = new string[m];
+            if (n > 0)
+            {
+                // ponytail: an O(n·m) table (2.2M cells for 1,500 goals a side); a diff with a linear space if runs get far longer.
+                var lcs = new int[n + 1, m + 1];
+                for (int i = n - 1; i >= 0; i--)
+                    for (int j = m - 1; j >= 0; j--)
+                        lcs[i, j] = oldLabels[i] == labels[j] ? lcs[i + 1, j + 1] + 1 : Math.Max(lcs[i + 1, j], lcs[i, j + 1]);
+                for (int i = 0, j = 0; i < n && j < m;)
+                    if (oldLabels[i] == labels[j]) ids[j++] = oldIds[i++];
+                    else if (lcs[i + 1, j] >= lcs[i, j + 1]) i++;
+                    else j++;
+            }
+            var taken = new HashSet<string>(oldIds ?? (IList<string>)new string[0]);
+            for (int j = 0; j < m; j++)
+                if (ids[j] == null) taken.Add(ids[j] = New(taken));
+            return ids;
+        }
+
+        /// <summary>
+        /// Ids made from the labels alone (a label's n-th goal gets the same id every time): for a goal list made afresh each time
+        /// from something else (a course solve's waypoints), never edited, whose files must still find their goals again.
+        /// </summary>
+        public static string[] Derived(IList<string> labels)
+        {
+            var ids = new string[labels.Count];
+            var seen = new Dictionary<string, int>();
+            var taken = new HashSet<string>();
+            for (int i = 0; i < labels.Count; i++)
+            {
+                seen.TryGetValue(labels[i], out int n);
+                seen[labels[i]] = n + 1;
+                ulong h = 14695981039346656037UL;
+                foreach (char ch in labels[i] + "#" + n) h = (h ^ ch) * 1099511628211UL;
+                string id;
+                do
+                {
+                    var c = new char[6];
+                    c[0] = Letters[(int)(h % 26)];
+                    for (int k = 1; k < 6; k++) c[k] = Letters[(int)((h >> (k * 6)) % (ulong)Letters.Length)];
+                    id = new string(c);
+                    h = (h ^ 0x9e) * 1099511628211UL;
+                }
+                while (!taken.Add(id));
+                ids[i] = id;
+            }
+            return ids;
+        }
+
+        /// <summary>Why a run's ids can't be its goals' (null: they can): one per goal, each set and unique.</summary>
+        public static string Invalid(IList<string> ids, int goals)
+        {
+            if (ids == null || ids.Count != goals) return "its goals have " + (ids?.Count ?? 0) + " ids for " + goals + " goals";
+            var seen = new HashSet<string>();
+            for (int i = 0; i < ids.Count; i++)
+                if (string.IsNullOrEmpty(ids[i]) || !seen.Add(ids[i])) return "goal " + i + "'s id \"" + ids[i] + "\" is " + (string.IsNullOrEmpty(ids[i]) ? "missing" : "taken");
+            return null;
         }
     }
 

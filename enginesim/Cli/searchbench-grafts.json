@@ -2,15 +2,132 @@
   "slack": 2,
   "note": "Planted-waste suite (enginesim/README.md, Search bench). A course case plants in a saved record (route) over its category's start trace; a Full-TAS case in the FalseEnding-Any% 355.92 record (handback) over the FE-CMB trace's goals, window goals[0]+1..goals[1]. at: the input range of the window scanned for the first spot the waste plants 5+ ticks slower and still gets there. No waste: an open case, the record's own window to beat by a tick (the waste the user saw in it).",
   "cases": [
-    { "name": "fe176-dashrun", "trace": "fulltas-FE-CMB.json", "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json", "goals": [175, 176], "waste": "dashrun", "at": [180, 200] },
-    { "name": "fe176-bonk", "trace": "fulltas-FE-CMB.json", "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json", "goals": [175, 176], "waste": "bonk", "at": [182, 200] },
-    { "name": "c2-dashpair", "trace": "start-c2-wjds.json", "route": "offline-best\\judged\\2_wjds-1.20.json", "waste": "dashpair", "at": [20, 40] },
-    { "name": "fe273-dashpair", "trace": "fulltas-FE-CMB.json", "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json", "goals": [272, 273], "waste": "dashpair", "at": [49, 70] },
-    { "name": "fe270-dashpair", "trace": "fulltas-FE-CMB.json", "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json", "goals": [269, 270], "waste": "dashpair", "at": [348, 400], "note": "on the climb to the double jump box" },
-    { "name": "fe-c2lap-restart", "trace": "fulltas-FE-CMB.json", "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json", "goals": [171, 173], "waste": "restart", "at": [22, 40], "minCost": 15 },
-    { "name": "fe-c3lap-restart", "trace": "fulltas-FE-CMB.json", "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json", "goals": [188, 190], "waste": "restart", "at": [12, 40], "minCost": 10 },
-    { "name": "fe174-open", "trace": "fulltas-FE-CMB.json", "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json", "goals": [173, 174], "note": "the jump that bonks a box's underside at ~10288" },
-    { "name": "fe270-open", "trace": "fulltas-FE-CMB.json", "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json", "goals": [269, 270], "note": "the dash pairs on the climb at ~15626-15786" },
-    { "name": "fe275-open", "trace": "fulltas-FE-CMB.json", "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json", "goals": [274, 275], "note": "run and dash on the flat at ~16300-16450, where supers are faster" }
+    {
+      "name": "fe176-dashrun",
+      "trace": "fulltas-FE-CMB.json",
+      "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json",
+      "goals": [
+        "xlhr88",
+        "xlhr88"
+      ],
+      "waste": "dashrun",
+      "at": [
+        180,
+        200
+      ]
+    },
+    {
+      "name": "fe176-bonk",
+      "trace": "fulltas-FE-CMB.json",
+      "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json",
+      "goals": [
+        "xlhr88",
+        "xlhr88"
+      ],
+      "waste": "bonk",
+      "at": [
+        182,
+        200
+      ]
+    },
+    {
+      "name": "c2-dashpair",
+      "trace": "start-c2-wjds.json",
+      "route": "offline-best\\judged\\2_wjds-1.20.json",
+      "waste": "dashpair",
+      "at": [
+        20,
+        40
+      ]
+    },
+    {
+      "name": "fe273-dashpair",
+      "trace": "fulltas-FE-CMB.json",
+      "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json",
+      "goals": [
+        "errnjl",
+        "errnjl"
+      ],
+      "waste": "dashpair",
+      "at": [
+        49,
+        70
+      ]
+    },
+    {
+      "name": "fe270-dashpair",
+      "trace": "fulltas-FE-CMB.json",
+      "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json",
+      "goals": [
+        "mqn7o7",
+        "mqn7o7"
+      ],
+      "waste": "dashpair",
+      "at": [
+        348,
+        400
+      ],
+      "note": "on the climb to the double jump box"
+    },
+    {
+      "name": "fe-c2lap-restart",
+      "trace": "fulltas-FE-CMB.json",
+      "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json",
+      "goals": [
+        "sa4at5",
+        "f0cgbl"
+      ],
+      "waste": "restart",
+      "at": [
+        22,
+        40
+      ],
+      "minCost": 15
+    },
+    {
+      "name": "fe-c3lap-restart",
+      "trace": "fulltas-FE-CMB.json",
+      "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json",
+      "goals": [
+        "n3e912",
+        "mjkteo"
+      ],
+      "waste": "restart",
+      "at": [
+        12,
+        40
+      ],
+      "minCost": 10
+    },
+    {
+      "name": "fe174-open",
+      "trace": "fulltas-FE-CMB.json",
+      "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json",
+      "goals": [
+        "c65k0u",
+        "c65k0u"
+      ],
+      "note": "the jump that bonks a box's underside at ~10288"
+    },
+    {
+      "name": "fe270-open",
+      "trace": "fulltas-FE-CMB.json",
+      "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json",
+      "goals": [
+        "mqn7o7",
+        "mqn7o7"
+      ],
+      "note": "the dash pairs on the climb at ~15626-15786"
+    },
+    {
+      "name": "fe275-open",
+      "trace": "fulltas-FE-CMB.json",
+      "route": "handback\\fulltas-FalseEnding-Any%-RNG-355.92.json",
+      "goals": [
+        "jruhc3",
+        "jruhc3"
+      ],
+      "note": "run and dash on the flat at ~16300-16450, where supers are faster"
+    }
   ]
 }

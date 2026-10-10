@@ -249,14 +249,14 @@ namespace IGTAP.EngineSim.Cli
                 type = "outlook", verdict, headline, advice, unit,
                 best = _best.LiveSeconds, bestTicks = _best.Last, floor = Seconds(Math.Max(0, floor)), floorTicks = Math.Max(0, floor),
                 headroom = Math.Round(headroom, 1),
-                hot = hot.Select(r => new { goal = r.K, label = r.Label, expected = Math.Round(r.Expected, 1), slow = r.Worst }),
+                hot = hot.Select(r => new { goal = IdOf(r.K), label = r.Label, expected = Math.Round(r.Expected, 1), slow = r.Worst }),
                 searched = Math.Round(searched), sessions = _pastSessions + 1, pulls = _pullNo,
                 gains = gains.Count, gained = gains.Sum(g => g.gain), lastGainAgo = lastAgo, typicalGain = typical,
                 chanceHour = Math.Round(pHour, 3), medianWait = Math.Round(median),
                 remaining = Math.Round(remaining), chanceRemaining = Math.Round(Chance(remaining), 3),
                 // What the odds rest on: the folder's other runs, and their gains past a dry spell as long as this one.
                 basis = new { runs = _poolRuns, search = Math.Round(_poolSearch), gains = _poolGains, spell = Math.Round(spell), spellGains = poolK, spellSearch = Math.Round(poolE) },
-                untried = untried.Select(u => new { lever = u.lever, goals = u.goals }),
+                untried = untried.Select(u => new { lever = u.lever, goals = u.goals.Where(k => k >= 1).Select(IdOf) }),
             });
         }
 

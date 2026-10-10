@@ -45,6 +45,7 @@ namespace IGTAPTasMod
                 catch (Exception ex) { Logger.LogWarning("runs\\" + Path.GetFileName(file) + " rejected: " + ex.Message); }
             }
             _fullTasRuns = runs;
+            _fullTasAvoids.Clear();
             foreach (FullTasRunDef run in _fullTasRuns)
                 RetireOutdatedFullTasRoutes(run, previous != null
                     && FullTasRunChanged(previous.Find(r => string.Equals(r.name, run.name, StringComparison.OrdinalIgnoreCase)), run));
@@ -78,7 +79,7 @@ namespace IGTAPTasMod
         string[] FullTasLabels(FullTasRunDef run)
         {
             try { return ResolveFullTasGoals(run).Select(g => g.label).ToArray(); }
-            catch (InvalidOperationException) { return (run.goals ?? new List<string>()).ToArray(); }
+            catch (InvalidOperationException) { return run.Labels.ToArray(); }
         }
 
         static bool TreeIndex(JToken t) { return t.Type == JTokenType.Integer && (int)t >= 0 && (int)t <= 27; }
@@ -116,6 +117,8 @@ namespace IGTAPTasMod
         {
             if (!RunName.IsMatch(run.name ?? "")) throw new InvalidOperationException("Full-TAS run names are letters, digits, \"%\" and \"-\" only (\"" + run.name + "\").");
             if (run.goals == null || run.goals.Count == 0) throw new InvalidOperationException("Full-TAS run " + run.name + " has no goals.");
+            string invalid = FullTasGoalIds.Invalid(run.Ids, run.goals.Count);
+            if (invalid != null) throw new InvalidOperationException("Full-TAS run " + run.name + ": " + invalid + " (runs/<run>.json \"goals\": [{\"id\", \"goal\"}]; tools/migrate-goal-ids.py gives a run its ids).");
             if (run.start != null && run.start != VmanStart)
                 throw new InvalidOperationException("Full-TAS run " + run.name + ": start is \"" + VmanStart + "\" (a Vman speedrun's world) or unset (a new game), not \"" + run.start + "\".");
             if (run.savestate != null && _savestates.Find(s => s.id == run.savestate) == null)
@@ -126,7 +129,12 @@ namespace IGTAPTasMod
                 throw new InvalidOperationException("Full-TAS run " + run.name + ": tree is a level 0-27 or an array of segments 0-27 and needs a savestate start.");
             if (run.buys != null && run.buys != "strict" && run.buys != "loose")
                 throw new InvalidOperationException("Full-TAS run " + run.name + ": buys is \"strict\" or \"loose\", not \"" + run.buys + "\".");
-            return run.goals.Select(ResolveFullTasGoal).ToArray();
+            return run.goals.Select(g =>
+            {
+                FullTasGoal goal = ResolveFullTasGoal(g.goal);
+                goal.id = g.id;
+                return goal;
+            }).ToArray();
         }
 
         /// <summary>A goal tracker for the run under its buy rule (strict, or loose: <see cref="FullTasTracker.LooseBuys"/>).</summary>
@@ -196,12 +204,23 @@ namespace IGTAPTasMod
             return goal;
         }
 
-        FullTasRunDef SetFullTasGoals(string name, IEnumerable<string> tokens, string start)
+        /// <summary>
+        /// The run's goals become <paramref name="tokens"/> (made if new). With <paramref name="ids"/> (a route's adopted goals, a goal
+        /// moved in place) those are their ids; without, a goal the old list shares keeps its id and a new one gets a new id
+        /// (<see cref="FullTasGoalIds.Carry"/>). A goal keeps its own avoid boxes by its id.
+        /// </summary>
+        FullTasRunDef SetFullTasGoals(string name, IEnumerable<string> tokens, string start, IList<string> ids = null)
         {
             string trimmed = (name ?? "").Trim();
             FullTasRunDef old = _fullTasRuns.Find(r => string.Equals(r.name, trimmed, StringComparison.OrdinalIgnoreCase));
-            var run = new FullTasRunDef { name = trimmed, start = start == null ? old?.start : start.Length == 0 ? null : start, savestate = old?.savestate, rebaseAt = old?.rebaseAt, tree = old?.tree, seeds = old?.seeds, buys = old?.buys, human = old?.human, goals = tokens.ToList() };
-            run.goals = ResolveFullTasGoals(run).Select(g => g.label).ToList();
+            List<string> labels = tokens.Select(t => ResolveFullTasGoal(t).label).ToList();
+            ids = ids ?? FullTasGoalIds.Carry(old?.Ids, old?.Labels, labels);
+            var kept = (old?.goals ?? new List<FullTasRunGoal>()).ToDictionary(g => g.id ?? "");
+            var run = new FullTasRunDef { name = trimmed, start = start == null ? old?.start : start.Length == 0 ? null : start, savestate = old?.savestate, rebaseAt = old?.rebaseAt,
+                tree = old?.tree, seeds = old?.seeds, buys = old?.buys, human = old?.human, section = old?.section, avoid = old?.avoid,
+                goals = labels.Select((l, i) => new FullTasRunGoal { id = ids[i], goal = l,
+                    avoid = kept.TryGetValue(ids[i], out FullTasRunGoal was) ? was.avoid : null, avoidAfter = was?.avoidAfter }).ToList() };
+            ResolveFullTasGoals(run);
             int at = _fullTasRuns.FindIndex(r => string.Equals(r.name, run.name, StringComparison.OrdinalIgnoreCase));
             if (at >= 0) _fullTasRuns[at] = run;
             else _fullTasRuns.Add(run);
@@ -226,7 +245,7 @@ namespace IGTAPTasMod
         {
             var splits = new List<FullTasSplit>();
             for (int i = 0; i < tracker.Next && i < tracker.Goals.Length; i++)
-                splits.Add(new FullTasSplit { label = tracker.Goals[i].label, ticks = tracker.PhysicsTicks[i], held = tracker.HeldFrames[i] });
+                splits.Add(new FullTasSplit { id = tracker.Goals[i].id, label = tracker.Goals[i].label, ticks = tracker.PhysicsTicks[i], held = tracker.HeldFrames[i] });
             return splits;
         }
 
@@ -407,7 +426,7 @@ namespace IGTAPTasMod
                     : "reached " + tracker.Next + " of " + tracker.Goals.Length + " goals (" + tracker.Explain(status) + ")"));
             if (audit.Count == 0)
             {
-                string refused = FullTasClassViolation(_solverFullTasClass, _solverFullTas.goals, inputs, time);
+                string refused = FullTasClassViolation(_solverFullTasClass, _solverFullTas.Labels, inputs, time);
                 if (refused != null) audit.Add(refused);
             }
             return audit.Count == 0 ? null : string.Join("; ", audit);
@@ -417,30 +436,37 @@ namespace IGTAPTasMod
         /// A route's own goals (`goals`, with `goalsFrom`: the goal lists they were derived from), as `fulltas --auto`'s goals part
         /// sends and writes them with a route of goals it adopted; null when the route is of the run's goals.
         /// </summary>
-        static (List<string> goals, List<List<string>> from) FullTasRouteGoals(JObject body)
+        static (List<FullTasRunGoal> goals, List<List<FullTasRunGoal>> from) FullTasRouteGoals(JObject body)
         {
             if (!(body["goals"] is JArray goals)) return (null, null);
-            var from = body["goalsFrom"] is JArray lists ? lists.OfType<JArray>().Select(l => l.Select(g => (string)g).ToList()).ToList() : new List<List<string>>();
-            return (goals.Select(g => (string)g).ToList(), from);
+            List<FullTasRunGoal> List(JArray list) => list.Select(g => new FullTasRunGoal { id = (string)g["id"], goal = (string)g["goal"] }).ToList();
+            var from = body["goalsFrom"] is JArray lists ? lists.OfType<JArray>().Select(List).ToList() : new List<List<FullTasRunGoal>>();
+            return (List(goals), from);
+        }
+
+        /// <summary>Two goal lists are one: the same goals (ids) with the same labels, in order.</summary>
+        static bool SameGoals(IList<FullTasRunGoal> a, IList<FullTasRunGoal> b)
+        {
+            return a.Count == b.Count && a.Zip(b, (x, y) => x.id == y.id && x.goal == y.goal).All(s => s);
         }
 
         /// <summary>
         /// The gate's check of a route of the run for a class (README ### Rules 54; major: today's record): saved as that class's
         /// best when it holds up and beats it, live time for major and nmg, score for a human class.
         /// </summary>
-        FullTasVerdict FullTasJudge(FullTasRunDef run, List<SolverTick> inputs, List<string> goals = null, List<List<string>> goalsFrom = null, string cls = MajorClass)
+        FullTasVerdict FullTasJudge(FullTasRunDef run, List<SolverTick> inputs, List<FullTasRunGoal> goals = null, List<List<FullTasRunGoal>> goalsFrom = null, string cls = MajorClass)
         {
             // A route of other goals (the engine's goals part dropped or added economy laps): judged under its own goals, and when
             // it's saved as the record those become the run's. Only when they were derived from the run's goals as they are now, and
             // keep its end, area, reward and unlock goals (FullTasGoal.EditRefused).
             FullTasRunDef judged = run;
             string[] current = FullTasLabels(run);
-            if (goals != null && !goals.SequenceEqual(current))
+            if (goals != null && !SameGoals(goals, run.goals))
             {
-                string refused = goalsFrom == null || !goalsFrom.Any(l => l.SequenceEqual(current))
+                string refused = goalsFrom == null || !goalsFrom.Any(l => SameGoals(l, run.goals))
                     ? "its goals (" + goals.Count + ") come from another goal list than " + run.name + "'s " + current.Length + " goals"
                     : cls != MajorClass ? "a " + cls + " route keeps the run's goals (only the major record adopts other goals)"
-                    : FullTasGoal.EditRefused(current, goals);
+                    : FullTasGoalIds.Invalid(goals.Select(g => g.id).ToList(), goals.Count) ?? FullTasGoal.EditRefused(current, goals.Select(g => g.goal).ToList());
                 if (refused != null)
                 {
                     string text = "Full-TAS " + run.name + ": route not judged: " + refused;
@@ -448,7 +474,7 @@ namespace IGTAPTasMod
                     return new FullTasVerdict { finished = false, reason = refused, splits = new List<FullTasSplit>(), cls = cls };
                 }
                 judged = JsonConvert.DeserializeObject<FullTasRunDef>(JsonConvert.SerializeObject(run));
-                judged.goals = goals.ToList();
+                judged.goals = goals.Select(g => new FullTasRunGoal { id = g.id, goal = g.goal }).ToList();
                 ResolveFullTasGoals(judged);
             }
             bool finished;
@@ -508,13 +534,13 @@ namespace IGTAPTasMod
         /// runs-backup\&lt;run&gt;.&lt;yyyyMMdd-HHmmss&gt;.json), which retires the routes of the old goals as a goals edit does; the
         /// next Improve captures the start again with them.
         /// </summary>
-        string AdoptFullTasGoals(FullTasRunDef run, List<string> goals)
+        string AdoptFullTasGoals(FullTasRunDef run, List<FullTasRunGoal> goals)
         {
             int was = run.goals.Count;
             string backup = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "runs-backup", run.name + "." + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".json");
             Directory.CreateDirectory(Path.GetDirectoryName(backup));
             if (File.Exists(FullTasRunFile(run.name))) File.Copy(FullTasRunFile(run.name), backup, true);
-            FullTasRunDef adopted = SetFullTasGoals(run.name, goals, null);
+            FullTasRunDef adopted = SetFullTasGoals(run.name, goals.Select(g => g.goal), null, goals.Select(g => g.id).ToList());
             string text = "the run's goals are now its " + adopted.goals.Count + " (were " + was + "; " + Path.GetFileName(backup) + " kept)";
             FullTasLog("Full-TAS " + run.name + ": " + text);
             return text;

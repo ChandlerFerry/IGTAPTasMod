@@ -11,22 +11,25 @@ namespace IGTAP.EngineSim.Cli
     /// starts from the stored state instead of replaying the run up to there, and an archive cell replays its prefix from
     /// the later of its worker's own state and these (docs/fulltas.md "Offline search"). They go with the archive: the
     /// run's start.key drops both together, a route edit hashes differently, and another engine build or world export (a
-    /// recapture: the same start, other instance ids, which the states hold) drops the states.
+    /// recapture: the same start, other instance ids, which the states hold) or another goal list (a state holds the goal
+    /// tracker's per-goal ticks) drops the states. A state file is named by its goal's id.
     /// </summary>
     sealed class FullTasStates
     {
         /// <summary>The snapshot format's version; a state file of another engine build is ignored.</summary>
         public readonly SnapshotIndex Index = new SnapshotIndex();
         readonly string _dir;
+        readonly string[] _ids;
         public int Saved;
 
-        public FullTasStates(string archiveDir, bool fresh, string worldExport)
+        public FullTasStates(string archiveDir, bool fresh, string worldExport, string[] ids)
         {
             _dir = Path.Combine(archiveDir, "states");
+            _ids = ids;
             if (!Directory.Exists(_dir)) return;
             // Another engine build can play the same inputs to another state (a fidelity fix), and another world export has
-            // other instance ids (a state of the old one names bodies the new one lacks): its states go.
-            string engineFile = Path.Combine(_dir, "engine"), engine = EngineHash() + ":" + FileHash(worldExport);
+            // other instance ids (a state of the old one names bodies the new one lacks): its states go. So do another goal list's.
+            string engineFile = Path.Combine(_dir, "engine"), engine = EngineHash() + ":" + FileHash(worldExport) + ":" + string.Join(",", ids);
             if (!File.Exists(engineFile) || File.ReadAllText(engineFile) != engine)
             {
                 foreach (string file in Directory.GetFiles(_dir, "*.bin")) File.Delete(file);
@@ -81,7 +84,8 @@ namespace IGTAP.EngineSim.Cli
             catch (NotSupportedException) { return; }
             Index.Add(new SnapshotIndex.Entry { Hash = hash, Tick = tick, Goal = goal, Data = data });
             Directory.CreateDirectory(_dir);
-            string file = Path.Combine(_dir, goal + "-" + hash.ToString("x16") + ".bin");
+            string name = goal >= 0 && goal < _ids.Length ? _ids[goal] : "end";
+            string file = Path.Combine(_dir, name + "-" + hash.ToString("x16") + ".bin");
             // Solver workers can record the same state at once: each writes its own temp file, the last move wins.
             string temp = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
             using (FileStream stream = File.Create(temp))
@@ -97,7 +101,7 @@ namespace IGTAP.EngineSim.Cli
             Saved++;
             // Per goal the newest arrivals win: the older ones were a route that no longer is. Another worker (or solve) can be
             // deleting or replacing the same file: Windows then refuses with access denied, and that file is gone or new anyway.
-            foreach (string old in Directory.GetFiles(_dir, goal + "-*.bin").OrderByDescending(File.GetLastWriteTimeUtc).Skip(3))
+            foreach (string old in Directory.GetFiles(_dir, name + "-*.bin").OrderByDescending(File.GetLastWriteTimeUtc).Skip(3))
                 try { File.Delete(old); } catch (Exception e) when (e is IOException || e is UnauthorizedAccessException) { }
         }
 

@@ -273,7 +273,7 @@ namespace IGTAP.EngineSim.Cli
         internal sealed class Window
         {
             public string Name, Caps;
-            public string[] Labels;
+            public string[] Labels, Ids;
             public int From, To;
             /// <summary>The whole route and its goals' input ticks (the input count when each was reached).</summary>
             public List<InputTick> Route;
@@ -301,6 +301,7 @@ namespace IGTAP.EngineSim.Cli
                 {
                     Name = fulltas.GetProperty("name").GetString(),
                     Labels = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray(),
+                    Ids = FullTas.HeaderGoals(fulltas).Ids,
                     Route = route,
                     From = from,
                 };
@@ -337,7 +338,7 @@ namespace IGTAP.EngineSim.Cli
                 w.StartPhysics = startPhysics;
                 w.RoutePhysics = r.Finished ? r.PhysicsTicks : long.MaxValue;
                 w.Caps = caps.Id;
-                w.Path = Solve.FullTasPaths(w.Name, w.Labels.Skip(w.From).Take(w.To - w.From).ToList(), w.Labels);
+                w.Path = Solve.FullTasPaths(w.Name, w.Ids, Enumerable.Range(w.From, w.To - w.From).ToHashSet());
                 List<InputTick> prefix = w.Prefix;
                 int limit = w.To;
                 w.Create = () =>

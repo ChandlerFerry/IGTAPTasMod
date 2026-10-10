@@ -75,6 +75,7 @@ namespace IGTAPTasMod
                 foreach (FullTasGoal g in goals)
                 {
                     w.WriteStartObject();
+                    w.WritePropertyName("id"); w.WriteValue(g.id);
                     w.WritePropertyName("label"); w.WriteValue(g.label);
                     w.WritePropertyName("kind"); w.WriteValue(g.kind);
                     w.WritePropertyName("course"); w.WriteValue(g.course);
@@ -232,13 +233,13 @@ namespace IGTAPTasMod
                     }
                 }
                 if (header == null) return false;
-                string[] labels = header["goals"].Select(g => (string)g["label"]).ToArray();
+                string[] goals = header["goals"].Select(g => (string)g["id"] + " " + (string)g["label"]).ToArray();
                 FullTasHumanWeights human = header["human"]?.ToObject<FullTasHumanWeights>() ?? new FullTasHumanWeights();
                 return checkpoints == CheckpointRespawns && (int?)header["startSetup"] == FullTasStartSetup && (int?)header["format"] == FullTasTraceFormat
                     && (string)header["start"] == run.start && (string)header["savestate"] == run.savestate
                     && ((string)header["buys"] == "loose") == run.LooseBuys && (!weights || human.Same(run.Human))
                     && RebaseOf(header) == run.RebaseAt && JToken.DeepEquals(header["tree"], run.tree) && (string)header["build"] == Application.buildGUID
-                    && labels.SequenceEqual(ResolveFullTasGoals(run).Select(g => g.label));
+                    && goals.SequenceEqual(ResolveFullTasGoals(run).Select(g => g.id + " " + g.label));
             }
             catch (Exception ex)
             {

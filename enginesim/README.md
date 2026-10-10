@@ -1378,7 +1378,7 @@ section.
   macro seeds and goal-list edits (`goals`: lap drops and adds, buy regroups, record laps, adopted when the whole run is
   faster; the game takes the list with the record it judges)
   ([docs/fulltas.md](../docs/fulltas.md#parts-goal-state-library-tail-windows-combine-scheduler-cost-to-go-macros-goals)).
-  `--focus a-b` keeps every pull's window starting in goals a..b (combine still splices anywhere); a complete `--ref`
+  `--focus ID-ID` (goal ids, docs/fulltas.md "Goal ids") keeps every pull's window starting in those goals (combine still splices anywhere); a complete `--ref`
   faster than the best is the loop's start. The studio's **Improve** runs this with the saved record as `--ref` and the
   picked goals as `--focus`. Over several 10-minute `--auto` sessions `FalseEnding-Any%` went from 390.38 s to the judged 379.40 s.
 - `coverage <trace> <route-human.json>` (`Cli\Coverage.cs`): each input of a human version mapped onto the contact whose

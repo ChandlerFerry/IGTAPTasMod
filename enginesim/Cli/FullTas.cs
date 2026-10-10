@@ -75,7 +75,10 @@ namespace IGTAP.EngineSim.Cli
         internal static bool TickTiming;
 
         readonly string _trace;
-        readonly int _threads, _window, _onlyGoal;
+        readonly int _threads, _window;
+        /// <summary>--goal ID: the one goal (from 1) whose window is searched, set once the run's goals are read (0: every goal).</summary>
+        int _onlyGoal;
+        readonly string _onlyGoalId;
         readonly double _minutes, _windowMinutes, _stallMinutes;
         /// <summary>--piece-minutes: a piece search's budget (the buy table's runs set it to their --entry-minutes).</summary>
         double _pieceMinutes;
@@ -170,7 +173,7 @@ namespace IGTAP.EngineSim.Cli
             _submit = !args.Contains("--no-submit");
             _fresh = args.Contains("--fresh");
             _unsolved = args.Contains("--unsolved");
-            _onlyGoal = Solve.Option(args, "--goal", 0);
+            _onlyGoalId = Solve.Option(args, "--goal", (string)null);
             _resetStudy = args.Contains("--reset-study");
             _lookahead = Math.Max(0, Solve.Option(args, "--lookahead", 0));
             _rng = Solve.Option(args, "--rng", 0);
@@ -197,9 +200,9 @@ namespace IGTAP.EngineSim.Cli
             // The trace alone: the unattended economy stages (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md), which hand
             // over to the reach solve when the next goal isn't an economy buy.
             if (args.Length == 1) return Unattended(args);
-            // --stretch N: one stretch alone, judged at its goal (FullTasStretch.cs).
+            // --stretch ID: one stretch alone, judged at its goal (FullTasStretch.cs).
             int stretch = Array.IndexOf(args, "--stretch");
-            if (stretch > 0 && stretch + 1 < args.Length) return new FullTas(args).StretchSearch(int.Parse(args[stretch + 1], System.Globalization.CultureInfo.InvariantCulture));
+            if (stretch > 0 && stretch + 1 < args.Length) return new FullTas(args).StretchSearch(args[stretch + 1]);
             return check > 0 && check + 1 < args.Length ? new FullTas(args).Check(args[check + 1]) : new FullTas(args).Search();
         }
 
@@ -250,8 +253,8 @@ namespace IGTAP.EngineSim.Cli
             JsonElement header = Solve.ReadHeader(_trace);
             if (!header.TryGetProperty("fulltas", out JsonElement fulltas)) throw new InvalidOperationException("Not a Full-TAS trace (no \"fulltas\" header): " + _trace);
             _name = fulltas.GetProperty("name").GetString();
-            _labels = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
-            _goals = _labels.Length;
+            GoalList headerGoals = HeaderGoals(fulltas);
+            SetGoals(headerGoals.Labels, headerGoals.Ids);
             _eval = Solve.Creator(_trace, header)();
             _eval.Engine.HumanClass = Human;
             // --loose-buys: a stray purchase doesn't end the replay (to line it up with a trace capture, which plays on).
@@ -264,14 +267,15 @@ namespace IGTAP.EngineSim.Cli
             string goalsFile = Solve.Option<string>(_args, "--goals", null);
             if (goalsFile != null)
             {
-                string[] labels = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(goalsFile))["goals"].AsArray().Select(g => g.GetValue<string>()).ToArray();
+                using JsonDocument goalsDoc = JsonDocument.Parse(File.ReadAllText(goalsFile));
+                JsonElement fileGoals = goalsDoc.RootElement.GetProperty("goals");
+                string[] labels = fileGoals.EnumerateArray().Select(LabelOf).ToArray();
                 FullTasTracker trace = _eval.Goals;
-                _goals = labels.Length;
+                SetGoals(labels, fileGoals.EnumerateArray().All(g => g.ValueKind == JsonValueKind.Object && g.TryGetProperty("id", out _)) ? ReadGoalList(fileGoals).Ids : null);
                 _origin = _origin.WithGoal(Fresh(_goals, 0));
                 FullTasGoal[] list = labels.Select(l => trace.Goals.FirstOrDefault(g => g.label == l) ?? NewGoal(l)?.goal
                     ?? throw new ArgumentException($"--goals {goalsFile}: no goal {l}")).ToArray();
                 _eval.UseGoals(trace.For(list));
-                _labels = labels;
             }
             List<InputTick> inputs = global::IGTAP.EngineSim.Cli.Plan.ReadRoute(file);
             Route r = Evaluate(inputs);
@@ -336,7 +340,7 @@ namespace IGTAP.EngineSim.Cli
                 Console.WriteLine($"retuned: {(t == null ? lost : $"{t.Progress} of {_goals} goals" + (t.Progress == _goals ? $", {Describe(t)}" : $" ({t.EndReason})"))}");
                 string outFile = Solve.Option(_args, "--out", (string)null);
                 if (t != null && t.Progress == _goals && outFile != null)
-                    File.WriteAllText(outFile, JsonSerializer.Serialize(new { fulltas = _name, time = t.LiveSeconds, runTicks = t.Last, goals = _labels, ticks = t.Inputs.Select(x => x.ToJson()) }));
+                    File.WriteAllText(outFile, JsonSerializer.Serialize(new { fulltas = _name, time = t.LiveSeconds, runTicks = t.Last, goals = Goals.Json, ticks = t.Inputs.Select(x => x.ToJson()) }));
             }
             // --chain-vs OLD: the chaining check (FullTasAutoLib.cs) of this route against an older one.
             int vs = Array.IndexOf(_args, "--chain-vs");
@@ -353,6 +357,7 @@ namespace IGTAP.EngineSim.Cli
         int Search()
         {
             string from = Open();
+            if (_onlyGoalId != null) _onlyGoal = GoalAt(_onlyGoalId) + 1;
             Console.WriteLine($"Full-TAS {_name}: {_goals} goals, windows of {_window}, {_threads} threads; best from {from}: {Describe(_best)}");
             if (Classed)
             {
@@ -402,7 +407,7 @@ namespace IGTAP.EngineSim.Cli
                 Console.WriteLine($"[{_clock.Elapsed:hh\\:mm\\:ss}] Done. Best {Describe(_best)}");
                 return 0;
             }
-            // --dump a-b: the best's ticks from goal a-1's to goal b's, one line each (input, place, speed, Cash against the next
+            // --dump ID-ID: the best's ticks from the goal before the first's to the second's, one line each (input, place, speed, Cash against the next
             // goal's price): what a stretch spends its time on; then stops.
             string dump = Solve.Option(_args, "--dump", (string)null);
             if (dump != null)
@@ -415,7 +420,7 @@ namespace IGTAP.EngineSim.Cli
                     Console.WriteLine($"box {token}: x {z.x0:0}-{z.x1:0} y {z.y0:0}-{z.y1:0}");
                 }
                 string[] ends = dump.Split('-');
-                int a = int.Parse(ends[0]), b = int.Parse(ends[ends.Length - 1]);
+                int a = GoalAt(ends[0]) + 1, b = GoalAt(ends[ends.Length - 1]) + 1;
                 long dumpFrom = a <= 1 ? 0 : _best.GoalPhysics[a - 2], dumpTo = b > _best.Progress ? long.MaxValue - 2 : _best.GoalPhysics[b - 1];
                 var vel = typeof(Movement).GetField("Velocity", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
                 var ground = typeof(Movement).GetField("onGround", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
@@ -535,8 +540,8 @@ namespace IGTAP.EngineSim.Cli
             JsonElement header = Solve.ReadHeader(_trace);
             if (!header.TryGetProperty("fulltas", out JsonElement fulltas)) throw new InvalidOperationException("Not a Full-TAS trace (no \"fulltas\" header): " + _trace);
             _name = fulltas.GetProperty("name").GetString();
-            _labels = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
-            _goals = _labels.Length;
+            GoalList headerGoals = HeaderGoals(fulltas);
+            SetGoals(headerGoals.Labels, headerGoals.Ids);
             // --tech-weight <tech>=<seconds>: this solve's own price of a tech's spans in a human class (docs/fulltas.md "Classes").
             _weights = HumanWeights.Of(fulltas).WithTechWeights(_args);
             if (_weights.Techs.Count > 0 && !Human) throw new ArgumentException("--tech-weight prices a human class's score: give --class human-major or human-nmg");
@@ -572,9 +577,9 @@ namespace IGTAP.EngineSim.Cli
             }
             Directory.CreateDirectory(_archiveDir);
             File.WriteAllText(StartFile(dir, _runKey), startKey);
-            _visits = _fresh ? new Dictionary<long, float>() : ReadVisits(_visitsFile, _labels) ?? new Dictionary<long, float>();
+            _visits = _fresh ? new Dictionary<long, float>() : ReadVisits(_visitsFile, _ids) ?? new Dictionary<long, float>();
             LoadPieces(dir);
-            _states = new FullTasStates(_archiveDir, _fresh, Path.ChangeExtension(_trace, ".world.json"));
+            _states = new FullTasStates(_archiveDir, _fresh, Path.ChangeExtension(_trace, ".world.json"), _ids);
             if (_states.Index.Count > 0) Log($"goal states: {_states.Index.Count} in {Path.Combine("archive", "fulltas-" + _runKey, "states")}");
 
             Starting("Loading the run: replaying its best");
@@ -586,8 +591,9 @@ namespace IGTAP.EngineSim.Cli
             {
                 using JsonDocument saved = JsonDocument.Parse(File.ReadAllText(majorFile));
                 List<InputTick> inputs = Solve.ReadInputs(saved.RootElement);
-                string[] solved = saved.RootElement.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
-                long[] goalInput = saved.RootElement.GetProperty("goalInputTicks").EnumerateArray().Select(t => t.GetInt64()).ToArray();
+                SavedGoal[] rows = ReadSavedGoals(saved.RootElement);
+                string[] solved = rows.Select(g => g.Label).ToArray();
+                long[] goalInput = rows.Select(g => g.Input).ToArray();
                 int keep = CurrentInputs(solved, goalInput, _labels, inputs.Count);
                 if (keep < inputs.Count) inputs.RemoveRange(keep, inputs.Count - keep);
                 Route major = Padded(Evaluate(inputs));
@@ -601,8 +607,9 @@ namespace IGTAP.EngineSim.Cli
             {
                 using JsonDocument saved = JsonDocument.Parse(File.ReadAllText(_runFile));
                 List<InputTick> inputs = Solve.ReadInputs(saved.RootElement);
-                string[] solved = saved.RootElement.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
-                long[] goalInput = saved.RootElement.GetProperty("goalInputTicks").EnumerateArray().Select(t => t.GetInt64()).ToArray();
+                SavedGoal[] rows = ReadSavedGoals(saved.RootElement);
+                string[] solved = rows.Select(g => g.Label).ToArray();
+                long[] goalInput = rows.Select(g => g.Input).ToArray();
                 int keep = CurrentInputs(solved, goalInput, _labels, inputs.Count), stored = inputs.Count;
                 if (keep < inputs.Count) inputs.RemoveRange(keep, inputs.Count - keep);
                 Route run = Padded(Evaluate(inputs));
@@ -748,12 +755,12 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>Loads the run's avoid boxes for a window heading for goals (null: every optional block on).</summary>
         void ReloadAvoids(ICollection<string> goals = null)
         {
-            OfflineSolver.ForcedPath path = Solve.FullTasPaths(_name, goals, _labels);
+            OfflineSolver.ForcedPath path = Avoids(goals);
             string now = string.Join(", ", path.Avoid), before = _path == null ? "" : string.Join(", ", _path.Avoid);
             _path = path;
             if (now == before) return;
-            Log("avoid (forced-paths.json): " + (now.Length == 0 ? "none" : now));
-            Emit(new { type = "note", level = "info", text = $"Avoid boxes now {path.Avoid.Count} (forced-paths.json)." });
+            Log($"avoid (runs/{_name}.json): " + (now.Length == 0 ? "none" : now));
+            Emit(new { type = "note", level = "info", text = $"Avoid boxes now {path.Avoid.Count} (runs/{_name}.json)." });
         }
 
         /// <summary>
@@ -837,8 +844,9 @@ namespace IGTAP.EngineSim.Cli
                 if (!File.Exists(file)) continue;
                 using JsonDocument saved = JsonDocument.Parse(File.ReadAllText(file));
                 List<InputTick> inputs = Solve.ReadInputs(saved.RootElement);
-                string[] solved = saved.RootElement.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
-                long[] goalInput = saved.RootElement.GetProperty("goalInputTicks").EnumerateArray().Select(t => t.GetInt64()).ToArray();
+                SavedGoal[] rows = ReadSavedGoals(saved.RootElement);
+                string[] solved = rows.Select(g => g.Label).ToArray();
+                long[] goalInput = rows.Select(g => g.Input).ToArray();
                 int keep = CurrentInputs(solved, goalInput, _labels, inputs.Count);
                 if (keep < inputs.Count) inputs.RemoveRange(keep, inputs.Count - keep);
                 Route r = Padded(Evaluate(inputs));
@@ -918,7 +926,7 @@ namespace IGTAP.EngineSim.Cli
                 sim.Goals.Limit = limit;
                 return sim;
             };
-            string archiveFile = Path.Combine(_archiveDir, (first + 1) + "-" + limit + "-" + ArchiveHash(prefix, _labels.Skip(first).Take(limit - first)).ToString("x16")
+            string archiveFile = Path.Combine(_archiveDir, "window-" + ArchiveHash(prefix, _ids.Skip(first).Take(limit - first)).ToString("x16")
                 + (_noResets ? "-noreset" : "") + ".json");
             if (_noResets) seeds.RemoveAll(s => s.Any(t => t.reset));
             var labels = new HashSet<string>(_labels.Skip(first).Take(limit - first));
@@ -1192,7 +1200,7 @@ namespace IGTAP.EngineSim.Cli
             Solve.WriteShared(_closestFile, JsonSerializer.Serialize(new
             {
                 name = _name,
-                goals = _labels,
+                goals = Goals.Json,
                 reached = replayed.Progress,
                 next = replayed.Progress < _goals ? _labels[replayed.Progress] : null,
                 distance = float.IsFinite(replayed.Distance) ? Math.Round(replayed.Distance, 1) : (double?)null,
@@ -1251,7 +1259,7 @@ namespace IGTAP.EngineSim.Cli
             return hash;
         }
 
-        static ulong ArchiveHash(List<InputTick> prefix, IEnumerable<string> labels)
+        static ulong ArchiveHash(List<InputTick> prefix, IEnumerable<string> goals)
         {
             ulong hash = 14695981039346656037UL;
             foreach (InputTick t in prefix)
@@ -1274,10 +1282,10 @@ namespace IGTAP.EngineSim.Cli
                 if (t.pause > 0) hash = Feed(hash, ((long)t.pauseTick << 32) | (uint)t.pause, 8);
                 if (t.pause > 0 && t.pauseFrame != 0) hash = Feed(hash, t.pauseFrame, 4);
             }
-            foreach (string label in labels)
+            foreach (string goal in goals)
             {
                 hash = Feed(hash, 0xff, 1);
-                foreach (byte b in Encoding.UTF8.GetBytes(label)) hash = Feed(hash, b, 1);
+                foreach (byte b in Encoding.UTF8.GetBytes(goal)) hash = Feed(hash, b, 1);
             }
             return hash;
         }
@@ -1291,14 +1299,14 @@ namespace IGTAP.EngineSim.Cli
         static ulong Feed(ulong hash, float value) { return Feed(hash, BitConverter.SingleToInt32Bits(value == 0f ? 0f : value), 4); }
         static ulong Feed(ulong hash, bool value) { return Feed(hash, value ? 1 : 0, 1); }
 
-        internal static Dictionary<long, float> ReadVisits(string file, string[] labels)
+        internal static Dictionary<long, float> ReadVisits(string file, string[] ids)
         {
             if (!File.Exists(file)) return null;
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(file));
             JsonElement root = doc.RootElement;
             if (root.GetProperty("cell").GetSingle() != VisitCell
                 || !root.TryGetProperty("version", out JsonElement version) || version.GetInt32() != VisitsVersion
-                || (labels != null && !root.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).SequenceEqual(labels))) return null;
+                || (ids != null && !root.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).SequenceEqual(ids))) return null;
             var visits = new Dictionary<long, float>();
             foreach (JsonElement c in root.GetProperty("cells").EnumerateArray())
                 visits[((long)c[0].GetInt32() << 32) | (uint)c[1].GetInt32()] = c[2].GetSingle();
@@ -1323,7 +1331,7 @@ namespace IGTAP.EngineSim.Cli
             Solve.WriteShared(_visitsFile, JsonSerializer.Serialize(new
             {
                 version = VisitsVersion,
-                goals = _labels,
+                goals = _ids,
                 cell = VisitCell,
                 cells = _visits.Select(v => new[] { (float)(int)(v.Key >> 32), (float)(int)v.Key, (float)Math.Round(v.Value, 2) }),
             }));
@@ -1660,9 +1668,8 @@ namespace IGTAP.EngineSim.Cli
                 {
                     using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(file), new JsonDocumentOptions { MaxDepth = 256 });
                     JsonElement root = doc.RootElement;
-                    if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("goals", out JsonElement goals) || !root.TryGetProperty("goalInputTicks", out JsonElement ticks)
-                        || !root.TryGetProperty("inputs", out _)) continue;
-                    runs.Add((Path.GetFileName(file), goals.EnumerateArray().Select(g => g.GetString()).ToArray(), ticks.EnumerateArray().Select(t => t.GetInt64()).ToArray(), Solve.ReadInputs(root)));
+                    if (!(ReadSavedGoals(root) is SavedGoal[] goals) || !root.TryGetProperty("inputs", out _)) continue;
+                    runs.Add((Path.GetFileName(file), goals.Select(g => g.Label).ToArray(), goals.Select(g => g.Input).ToArray(), Solve.ReadInputs(root)));
                 }
                 catch (Exception ex) when (ex is IOException || ex is JsonException || ex is InvalidOperationException) { }
             }
@@ -1747,7 +1754,7 @@ namespace IGTAP.EngineSim.Cli
             JsonElement root = doc.RootElement;
             bool Flag(string name) { return root.TryGetProperty(name, out JsonElement v) && v.ValueKind == JsonValueKind.True; }
             var goals = new List<string>();
-            if (root.TryGetProperty("goals", out JsonElement g) && g.ValueKind == JsonValueKind.Array) goals.AddRange(g.EnumerateArray().Select(e => e.GetString()));
+            if (root.TryGetProperty("goals", out JsonElement g) && g.ValueKind == JsonValueKind.Array) goals.AddRange(g.EnumerateArray().Select(LabelOf));
             else if (root.TryGetProperty("course", out JsonElement c) && c.ValueKind == JsonValueKind.Number && c.GetInt32() > 0)
                 goals.AddRange(new[] { "record:" + c.GetInt32(), "farm:" + c.GetInt32() });
             else if (root.TryGetProperty("token", out JsonElement t) && t.ValueKind == JsonValueKind.String && t.GetString().StartsWith("bonus", StringComparison.OrdinalIgnoreCase))
@@ -2050,8 +2057,8 @@ namespace IGTAP.EngineSim.Cli
                 file = Path.Combine(_outDir, "fulltas-" + _runKey + "-" + time.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
                 // A route of goals the loop adopted (--parts goals) carries them and the lists they came from: the game judges it
                 // under them and takes them as the run's when it saves the record.
-                string[] goals = _goalLineage.Count == 0 ? null : _labels;
-                List<string[]> goalsFrom = _goalLineage.Count == 0 ? null : _goalLineage.ToList();
+                object goals = _goalLineage.Count == 0 ? null : Goals.Json;
+                object[] goalsFrom = _goalLineage.Count == 0 ? null : _goalLineage.Select(l => l.Json).ToArray();
                 Solve.WriteShared(file, Classed
                     ? JsonSerializer.Serialize(new { fulltas = _name, @class = Glitches.Key(_class), time, score = Human ? ScoreSeconds(r) : (double?)null, runTicks = r.Last, goals, goalsFrom,
                         ticks = r.Inputs.Select(t => t.ToJson()) })
@@ -2064,7 +2071,7 @@ namespace IGTAP.EngineSim.Cli
             Log($"new best {Describe(r)} ({where}) -> " + (major == null ? Path.GetFileName(file) : $"not saved: it uses {major.Tech} (major) at input tick {major.Tick}"));
             Emit(new { type = "record", how = where, previous = RouteJson(previous), best = RouteJson(r), file = major == null ? Path.GetFileName(file) : null,
                 complete = r.Progress == _labels.Length, firstComplete = r.Progress == _labels.Length && previous.Progress < _labels.Length, goalsEdit = _goalsEdit,
-                goals = _goalsEdit == null ? null : _labels });
+                goals = _goalsEdit == null ? null : Goals.Json });
             _committed?.Invoke(r, where);
             // Every complete best has its waits re-timed to their Cash from the start: an edit (a goals adoption, a window)
             // moves the Cash every later wait was made for, and the loop's own re-timings start at a buy site.
@@ -2097,17 +2104,12 @@ namespace IGTAP.EngineSim.Cli
             return new
             {
                 name = _name,
-                goals = _labels,
+                goals = SavedGoalsJson(r),
                 inputs = r.Inputs.Select(t => t.ToJson()),
-                goalInputTicks = r.GoalInput,
-                goalPhysicsTicks = r.GoalPhysics,
-                goalHeldFrames = r.GoalHeld,
                 total = r.Progress == _labels.Length ? r.Last : -1,
                 live = r.Progress == _labels.Length ? r.LiveSeconds : -1,
-                // Each buy's wait for its Cash, standing at its box (FullTasIdles.cs): the studio's idle rows, the overlay's banner.
-                idles = IdlesJson(r),
                 startAt = new { x = _startAt.x, y = _startAt.y, facingRight = _startAt.facingRight },
-                goalsFrom = _goalLineage.Count == 0 ? null : _goalLineage,
+                goalsFrom = _goalLineage.Count == 0 ? null : _goalLineage.Select(l => l.Json).ToArray(),
             };
         }
 
@@ -2115,8 +2117,8 @@ namespace IGTAP.EngineSim.Cli
         sealed class Submission
         {
             public List<InputTick> Inputs;
-            public string[] Goals;
-            public List<string[]> GoalsFrom;
+            public object Goals;
+            public object[] GoalsFrom;
         }
 
         void Submitter()

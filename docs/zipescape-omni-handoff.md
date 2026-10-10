@@ -15,20 +15,24 @@ Zip%, but escaping the tunnel by teleporter instead of the refill orbs. The user
   comes before it. Area 2 pads register a visit without the box. Afterwards `buytree16` (the zip movers, (25843, 6091))
   is reached by teleporting to pad 3 once it's paid for.
 
-**Goals** (`runs/ZipEscape%.json`, 1163; the user's draft is in `C:\tmp\igtap\zip\ZipEscape-before.json`): Zip%'s first
-1157, then `at:28710,5876,240,400` (pad 3), `buy:buytree13`, `buy:buyteleporters`, `at:16639,11761,240,400` (pad 102),
-`buy:buytree14`, `buy:buytree16`. Zip%'s laps between `buytree13` and `buytree14` were dropped: the stages plan the economy.
-The run file and the trace header were set together (`C:\tmp\igtap\zip\s3\setgoals.py <repo> <trace> <goals.json>`).
+**Goals** (`runs/ZipEscape%.json`, 842 since the replan below; the user's draft is in
+`C:\tmp\igtap\zip\ZipEscape-before.json`): Zip%'s first 807, Zip%'s unlocks after them (29: `buytree0`-`4`, `6`, `7`, `12`,
+`buyatom` twice, `buycd8`, `buyclonecd8` four times, `buycddigits8`), then `at:28710,5876,240,400` (pad 3), `buy:buytree13`,
+`buy:buyteleporters`, `at:16639,11761,240,400` (pad 102), `buy:buytree14`, `buy:buytree16`. The run file and the trace
+header are set together (`C:\tmp\igtap\zip\s3\setgoals.py <repo> <trace> <goals.json>`).
 
-**Where it stands:** the trace is captured (`fulltas-ZipEscape%.json`). The best (`fulltas/ZipEscape%.json`) reaches goal
-1158: Zip%'s best through goal 1157 (tick 75,670, the player at (25513, -2313)), then the climb to pad 3, found by the
-area-goal stage on its second search (1,234 ticks, pad reached on tick 76,904). The next stage was planning
-`buy:buyclone7` then `buy:buytree13` from pad 3 when it was stopped for the user to improve stretches.
+**Replanned (2026-10-09):** turbo's body fix (`e1a5521`, `TurboRunner.KeepBody`) broke the old best at goal 808
+(`buy:buytree2`; old numbering 970), so the best reaches goal 807 (`buy:buyreward7`, tick 58,197), not pad 3. Rather than
+rebuild Zip%'s economy goals after it (137 buys of economy boxes and laps, `FullTasGoal.IsEconomy`, planned for Zip%'s run),
+they were dropped: the stages plan the economy between the unlocks, as between `buytree13` and `buytree14`. Before it
+(run file, trace, offline best, the stale stretch bests 960 and 974): `C:\tmp\igtap\zip\replan-20261009`. The copy that
+reached pad 3 before the turbo fix, `fulltas/ZipEscape%.before-repair-1158-of-1163.json` (979 goals), doesn't replay.
 
 **To resume:** `IGTAP.EngineSim fulltas "<config>\enginesim\fulltas-ZipEscape%.json"` (no flags; the unattended stages).
 Watch it: the user wants every stage monitored, a stall checked in the engine (`fulltas-plan --try`, `stick:X/Y@T`) before
 anything else. What should happen next:
-1. `buytree13` (economy stage, from pad 3).
+1. The economy from goal 807 through the 29 unlocks to pad 3 (the climb from (25513, -2313) took 1,234 ticks in the old
+   best, its tree grown by the same unlocks), then `buytree13` (economy stage, from pad 3).
 2. `buy:buyteleporters` (20M GP: the GP climb Zip% made with enablers).
 3. Pad 102: an area goal, one piece search from the box (walk; realize takes a hop chain when it's cheaper).
 4. `buytree14`, then out of the tunnel by teleporter (the planner's hop chains: pads 4 / 101 / 200 sit in a row at
@@ -38,7 +42,7 @@ anything else. What should happen next:
 ## Omni%
 
 Zip% plus `buy:buytree23` (TreePart23's OmniDash box at (25623, 7236): its first buy turns Area 1 overgrown and opens the
-Zone 2 -> 1 path, `Economy.OmniDashFirstBuy`). Goals: Zip%'s 1717 then `buy:buytree23` (1718). No trace yet: capture it
+Zone 2 -> 1 path, `Economy.OmniDashFirstBuy`). Goals: Zip%'s 1492 then `buy:buytree23` (1493; lap goals since `9711320`). No trace yet: capture it
 (`POST /api/fulltas/capture {"name": "Omni%"}`, a new game in the live game), then the unattended stages: it starts from Zip%'s
 whole best (seed adoption) and has one economy stage to `buytree23`. Open question for the user: should Omni% take
 ZipEscape%'s teleporter route instead of Zip%'s orbs (seed it from ZipEscape% once that's complete)?

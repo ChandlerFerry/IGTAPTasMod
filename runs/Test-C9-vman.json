@@ -5,6 +5,9 @@
   "tree": [],
   "section": "test",
   "goals": [
-    "record:9"
+    {
+      "id": "s9aik2",
+      "goal": "record:9"
+    }
   ]
 }

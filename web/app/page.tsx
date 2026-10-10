@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import "./route-picker.css";
 import "./fulltas.css";
 import { FullTasTransitions } from "./fulltas-transitions";
-import { FullTasSolvePanel, LEVERS, SegmentGroup, SegmentLegend, goalSpan, liveSeconds, place, resetSegments, runTime, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
+import { FullTasSolvePanel, LEVERS, SegmentGroup, SegmentLegend, goalSpan, liveSeconds, place, resetSegments, runTime, type FullTasGoal, type FullTasIdle, type FullTasOutcome, type FullTasSolveState, type FullTasSplit } from "./fulltas-solve";
 import { FullTasClasses, RouteClasses, type FullTasClassRun, type FullTasDifficultyJob, type FullTasQueue } from "./fulltas-classes";
 import { TechPanel, type TechState } from "./techs";
 import { PlaceLoadstate, TasEditor, type PlacePrefill, type TasLive } from "./tas-editor";
@@ -31,11 +31,11 @@ type SolverState = { running: boolean; status: string; speed?: string; course: n
  * this one, updated with this target's own gains), the model's floor and headroom, and what else there is to try. Seconds
  * are search (wall) seconds. */
 type Outlook = { verdict: "likely" | "possible" | "unlikely" | "exhausted" | "floor"; headline: string; advice: string[]; unit: string;
-  best: number; bestTicks: number; floor: number; floorTicks: number; headroom: number; hot: { goal: number; label: string; expected: number; slow: string }[];
+  best: number; bestTicks: number; floor: number; floorTicks: number; headroom: number; hot: { goal: string; label: string; expected: number; slow: string }[];
   searched: number; sessions: number; pulls: number; gains: number; gained: number; lastGainAgo: number | null; typicalGain: number | null;
-  chanceHour: number; medianWait: number; remaining: number; chanceRemaining: number; untried: { lever: string; goals: number[] }[];
+  chanceHour: number; medianWait: number; remaining: number; chanceRemaining: number; untried: { lever: string; goals: string[] }[];
   basis: { runs: number; search: number; gains: number; spell: number; spellGains: number; spellSearch: number } };
-type PullNow = { pull: number; lever: string; goal: number; label: string; budget: number; expected: number; pulls: number; cpu: number; gained: number;
+type PullNow = { pull: number; lever: string; goal: string; label: string; budget: number; expected: number; pulls: number; cpu: number; gained: number;
   misses: number; history: { pulls: number; gains: number } };
 /**
  * A course target's waypoints (`solve --auto --waypoints-out`): the start gate (record timing: `timerGoal`), goals along its
@@ -56,9 +56,7 @@ type Direction = "forwards" | "backwards";
 type HumanCourseClass = "human-major" | "human-nmg";
 const HUMAN_LABEL: Record<HumanCourseClass, string> = { "human-major": "Human major", "human-nmg": "Human NMG" };
 type CourseTarget = { course: number; capabilities: string; farm: boolean; direction?: Direction; class?: HumanCourseClass };
-/** A buy goal's wait for its Cash at its box (enginesim FullTasIdles.cs): [physics tick, held frames] at arrival and when the Cash is there. */
-type FullTasIdle = { goal: number; arrive: [number, number]; afford: [number, number] };
-type FullTasRun = { name: string; start?: string | null; savestate?: string | null; section: "complete" | "wip" | "test"; goals: string[]; breaker?: number | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
+type FullTasRun = { name: string; start?: string | null; savestate?: string | null; section: "complete" | "wip" | "test"; goals: FullTasGoal[]; breaker?: string | null; best: { routeId: string; name: string; time: number; splits: FullTasSplit[] } | null;
   offline?: { reached: number; time: number; splits: FullTasSplit[]; segments?: number[][]; idles?: FullTasIdle[] | null } | null; closest?: { reached: number; next: string | null; distance: number | null; ticks: number } | null; playable?: boolean; traceReady: boolean }
   & Partial<Omit<FullTasClassRun, "name">>;
 type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string; queue?: FullTasQueue | null; difficulty?: FullTasDifficultyJob | null };
@@ -554,7 +552,7 @@ function OutlookCard({outlook:o,pulls}:{outlook:Outlook;pulls:PullNow[]}) {
         <small>floor {o.floor.toFixed(2)}s (top speed on every {o.unit}; optimistic) · the model's guess: ~{o.headroom} ticks findable</small></div>
     </div>
     {pulls.length>0&&<div className="outlookNow"><span>Searching now</span><ul>{pulls.map(p=><li key={p.pull}>
-      <b>{LEVERS[p.lever]??p.lever}</b> at {o.unit} {o.unit === "goal" ? p.goal - 1 : p.goal} for up to {searchSpan(p.budget*60)} · {p.pulls?`${p.misses?`${p.misses} miss${p.misses===1?"":"es"} in a row here`:`−${p.gained} ticks here`} (${searchSpan(p.cpu)} CPU)`:"first time here"} · {p.history.pulls?`such pulls gained ${p.history.gains} of ${p.history.pulls} times`:"no record of such pulls"}</li>)}</ul></div>}
+      <b>{LEVERS[p.lever]??p.lever}</b> at {o.unit} {p.label} for up to {searchSpan(p.budget*60)} · {p.pulls?`${p.misses?`${p.misses} miss${p.misses===1?"":"es"} in a row here`:`−${p.gained} ticks here`} (${searchSpan(p.cpu)} CPU)`:"first time here"} · {p.history.pulls?`such pulls gained ${p.history.gains} of ${p.history.pulls} times`:"no record of such pulls"}</li>)}</ul></div>}
     <details className="howTo"><summary>How Improve decides</summary><ul>
       <li>A <b>pull</b> is one short search: one tactic at one {o.unit}, for a minute or two. Improve runs pulls until its minutes are up.</li>
       <li>Tactics: <b>window search</b> re-finds the inputs between two {o.unit}s; <b>input polish</b> nudges the timing of the inputs the route has; <b>look-ahead</b> and <b>long windows</b> search further on, so a slower arrival that carries more speed can win; <b>graft</b>, <b>combine</b> and <b>revive</b> splice in faster pieces other found routes have.</li>
@@ -566,8 +564,8 @@ function OutlookCard({outlook:o,pulls}:{outlook:Outlook;pulls:PullNow[]}) {
 }
 
 /** `waypoints`: a course target's (Improve's), drawn numbered over the map; `picked`: the ones Improve focuses on. */
-// stretch: a Full-TAS run's one goal alone (its number from 0): only its stretch drawn, every box drawn cuts for it alone.
-type MapTarget = { course: number; capabilities: string; optional: string[]; fulltas?: string; stretch?: number; waypoints?: MapGoal[]; picked?: [number, number] | null };
+// stretch: a Full-TAS run's one goal alone (its id): only its stretch drawn, every box drawn cuts for it alone.
+type MapTarget = { course: number; capabilities: string; optional: string[]; fulltas?: string; stretch?: string; waypoints?: MapGoal[]; picked?: [number, number] | null };
 // `when`: the world state it's only in ("<state>:<option>"), none: every one. An "area" is ground off in the capture:
 // its outline rings end to end in `p`, `rings` the length of each, filled even-odd.
 type MapSolid = { k: "poly" | "line" | "circle" | "capsule" | "area"; spike: boolean; p: number[]; r: number; tone?: "blue" | "orange" | null; spring?: number[] | null; when?: string | null; rings?: number[] | null };
@@ -594,8 +592,22 @@ type MapData = { course: number; capabilities: string; label: string; fulltas?: 
   explored: { cell: number; runs: number; prefixes: number; replayed?: number; toReplay?: number; cells: number[][] };
   // The engine is still drawing it: this is what it has so far (an earlier draw's before its first write).
   pending?: boolean; queued?: boolean };
-// A Full-TAS run's at: goal: its number in the run's goal list (1-based, as the goals table), its label and its rect (x0, y0, x1, y1).
-type MapGoal = { index: number; label: string; box: number[] };
+// A Full-TAS run's at: goal: its number in the run's goal list (1-based, as the goals table), its id, its label and its rect (x0, y0, x1, y1).
+type MapGoal = { index: number; id?: string; label: string; box: number[] };
+/** A Full-TAS map's avoid box as the engine draws it (Map.AvoidDrawn): whose goal (its id; null: the run's own) and when it cuts. */
+type FullTasMapAvoid = { box: number[]; from: number; goal: string | null; when: "always" | "heading" | "after" };
+/** A Full-TAS map (its avoid boxes and goals by goal id) placed in the run's goal list `ids`: each box as the map draws it,
+ * [x0, y0, x1, y1, after, until, from] (avoidLive), each goal its number; a box of a goal the list doesn't have cuts nowhere. */
+function placeFullTasMap(raw: MapData, ids: string[]): MapData {
+  const avoid = (raw.avoid as unknown as FullTasMapAvoid[]).flatMap(a => {
+    const at = a.goal == null ? -1 : ids.indexOf(a.goal);
+    if (a.when !== "always" && at < 0) return [];
+    const [after, until] = a.when === "heading" ? [at, at + 1] : a.when === "after" ? [at + 1, 0] : [0, 0];
+    return [[...a.box, after, until, a.from]];
+  });
+  const goals = (raw.goals ?? []).map(g => ({ ...g, index: g.id ? ids.indexOf(g.id) + 1 : g.index }));
+  return { ...raw, avoid, goals };
+}
 type MapLayers = { art: boolean; background: boolean; tree: boolean; shapes: boolean; explored: boolean; boxes: boolean; markers: boolean } & Record<`box:${BoxCategory}`, boolean>;
 // A Full-TAS avoid box (the map's x0, y0, x1, y1, after, until, from; OfflineSolver.Box): it cuts at g goals reached (heading
 // for goal g as the studio numbers them) from After until Until (0: no end), entering across From's sides (bits in SIDES' order).
@@ -605,7 +617,10 @@ const avoidText = (b: number[]) => (b[5] ? `goal ${b[4]}` : b[4] ? `goals ${b[4]
   + (b[6] ? ` · enter from ${SIDES.filter((_, i) => !(b[6] & 1 << i)).join("/") || "inside only"}` : "");
 const ROUTE_COLORS = ["#4fc3f7", "#ff8a65", "#ba68c8", "#81c784", "#f06292", "#fff176", "#4db6ac", "#9575cd"];
 
-function SolveMap({target,courses,runs,goals,busy,onClose}:{target:MapTarget;courses:Course[];runs?:string[];goals?:string[];busy?:boolean;onClose:()=>void}) {
+function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapTarget;courses:Course[];runs?:string[];goals?:FullTasGoal[];busy?:boolean;onClose:()=>void}) {
+  const goals = runGoals?.map(g => g.label), goalIds = useRef<string[]>([]);
+  goalIds.current = runGoals?.map(g => g.id) ?? [];
+  const stretchAt = target.stretch != null ? goalIds.current.indexOf(target.stretch) : -1;
   const [data, setData] = useState<MapData | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState("");
@@ -679,7 +694,7 @@ function SolveMap({target,courses,runs,goals,busy,onClose}:{target:MapTarget;cou
   const [avoidGoal, setAvoidGoal] = useState("");
   const [avoidOpen, setAvoidOpen] = useState<string[]>([]);
   const [hotAvoid, setHotAvoid] = useState(-1);
-  const focus = target.stretch != null ? target.stretch : target.fulltas && avoidGoal.trim() !== "" && Number.isInteger(Number(avoidGoal)) ? Number(avoidGoal) : null;
+  const focus = target.stretch != null ? stretchAt : target.fulltas && avoidGoal.trim() !== "" && Number.isInteger(Number(avoidGoal)) ? Number(avoidGoal) : null;
   const drawBlock = !sketchRuns.length ? "Pick a run for the boxes." : target.stretch == null && avoidScope !== "every" && focus == null ? "Type a goal number, or click a goal's green box while drawing."
     : avoidOpen.length === SIDES.length ? "A box open on every side cuts nothing." : "";
   // Course maps: the avoid box's optional block name (empty: cut for every solve) and whether that block starts on.
@@ -708,8 +723,9 @@ function SolveMap({target,courses,runs,goals,busy,onClose}:{target:MapTarget;cou
     if (!poll) { setLoading(true); setFailure(""); fresh.current = true; }
     let pending = false;
     try {
-      const d: MapData = target.fulltas ? await request("/fulltas/map", { name: target.fulltas, poll, ...(target.stretch != null ? { stretch: target.stretch } : {}) })
+      const raw: MapData = target.fulltas ? await request("/fulltas/map", { name: target.fulltas, poll, ...(target.stretch != null ? { stretch: target.stretch } : {}) })
         : await request("/enginesim/map", { ...target, poll });
+      const d = target.fulltas && raw.solids ? placeFullTasMap(raw, goalIds.current) : raw;
       if (id !== loads.current) return;
       pending = !!d.pending;
       if (pending) poller.current = window.setTimeout(() => load(true), 1000);
@@ -1041,8 +1057,9 @@ function SolveMap({target,courses,runs,goals,busy,onClose}:{target:MapTarget;cou
     if (!s) { setSketch(null); const hit = goalAt(start); if (hit) setAvoidGoal(String(hit.goal.index - 1)); return; }
     if (drawBlock) { setSketch(null); setFailure(drawBlock); return; }
     const from = avoidOpen.length ? SIDES.filter(side => !avoidOpen.includes(side)).join("+") : "";
-    if (target.stretch != null) editAvoid(s, [target.fulltas!], false, { stretch: target.stretch, from });
-    else editAvoid(s, sketchRuns, false, { goal: avoidScope === "only" ? String(focus) : "", after: avoidScope === "from" && focus ? String(focus - 1) : "", from });
+    const id = (k: number | null) => k == null || k < 0 ? "" : goalIds.current[k] ?? "";
+    if (target.stretch != null) editAvoid(s, [target.fulltas!], false, { goal: target.stretch, from });
+    else editAvoid(s, sketchRuns, false, { goal: avoidScope === "only" ? id(focus) : "", after: avoidScope === "from" && focus ? id(focus - 1) : "", from });
   };
   const onMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const v = view.current;
@@ -1070,7 +1087,7 @@ function SolveMap({target,courses,runs,goals,busy,onClose}:{target:MapTarget;cou
     }
     if (near) { setBoxTip(near); setCursor({ x: p.x, y: p.y, marker: boxTitle(near) }); }
   };
-  const editAvoid = async (box: number[], names: string[], remove: boolean, when: { goal?: string; after?: string; from?: string; stretch?: number } = {}) => {
+  const editAvoid = async (box: number[], names: string[], remove: boolean, when: { goal?: string; after?: string; from?: string } = {}) => {
     setSaving(true); setFailure("");
     try { await request("/fulltas/avoid", { box: box.slice(0, 4), runs: names, remove, ...when }); if (!remove) setSketch(null); await load(); }
     catch (e) { setFailure(e instanceof Error ? e.message : String(e)); }
@@ -1091,7 +1108,7 @@ function SolveMap({target,courses,runs,goals,busy,onClose}:{target:MapTarget;cou
   const saveMoved = async () => {
     if (!moved || !data?.fulltas) return;
     setSaving(true); setFailure("");
-    try { const to = center(moved.box); await request("/fulltas/move-goal", { name: data.fulltas, index: moved.goal.index - 1, label: moved.goal.label, x: to.x, y: to.y }); setMoved(null); await load(); }
+    try { const to = center(moved.box); await request("/fulltas/move-goal", { name: data.fulltas, goal: moved.goal.id, label: moved.goal.label, x: to.x, y: to.y }); setMoved(null); await load(); }
     catch (e) { setFailure(e instanceof Error ? e.message : String(e)); }
     finally { setSaving(false); }
   };
@@ -1143,7 +1160,7 @@ function SolveMap({target,courses,runs,goals,busy,onClose}:{target:MapTarget;cou
     {data?.fulltas && <div className="ghostBar">
       <strong>Avoid boxes</strong>
       <button className={drawing ? "primary" : "secondary"} title="Drag boxes on the map: each is saved as drawn, with these settings." onClick={() => { setDrawing(d => !d); setSketch(null); setMoving(false); setMoved(null); }}>{drawing ? "Stop drawing" : "Draw avoid"}</button>
-      {target.stretch != null ? <code className="hint">Cuts only on this stretch: heading for goal {target.stretch}, {goals?.[target.stretch]}</code> : <><label className="ghostPick">Cuts
+      {target.stretch != null ? <code className="hint">Cuts only on this stretch: heading for goal {stretchAt}, {goals?.[stretchAt]}</code> : <><label className="ghostPick">Cuts
         <select value={avoidScope} onChange={e => setAvoidScope(e.target.value as typeof avoidScope)}>
           <option value="every">for every goal</option>
           <option value="only">only heading for goal</option>
@@ -1264,7 +1281,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const [picked, setPicked] = useState<[number, number] | null>(null);
   const name = selected || runs[0]?.name || "";
   const run = runs.find(r => r.name === name);
-  const savedGoals = (run?.goals ?? []).join("\n");
+  const savedGoals = (run?.goals ?? []).map(g => g.label).join("\n");
   const [draft, setDraft] = useState(savedGoals);
   useEffect(() => setDraft(savedGoals), [name, savedGoals]);
   useEffect(() => setPicked(null), [name]);
@@ -1279,10 +1296,11 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const goals = draft.split("\n").map(g => g.trim()).filter(g => g);
   const validName = /^[A-Za-z0-9%-]+$/.test(newName);
   const splits = run?.best?.splits ?? run?.offline?.splits ?? [];
-  const labels = run?.goals ?? [];
+  const labels = (run?.goals ?? []).map(g => g.label), ids = (run?.goals ?? []).map(g => g.id);
   const segments = resetSegments(run?.offline?.segments);
-  // The offline best's idles (each buy's wait for its Cash at its box), when the splits shown are its own.
-  const idleAt = new Map((run?.offline?.idles && (!run.best || run.best.splits.every((s, i) => run.offline?.splits[i]?.ticks === s.ticks)) ? run.offline.idles : []).map(d => [d.goal, d]));
+  // The offline best's idles (each buy's wait for its Cash at its box), when the splits shown are its own; by goal number from 1.
+  const idleAt = new Map((run?.offline?.idles && (!run.best || run.best.splits.every((s, i) => run.offline?.splits[i]?.ticks === s.ticks)) ? run.offline.idles : []).map(d => [ids.indexOf(d.id) + 1, d]));
+  const breakerAt = run?.breaker ? ids.indexOf(run.breaker) : -1;
   // Improve searches a complete route; a run that misses goals gets the reach search, and Improve on picked goals it reaches.
   const complete = labels.length > 0 && splits.length === labels.length;
   // Picked goals can be improved on a best that misses later goals too, up to the goals it reaches.
@@ -1319,7 +1337,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
           <div className="ftImprove">
             {complete || !run || picked
               ? <button className="primary" disabled={busy || !(complete || picked)} title={picked ? `Searches only windows starting in ${goalSpan(picked)}; known faster pieces still join anywhere.` : "Searches the whole run from its record until Stop."}
-                onClick={() => onCommand("/fulltas/solve", picked ? { name, focus: picked } : { name })}>{picked ? `Improve ${goalSpan(picked)}` : "Improve"}</button>
+                onClick={() => onCommand("/fulltas/solve", picked ? { name, focus: [ids[picked[0] - 1], ids[picked[1] - 1]] } : { name })}>{picked ? `Improve ${goalSpan(picked)}` : "Improve"}</button>
               : <button className="primary" disabled={busy || !run.goals.length} title="The best misses goals: searches for them in order first. Improve works once every goal is reached."
                 onClick={() => onCommand("/fulltas/solve", { name, unsolved: true })}>Reach missing goals</button>}
             <button className="danger" disabled={!busy} onClick={() => onCommand("/fulltas/stop")}>Stop</button>
@@ -1340,7 +1358,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
         <div className={`resultTable ${segments.length > 1 ? "segmented" : ""}`}>
           <div className="tableHead"><span>#</span><span>Goal</span><span>Split (live · frames)</span><span>Cumulative (live · frames)</span></div>
           {(() => {
-            const goalRow = (i: number) => { const label = labels[i]; const s = splits[i]; const b = run?.breaker; const inPick = picked != null && i + 1 >= picked[0] && i + 1 <= picked[1];
+            const goalRow = (i: number) => { const label = labels[i]; const s = splits[i]; const b = breakerAt >= 0 ? breakerAt : null; const inPick = picked != null && i + 1 >= picked[0] && i + 1 <= picked[1];
               const title = [b!=null&&i===b?"Trips the breaker: the lights go out":"", goalTitle(label) ?? "", i < reached ? "Click to improve just this goal; shift-click to extend" : ""].filter(Boolean).join("\n");
               const idle = idleAt.get(i + 1);
               return <Fragment key={i}>
@@ -1379,7 +1397,7 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
     {run?.classes && run.human && run.candidates && <FullTasClasses key={name} run={{ name, classes: run.classes, human: run.human, candidates: run.candidates }} queue={fullTas.queue ?? null} difficulty={fullTas.difficulty ?? null} busy={busy} complete={complete} onCommand={onCommand}/>}
     <div className="fullTasSearch">
       <div className="panelTitle"><div><p className="eyebrow">OFFLINE SEARCH</p><h2>{solve.name ? `Improve · ${solve.name}` : "Improve"}</h2></div><span className={`offlineStatus ${solve.running?"running":""}`}>{solve.running?"Running":"Idle"}</span></div>
-      <FullTasSolvePanel solve={solve} goals={labels} route={run ? { progress: splits.length, time: splits.length ? liveSeconds(splits[splits.length - 1]) : null, splits: splits.map(liveSeconds) } : null} run={solve.name ?? name} lastResult={fullTas.lastResult} canPlay={!busy && !!(run?.playable ?? run?.best)} onPlay={() => onCommand("/fulltas/play", { name })}
+      <FullTasSolvePanel solve={solve} goals={run?.goals ?? []} route={run ? { progress: splits.length, time: splits.length ? liveSeconds(splits[splits.length - 1]) : null, splits: splits.map(liveSeconds) } : null} run={solve.name ?? name} lastResult={fullTas.lastResult} canPlay={!busy && !!(run?.playable ?? run?.best)} onPlay={() => onCommand("/fulltas/play", { name })}
         picked={picked} onPick={(goal, shift) => { if (complete) pick(goal, goal, shift); }}/>
       {solve.outlook != null && <OutlookCard outlook={solve.outlook as Outlook} pulls={solve.running ? (solve.pulls ?? []) as PullNow[] : []}/>}
     </div>

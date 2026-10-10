@@ -26,9 +26,7 @@ namespace IGTAPTasMod
                 return _fullTasOffline.Get(path, p =>
                 {
                     JObject o = JObject.Parse(File.ReadAllText(p));
-                    return new FullTasOfflineFile { goals = o["goals"].ToObject<List<string>>(), ticks = o["goalPhysicsTicks"].ToObject<List<long>>(),
-                        held = o["goalHeldFrames"]?.ToObject<List<long>>(), inputTicks = o["goalInputTicks"].ToObject<List<long>>(), inputs = o["inputs"].ToObject<List<SolverTick>>(),
-                        idles = o["idles"]?.Type == JTokenType.Array ? o["idles"].ToObject<List<FullTasIdle>>() : null };
+                    return new FullTasOfflineFile { goals = o["goals"].ToObject<List<FullTasSavedGoal>>(), inputs = o["inputs"].ToObject<List<SolverTick>>() };
                 });
             }
             catch (Exception ex)
@@ -43,18 +41,20 @@ namespace IGTAPTasMod
             FullTasOfflineFile file = ReadFullTasOffline(run);
             if (file == null) return null;
             var offline = new FullTasOffline { splits = new List<FullTasSplit>() };
-            for (int i = 0; i < labels.Count && i < file.goals.Count && i < file.ticks.Count && file.ticks[i] >= 0 && file.goals[i] == labels[i]; i++)
-                offline.splits.Add(new FullTasSplit { label = labels[i], ticks = file.ticks[i], held = file.held != null && i < file.held.Count ? Math.Max(0, file.held[i]) : 0 });
+            for (int i = 0; i < labels.Count && i < file.goals.Count && file.goals[i].physics >= 0 && file.goals[i].label == labels[i]; i++)
+                offline.splits.Add(new FullTasSplit { id = file.goals[i].id, label = labels[i], ticks = file.goals[i].physics, held = Math.Max(0, file.goals[i].held) });
             offline.reached = offline.splits.Count;
             offline.time = offline.reached == 0 ? 0f : offline.splits[offline.reached - 1].Live;
-            int keep = offline.reached == 0 ? 0 : (int)Math.Min(file.inputTicks[offline.reached - 1], file.inputs.Count);
+            List<long> inputTicks = file.goals.Select(g => g.input).ToList();
+            int keep = offline.reached == 0 ? 0 : (int)Math.Min(inputTicks[offline.reached - 1], file.inputs.Count);
             offline.inputs = file.inputs.GetRange(0, keep);
-            offline.segments = ResetSegments(offline.inputs, file.inputTicks, offline.reached);
-            offline.idles = file.idles?.Where(i => i.goal >= 1 && i.goal <= offline.reached && i.arrive?.Length == 2 && i.afford?.Length == 2).ToList();
+            offline.segments = ResetSegments(offline.inputs, inputTicks, offline.reached);
+            offline.idles = file.goals.Take(offline.reached).Where(g => g.idle?.arrive?.Length == 2 && g.idle.afford?.Length == 2)
+                .Select(g => new FullTasIdle { id = g.id, label = g.label, arrive = g.idle.arrive, afford = g.idle.afford }).ToList();
             offline.waits = new int[offline.reached];
             for (int g = 0; g < offline.reached; g++)
             {
-                int from = g == 0 ? 0 : (int)Math.Min(file.inputTicks[g - 1], offline.inputs.Count), to = (int)Math.Min(file.inputTicks[g], offline.inputs.Count);
+                int from = g == 0 ? 0 : (int)Math.Min(inputTicks[g - 1], offline.inputs.Count), to = (int)Math.Min(inputTicks[g], offline.inputs.Count);
                 for (int i = from, length = 0; i <= to; i++)
                 {
                     SolverTick t = i < to ? offline.inputs[i] : null;
@@ -99,7 +99,7 @@ namespace IGTAPTasMod
                 closest = _fullTasClosest.Get(path, p =>
                 {
                     JObject o = JObject.Parse(File.ReadAllText(p));
-                    return new FullTasClosest { goals = o["goals"].ToObject<List<string>>(), reached = (int)o["reached"],
+                    return new FullTasClosest { goals = o["goals"].Select(g => (string)g["goal"]).ToList(), reached = (int)o["reached"],
                         next = (string)o["next"], distance = (float?)o["distance"], inputs = o["inputs"].ToObject<List<SolverTick>>() };
                 });
             }
@@ -130,13 +130,14 @@ namespace IGTAPTasMod
             float minutes = FloatNumber(body, "minutes", unsolved ? 60f : 24 * 60f);
             args.Append(" --minutes ").Append(minutes.ToString(CultureInfo.InvariantCulture));
             string what, of = run.name + (cls == MajorClass ? "" : " (" + cls + ")");
-            // "stretch": one stretch alone (its goal number from 1), judged at its goal (the engine's --stretch, FullTasStretch.cs).
-            int stretch = Number(body, "stretch", 0);
-            if (stretch > 0)
+            // "stretch": one stretch alone (its goal's id), judged at its goal (the engine's --stretch, FullTasStretch.cs).
+            string stretch = Text(body, "stretch");
+            if (stretch.Length > 0)
             {
-                if (stretch > run.goals.Count) throw new InvalidOperationException("stretch: a goal within 1-" + run.goals.Count + ".");
+                string label = run.goals[FullTasGoalAt(run, stretch)].goal;
+                if (FullTasGoal.IsLap(label)) throw new InvalidOperationException("stretch: " + label + " is a lap, improved as its course's route.");
                 args.Append(" --window-minutes 0.5 --stretch ").Append(stretch);
-                what = "Optimizing " + of + "'s stretch to goal " + (stretch - 1) + " (" + run.goals[stretch - 1] + ") on " + threads + " threads";
+                what = "Optimizing " + of + "'s stretch to " + label + " on " + threads + " threads";
             }
             else if (unsolved)
             {
@@ -146,17 +147,17 @@ namespace IGTAPTasMod
             }
             else
             {
-                int[] focus = body["focus"] is JArray range && range.Count == 2 ? new[] { (int)range[0], (int)range[1] } : null;
-                if (focus != null && (focus[0] < 1 || focus[1] < focus[0] || focus[1] > run.goals.Count))
-                    throw new InvalidOperationException("focus: a goal range [first, last] within 1-" + run.goals.Count + ".");
+                // "focus": [first, last] goal ids, the goals --auto works on (goals from 1 below, as the engine counts them).
+                int[] focus = body["focus"] is JArray range && range.Count == 2 ? new[] { FullTasGoalAt(run, (string)range[0]) + 1, FullTasGoalAt(run, (string)range[1]) + 1 } : null;
+                if (focus != null && focus[1] < focus[0]) throw new InvalidOperationException("focus: its last goal comes before its first.");
                 MacroDefinition record = FullTasClassBest(run.name, cls, out _);
                 // --auto improves the goals the offline best reaches (all of them, or those of a best that misses goals): picked
                 // goals must be among them.
-                int reached = FullTasOfflineBest(run.name + (cls == MajorClass ? "" : "." + cls), run.goals)?.reached ?? 0;
+                int reached = FullTasOfflineBest(run.name + (cls == MajorClass ? "" : "." + cls), run.Labels)?.reached ?? 0;
                 if (focus != null && record == null && focus[1] > reached)
                     throw new InvalidOperationException("focus: the offline best reaches goal " + (reached - 1) + " of " + (run.goals.Count - 1) + "; pick goals up to it, or Reach missing goals first.");
                 args.Append(" --auto --window-minutes 0.5");
-                if (focus != null) args.Append(" --focus ").Append(focus[0]).Append('-').Append(focus[1]);
+                if (focus != null) args.Append(" --focus ").Append(run.goals[focus[0] - 1].id).Append('-').Append(run.goals[focus[1] - 1].id);
                 if (record != null)
                 {
                     string file = Path.Combine(EngineSimDir, "fulltas-" + run.name + (cls == MajorClass ? "" : "-" + cls) + "-record.json");
@@ -265,8 +266,8 @@ namespace IGTAPTasMod
                 string file = Path.Combine(EngineSimDir, "fulltas", source + ".json");
                 if (!File.Exists(file)) { FullTasLog("Seed run " + source + " has no offline best (" + file + ")"); continue; }
                 JObject saved = JObject.Parse(File.ReadAllText(file));
-                var goals = saved["goals"].Select(g => (string)g).ToList();
-                var goalInput = saved["goalInputTicks"].Select(t => (long)t).ToList();
+                var goals = saved["goals"].Select(g => (string)g["label"]).ToList();
+                var goalInput = saved["goals"].Select(g => (long)g["input"]).ToList();
                 var inputs = (JArray)saved["inputs"];
                 int reached = goalInput.TakeWhile(t => t >= 0).Count();
                 for (int k = 0; k < reached; k++)
@@ -418,90 +419,62 @@ namespace IGTAPTasMod
 
         string FullTasSolvingGroup { get { return _fullTasProcess == null ? null : "fulltas-" + _fullTasSolveRun; } }
 
-        /// <summary>A box drawn on a Full-TAS run's map: under the rule with `"fulltas": [runs]` those runs share
-        /// (created when none is drawn yet), so every window of their solves that enters it is cut. With a goal label, it goes into
-        /// that rule's optional block "for" the goal: it cuts only while a run heads for that goal; with <paramref name="after"/>
-        /// (a goal label), the block "after" it: it cuts once a run has reached that goal. <paramref name="from"/> ("left+bottom",
-        /// ...) makes it one-way, the block's "from": it cuts only a move into it across those sides. Remove takes it out of all.</summary>
-        int EditFullTasAvoids(string[] runs, float[] b, bool remove, string goal = null, string after = null, string from = null, int? only = null)
+        /// <summary>
+        /// A box drawn on a Full-TAS run's map, into the run definitions (runs/&lt;run&gt;.json; the engine's FullTasPaths reads them):
+        /// with <paramref name="goal"/> (a goal's id) that goal's "avoid", cut only while the run heads for it; with
+        /// <paramref name="after"/> its "avoidAfter", cut once the run has reached it; else each run's run-wide "avoid".
+        /// <paramref name="from"/> ("left+bottom", ...) makes it one-way: it cuts only a move into it across those sides. A box joins
+        /// the block of its sides there (made when none is). Remove takes it out of every block of the runs, dropping emptied ones.
+        /// </summary>
+        int EditFullTasAvoids(List<FullTasRunDef> runs, float[] b, bool remove, string goal = null, string after = null, string from = null)
         {
             float[] wanted = NormalizedBox(b);
-            Func<JToken, bool> same = SameBox(wanted);
-            return EditForcedPaths(paths =>
+            bool Same(float[] box) => box.Length == 4 && Enumerable.Range(0, 4).All(i => Math.Abs(box[i] - wanted[i]) < .5f);
+            int changed = 0;
+            if (remove)
             {
-                List<JObject> rules = paths.OfType<JObject>().Where(r => r["fulltas"] is JArray).ToList();
-                int changed = 0;
-                if (remove)
+                foreach (FullTasRunDef run in runs)
                 {
-                    foreach (JObject rule in rules.Where(r => r["fulltas"].Any(n => runs.Contains((string)n))))
+                    int was = changed;
+                    List<FullTasAvoidBlock> Clean(List<FullTasAvoidBlock> blocks)
                     {
-                        if (rule["avoid"] is JArray avoid)
-                            foreach (JToken hit in avoid.Where(same).ToList()) { hit.Remove(); changed++; }
-                        if (rule["optional"] is JArray optional)
-                            foreach (JObject block in optional.OfType<JObject>().Where(o => o["avoid"] is JArray).ToList())
-                            {
-                                var boxes = (JArray)block["avoid"];
-                                foreach (JToken hit in boxes.Where(same).ToList()) { hit.Remove(); changed++; }
-                                if (boxes.Count == 0) block.Remove();
-                            }
-                        bool empty(string key) => !(rule[key] is JArray list && list.Count > 0);
-                        if (empty("avoid") && empty("via") && empty("optional")) rule.Remove();
+                        if (blocks == null) return null;
+                        foreach (FullTasAvoidBlock block in blocks) changed += block.boxes.RemoveAll(Same);
+                        blocks.RemoveAll(block => block.boxes.Count == 0);
+                        return blocks.Count == 0 ? null : blocks;
                     }
+                    run.avoid = Clean(run.avoid);
+                    foreach (FullTasRunGoal g in run.goals) { g.avoid = Clean(g.avoid); g.avoidAfter = Clean(g.avoidAfter); }
+                    if (changed > was) SaveFullTasRun(run);
                 }
-                else
+            }
+            else
+            {
+                foreach (FullTasRunDef run in goal != null || after != null ? runs.Take(1) : runs)
                 {
-                    JObject rule = rules.FirstOrDefault(r => (bool?)r["drawn"] == true
-                        && r["fulltas"].Select(n => (string)n).OrderBy(n => n, StringComparer.Ordinal).SequenceEqual(runs));
-                    if (rule == null)
-                    {
-                        rule = new JObject { ["fulltas"] = new JArray(runs), ["note"] = "Drawn on the Full-TAS map.", ["drawn"] = true, ["avoid"] = new JArray() };
-                        paths.Add(rule);
-                    }
-                    var avoid = (JArray)rule["avoid"];
-                    if (goal != null || after != null || from != null || only != null)
-                    {
-                        if (!(rule["optional"] is JArray optional)) rule["optional"] = optional = new JArray();
-                        JObject block = optional.OfType<JObject>().FirstOrDefault(o => (string)o["for"] == goal && (string)o["after"] == after
-                            && (string)o["from"] == from && (int?)o["forGoal"] == only && o["offFor"] == null && o["avoid"] is JArray);
-                        if (block == null)
-                        {
-                            string name = (only != null ? "goal " + only : goal != null ? "for " + goal : after != null ? "after " + after : "always") + (from != null ? " from " + from : "");
-                            block = new JObject { ["name"] = name, ["note"] = "Drawn on the Full-TAS map: cuts "
-                                + (only != null ? "only while the run heads for goal " + only : goal != null ? "only while a run heads for " + goal
-                                    : after != null ? "once a run has reached " + after : "for every goal")
-                                + (from != null ? ", only a move into it across its " + from + " side" : "") + "." };
-                            if (only != null) block["forGoal"] = only;
-                            if (goal != null) block["for"] = goal;
-                            if (after != null) block["after"] = after;
-                            if (from != null) block["from"] = from;
-                            block["avoid"] = new JArray();
-                            optional.Add(block);
-                        }
-                        avoid = (JArray)block["avoid"];
-                    }
-                    if (!avoid.Any(same)) { avoid.Add(new JArray(wanted)); changed++; }
+                    FullTasRunGoal on = (goal ?? after) is string id ? run.goals[FullTasGoalAt(run, id)] : null;
+                    List<FullTasAvoidBlock> blocks = on == null ? run.avoid ?? (run.avoid = new List<FullTasAvoidBlock>())
+                        : goal != null ? on.avoid ?? (on.avoid = new List<FullTasAvoidBlock>()) : on.avoidAfter ?? (on.avoidAfter = new List<FullTasAvoidBlock>());
+                    FullTasAvoidBlock block = blocks.FirstOrDefault(x => x.from == from && x.offFor == null);
+                    if (block == null) blocks.Add(block = new FullTasAvoidBlock { from = from, note = "Drawn on the Full-TAS map." });
+                    if (block.boxes.Any(Same)) continue;
+                    block.boxes.Add(wanted);
+                    changed++;
+                    SaveFullTasRun(run);
                 }
-                return changed;
-            });
+            }
+            _fullTasAvoids.Clear();
+            return changed;
         }
 
+        /// <summary>A run's run-wide avoid boxes (the overlay draws them), from its definition.</summary>
         List<float[]> FullTasAvoids(string run)
         {
-            JObject root = ForcedPaths();
-            if (root != _fullTasAvoidsOf)
-            {
-                _fullTasAvoidsOf = root;
-                _fullTasAvoids.Clear();
-                if (root != null)
-                    foreach (JObject rule in ((JArray)root["paths"]).OfType<JObject>())
-                        if (rule["fulltas"] is JArray runs && rule["avoid"] is JArray avoid)
-                            foreach (string name in runs.Select(r => (string)r))
-                            {
-                                if (!_fullTasAvoids.TryGetValue(name, out List<float[]> list)) _fullTasAvoids[name] = list = new List<float[]>();
-                                list.AddRange(avoid.OfType<JArray>().Where(b => b.Count == 4).Select(b => b.Select(v => (float)v).ToArray()));
-                            }
-            }
-            return _fullTasAvoids.TryGetValue(run, out List<float[]> boxes) ? boxes : NoAvoids;
+            if (_fullTasAvoids.TryGetValue(run, out List<float[]> boxes)) return boxes;
+            FullTasRunDef def = _fullTasRuns?.Find(r => string.Equals(r.name, run, StringComparison.OrdinalIgnoreCase));
+            boxes = def?.avoid == null ? NoAvoids : def.avoid.SelectMany(block => block.boxes).Where(box => box.Length == 4).ToList();
+            _fullTasAvoids[run] = boxes;
+            return boxes;
         }
     }
 }

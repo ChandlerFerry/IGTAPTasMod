@@ -110,7 +110,7 @@ namespace IGTAP.EngineSim.Cli
             string[] goals = null;
             using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(routePath), new JsonDocumentOptions { MaxDepth = 256 }))
                 if (doc.RootElement.TryGetProperty("goals", out JsonElement g) && g.ValueKind == JsonValueKind.Array)
-                    goals = g.EnumerateArray().Select(e => e.GetString()).ToArray();
+                    goals = g.EnumerateArray().Select(FullTas.LabelOf).ToArray();
             List<InputTick> inputs = Plan.ReadRoute(routePath);
             if (!header.TryGetProperty("fulltas", out JsonElement fulltas)) return (header, null, inputs);
             string[] labels = fulltas.GetProperty("goals").EnumerateArray().Select(e => e.GetProperty("label").GetString()).ToArray();

@@ -143,7 +143,7 @@ namespace IGTAPTasMod
                     if (!(body["goals"] is JArray goals)) throw new InvalidOperationException("goals: an array of goal tokens.");
                     FullTasRunDef run = SetFullTasGoals(Text(body, "name"), goals.Select(g => g.Type == JTokenType.Null ? "" : g.ToString()),
                         body["start"] == null ? null : body["start"].Type == JTokenType.Null ? "" : body["start"].ToString());
-                    return new { ok = true, name = run.name, start = run.start, goals = run.goals };
+                    return new { ok = true, name = run.name, start = run.start, goals = run.goals.Select(g => new { g.id, label = g.goal }) };
                 }
                 case "/api/fulltas/capture":
                 {
@@ -163,21 +163,20 @@ namespace IGTAPTasMod
                         StartFullTasPlayback(run, best, null, Number(body, "fromTick", 0));
                         return new { ok = true };
                     }
-                    // "stretch": a stretch's best (its goal from 1): the run's best up to the stretch, then the stretch's inputs, from a few
+                    // "stretch": a stretch's best (its goal's id): the run's best up to the stretch, then the stretch's inputs, from a few
                     // seconds before it (turbo before, 1x from there), stopping at its goal.
-                    int stretch = Number(body, "stretch", 0);
-                    if (stretch > 0)
+                    string stretchId = Text(body, "stretch");
+                    if (stretchId.Length > 0)
                     {
-                        string file = Path.Combine(EngineSimDir, "fulltas", run.name + ".stretch-" + stretch + ".json");
-                        if (!File.Exists(file)) throw new InvalidOperationException("No stretch best for goal " + (stretch - 1) + " of " + run.name + " yet: Improve this stretch first.");
-                        JObject s = JObject.Parse(File.ReadAllText(file));
-                        if (s["prefixLength"] == null) throw new InvalidOperationException("That stretch best predates playback: Improve the stretch again to save it anew.");
+                        int stretch = FullTasGoalAt(run, stretchId) + 1;
+                        JObject s = FullTasStretchBests(run.name)[stretchId] as JObject
+                            ?? throw new InvalidOperationException("No stretch best for " + run.goals[stretch - 1].goal + " (goal " + (stretch - 1) + ") of " + run.name + " yet: Improve this stretch first.");
                         List<SolverTick> route = ToTicks(FullTasPlayableRoute(run).steps);
                         int prefix = (int)s["prefixLength"];
                         if (prefix > route.Count) throw new InvalidOperationException("The run's best is shorter than the stretch's start: the stretch was found on another best.");
                         List<SolverTick> ticks = route.Take(prefix).Concat(s["inputs"].ToObject<List<SolverTick>>()).ToList();
                         long from = Math.Max(0, (long)s["startTick"] - 150);
-                        StartFullTasPlayback(run, new MacroDefinition { name = "fulltas/" + run.name + " stretch to goal " + (stretch - 1) + " (" + ((long)s["bestTick"] - (long)s["startTick"]) + " ticks)",
+                        StartFullTasPlayback(run, new MacroDefinition { name = "fulltas/" + run.name + " stretch to " + run.goals[stretch - 1].goal + " (" + ((long)s["bestTick"] - (long)s["startTick"]) + " ticks)",
                             steps = ToSteps(ticks) }, stretch, (int)from);
                         return new { ok = true };
                     }
@@ -233,57 +232,38 @@ namespace IGTAPTasMod
                     float[] b = box.Select(v => (float)v).ToArray();
                     List<FullTasRunDef> defs = (body["runs"] is JArray list ? list.Select(r => (string)r) : new[] { Text(body, "name") })
                         .Select(FindFullTasRun).GroupBy(r => r.name).Select(g => g.First()).ToList();
-                    string[] runs = defs.Select(r => r.name).OrderBy(r => r, StringComparer.Ordinal).ToArray();
-                    if (runs.Length == 0) throw new InvalidOperationException("runs: the Full-TAS runs the box is for.");
-                    // A goal label, or its number as the studio shows it (from 0): the first run's label there.
-                    string Goal(string key)
-                    {
-                        string goal = Text(body, key).Trim();
-                        if (int.TryParse(goal, out int number))
-                            goal = number >= 0 && number < defs[0].goals.Count ? defs[0].goals[number]
-                                : throw new InvalidOperationException($"{key}: {defs[0].name} has goals 0 to {defs[0].goals.Count - 1}, not {number}.");
-                        if (goal.Length > 0 && defs.FirstOrDefault(r => !r.goals.Contains(goal)) is FullTasRunDef missing)
-                            throw new InvalidOperationException($"{key}: {missing.name} has no goal {goal}.");
-                        return goal.Length > 0 ? goal : null;
-                    }
-                    // "goal": the box cuts only while a run heads for that goal (forced-paths.json's block "for"); "after": once a run
-                    // has reached it (the block's "after", which the engine finds at the label's last place in the run).
-                    string forGoal = Goal("goal"), after = Goal("after");
-                    if (forGoal != null && after != null) throw new InvalidOperationException("goal or after, not both.");
-                    if (after != null && int.TryParse(Text(body, "after").Trim(), out int at) && defs[0].goals.LastIndexOf(after) != at)
-                        throw new InvalidOperationException($"after: goal {at}'s label {after} comes again at goal {defs[0].goals.LastIndexOf(after)}, where the box would start instead.");
+                    if (defs.Count == 0) throw new InvalidOperationException("runs: the Full-TAS runs the box is for.");
+                    // "goal": the box cuts only while the run heads for that goal (its id: the goal's "avoid"); "after": once the run has
+                    // reached it (the goal's "avoidAfter"). A goal is one run's: a box for several runs is run-wide.
+                    string goal = Text(body, "goal").Trim(), after = Text(body, "after").Trim();
+                    if (goal.Length > 0 && after.Length > 0) throw new InvalidOperationException("goal or after, not both.");
+                    if ((goal.Length > 0 || after.Length > 0) && defs.Count != 1) throw new InvalidOperationException("goal, after: one run's goal (its id).");
+                    if (goal.Length > 0) FullTasGoalAt(defs[0], goal);
+                    if (after.Length > 0) FullTasGoalAt(defs[0], after);
                     // "from": the sides ("left+bottom") the box cuts a move into it across (the block's "from"); none: any tick inside.
                     string from = Text(body, "from").Trim();
                     if (from.Split('+').Any(s => s.Length > 0 && !FullTasGoal.SideNames.Contains(s)))
                         throw new InvalidOperationException($"from: sides {string.Join(", ", FullTasGoal.SideNames)} joined with +, not {from}.");
-                    // "stretch": the box cuts while one run heads for that one goal (its number from 0; the block's "forGoal"), not
-                    // every goal with its label.
-                    if (body["stretch"] != null && body["stretch"].Type == JTokenType.Integer)
-                    {
-                        int only = (int)body["stretch"];
-                        if (runs.Length != 1) throw new InvalidOperationException("stretch: one run's goal (its number is that run's).");
-                        if (only < 0 || only >= defs[0].goals.Count) throw new InvalidOperationException($"stretch: {defs[0].name} has goals 0 to {defs[0].goals.Count - 1}, not {only}.");
-                        return new { ok = true, changed = EditFullTasAvoids(runs, b, Truthy(body, "remove"), null, null, from.Length > 0 ? from : null, only) };
-                    }
-                    return new { ok = true, changed = EditFullTasAvoids(runs, b, Truthy(body, "remove"), forGoal, after, from.Length > 0 ? from : null) };
+                    return new { ok = true, changed = EditFullTasAvoids(defs, b, Truthy(body, "remove"), goal.Length > 0 ? goal : null, after.Length > 0 ? after : null,
+                        from.Length > 0 ? from : null) };
                 }
                 case "/api/fulltas/move-goal":
                 {
                     FullTasRunDef run = FindFullTasRun(Text(body, "name"));
-                    int index = Number(body, "index", -1);
+                    int index = FullTasGoalAt(run, Text(body, "goal"));
                     string label = Text(body, "label");
-                    if (index < 0 || index >= run.goals.Count) throw new InvalidOperationException("index: goal " + (index + 1) + " is not one of " + run.name + "'s " + run.goals.Count + " goals.");
-                    if (run.goals[index] != label)
-                        throw new InvalidOperationException("Goal " + (index + 1) + " of " + run.name + " is " + run.goals[index] + " now, not " + label + ": redraw the map.");
+                    if (run.goals[index].goal != label)
+                        throw new InvalidOperationException("Goal " + index + " of " + run.name + " is " + run.goals[index].goal + " now, not " + label + ": redraw the map.");
                     string[] parts = label.Substring(3).Split(',');
                     if (!label.StartsWith("at:", StringComparison.Ordinal) || parts.Length < 4) throw new InvalidOperationException("Goal " + (index + 1) + " (" + label + ") is not an area goal.");
                     parts[0] = Math.Round(FloatNumber(body, "x", 0f), 1).ToString(CultureInfo.InvariantCulture);
                     parts[1] = Math.Round(FloatNumber(body, "y", 0f), 1).ToString(CultureInfo.InvariantCulture);
-                    var goals = run.goals.ToList();
+                    List<string> goals = run.Labels;
                     goals[index] = "at:" + string.Join(",", parts);
-                    FullTasRunDef moved = SetFullTasGoals(run.name, goals, null);
-                    FullTasLog("Moved " + run.name + " goal " + (index + 1) + " from " + label + " to " + moved.goals[index]);
-                    return new { ok = true, index, from = label, to = moved.goals[index] };
+                    // Moved in place: the same goal, its id (and its avoid boxes) kept.
+                    FullTasRunDef moved = SetFullTasGoals(run.name, goals, null, run.Ids);
+                    FullTasLog("Moved " + run.name + " goal " + index + " from " + label + " to " + moved.goals[index].goal);
+                    return new { ok = true, goal = moved.goals[index].id, from = label, to = moved.goals[index].goal };
                 }
                 case "/api/fulltas/difficulty":
                     return StartFullTasDifficulty(body);
@@ -296,15 +276,17 @@ namespace IGTAPTasMod
                         request.StatusCode = 404;
                         return new { ok = false, error = "No trace for " + run.name + " yet: capture its start or improve it once first." };
                     }
-                    // "stretch": one goal's stretch alone (its number from 0): the best's path to it from the goal before, its avoid boxes.
-                    int stretch = body["stretch"] != null && body["stretch"].Type == JTokenType.Integer ? (int)body["stretch"] : -1;
-                    string output = Path.Combine(EngineSimDir, "map-fulltas-" + run.name + (stretch >= 0 ? "-goal" + stretch : "") + ".json");
+                    // "stretch": one goal's stretch alone (its id): the best's path to it from the goal before, its avoid boxes.
+                    string stretch = Text(body, "stretch");
+                    if (stretch.Length > 0) FullTasGoalAt(run, stretch);
+                    string output = Path.Combine(EngineSimDir, "map-fulltas-" + run.name + (stretch.Length > 0 ? "-" + stretch : "") + ".json");
                     if (MapInFlight(output, body)) return RunEngineSimMap(request, null, output, true);
                     // The run's goals as they are now: the trace holds the goals it was captured with, older after a goals edit.
                     string goalsFile = Path.Combine(EngineSimDir, "map-fulltas-" + run.name + ".goals.json");
-                    File.WriteAllText(goalsFile, JsonConvert.SerializeObject(ResolveFullTasGoals(run).Select(g => g.label)));
+                    ResolveFullTasGoals(run);
+                    File.WriteAllText(goalsFile, JsonConvert.SerializeObject(new { goals = run.goals.Select(g => new { g.id, g.goal }) }));
                     return RunEngineSimMap(request, "map " + Quote(trace) + " --goals " + Quote(goalsFile) + " --out " + Quote(output)
-                        + (stretch >= 0 ? " --stretch " + stretch.ToString(CultureInfo.InvariantCulture) : ""), output, true);
+                        + (stretch.Length > 0 ? " --stretch " + stretch : ""), output, true);
                 }
             }
             request.StatusCode = 404;
@@ -313,24 +295,34 @@ namespace IGTAPTasMod
 
         /// <summary>The runs (studio static state): goals, bests (the record and each class's), offline bests, closest attempts,
         /// human candidates; they change with files and routes.</summary>
-        /// <summary>A run's stretch bests (fulltas/&lt;run&gt;.stretch-&lt;N&gt;.json, the engine's --stretch): each stretch's goal (from 0), its best
-        /// ticks and the run's.</summary>
+        /// <summary>A run's stretch bests (fulltas/&lt;run&gt;.stretches.json, the engine's --stretch): { goal id: { label, prefix,
+        /// prefixLength, startTick, runTick, bestTick, inputs, ... } }; empty with none or unreadable.</summary>
+        JObject FullTasStretchBests(string run)
+        {
+            string file = Path.Combine(EngineSimDir, "fulltas", run + ".stretches.json");
+            try { return File.Exists(file) ? JObject.Parse(File.ReadAllText(file)) : new JObject(); }
+            catch (Exception ex) when (ex is IOException || ex is JsonException) { return new JObject(); }
+        }
+
+        /// <summary>The run's stretch bests for the studio: each stretch's goal (its id), its best ticks and the run's.</summary>
         object[] FullTasStretches(string run)
         {
-            string dir = Path.Combine(EngineSimDir, "fulltas");
-            if (!Directory.Exists(dir)) return Array.Empty<object>();
             var list = new List<object>();
-            foreach (string file in Directory.GetFiles(dir, run + ".stretch-*.json"))
-            {
-                try
+            foreach (JProperty p in FullTasStretchBests(run).Properties())
+                if (p.Value is JObject s && s["startTick"] != null)
                 {
-                    JObject s = JObject.Parse(File.ReadAllText(file));
                     long start = (long)s["startTick"];
-                    list.Add(new { goal = (int)s["goal"], bestTicks = (long)s["bestTick"] - start, runTicks = (long)s["runTick"] - start });
+                    list.Add(new { goal = p.Name, bestTicks = (long)s["bestTick"] - start, runTicks = (long)s["runTick"] - start });
                 }
-                catch (Exception) { }
-            }
             return list.ToArray();
+        }
+
+        /// <summary>A goal's place in the run's list by its id (a request's); throws for an id the run doesn't have.</summary>
+        static int FullTasGoalAt(FullTasRunDef run, string id)
+        {
+            int i = run.goals.FindIndex(g => g.id == id);
+            if (i < 0) throw new InvalidOperationException(run.name + " has no goal with id \"" + id + "\".");
+            return i;
         }
 
         object[] BuildFullTasRunsWebState()
@@ -340,7 +332,7 @@ namespace IGTAPTasMod
                 string error = null;
                 string[] labels;
                 try { labels = ResolveFullTasGoals(r).Select(goal => goal.label).ToArray(); }
-                catch (Exception ex) { error = ex.Message; labels = (r.goals ?? new List<string>()).ToArray(); }
+                catch (Exception ex) { error = ex.Message; labels = r.Labels.ToArray(); }
                 MacroDefinition best = FullTasBestRoute(r.name);
                 Match g = best == null ? null : MatchCategoryRoute(best.name);
                 List<FullTasSplit> splits;
@@ -348,8 +340,10 @@ namespace IGTAPTasMod
                 splits = splits.TakeWhile((s, i) => i < labels.Length && s.label == labels[i]).ToList();
                 FullTasOffline offline = FullTasOfflineBest(r.name, labels);
                 FullTasClosest closest = FullTasClosestAttempt(r.name, labels);
-                return new { name = r.name, start = r.start, savestate = r.savestate, section = r.Section, goals = labels, error = error,
-                    breaker = FullTasBreakerGoal(labels),
+                int? breaker = FullTasBreakerGoal(labels);
+                return new { name = r.name, start = r.start, savestate = r.savestate, section = r.Section,
+                    goals = r.goals.Select((goal, i) => new { goal.id, label = i < labels.Length ? labels[i] : goal.goal }), error = error,
+                    breaker = breaker == null ? null : r.goals[breaker.Value].id,
                     best = best == null ? null : new { routeId = best.id, name = best.name, time = float.Parse(g.Groups["time"].Value, CultureInfo.InvariantCulture), splits = splits },
                     offline = offline == null ? null : new { reached = offline.reached, time = offline.time, splits = offline.splits, segments = offline.segments, idles = offline.idles, waits = offline.waits },
                     closest = closest == null ? null : new { reached = closest.reached, next = closest.next, distance = closest.distance, ticks = closest.inputs.Count },
@@ -375,7 +369,7 @@ namespace IGTAPTasMod
                 difficulty = _fullTasDifficultyRun == null ? null : new { name = _fullTasDifficultyRun, running = _fullTasDifficultyProcess != null,
                     done = _fullTasDifficultyDone, of = _fullTasDifficultyOf },
                 playing = play == null ? null : new { name = play.run.name, started = play.started, reached = play.tracker.Next, of = play.tracker.Goals.Length,
-                    next = play.tracker.Current?.label, droppedFrames = _droppedFrames, tick = _engine.PhysicsTicks, idles = play.idles?.Count ?? 0, idle = CurrentIdle(play)?.goal,
+                    next = play.tracker.Current?.label, droppedFrames = _droppedFrames, tick = _engine.PhysicsTicks, idles = play.idles?.Count ?? 0, idle = CurrentIdle(play)?.id,
                     cash = globalStats.currencyLookup != null && globalStats.currencyLookup.TryGetValue(globalStats.Currencies.Cash, out double cash) ? cash : 0.0 } };
         }
 

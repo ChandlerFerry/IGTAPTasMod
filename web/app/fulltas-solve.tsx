@@ -3,7 +3,19 @@
 import { useState, type ReactNode } from "react";
 
 /** A goal's arrival: its physics tick (game frames) and the frames the run had stood still in by then (dash freezes, pauses). */
-export type FullTasSplit = { label: string; ticks: number; held?: number };
+export type FullTasSplit = { id?: string; label: string; ticks: number; held?: number };
+/** A run's goal: its id (what requests and the engine name it by) and its label. */
+export type FullTasGoal = { id: string; label: string };
+/** A buy goal's wait for its Cash at its box (enginesim FullTasIdles.cs): [physics tick, held frames] at arrival and when the Cash is there. */
+export type FullTasIdle = { id: string; label: string; arrive: [number, number]; afford: [number, number] };
+/** An event's goal list ([{id, goal}]: a session's, an adopted edit's) as the run's goals. */
+const eventGoals = (list: unknown) => Array.isArray(list) ? (list as { id: string; goal: string }[]).map(g => ({ id: g.id, label: g.goal })) : undefined;
+/** A goal range by its first and last goals' ids (an event's), as goal numbers from 1 in `ids`; null when either is missing. */
+const idSpan = (span: unknown, ids: string[]): [number, number] | null => {
+  if (!Array.isArray(span) || span.length !== 2) return null;
+  const a = ids.indexOf(String(span[0])), b = ids.indexOf(String(span[1]));
+  return a < 0 || b < 0 ? null : [a + 1, b + 1];
+};
 /** Live time: what the run takes at 1x, ticks at 0.02 s plus held frames at 1/280 s (MacroEngine.LiveSeconds). */
 export const liveSeconds = (s: FullTasSplit) => s.ticks * 0.02 + (s.held ?? 0) / 280;
 export type RouteJson = { progress: number; time: number | null; splits: number[] };
@@ -178,7 +190,7 @@ function recordItem(e: FullTasEvent, goals: string[]): Item {
  *  checks and notes. */
 const AUTO_QUIET: Record<string, true> = { session: true, phase: true, window: true, found: true, windowEnd: true, dropped: true };
 
-function feed(events: FullTasEvent[], goals: string[]): Item[] {
+function feed(events: FullTasEvent[], goals: string[], ids: string[]): Item[] {
   const windows = new Map<number, Window>();
   const items: Item[] = [];
   const auto = events.some(e => e.type === "autoStart");
@@ -204,7 +216,7 @@ function feed(events: FullTasEvent[], goals: string[]): Item[] {
         break;
       }
       case "autoStart": {
-        const best = e.best as RouteJson, focus = e.focus as [number, number] | undefined;
+        const best = e.best as RouteJson, focus = idSpan(e.focus, ids);
         const whole = !focus || (focus[0] <= 1 && focus[1] >= goals.length);
         push({ key: `a${e.at}`, at: e.at, tone: "info", title: `Improve started from ${s2(best.time)}`,
           detail: `${whole ? "Whole run" : `Only ${goalSpan(focus)}`} · ${num(e.threads)} threads` });
@@ -297,17 +309,20 @@ function CopyButton({ text, label = "Copy details" }: { text: () => string; labe
   return <button className="secondary copyButton" onClick={async () => { await copy(text()); setDone(true); window.setTimeout(() => setDone(false), 2000); }}>{done ? "Copied" : label}</button>;
 }
 
-export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay, canPlay, picked, onPick }: { solve: FullTasSolveState; goals: string[]; route: RouteJson | null;
+export function FullTasSolvePanel({ solve, goals: runGoals, route, run, lastResult, onPlay, canPlay, picked, onPick }: { solve: FullTasSolveState; goals: FullTasGoal[]; route: RouteJson | null;
   run: string; lastResult?: FullTasOutcome | null; onPlay: () => void; canPlay: boolean; picked: [number, number] | null; onPick: (goal: number, shift: boolean) => void }) {
   const [dismissed, setDismissed] = useState<string>("");
   const allEvents = solve.events ?? [];
-  const sessionGoals = allEvents.find(e => e.type === "session")?.goals as string[] | undefined;
-  const outdated = !solve.running && sessionGoals != null && (sessionGoals.length !== goals.length || sessionGoals.some((g, i) => g !== goals[i]));
+  const goals = runGoals.map(g => g.label);
+  const sessionList = eventGoals(allEvents.find(e => e.type === "session")?.goals);
+  const sessionGoals = sessionList?.map(g => g.label);
+  const outdated = !solve.running && sessionList != null && (sessionList.length !== runGoals.length || sessionList.some((g, i) => g.id !== runGoals[i].id || g.label !== runGoals[i].label));
   const events = outdated ? [] : allEvents;
   const session = events.find(e => e.type === "session");
   // Improve (--auto) announces the best it really starts from: the saved record it was handed can beat the session's.
   const autoStart = events.find(e => e.type === "autoStart");
   const labels = outdated ? goals : sessionGoals ?? goals;
+  const ids = (outdated ? runGoals : sessionList ?? runGoals).map(g => g.id);
   const of = labels.length;
   const records = events.filter(e => e.type === "record");
   const start = (autoStart ?? session)?.best as RouteJson | undefined ?? route ?? undefined;
@@ -319,9 +334,9 @@ export function FullTasSolvePanel({ solve, goals, route, run, lastResult, onPlay
   const windowOpen = !autoStart && solve.running && window_ != null && !events.some(e => e.type === "windowEnd" && e.id === window_.id);
   const progress = solve.progress && window_ && solve.progress.id === window_.id ? solve.progress : null;
   const phase = [...events].reverse().find(e => e.type === "phase")?.phase;
-  const items = feed(events, labels);
+  const items = feed(events, labels, ids);
   const lastRecord = records[records.length - 1];
-  const runFocus = autoStart?.focus as [number, number] | undefined;
+  const runFocus = idSpan(autoStart?.focus, ids);
   const focused = runFocus != null && (runFocus[0] > 1 || runFocus[1] < of) ? runFocus : null;
   const pull = autoStart && solve.running ? lastPull(solve.log) : null;
   const improved = new Set<number>();

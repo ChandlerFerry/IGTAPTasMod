@@ -99,7 +99,7 @@ namespace IGTAP.EngineSim.Cli
                 if (p != avoidFor && p < _goals)
                 {
                     avoidFor = p;
-                    field.SetAvoid(Solve.FullTasPaths(_name, new[] { _labels[p] }, _labels).Avoid);
+                    field.SetAvoid(Avoids(new[] { _labels[p] }).Avoid);
                 }
                 WorldPos wp = _eval.PlayerWorld;
                 CapturePos c = _eval.PlayerAtCapture;
@@ -399,8 +399,8 @@ namespace IGTAP.EngineSim.Cli
             JsonElement header = Solve.ReadHeader(_trace);
             if (!header.TryGetProperty("fulltas", out JsonElement fulltas)) throw new InvalidOperationException("Not a Full-TAS trace (no \"fulltas\" header): " + _trace);
             _name = fulltas.GetProperty("name").GetString();
-            _labels = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
-            _goals = _labels.Length;
+            GoalList headerGoals = HeaderGoals(fulltas);
+            SetGoals(headerGoals.Labels, headerGoals.Ids);
             _eval = Solve.Creator(_trace, header)();
             _eval.StrictBuys = true;
             _origin = _eval.Start;
@@ -480,7 +480,7 @@ namespace IGTAP.EngineSim.Cli
             Log($"auto: waste audit of {Describe(_best)} in {CpuSeconds() - c0:0.0} CPU s: {_wasteFound.Count} findings ({string.Join(", ", _wasteFound.GroupBy(x => x.Kind).Select(g => $"{g.Key} {g.Count()}"))}), "
                 + $"stake {_wasteAt.Values.Sum():0} ticks at {_wasteAt.Count} goals");
             foreach (Waste x in _wasteFound.Where(x => x.Stake > 0).OrderByDescending(x => x.Stake).Take(12)) Log("auto: waste " + WasteLine(x, _labels[x.Goal - 1]));
-            AutoWrite(new { type = "waste", best = _best.LiveSeconds, findings = _wasteFound.Select(x => new { kind = x.Kind, goal = x.Goal, limit = x.Limit, from = x.From, to = x.To, raw = x.Raw, stake = x.Stake, what = x.What }) });
+            AutoWrite(new { type = "waste", best = _best.LiveSeconds, findings = _wasteFound.Select(x => new { kind = x.Kind, goal = IdOf(x.Goal), limit = IdOf(x.Limit), from = x.From, to = x.To, raw = x.Raw, stake = x.Stake, what = x.What }) });
         }
 
         /// <summary>The audit's ticks at stake at goal k (0: none).</summary>

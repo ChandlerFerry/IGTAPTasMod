@@ -524,7 +524,7 @@ namespace IGTAP.EngineSim.Cli
         void HarvestRoute(string file)
         {
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(file));
-            string[] labels = doc.RootElement.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
+            string[] labels = doc.RootElement.GetProperty("goals").EnumerateArray().Select(LabelOf).ToArray();
             List<InputTick> inputs = Solve.ReadInputs(doc.RootElement);
             var byLabel = new Dictionary<string, FullTasGoal>();
             foreach (FullTasGoal g in _runGoals.Goals) byLabel.TryAdd(g.label, g);
@@ -610,8 +610,7 @@ namespace IGTAP.EngineSim.Cli
             using JsonDocument doc = JsonDocument.Parse(text);
             JsonElement root = doc.RootElement;
             List<InputTick> inputs = Solve.ReadInputs(root);
-            string[] solved = root.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
-            long[] goalInput = root.TryGetProperty("goalInputTicks", out JsonElement ticks) ? ticks.EnumerateArray().Select(t => t.GetInt64()).ToArray() : new long[0];
+            (string[] solved, long[] goalInput) = SolvedGoals(root);
             int keep = CurrentInputs(solved, goalInput, labels, inputs.Count);
             if (keep < inputs.Count) inputs.RemoveRange(keep, inputs.Count - keep);
             if (inputs.Count == 0) return;
@@ -649,14 +648,10 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>A goal given as its 1-based number or its label (first occurrence); fallback when empty.</summary>
+        /// <summary>A goal given by its id or its label (first occurrence), as its 1-based number; fallback when empty.</summary>
         int GoalNumber(string arg, int fallback)
         {
-            if (arg == "") return fallback;
-            if (int.TryParse(arg, out int n)) return n;
-            int i = Array.IndexOf(_labels, arg);
-            if (i < 0) throw new ArgumentException("no goal " + arg);
-            return i + 1;
+            return arg == "" ? fallback : GoalNamed(arg) + 1;
         }
 
         /// <summary>The physics tick of each goal the last <see cref="Play"/> that played reached (realize measures a lap's walk to its gate).</summary>

@@ -400,7 +400,7 @@ namespace IGTAPTasMod
                         {
                             string name = (string)reader.Value;
                             reader.Read();
-                            if (name == "class" || name == "score" || name == "live" || name == "goals" || name == "goalInputTicks" || name == "glitches" || name == "difficulty")
+                            if (name == "class" || name == "score" || name == "live" || name == "goals" || name == "glitches" || name == "difficulty")
                                 o[name] = JToken.ReadFrom(reader);
                             else reader.Skip();
                         }
@@ -410,8 +410,8 @@ namespace IGTAPTasMod
                     return new FullTasCandidate { cls = (string)o["class"], score = (float?)o["score"], time = live >= 0f ? live : (float?)null,
                         major = (int?)glitches["major"] ?? 0, nmg = (int?)glitches["nmg"] ?? 0, graceTicks = (int?)glitches["graceTicks"] ?? 0,
                         spans = glitches["spans"]?.ToObject<List<FullTasSpan>>() ?? new List<FullTasSpan>(),
-                        goals = o["goals"]?.ToObject<List<string>>() ?? new List<string>(),
-                        reached = (o["goalInputTicks"] as JArray ?? new JArray()).TakeWhile(t => (long)t >= 0).Count(),
+                        goals = (o["goals"] as JArray ?? new JArray()).Select(g => (string)g["label"]).ToList(),
+                        reached = (o["goals"] as JArray ?? new JArray()).TakeWhile(g => (long)g["input"] >= 0).Count(),
                         difficulty = (o["difficulty"] as JObject)?.ToObject<FullTasDifficulty>() };
                 });
             }

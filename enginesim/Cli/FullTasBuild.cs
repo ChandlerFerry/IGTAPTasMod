@@ -434,7 +434,7 @@ namespace IGTAP.EngineSim.Cli
                 }
                 return sim;
             };
-            string archiveFile = Path.Combine(_archiveDir, "piece-" + (target.Goal + 1) + "-" + ArchiveHash(prefix, goals.Select(g => g.label)).ToString("x16") + ".json");
+            string archiveFile = Path.Combine(_archiveDir, "piece-" + ArchiveHash(prefix, goals.Select(g => g.label)).ToString("x16") + ".json");
             for (int attempt = 1; attempt <= 2 && !TimeUp; attempt++)
             {
                 // Unattended, a second search takes the step's budget left on from where the first got nearest (Zip%'s buytree16: its 16
@@ -766,15 +766,15 @@ namespace IGTAP.EngineSim.Cli
                 if (NewGoal(label) is not { } made) return $"{buy}: short of Cash, and no lap goal {label} in this world";
                 _insertedGoals[label] = (0, made.header, made.goal);
             }
-            string[] from = _labels;
+            GoalList from = Goals;
             _goalLineage.Add(from);
-            SwitchGoals(from.Take(goal).Append(label).Concat(from.Skip(goal)).ToArray());
+            SwitchGoals(from.Labels.Take(goal).Append(label).Concat(from.Labels.Skip(goal)).ToArray());
             FullTasTracker.State s = at.Goal;
             long[] Grown(long[] a) => a.Take(goal).Append(-1L).Concat(a.Skip(goal)).ToArray();
             at = at.WithGoal(new FullTasTracker.State { Next = s.Next, Banked = s.Banked, InputTicks = Grown(s.InputTicks), PhysicsTicks = Grown(s.PhysicsTicks),
                 HeldFrames = Grown(s.HeldFrames) });
             _best = Evaluate(_best.Inputs);
-            Log($"build: {buy} is short of Cash: {label} put in before it ({from.Length} -> {_goals} goals)");
+            Log($"build: {buy} is short of Cash: {label} put in before it ({from.Labels.Length} -> {_goals} goals)");
             return null;
         }
 

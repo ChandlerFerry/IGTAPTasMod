@@ -242,7 +242,7 @@ namespace IGTAP.EngineSim.Cli
                 + $"{run.Goals.Count} goals ({run.Goals.Count(g => g.kind == FullTasGoal.At)} waypoints): {string.Join(" ", run.Goals.Select(g => g.label))}; "
                 + $"avoid {(rules.Avoid.Count == 0 ? "-" : string.Join(", ", rules.Avoid))}");
 
-            var fullArgs = FullArgs(synthetic, args, run.Goals.Count);
+            var fullArgs = FullArgs(synthetic, args, run.Goals);
             // The other finishing candidates are the loop's references (combine splices their leading goal runs into the best).
             foreach (var p in finishing.Where(p => p.inputs != best.inputs))
             {
@@ -553,13 +553,22 @@ namespace IGTAP.EngineSim.Cli
         /// arrival ticks that are its time only once that goal is in a window's prefix, so its windows start after that goal
         /// unless --focus says otherwise (combine, which compares the run's time, still splices anywhere).
         /// </summary>
-        static List<string> FullArgs(string synthetic, string[] args, int goals)
+        static List<string> FullArgs(string synthetic, string[] args, List<FullTasGoal> goals)
         {
+            // The run's goal ids, as WriteCourseTrace gives them; a course --focus a-b (waypoints from 1) becomes theirs.
+            string[] ids = IGTAPTasMod.FullTasGoalIds.Derived(goals.Select(g => g.label).ToList());
+            string Span(int a, int b) => ids[Math.Clamp(a, 1, ids.Length) - 1] + "-" + ids[Math.Clamp(b, 1, ids.Length) - 1];
             var fullArgs = new List<string> { synthetic, "--auto", "--no-submit" };
-            if (TimerGoal > 0 && !args.Contains("--focus")) fullArgs.AddRange(new[] { "--focus", (TimerGoal + 1) + "-" + goals });
+            if (TimerGoal > 0 && !args.Contains("--focus")) fullArgs.AddRange(new[] { "--focus", Span(TimerGoal + 1, goals.Count) });
             for (int i = 1; i < args.Length; i++)
             {
                 string a = args[i];
+                if (a == "--focus" && i + 1 < args.Length)
+                {
+                    string[] ends = args[++i].Split('-');
+                    fullArgs.AddRange(new[] { "--focus", Span(int.Parse(ends[0], CultureInfo.InvariantCulture), int.Parse(ends[^1], CultureInfo.InvariantCulture)) });
+                    continue;
+                }
                 if (a == "--seed" || a == "--walk-seed" || a == "--waypoints-out" || a == "--log-json" || a == "--optional" || a == "--no-optional" || a == "--via" || a == "--avoid"
                     || a == "--stall-minutes" || a == "--rng" || a == "--tech-cache" || a == "--tech-dir" || a == "--guide-weight" || a == "--path-name"
                     || a == "--whole-minutes")
@@ -582,6 +591,7 @@ namespace IGTAP.EngineSim.Cli
         {
             // The run ends at its goals (GoalHeader drops a bonus's reward box and a transition's next gate: its last goal is the finish).
             var head = JsonNode.Parse(CourseWaypoints.GoalHeader(run.Header).GetRawText()).AsObject();
+            string[] ids = IGTAPTasMod.FullTasGoalIds.Derived((goals ?? run.Goals).Select(g => g.label).ToList());
             foreach (string key in new[] { "ticks", "result", "inputs" }) head.Remove(key);
             // A course's run: the simulation starts it from the category's canonical start (CourseStart.cs) as a course trace's.
             head["courseAuto"] = true;
@@ -591,9 +601,9 @@ namespace IGTAP.EngineSim.Cli
                 ["name"] = name ?? run.Name,
                 // A category route may walk through any box (bonus5's 3.56 brushes GLOBALWatt): no buy is a stray one here.
                 ["buys"] = "loose",
-                ["goals"] = new JsonArray((goals ?? run.Goals).Select(g =>
+                ["goals"] = new JsonArray((goals ?? run.Goals).Select((g, i) =>
                 {
-                    var o = new JsonObject { ["label"] = g.label, ["kind"] = g.kind };
+                    var o = new JsonObject { ["id"] = ids[i], ["label"] = g.label, ["kind"] = g.kind };
                     if (g.IsCourse) o["course"] = g.course;
                     if (g.kind == FullTasGoal.At) o["rect"] = new JsonArray(g.x, g.y, g.w, g.h);
                     if (g.from != 0) o["from"] = g.from;

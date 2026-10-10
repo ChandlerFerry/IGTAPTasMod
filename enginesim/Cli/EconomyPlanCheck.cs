@@ -120,6 +120,15 @@ namespace IGTAP.EngineSim.Cli
                 Console.WriteLine((ok ? "PASS " : "FAIL ") + what);
                 if (!ok) fails++;
             }
+            // Goal ids across a goals edit: shared goals keep theirs (a repeated label by its place), new goals get new unique ones.
+            {
+                string[] ids = { "a", "b", "c", "d", "e" }, was = { "buy:x", "record:1", "buy:x", "buy:y", "at:0,0,1,1" };
+                string[] now = IGTAPTasMod.FullTasGoalIds.Carry(ids, was, new[] { "buy:x", "buy:x", "record:2", "buy:y", "at:0,0,1,1" });
+                Check(now[0] == "a" && now[1] == "c" && now[3] == "d" && now[4] == "e" && !ids.Contains(now[2])
+                    && IGTAPTasMod.FullTasGoalIds.Invalid(now, 5) == null, "goal ids: kept goals keep theirs, a new goal gets a new one");
+                Check(IGTAPTasMod.FullTasGoalIds.Invalid(new[] { "a", "a" }, 2) != null && IGTAPTasMod.FullTasGoalIds.Invalid(new[] { "a" }, 2) != null,
+                    "goal ids: a repeated or missing id is refused");
+            }
             // Tree transitions by the run's tree level (README ### Rules 21): a level's group, Courses 7/9's level 0 at 1-2, none past.
             Check(MoveTable.TreeLevelPlays(0, 7, 0) && MoveTable.TreeLevelPlays(0, 7, 2) && MoveTable.TreeLevelPlays(3, 9, 3)
                 && !MoveTable.TreeLevelPlays(0, 7, 3) && !MoveTable.TreeLevelPlays(3, 7, 7) && !MoveTable.TreeLevelPlays(0, 6, 1)

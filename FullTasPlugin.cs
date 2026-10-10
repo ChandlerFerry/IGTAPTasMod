@@ -49,11 +49,37 @@ namespace IGTAPTasMod
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public FullTasHumanWeights human;
             /// <summary>The studio's run list section: "complete", "wip" or "test". Unset: "test" with a savestate, else "wip".</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string section;
-            public List<string> goals = new List<string>();
+            /// <summary>The run-wide avoid boxes: every search of the run is cut where it enters one (the engine's FullTasPaths).</summary>
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public List<FullTasAvoidBlock> avoid;
+            public List<FullTasRunGoal> goals = new List<FullTasRunGoal>();
+            [JsonIgnore] public List<string> Labels { get { return goals.Select(g => g.goal).ToList(); } }
+            [JsonIgnore] public List<string> Ids { get { return goals.Select(g => g.id).ToList(); } }
             [JsonIgnore] public string Section { get { return section ?? (savestate != null ? "test" : "wip"); } }
             [JsonIgnore] public bool LooseBuys { get { return buys == "loose"; } }
             [JsonIgnore] public bool Vman { get { return start == VmanStart; } }
             [JsonIgnore] public FullTasHumanWeights Human { get { return human ?? new FullTasHumanWeights(); } }
+        }
+
+        /// <summary>A run's goal (docs/fulltas.md "Goal ids"): its id, which everything outside the list names it by and which a goals
+        /// edit keeps; its label; and its own avoid boxes, which go wherever the goal goes.</summary>
+        public sealed class FullTasRunGoal
+        {
+            public string id;
+            public string goal;
+            /// <summary>Cut only while the run heads for this goal (from the goal before it until it is reached).</summary>
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public List<FullTasAvoidBlock> avoid;
+            /// <summary>Cut once the run has reached this goal.</summary>
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public List<FullTasAvoidBlock> avoidAfter;
+        }
+
+        /// <summary>Avoid boxes (world corners [x0, y0, x1, y1]) that cut alike: "from" the sides a move must cross into one ("left+bottom";
+        /// unset: any tick inside), a run-wide block's "offFor" the goals (ids) while heading for which it is off.</summary>
+        public sealed class FullTasAvoidBlock
+        {
+            public List<float[]> boxes = new List<float[]>();
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string from;
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public List<string> offFor;
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string note;
         }
 
         /// <summary>
@@ -92,6 +118,8 @@ namespace IGTAPTasMod
         /// freezes, pauses); together its live time (MacroEngine.LiveSeconds).</summary>
         public sealed class FullTasSplit
         {
+            /// <summary>The goal's id in its run.</summary>
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string id;
             public string label;
             public long ticks;
             public long held;
@@ -330,18 +358,25 @@ namespace IGTAPTasMod
             }
         }
 
+        /// <summary>An offline best (the engine's fulltas/&lt;run&gt;.json): its goals, each where the route reached it, and its inputs.</summary>
         sealed class FullTasOfflineFile
         {
-            public List<string> goals;
-            public List<long> ticks, held, inputTicks;
+            public List<FullTasSavedGoal> goals;
             public List<SolverTick> inputs;
-            public List<FullTasIdle> idles;
+        }
+        /// <summary>A saved route's goal: its id and label, the input tick, physics tick and held frames it was reached at (-1: not),
+        /// and a buy's idle.</summary>
+        sealed class FullTasSavedGoal
+        {
+            public string id, label;
+            public long input = -1, physics = -1, held = -1;
+            public FullTasIdle idle;
         }
         /// <summary>A buy goal's wait for its Cash, standing at its box (enginesim FullTasIdles.cs): [physics tick, held frames] when
-        /// the player was first at the box and when the Cash was there. Not a goal: goal is the buy's number (1-based).</summary>
+        /// the player was first at the box and when the Cash was there. Not a goal: the buy's own (its id and label).</summary>
         sealed class FullTasIdle
         {
-            public int goal;
+            public string id, label;
             public long[] arrive, afford;
         }
         sealed class FullTasOffline
@@ -361,6 +396,7 @@ namespace IGTAPTasMod
 
         sealed class FullTasClosest
         {
+            /// <summary>The goal labels it was searched under.</summary>
             public List<string> goals;
             public int reached;
             public string next;
@@ -385,8 +421,8 @@ namespace IGTAPTasMod
         static readonly Regex FullTasSeedRoute = new Regex(@"^([A-Za-z0-9]+)_");
         static readonly Regex FullTasSeedTransition = new Regex(@"^(bonus\d+|\d+|tree\d+)to(bonus\d+|\d+)$", RegexOptions.IgnoreCase);
 
+        /// <summary>Each run's run-wide avoid boxes (<see cref="FullTasAvoids"/>), cleared when a run definition is read or edited.</summary>
         readonly Dictionary<string, List<float[]>> _fullTasAvoids = new Dictionary<string, List<float[]>>(StringComparer.OrdinalIgnoreCase);
-        JObject _fullTasAvoidsOf;
         static readonly List<float[]> NoAvoids = new List<float[]>();
 
         static readonly Regex CompactScalarArrays = new Regex(@"\[((?:\s*(?:-?[\d.eE+-]+|""[^""\[\]{},]*"")\s*,)*\s*(?:-?[\d.eE+-]+|""[^""\[\]{},]*"")\s*)\]");

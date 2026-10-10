@@ -163,17 +163,17 @@ namespace IGTAP.EngineSim.Cli
         /// before any focused window ran.</summary>
         bool InIdleReach(int k) { return k >= _focusFrom && k <= (long)_focusTo + IdleReach; }
 
-        /// <summary>--focus a-b (or a): the goals --auto and --reset-study work on; every goal without it. Whether it was given.</summary>
+        /// <summary>--focus ID-ID (or ID): the goals --auto and --reset-study work on, by their ids; every goal without it. Whether it was given.</summary>
         bool ReadFocus(string[] args)
         {
             string focus = Solve.Option(args, "--focus", (string)null);
             _focusTo = _goals;
             if (focus == null) return false;
             string[] ends = focus.Split('-');
-            if (ends.Length > 2 || !int.TryParse(ends[0], out _focusFrom) || !int.TryParse(ends[ends.Length - 1], out _focusTo)
-                || _focusFrom < 1 || _focusTo < _focusFrom || _focusFrom > _goals)
-                throw new ArgumentException($"--focus {focus}: a goal range a-b (or one goal a) within 1-{_goals}");
-            _focusTo = Math.Min(_focusTo, _goals);
+            if (ends.Length > 2) throw new ArgumentException($"--focus {focus}: a goal id, or two (first-last)");
+            _focusFrom = GoalAt(ends[0]) + 1;
+            _focusTo = GoalAt(ends[ends.Length - 1]) + 1;
+            if (_focusTo < _focusFrom) throw new ArgumentException($"--focus {focus}: goal {ends[^1]} comes before {ends[0]}");
             return true;
         }
 
@@ -258,12 +258,12 @@ namespace IGTAP.EngineSim.Cli
             _hopeless = Hopeless;
             _repairBegin = RepairBegin;
             _collect = (r, how) => Collect(r, $"{how} #{_pullNo}");
-            // --pull lever@k: one pull of a lever at goal k with the loop's budgets (a new best is merged, repaired and written); then stops.
+            // --pull lever@ID: one pull of a lever at that goal with the loop's budgets (a new best is merged, repaired and written); then stops.
             string pull = Solve.Option(args, "--pull", (string)null);
             if (pull != null)
             {
                 string[] arm = pull.Split('@');
-                Log($"auto: pull {pull}: {Pull(new Arm { Lever = arm[0], Goal = int.Parse(arm[1]) }, _windowMinutes)}; best {Describe(_best)}");
+                Log($"auto: pull {pull}: {Pull(new Arm { Lever = arm[0], Goal = GoalAt(arm[1]) + 1 }, _windowMinutes)}; best {Describe(_best)}");
                 return;
             }
             _autoCpu0 = CpuSeconds();
@@ -272,7 +272,7 @@ namespace IGTAP.EngineSim.Cli
             ReadHistory();
             AutoWrite(new { type = "autoStart", run = _name, threads = _threads, parallel = _parallel, minutes = _minutes, windowMinutes = _windowMinutes, best = RouteJson(_best),
                 parts = _parts.OrderBy(p => Array.IndexOf(AllParts, p)).ToArray(), refs = Solve.Args(args, "--ref").ToArray(),
-                focus = new[] { _focusFrom, _focusTo } });
+                focus = new[] { IdOf(Math.Max(1, _focusFrom)), IdOf(_focusTo) } });
             if (focused) Log($"auto: focus goals {_focusFrom}-{_focusTo}: the scheduler and every lever pull windows starting there; combine splices anywhere");
             Log($"auto: parts {(_parts.Count == 0 ? "none" : string.Join(",", AllParts.Where(Part)))}");
             if (Part("lib"))
@@ -732,7 +732,7 @@ namespace IGTAP.EngineSim.Cli
             // spot) gained in every recorded run in this folder.
             var spot = Spot(arm.Lever, arm.Goal);
             var record = LeverRecord(arm.Lever, spot.misses);
-            Emit(new { type = "pullStart", pull = _pullNo, lever = arm.Lever, goal = arm.Goal, label = _labels[arm.Goal - 1], budget = Math.Round(budget, 2),
+            Emit(new { type = "pullStart", pull = _pullNo, lever = arm.Lever, goal = IdOf(arm.Goal), label = _labels[arm.Goal - 1], budget = Math.Round(budget, 2),
                 expected = Math.Round(_model[arm.Goal - 1].Expected, 1), pulls = spot.pulls, cpu = Math.Round(spot.cpu), gained = spot.gain,
                 misses = spot.misses, history = new { pulls = record.pulls, gains = record.gains } });
         }
@@ -796,14 +796,14 @@ namespace IGTAP.EngineSim.Cli
                     return s;
                 };
                 var labels = _labels.Skip(k - 1).Take(limit - k + 1).ToList();
-                string archiveFile = _focused ? Path.Combine(_archiveDir, k + "-" + limit + "-" + ArchiveHash(prefix, labels).ToString("x16") + (_noResets ? "-noreset" : "") + ".json") : null;
+                string archiveFile = _focused ? Path.Combine(_archiveDir, "window-" + ArchiveHash(prefix, _ids.Skip(k - 1).Take(limit - k + 1)).ToString("x16") + (_noResets ? "-noreset" : "") + ".json") : null;
                 OfflineSolver.Memory memory = archiveFile == null || _fresh ? null : Solve.LoadMemory(archiveFile);
                 var windowSeeds = new List<List<InputTick>> { best.Inputs.Skip(prefixLength).ToList() };
                 windowSeeds.AddRange(MacroSeeds(best, k, prefixLength));
                 // --parts waste and grafts (FullTasAutoWaste.cs): the undone findings at goal k as seeds; the tech grafts.
                 windowSeeds.AddRange(WasteSeeds(best, k, prefixLength));
                 var solver = new OfflineSolver(create, WindowCaps(_runGoals.Goals.Skip(k - 1).Take(limit - k + 1)), windowSeeds,
-                    memory, Solve.FullTasPaths(_name, labels, _labels), VisitCell, WindowGrafts(k, limit));
+                    memory, Avoids(labels), VisitCell, WindowGrafts(k, limit));
                 if (memory != null) Log($"auto: window {k}-{limit} resumes {Path.GetFileName(archiveFile)}: {memory.Sources.Sum(m => m.Cells.Count)} cells, {memory.Runs} runs before");
                 TuneGrafts(solver, k, limit, prefixLength);
                 solver.Penalty = WindowPenalty(k - 1);
@@ -899,7 +899,7 @@ namespace IGTAP.EngineSim.Cli
             if (arm.Pull != null) SafePart(() => { _sched.Report(arm.Pull, gain, cpu, gain > 0 ? 0 : arm.Lead); return 0; }, "scheduler Report");
             _order.Add($"{arm.Lever}@{arm.Goal}" + (gain > 0 ? $"(-{gain})" : ""));
             Log($"auto: pull {pull} {arm.Lever} goal {arm.Goal}: {outcome}; {(gain > 0 ? $"GAINED {gain} ticks" : "no gain")} in {cpu:0} CPU s, {wall:0} s; best {Describe(_best)}");
-            AutoWrite(new { type = "pull", pull, lever = arm.Lever, goal = arm.Goal, label = _labels[arm.Goal - 1], budget, outcome, gain, cpu = Math.Round(cpu, 1),
+            AutoWrite(new { type = "pull", pull, lever = arm.Lever, goal = IdOf(arm.Goal), label = _labels[arm.Goal - 1], budget, outcome, gain, cpu = Math.Round(cpu, 1),
                 wall = Math.Round((_clock.Elapsed - _autoWall0).TotalSeconds, 1), best = _best.LiveSeconds, score });
             if (gain > 0)
             {
@@ -907,7 +907,7 @@ namespace IGTAP.EngineSim.Cli
                 var changed = Enumerable.Range(1, _goals).Where(k => Split(before.GoalPhysics, k) != Split(_best.GoalPhysics, k))
                     .Select(k => $"{k}:{Split(before.GoalPhysics, k)}->{Split(_best.GoalPhysics, k)}");
                 Log($"auto: record {Describe(before)} -> {Describe(_best)} at {(_clock.Elapsed - _autoWall0).TotalSeconds:0} s by {arm.Lever} at goal {arm.Goal} (-{gain} ticks); splits changed: {string.Join(" ", changed)}");
-                AutoWrite(new { type = "record", lever = arm.Lever, goal = arm.Goal, gain, time = _best.LiveSeconds, ticks = _best.Last,
+                AutoWrite(new { type = "record", lever = arm.Lever, goal = IdOf(arm.Goal), gain, time = _best.LiveSeconds, ticks = _best.Last,
                     wall = Math.Round((_clock.Elapsed - _autoWall0).TotalSeconds, 1), cpu = Math.Round(CpuSeconds() - _autoCpu0, 1),
                     splits = Enumerable.Range(1, _goals).Select(k => Split(_best.GoalPhysics, k)).ToArray() });
             }
@@ -1298,7 +1298,7 @@ namespace IGTAP.EngineSim.Cli
             HashSet<AutoRef> keep = Useful();
             Solve.WriteShared(_refsFile, JsonSerializer.Serialize(new
             {
-                name = _name, goals = _labels,
+                name = _name, goals = _ids,
                 refs = _refs.Where(keep.Contains).Select(r => new { how = r.How, progress = r.Progress, goalPhysicsTicks = r.GoalPhysics, inputs = r.Inputs.Select(t => t.ToJson()) }),
             }));
         }
@@ -1307,7 +1307,7 @@ namespace IGTAP.EngineSim.Cli
         {
             if (!File.Exists(_refsFile)) return;
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(_refsFile), new JsonDocumentOptions { MaxDepth = 256 });
-            if (!doc.RootElement.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).SequenceEqual(_labels)) return;
+            if (!doc.RootElement.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).SequenceEqual(_ids)) return;
             int n = 0;
             const string Earlier = " (earlier --auto)";
             foreach (JsonElement r in doc.RootElement.GetProperty("refs").EnumerateArray())
@@ -1377,7 +1377,7 @@ namespace IGTAP.EngineSim.Cli
                 if (field != null && p != avoidFor && p < _goals)
                 {
                     avoidFor = p;
-                    field.SetAvoid(Solve.FullTasPaths(_name, new[] { _labels[p] }, _labels).Avoid);
+                    field.SetAvoid(Avoids(new[] { _labels[p] }).Avoid);
                 }
                 WorldPos w = _eval.PlayerWorld;
                 CapturePos c = _eval.PlayerAtCapture;
@@ -1729,7 +1729,7 @@ namespace IGTAP.EngineSim.Cli
                 + $"most expected: {string.Join(", ", _model.OrderByDescending(r => r.Expected).Take(6).Select(r => $"{r.K} ({r.Expected:0})"))}");
             Log(b.ToString());
             AutoWrite(new { type = "model", when, best = _best.LiveSeconds, bound = _model.Sum(r => r.Bound),
-                goals = _model.Select(r => new { goal = r.K, label = r.Label, split = r.Split, bound = r.Bound, gap = r.Gap, distance = Math.Round(r.Distance), vtop = Math.Round(r.VTop, 1),
+                goals = _model.Select(r => new { goal = IdOf(r.K), label = r.Label, split = r.Split, bound = r.Bound, gap = r.Gap, distance = Math.Round(r.Distance), vtop = Math.Round(r.VTop, 1),
                     caps = r.Caps, deficit = Math.Round(r.Deficit, 1), economy = r.Economy, slack = r.Slack, target = r.Target, spare = r.Spare == long.MaxValue ? (long?)null : r.Spare, refSplit = r.RefSplit, refArrival = r.RefArrival, expected = Math.Round(r.Expected, 1), slow = r.Worst }) });
         }
 

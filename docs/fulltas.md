@@ -37,8 +37,30 @@ runs are versioned with the code; the studio's goal edits and adopted records wr
 disk (or `fulltas-plan --install`'s, [below](#install-and-stages)) is picked up within a second, never mid-run:
 
 ```json
-{ "name": "main", "goals": ["record:1", "buy:buyreward", "record:1", "buy:buywj", "start:2"] }
+{ "name": "main", "goals": [
+  { "id": "k3f9a2", "goal": "record:1" }, { "id": "p20xq7", "goal": "buy:buyreward" }, { "id": "b7m1zc", "goal": "record:1" },
+  { "id": "w4e8rt", "goal": "buy:buywj", "avoid": [{ "boxes": [[1200, 300, 1400, 520]], "from": "left" }] }, { "id": "c9d2nh", "goal": "start:2" } ] }
 ```
+
+### Goal ids
+
+Each goal has an id (`"id"`: six letters and digits, a letter first, unique in the run), and everything outside the goal
+list names a goal by it, never by its place in the list, which a goals edit moves (`FullTasGoalIds`, `FullTas.cs`): the
+engine's flags (`--stretch ID`, `--focus ID-ID`, `--goal ID`, `map --stretch ID`; `--from`/`--until` take an id or a
+label), the HTTP API (`/api/fulltas/solve {stretch: ID, focus: [ID, ID]}`, `/play {stretch}`, `/map {stretch}`,
+`/avoid {goal, after}`, `/move-goal {goal}`), the engine's events (`stretch`, `pullStart`, `outlook`, `autoStart`'s
+focus), the studio's state (`goals: [{id, label}]`, `breaker`, `stretches[].goal`, the idles), the trace header (each
+goal entry's `id`), a goal's own avoid boxes (below), the stretch bests (`fulltas/<run>.stretches.json`, by id) and the
+`--auto` memory, references and visits. A saved route (an offline best, a candidate, a class's best) keeps one object per
+goal, `{id, label, input, physics, held, idle?}` (where it reached the goal, -1: not, and a buy's wait for its Cash);
+its `goalsFrom` and a closest attempt's `goals` are `[{id, goal}]` lists. Counts stay counts: a route's `reached`, a
+window's `first`/`limit`, the splits.
+
+A goal keeps its id through every edit of the list: the studio's goal edits and a moved goal (the plugin's
+`SetFullTasGoals`), the goals part's and `InsertLap`'s edits and `fulltas-plan --install` (the engine's `SetGoals`), each
+carrying the ids of the goals the old and new lists share (their longest common subsequence of labels) and giving a goal
+it adds a new one. A route of adopted goals carries its ids to the gate, which takes them as the run's. A course solve's
+waypoint goals (made afresh each time) take ids made from their labels (`FullTasGoalIds.Derived`).
 
 | Goal | Reached when |
 |---|---|
@@ -239,21 +261,21 @@ the time goes:
 
 ### Avoids and the map
 
-`enginesim\Cli\forced-paths.json` rules with `"fulltas": ["<run>", ...]` list a run's `avoid` boxes (game-world
-`x0,y0,x1,y1`): every search window of the run cuts a run that enters one, which keeps the search in the corridor
-between area goals. The Full-TAS tab's **Show map** (`POST /api/fulltas/map {name}`) draws where the run's windows
+A run's avoid boxes (game-world `x0,y0,x1,y1`) are its definition's: blocks `{boxes, from?, note?}`, the run-wide ones
+in its `"avoid"` (cut always; one with `"offFor": [ids]` is off while heading for those goals) and a goal's own in its
+`"avoid"` (cut only while the run heads for that goal) and `"avoidAfter"` (cut once it has reached it). A goal's boxes go
+where the goal goes, and with it when an edit drops it (the engine's `Solve.FullTasPaths`). Every search window of the run
+cuts a run that enters one, which keeps the search in the corridor between area goals. The Full-TAS tab's **Show map** (`POST /api/fulltas/map {name}`) draws where the run's windows
 went (`archive\fulltas-<run>.visits.json`, every solve of its current goals), the best so far, the `at:` goals and the
 avoid boxes, with a world-coordinate readout. The map's **Avoid boxes** bar sets when a new box cuts (for every goal,
 only heading for goal N, or from goal N on; a click on a goal's green box while drawing picks N), its open sides (where a
 run may enter it; none: any tick inside is cut) and the runs it's for; then **Draw avoid** and drag boxes, each saved as
-drawn (`POST /api/fulltas/avoid {box: [x0, y0, x1, y1], runs: [...], goal?, after?, from?}`): it goes into the
-`"drawn": true` rule for exactly those runs, or that rule's optional block with the same `for`, `after` and `from`. The
-map draws a one-way box's open sides dashed green and fades the boxes that don't cut at the bar's goal; its list puts
-those that do first. **Remove** under the map (`remove: true`, `name`) takes a box out of every rule of the run and its
-optional blocks, and so out of the other runs sharing that rule. The plugin writes both `enginesim\Cli\forced-paths.json` and the solver's
-copy beside its exe, and a solve rereads the boxes before every window, so a box drawn mid-solve applies from the next
-window on. A hand edit of the source file needs an engine rebuild
-(`dotnet build enginesim\Cli\IGTAP.EngineSim.csproj -c Release`) to reach the solver's copy. Course search maps draw
+drawn (`POST /api/fulltas/avoid {box: [x0, y0, x1, y1], runs: [...], goal?, after?, from?}`, `goal` and `after` a goal's
+id, of one run): it goes into that goal's `avoid` or `avoidAfter`, else each run's run-wide `avoid`, joining the block
+with the same `from`. The map draws a one-way box's open sides dashed green and fades the boxes that don't cut at the
+bar's goal; its list puts those that do first. **Remove** under the map (`remove: true`) takes a box out of every block of
+the run. The engine rereads `runs/<run>.json` whenever it changes, and a solve rereads the boxes before every window, so a
+box drawn mid-solve applies from the next window on. `enginesim\Cli\forced-paths.json` holds the courses' rules only. Course search maps draw
 their rules the same way (**Draw avoid**, `POST /api/enginesim/avoid {course, capabilities, box, name?, on?, remove?}`;
 a named box becomes a pickable optional block of the rule covering the map's category).
 
@@ -502,7 +524,7 @@ route in turbo from the run's start with the usual buffer audit, checks the unlo
 far, and refuses a quick restart on two ticks in a row (a real button is released in between). Splits per goal are kept
 in `fulltas-splits.json`, each with its `ticks` and `held` frames. The offline search keeps ticks as its clock (splits,
 rests, windows, the library) and compares whole runs by live time (`Route.Live`), so what it submits is what the gate
-scores; its run file carries `goalHeldFrames` beside `goalPhysicsTicks`. A record named when a run's time was its
+scores; its run file carries each goal's `held` beside its `physics`. A record named when a run's time was its
 ticks alone is renamed to its live time on its next trace (`RememberBestSplits`).
 
 ### Idles
@@ -573,7 +595,7 @@ inputs past the last unchanged goal the same way.
   saves it when it holds up, as every solve's did. `threads` 0 or missing (the site sends none) is cores − 4, leaving the
   game room to run and judge.
 - **Improve selected goals**: click a goal in the goals table (or a goal in the panel's bar, or a segment's bar for its
-  goals), shift-click to extend, then **Improve goals a–b** (`focus: [a, b]`, `--focus a-b`): the search's windows all
+  goals), shift-click to extend, then **Improve goals a–b** (`focus: [first id, last id]`, `--focus ID-ID`): the search's windows all
   start in goals a..b, while combine still splices known faster stretches anywhere. The pick shows as **Improve
   selected: goals a–b** with its time in the record; **Clear selection** (or clicking the same pick again) goes back to
   the whole run.
@@ -602,7 +624,7 @@ inputs past the last unchanged goal the same way.
 - **Goals in game** (`POST /api/settings/fulltas-goals {name}`, `""` turns it off; settings `fullTasGoalsRun`, `/api/state`
   `fullTas.goalsOverlay`) draws the run's `at:` and `reward:` rects in game, numbered, where the goal check tests them
   (`courses.json`'s frame plus the current origin), independent of the main overlay. While that run plays, reached
-  goals are green and the next one yellow. The run's avoid boxes (forced-paths.json, the solver's copy) are drawn in
+  goals are green and the next one yellow. The run's avoid boxes (its definition's) are drawn in
   red, and a box added or removed on the map shows up within a second.
 - **Show map** draws the run's `at:` goals as they are in `runs/<run>.json` now (the plugin passes them to `map` as
   `--goals`; the trace's own goals are the ones it was captured with). **Move goals** there: drag a green goal box, or
@@ -817,7 +839,7 @@ human classes' score adds 5 s a frame-perfect input and 20 s a back-to-back pair
 ## Offline search
 
 ```powershell
-& $exe fulltas $traces\fulltas-main.json --minutes 60 --window-minutes 1 --window 2   # --unsolved, --no-submit, --fresh, --threads N, --goal N, --piece-minutes P, --seed FILE, --seed-list FILE, --reach-polish S
+& $exe fulltas $traces\fulltas-main.json --minutes 60 --window-minutes 1 --window 2   # --unsolved, --no-submit, --fresh, --threads N, --goal ID, --piece-minutes P, --seed FILE, --seed-list FILE, --reach-polish S
 ```
 
 - The best is `<traces>\fulltas\<run>.json` (or the trace's inputs when better or when there is none).
@@ -858,7 +880,7 @@ human classes' score adds 5 s a frame-perfect input and 20 s a back-to-back pair
   the best reaches, skipping windows made only of loop goals: each worker replays the best up to goal i-1
   (`Simulation.Advance`), starts there (`SetStart`) and searches for the fastest way through goal i+W-1. The first
   goal's split is kept only as part of the whole: a later goal reached sooner is what counts, so a lap that ends slower
-  but sets up the next one wins. `--goal N` polishes its window only, loop goals or not. A window scores its way at its
+  but sets up the next one wins. `--goal ID` polishes its window only (the one ending at that goal), loop goals or not. A window scores its way at its
   last goal's tick: a strict run ends 12 ticks after that goal (`Simulation.StrictFinishTicks`), and windows used to
   compare that end with the goal's tick, so a way had to be 13 ticks faster before it counted.
 - A window's best is spliced into the run with the old tail after it; when the old tail no longer reaches the rest (the
@@ -1000,7 +1022,7 @@ route. A best that misses goals is improved through the goals it reaches, as if 
 the goals part off). It is the same solve (windows, merge, repair, reset study, the transplant's splices, polish, plan), driven
 by a measured gap. The studio's **Improve** runs it ([Studio](#studio-full-tas-tab)).
 
-**Focus.** `--focus a-b` (or `--focus a`) keeps the search on goals a..b: the scheduler's regions are those goals' labels
+**Focus.** `--focus ID-ID` (or `--focus ID`; the first and last goals' ids) keeps the search on those goals and the ones between: the scheduler's regions are those goals' labels
 (numbered within the focus, the loop adds `a − 1` back), the first-round probes and the bandit's arms are goals a..b only,
 so every pull's window starts there (a window of goal b still runs to goal b+1). Combine splices only runs of goals that
 reach into the focus, and revive only known routes whose lead ends at goal a−1..b: elsewhere their repairs searched goals

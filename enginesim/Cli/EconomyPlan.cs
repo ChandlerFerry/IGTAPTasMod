@@ -1202,7 +1202,7 @@ namespace IGTAP.EngineSim.Cli
                 // realize waits where the step before left the player, so each install's new goals get --auto's idle pass.
                 if (run._installed && run._installedTo > run._installedFrom)
                 {
-                    string[] idle = { args[0], "--auto", "--place-idles", "--no-submit", "--focus", $"{Math.Max(1, run._installedFrom)}-{run._installedTo}" };
+                    string[] idle = { args[0], "--auto", "--place-idles", "--no-submit", "--focus", $"{run._ids[Math.Max(1, run._installedFrom) - 1]}-{run._ids[run._installedTo - 1]}" };
                     Console.WriteLine($"unattended: the idles of goals {Math.Max(1, run._installedFrom)}-{run._installedTo} (--place-idles)");
                     try { new FullTas(idle).Search(); }
                     catch (Exception ex) when (ex is not OutOfMemoryException) { Console.WriteLine("unattended: idles not placed: " + ex.Message); }
@@ -1297,14 +1297,14 @@ namespace IGTAP.EngineSim.Cli
             finally { _stepTicks = long.MaxValue; }
             if (played == null)
             {
-                _stageReport = new { target = goal.label, from = kept, stop = $"{goal.label} doesn't play from goal {kept} ({_whyNot})" };
+                _stageReport = new { target = goal.label, from = IdOf(kept), stop = $"{goal.label} doesn't play from goal {kept} ({_whyNot})" };
                 Log("unattended: " + goal.label + " doesn't play: " + _whyNot);
                 return 3;
             }
             Route run = Evaluate(played.Value.inputs);
             if (run.Progress > _best.Progress) Install(run, all.Select(g => g.label).ToArray());
             else Log($"install: the area goal's route reaches goal {run.Progress}, not past the best's {_best.Progress}");
-            _stageReport = new { target = goal.label, from = kept, built = played.Value.tick, installed = _installed, reaches = run.Progress };
+            _stageReport = new { target = goal.label, from = IdOf(kept), built = played.Value.tick, installed = _installed, reaches = run.Progress };
             return 0;
         }
 
@@ -1454,13 +1454,17 @@ namespace IGTAP.EngineSim.Cli
             var byLabel = new Dictionary<string, JsonNode>();
             foreach (JsonElement g in Solve.ReadHeader(_trace).GetProperty("fulltas").GetProperty("goals").EnumerateArray())
                 byLabel.TryAdd(g.GetProperty("label").GetString(), JsonNode.Parse(g.GetRawText()));
-            var entries = new JsonArray(goals.Select(l => byLabel.TryGetValue(l, out JsonNode e) ? e.DeepClone()
-                : NewGoal(l)?.header ?? throw new InvalidOperationException($"--install: no header entry for goal {l}; capture the trace again")).ToArray());
+            SetGoals(goals);
+            var entries = new JsonArray(goals.Select((l, i) =>
+            {
+                JsonNode e = byLabel.TryGetValue(l, out JsonNode h) ? h.DeepClone()
+                    : NewGoal(l)?.header?.DeepClone() ?? throw new InvalidOperationException($"--install: no header entry for goal {l}; capture the trace again");
+                e["id"] = _ids[i];
+                return e;
+            }).ToArray());
             SpliceHeaderGoals(_trace, entries.ToJsonString(compact));
-            _labels = goals;
-            _goals = goals.Length;
             JsonObject run = JsonNode.Parse(File.ReadAllText(def)).AsObject();
-            run["goals"] = new JsonArray(goals.Select(g => (JsonNode)g).ToArray());
+            run["goals"] = RunDefGoals(run["goals"]?.AsArray());
             Solve.WriteShared(def, run.ToJsonString(indented) + "\n");
         }
 
@@ -1523,7 +1527,7 @@ namespace IGTAP.EngineSim.Cli
             int nextBuy = Array.FindIndex(_labels, kept, l => l.StartsWith("buy:", StringComparison.Ordinal));
             if (stage && nextBuy < 0)
             {
-                _stageReport = new { from = kept, stop = $"no buy goal after goal {kept}: the reach solve's" };
+                _stageReport = new { from = IdOf(kept), stop = $"no buy goal after goal {kept}: the reach solve's" };
                 return NotEconomy;
             }
             string[] targets = (stage ? _labels[nextBuy] : Solve.Option(args, "--target", "buy:buyds")).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -1559,8 +1563,7 @@ namespace IGTAP.EngineSim.Cli
                 var goals = _runGoals.Goals.ToList();
                 goals.RemoveAt(kept - 1);
                 _runGoals = _runGoals.For(goals.ToArray());
-                _labels = goals.Select(g => g.label).ToArray();
-                _goals = _labels.Length;
+                SetGoals(goals.Select(g => g.label).ToArray());
                 kept--;
                 nextBuy = Array.FindIndex(_labels, kept, l => l.StartsWith("buy:", StringComparison.Ordinal));
                 targets = new[] { _labels[nextBuy] };
@@ -1570,7 +1573,7 @@ namespace IGTAP.EngineSim.Cli
             SimSnapshot at = GoalState(kept).at;
             if (stage && Affordable(at, GoalOf(targets[^1])?.boxes ?? Array.Empty<string>()) == true)
             {
-                _stageReport = new { target = targets[^1], from = kept, stop = $"{targets[^1]} is paid for at goal {kept}: the reach solve's" };
+                _stageReport = new { target = targets[^1], from = IdOf(kept), stop = $"{targets[^1]} is paid for at goal {kept}: the reach solve's" };
                 return NotEconomy;
             }
             if (stage && only != null && Enabler(kept, at, targets[^1], GoalOf, only, moves) is var (enabler, why) && enabler != null)
@@ -1581,8 +1584,7 @@ namespace IGTAP.EngineSim.Cli
                 var goals = _runGoals.Goals.ToList();
                 goals.Insert(nextBuy, GoalOf(enabler));
                 _runGoals = _runGoals.For(goals.ToArray());
-                _labels = goals.Select(g => g.label).ToArray();
-                _goals = _labels.Length;
+                SetGoals(goals.Select(g => g.label).ToArray());
                 targets = new[] { enabler };
                 _eval.Restore(at);
             }
@@ -1673,7 +1675,7 @@ namespace IGTAP.EngineSim.Cli
             Realization z0 = realized.FirstOrDefault().z;
             _stageReport = new
             {
-                target = targetLabel, from = kept, fromTick = startTick, planTicks = z0?.PlanTicks, built = z0 != null && z0.Done ? z0.Tick : -1,
+                target = targetLabel, from = IdOf(kept), fromTick = startTick, planTicks = z0?.PlanTicks, built = z0 != null && z0.Done ? z0.Tick : -1,
                 installed = _installed, reaches = written.run?.Progress, stop = z0?.Why,
                 failed = moves.Failures.Where(f => !failuresBefore.Contains(f)).Select(f => new { f.from, f.to, f.caps, f.tree, f.why }).ToList(),
                 // A stop: every failed move the plan couldn't use (spec section 4), not only this stage's.

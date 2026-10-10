@@ -1254,7 +1254,7 @@ namespace IGTAP.EngineSim.Cli
                 };
                 var seeds = new List<List<InputTick>> { best.Inputs.Skip(PrefixAt(best, first)).ToList(), c.Inputs.Skip(prefixLength).ToList() };
                 if (!ReferenceEquals(follow, best)) seeds.Add(follow.Inputs.Skip(PrefixAt(follow, first)).ToList());
-                OfflineSolver.ForcedPath path = Solve.FullTasPaths(_name, _labels.Skip(first - 1).Take(limit - first + 1).ToList(), _labels);
+                OfflineSolver.ForcedPath path = Avoids(_labels.Skip(first - 1).Take(limit - first + 1));
                 string stray = _strayAvoid ? StrayBox(c.EndReason) : null, avoided = "";
                 if (stray != null)
                 {

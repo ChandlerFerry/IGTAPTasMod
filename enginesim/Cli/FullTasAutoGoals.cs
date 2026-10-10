@@ -38,7 +38,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>The earlier goal lists of this run (oldest first: the trace's), which the current one was derived from by
         /// adopted edits. The run file, the offline bests and the gate submissions carry them (goalsFrom): the game adopts a
         /// route's goals only when its own list is one of them.</summary>
-        readonly List<string[]> _goalLineage = new List<string[]>();
+        readonly List<GoalList> _goalLineage = new List<GoalList>();
         /// <summary>The adopted edit's words while its Commit runs (its record event carries them to the studio's feed).</summary>
         string _goalsEdit;
         Route _goalsFor;
@@ -158,7 +158,7 @@ namespace IGTAP.EngineSim.Cli
                     + (r == null ? "not joined" : whole ? $"whole route {r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s ({r.Last - best.Last:+0;-0} ticks against the best)"
                         : $"the route on stops at goal {r.Progress + 1} of {p.Goals.Length} ({(r.Progress < p.Goals.Length ? p.Goals[r.Progress] : "")}: {r.EndReason})");
                 Log($"auto goals: {what}: {plans}, {verdict}");
-                AutoWrite(new { type = "goalEdit", pull, kind = "plan", text = what, first = kept + 1, last = t + 1, goals = p.Goals.Length,
+                AutoWrite(new { type = "goalEdit", pull, kind = "plan", text = what, from = labels[kept - 1], to = labels[t], goals = p.Goals.Length,
                     plans = p.PlanTicks, built = p.Done ? p.Tick : -1, cap, bestTick, time = whole ? r.LiveSeconds : (double?)null, gain = whole ? best.Last - r.Last : (long?)null, why = p.Why });
                 // Built, but no sooner than the route it would replace: that route stays (realize checks the cap on plans, not builds).
                 if (!p.Done || r == null || through && p.Tick >= cap)
@@ -193,14 +193,14 @@ namespace IGTAP.EngineSim.Cli
             long gain = GainTicks(best);
             _order.Add("goals" + (gain > 0 ? $"(-{gain})" : ""));
             Log($"auto: pull {pull} goals: {outcome}; {(gain > 0 ? $"GAINED {gain} ticks" : "no gain")} in {cpu:0} CPU s, {wall:0} s; best {Describe(_best)}");
-            AutoWrite(new { type = "pull", pull, lever = "goals", goal = win.first, label = "goals", budget = 0, outcome, gain, cpu = Math.Round(cpu, 1),
+            AutoWrite(new { type = "pull", pull, lever = "goals", goal = IdOf(win.first), label = "goals", budget = 0, outcome, gain, cpu = Math.Round(cpu, 1),
                 wall = Math.Round((_clock.Elapsed - _autoWall0).TotalSeconds, 1), best = _best.LiveSeconds, score = double.NaN });
             if (gain > 0)
             {
                 _curve.Add(((_clock.Elapsed - _autoWall0).TotalSeconds, CpuSeconds() - _autoCpu0, _best.Last, "goals", win.first));
-                AutoWrite(new { type = "record", lever = "goals", goal = win.first, gain, time = _best.LiveSeconds, ticks = _best.Last,
+                AutoWrite(new { type = "record", lever = "goals", goal = IdOf(win.first), gain, time = _best.LiveSeconds, ticks = _best.Last,
                     wall = Math.Round((_clock.Elapsed - _autoWall0).TotalSeconds, 1), cpu = Math.Round(CpuSeconds() - _autoCpu0, 1),
-                    splits = Enumerable.Range(1, _goals).Select(k => Split(_best.GoalPhysics, k)).ToArray(), goals = _labels });
+                    splits = Enumerable.Range(1, _goals).Select(k => Split(_best.GoalPhysics, k)).ToArray(), goals = Goals.Json });
             }
             Outlook();
             return adopted;
@@ -493,7 +493,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 Log($"auto stray fit: {e.Text}: bought {box} at goal {p + 1} ({e.Labels[p]}): " + (pick.how == null ? $"none of {options.Count} fits gets past it" : $"{pick.how}, reaches goal {pick.progress} ({pick.why})"));
                 if (_autoLog != null)
-                    AutoWrite(new { type = "strayFit", edit = e.Text, box, goal = p + 1, fit = pick.how, tried = options.Count, reach = pick.how == null ? p : pick.progress, result = pick.why });
+                    AutoWrite(new { type = "strayFit", edit = e.Text, box, goal = e.Labels[p], fit = pick.how, tried = options.Count, reach = pick.how == null ? p : pick.progress, result = pick.why });
             }
             sim.UseGoals(sim.Goals.For(GoalsOf(pick.how == null ? e.Labels : pick.labels)));
             return pick.how == null ? null : (pick.labels, pick.oldOf);
@@ -524,8 +524,8 @@ namespace IGTAP.EngineSim.Cli
                 Log($"auto goals: {e.Text} not adopted: a {Glitches.Key(_class)} solve keeps the run's goals");
                 return false;
             }
-            var saved = (header: AutoHeader(), create: _create, eval: _eval, origin: _origin, tracker: _runGoals, labels: _labels, goals: _goals, best: _best);
-            string[] from = _labels;
+            var saved = (header: AutoHeader(), create: _create, eval: _eval, origin: _origin, tracker: _runGoals, ids: _ids, labels: _labels, goals: _goals, best: _best);
+            GoalList from = Goals;
             SwitchGoals(e.Labels);
             // Commit compares with the best under these goals: the old route's end with its goal ticks where the goals are its.
             Route standIn = StandIn(e, old, false);
@@ -538,13 +538,13 @@ namespace IGTAP.EngineSim.Cli
             if (ReferenceEquals(_best, standIn))
             {
                 _goalLineage.RemoveAt(_goalLineage.Count - 1);
-                (_autoHeader, _create, _eval, _origin, _runGoals, _labels, _goals, _best) = saved;
+                (_autoHeader, _create, _eval, _origin, _runGoals, _ids, _labels, _goals, _best) = saved;
                 RebindEval();
                 Log($"auto goals: {e.Text}: the fresh check didn't keep it; the goals stay");
                 return false;
             }
-            Log($"auto goals: ADOPTED {e.Text}: {from.Length} -> {_goals} goals, {old.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s -> {Describe(_best)}");
-            AutoWrite(new { type = "goals", text = words, from = from.Length, to = _goals, goals = _labels, time = _best.LiveSeconds, gain = old.Last - _best.Last });
+            Log($"auto goals: ADOPTED {e.Text}: {from.Labels.Length} -> {_goals} goals, {old.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s -> {Describe(_best)}");
+            AutoWrite(new { type = "goals", text = words, from = from.Labels.Length, to = _goals, goals = Goals.Json, time = _best.LiveSeconds, gain = old.Last - _best.Last });
             RestartOnGoals();
             return true;
         }
@@ -566,23 +566,23 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>The run's goals become these: the trace's header with this goal list (<see cref="GoalsHeader"/>) makes every
         /// simulation from here on, the loop's own included.</summary>
-        void SwitchGoals(string[] labels)
+        void SwitchGoals(string[] labels, string[] ids = null)
         {
-            JsonElement header = GoalsHeader(AutoHeader(), labels, l => _insertedGoals.TryGetValue(l, out var x) ? x.header : null);
+            ids ??= IGTAPTasMod.FullTasGoalIds.Carry(_ids, _labels, labels);
+            JsonElement header = GoalsHeader(AutoHeader(), labels, l => _insertedGoals.TryGetValue(l, out var x) ? x.header : null, ids);
             _autoHeader = header;
             Func<Simulation> make = Solve.Creator(_trace, header);
             _create = () => { Simulation sim = make(); sim.StrictBuys = true; sim.TickTimed = TickTiming; sim.Engine.HumanClass = Human; return sim; };
             _eval = _create();
             _origin = _eval.Start;
             _runGoals = _eval.Goals;
-            _labels = labels;
-            _goals = labels.Length;
+            SetGoals(labels, ids);
             _focusTo = _goals;
         }
 
         /// <summary>A Full-TAS trace's header with this goal list: each goal's own entry from the header (else
         /// <paramref name="inserted"/>'s, a planned goal's), a grouped buy (buy:a+b) made of its boxes' entries.</summary>
-        internal static JsonElement GoalsHeader(JsonElement header, string[] labels, Func<string, JsonNode> inserted = null)
+        internal static JsonElement GoalsHeader(JsonElement header, string[] labels, Func<string, JsonNode> inserted = null, string[] ids = null)
         {
             JsonNode node = JsonNode.Parse(header.GetRawText());
             JsonArray old = node["fulltas"]["goals"].AsArray();
@@ -599,6 +599,10 @@ namespace IGTAP.EngineSim.Cli
                 first["boxes"] = new JsonArray(parts.SelectMany(p => byLabel["buy:" + p]["boxes"].AsArray().Select(b => (JsonNode)b.GetValue<string>())).ToArray());
                 goals.Add(first);
             }
+            // Each entry its goal's id (a goal's entry comes from the first with its label): without ids, none.
+            for (int i = 0; i < goals.Count; i++)
+                if (ids != null) goals[i]["id"] = ids[i];
+                else goals[i].AsObject().Remove("id");
             node["fulltas"]["goals"] = goals;
             using JsonDocument doc = JsonDocument.Parse(node.ToJsonString(), new JsonDocumentOptions { MaxDepth = 256 });
             return doc.RootElement.Clone();
@@ -643,19 +647,21 @@ namespace IGTAP.EngineSim.Cli
         void ResumeAdoptedGoals()
         {
             if (!File.Exists(_runFile)) return;
-            string[] goals;
-            List<string[]> from;
+            GoalList adopted;
+            List<GoalList> from;
             List<InputTick> inputs;
             using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(_runFile), new JsonDocumentOptions { MaxDepth = 256 }))
             {
                 JsonElement root = doc.RootElement;
                 if (!root.TryGetProperty("goalsFrom", out JsonElement f) || f.ValueKind != JsonValueKind.Array) return;
-                goals = root.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
-                from = f.EnumerateArray().Select(l => l.EnumerateArray().Select(g => g.GetString()).ToArray()).ToList();
+                SavedGoal[] rows = ReadSavedGoals(root);
+                adopted = new GoalList(rows.Select(g => g.Id).ToArray(), rows.Select(g => g.Label).ToArray());
+                from = f.EnumerateArray().Select(ReadGoalList).ToList();
                 inputs = Solve.ReadInputs(root);
             }
-            int mine = from.FindIndex(l => l.SequenceEqual(_labels));
-            if (goals.SequenceEqual(_labels) || mine < 0) return;
+            string[] goals = adopted.Labels;
+            int mine = from.FindIndex(l => l.Same(Goals));
+            if (adopted.Same(Goals) || mine < 0) return;
             // A reward or single buy goal the trace doesn't have came from a planned list (the loop adopts those past
             // EditRefused: GoalsRefused; the trace's header has no entry for it): its entry is made again as they make it. Anything else
             // that changes the skeleton stays refused.
@@ -681,9 +687,9 @@ namespace IGTAP.EngineSim.Cli
                 Log($"auto goals: fulltas/{Path.GetFileName(_runFile)}'s adopted goals ({goals.Length}) aren't an edit of the trace's ({refused}); the trace's goals stay");
                 return;
             }
-            var saved = (header: AutoHeader(), create: _create, eval: _eval, origin: _origin, tracker: _runGoals, labels: _labels, goals: _goals, best: _best);
+            var saved = (header: AutoHeader(), create: _create, eval: _eval, origin: _origin, tracker: _runGoals, ids: _ids, labels: _labels, goals: _goals, best: _best);
             string[] trace = _labels;
-            SwitchGoals(goals);
+            SwitchGoals(goals, adopted.Ids);
             Route r = Evaluate(inputs);
             if (r.Progress == _goals && (saved.best.Progress < saved.goals || r.Live < saved.best.Live))
             {
@@ -692,7 +698,7 @@ namespace IGTAP.EngineSim.Cli
                 Log($"auto goals: fulltas/{Path.GetFileName(_runFile)} has goals adopted from the trace's ({trace.Length} -> {_goals} goals) at {Describe(r)}: the loop runs on them");
                 return;
             }
-            (_autoHeader, _create, _eval, _origin, _runGoals, _labels, _goals, _best) = saved;
+            (_autoHeader, _create, _eval, _origin, _runGoals, _ids, _labels, _goals, _best) = saved;
             foreach (string l in made) _insertedGoals.Remove(l); // not goals the loop planned
             RebindEval();
             Log($"auto goals: fulltas/{Path.GetFileName(_runFile)}'s adopted goals ({goals.Length}) replay as {r.Progress}/{goals.Length} goals"

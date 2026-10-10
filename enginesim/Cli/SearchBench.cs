@@ -138,6 +138,8 @@ namespace IGTAP.EngineSim.Cli
             public string Name, Waste, Trace, Invalid;
             public bool FullTas;
             public int From, To, At = -1, Rejoin;
+            /// <summary>A Full-TAS case's window by its first and last goals' ids (the trace's: goals From+1..To from 1).</summary>
+            public string FirstId, LastId;
             public long Original, Target, Seed, AtPhysics;
             /// <summary>The seed from the run's start (a Full-TAS one cut after goal To).</summary>
             public List<InputTick> Inputs;
@@ -186,7 +188,7 @@ namespace IGTAP.EngineSim.Cli
                         string M = minutes.ToString(CultureInfo.InvariantCulture);
                         // A Full-TAS case polishes its one window (--goal To, --window To - From) for the whole budget.
                         var runArgs = c.FullTas
-                            ? new List<string> { "fulltas", copy, "--goal", c.To.ToString(CultureInfo.InvariantCulture), "--window", (c.To - c.From).ToString(CultureInfo.InvariantCulture),
+                            ? new List<string> { "fulltas", copy, "--goal", c.LastId, "--window", (c.To - c.From).ToString(CultureInfo.InvariantCulture),
                                 "--window-minutes", M }
                             : new List<string> { "solve", copy, "--no-humanize", "--no-whole" };
                         runArgs.AddRange(new[] { "--rng", s.ToString(CultureInfo.InvariantCulture), "--no-submit", "--fresh", "--minutes", M,
@@ -206,7 +208,7 @@ namespace IGTAP.EngineSim.Cli
                     var line = new JsonObject
                     {
                         ["case"] = c.Name, ["waste"] = c.Waste, ["arm"] = arm, ["trace"] = Path.GetFileName(c.Trace),
-                        ["goals"] = c.FullTas ? new JsonArray(c.From, c.To) : null, ["at"] = c.At >= 0 ? (int?)c.At : null, ["atPhysics"] = c.At >= 0 ? (long?)c.AtPhysics : null,
+                        ["goals"] = c.FullTas ? new JsonArray(c.FirstId, c.LastId) : null, ["window"] = c.FullTas ? new JsonArray(c.From + 1, c.To) : null, ["at"] = c.At >= 0 ? (int?)c.At : null, ["atPhysics"] = c.At >= 0 ? (long?)c.AtPhysics : null,
                         ["rejoin"] = c.At >= 0 ? (int?)c.Rejoin : null,
                         ["original"] = c.Original, ["seed"] = c.Seed, ["target"] = c.Target, ["slack"] = c.Waste == "open" ? 0 : slack,
                         ["reached"] = runs.Count(r => (bool)r["reached"]), ["runs"] = runs.Count,
@@ -229,7 +231,7 @@ namespace IGTAP.EngineSim.Cli
                 long target = (long)l["target"];
                 string over(JsonNode v) => v == null ? "-" : ((long)(double)v - target).ToString("+0;-0;0", CultureInfo.InvariantCulture);
                 JsonNode best = l["best"];
-                string window = l["goals"] is JsonArray g ? $"goals {(int)g[0] + 1}-{(int)g[1]}" : "course";
+                string window = l["window"] is JsonArray g ? $"goals {(int)g[0]}-{(int)g[1]}" : "course";
                 Console.WriteLine($"{(string)l["case"] + (arms.Count > 1 ? "/" + (string)l["arm"] : ""),-22} {(string)l["waste"],-9} {window,-16} {target,7} "
                     + $"{$"{(long)l["seed"]} (+{(long)l["seed"] - target})",12} {$"{(int)l["reached"]}/{(int)l["runs"]}",8}  {Row(l["cpu"]),-30} {over(best["median"])} {over(best["min"])} {over(best["max"])}");
             }
@@ -325,8 +327,13 @@ namespace IGTAP.EngineSim.Cli
             Simulation sim = Solve.Creator(c.Trace, header)();
             if (c.FullTas)
             {
-                c.From = (int)spec["goals"][0];
-                c.To = (int)spec["goals"][1];
+                // The window by its first and last goals' ids (the trace's).
+                string[] ids = FullTas.HeaderGoals(header.GetProperty("fulltas")).Ids;
+                c.FirstId = (string)spec["goals"][0];
+                c.LastId = (string)spec["goals"][1];
+                c.From = Array.IndexOf(ids, c.FirstId);
+                c.To = Array.IndexOf(ids, c.LastId) + 1;
+                if (c.From < 0 || c.To <= c.From) throw new InvalidOperationException($"searchbench case {c.Name}: goals {c.FirstId}..{c.LastId} aren't a window of {Path.GetFileName(c.Trace)}'s goals");
                 sim.StrictBuys = true;
                 sim.Goals.Limit = c.To;
             }

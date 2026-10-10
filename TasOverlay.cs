@@ -479,14 +479,14 @@ namespace IGTAPTasMod
             FullTasIdle idle = CurrentIdle(_fullTasPlay);
             if (idle == null) return;
             long tick = _engine.PhysicsTicks, held = _engine.HeldFrames;
-            string goal = idle.goal - 1 < _fullTasPlay.tracker.Goals.Length ? _fullTasPlay.tracker.Goals[idle.goal - 1].label : "the next buy";
+            string goal = idle.label ?? "the next buy";
             double left = System.Math.Max(0.0, MacroEngine.LiveSeconds(idle.afford[0], idle.afford[1]) - MacroEngine.LiveSeconds(tick, held));
             // Rebuilt only when the tenths change: a new string every frame is IMGUI garbage (README "Studio").
             int tenths = (int)System.Math.Ceiling(left * 10);
-            if (_idleBanner == null || _idleBannerGoal != idle.goal || _idleBannerTenths != tenths)
+            if (_idleBanner == null || _idleBannerGoal != idle.id || _idleBannerTenths != tenths)
             {
                 _idleBanner = "IDLE · waiting for " + goal + " · " + (tenths / 10.0).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " s";
-                _idleBannerGoal = idle.goal;
+                _idleBannerGoal = idle.id;
                 _idleBannerTenths = tenths;
             }
             float width = 620 * scale, height = 40 * scale;
@@ -496,7 +496,8 @@ namespace IGTAPTasMod
         }
 
         string _idleBanner;
-        int _idleBannerGoal, _idleBannerTenths;
+        string _idleBannerGoal;
+        int _idleBannerTenths;
 
         /// <summary>The idle the playback stands in now (its tick between the player's arrival at the box and the Cash), or null.</summary>
         FullTasIdle CurrentIdle(FullTasPlay play)

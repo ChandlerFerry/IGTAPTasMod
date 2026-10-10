@@ -51,8 +51,7 @@ namespace IGTAP.EngineSim.Cli
             int threads = int.Parse(Solve.Option(args, "--threads", (string)null) ?? Math.Max(1, Environment.ProcessorCount - 2).ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
             JsonElement header = Solve.ReadHeader(trace);
             if (header.TryGetProperty("fulltas", out JsonElement fulltas))
-                return FullTasMap(trace, header, fulltas, Solve.Option(args, "--goals", (string)null), output,
-                    int.Parse(Solve.Option(args, "--stretch", "-1"), CultureInfo.InvariantCulture));
+                return FullTasMap(trace, header, fulltas, Solve.Option(args, "--goals", (string)null), output, Solve.Option(args, "--stretch", (string)null));
             int course = header.GetProperty("course").GetInt32();
             string caps = header.GetProperty("capabilities").GetString();
             string label = course + "_" + caps;
@@ -254,15 +253,23 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        /// <param name="stretch">One stretch alone (the goal heading for, numbered from 0 as the studio shows it; -1: the whole
-        /// run): the best's path from the goal before it to it, the box around that, its goal and the avoid boxes that cut there.</param>
-        static int FullTasMap(string trace, JsonElement header, JsonElement fulltas, string goalsFile, string output, int stretch = -1)
+        /// <param name="stretchId">One stretch alone (the id of the goal heading for; null: the whole run): the best's path from the
+        /// goal before it to it, the box around that, its goal and the avoid boxes that cut there.</param>
+        static int FullTasMap(string trace, JsonElement header, JsonElement fulltas, string goalsFile, string output, string stretchId = null)
         {
             string name = fulltas.GetProperty("name").GetString();
-            // The trace's goals are the ones it was captured with; --goals (the run's goals now, a JSON array of labels) wins,
-            // so a goal moved since the capture is drawn where it is now. The replay itself checks the trace's goals.
+            // The trace's goals are the ones it was captured with; --goals (the run's goals now, [{id, goal}]) wins, so a goal moved
+            // since the capture is drawn where it is now. The replay itself checks the trace's goals.
             string[] traced = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
-            string[] labels = goalsFile == null ? traced : JsonSerializer.Deserialize<string[]>(File.ReadAllText(goalsFile));
+            FullTas.GoalList run = FullTas.HeaderGoals(fulltas);
+            if (goalsFile != null)
+            {
+                using JsonDocument goalsDoc = JsonDocument.Parse(File.ReadAllText(goalsFile));
+                run = FullTas.ReadGoalList(goalsDoc.RootElement.GetProperty("goals"));
+            }
+            string[] labels = run.Labels, ids = run.Ids;
+            int stretch = stretchId == null ? -1 : Array.IndexOf(ids, stretchId);
+            if (stretchId != null && stretch < 0) throw new ArgumentException($"map --stretch {stretchId}: {name} has no goal with that id");
             string dir = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(trace));
             string worldPath = System.IO.Path.ChangeExtension(trace, null) + ".world.json";
             string runFile = System.IO.Path.Combine(dir, "fulltas", name + ".json");
@@ -274,8 +281,7 @@ namespace IGTAP.EngineSim.Cli
                 {
                     JsonElement root = saved.RootElement;
                     List<InputTick> inputs = Solve.ReadInputs(root);
-                    string[] solved = root.GetProperty("goals").EnumerateArray().Select(g => g.GetString()).ToArray();
-                    long[] goalInput = root.GetProperty("goalInputTicks").EnumerateArray().Select(t => t.GetInt64()).ToArray();
+                    (string[] solved, long[] goalInput) = FullTas.SolvedGoals(root);
                     int keep = FullTas.CurrentInputs(solved, goalInput, labels, inputs.Count);
                     routes.Add(("best so far", "best", inputs.GetRange(0, keep)));
                 }
@@ -307,10 +313,9 @@ namespace IGTAP.EngineSim.Cli
                 float[] v = labels[i].Substring(3).Split(',').Take(4).Select(s => float.Parse(s, CultureInfo.InvariantCulture)).ToArray();
                 goals.Add((i + 1, labels[i], new[] { v[0] - v[2] / 2, v[1] - v[3] / 2, v[0] + v[2] / 2, v[1] + v[3] / 2 }));
             }
-            OfflineSolver.ForcedPath avoid = Solve.FullTasPaths(name, null, labels);
-            if (stretch >= 0) avoid.Avoid.RemoveAll(b => !b.Live(stretch));
+            List<AvoidDrawn> avoid = DrawnAvoids(name, ids, stretch);
             Dictionary<long, float> visits = (FullTas.StartChanged(dir, name, FullTas.StartKey(header).ToString("x16")) ? null
-                : FullTas.ReadVisits(FullTas.VisitsFile(dir, name), labels)) ?? new Dictionary<long, float>();
+                : FullTas.ReadVisits(FullTas.VisitsFile(dir, name), ids)) ?? new Dictionary<long, float>();
             const float cell = FullTas.VisitCell;
 
             // A stretch's box is its path and goal's; the explored cells drawn are those inside it.
@@ -324,8 +329,8 @@ namespace IGTAP.EngineSim.Cli
             TreeGround tree = Grown(world.RootElement, origin, x0, y0, x1, y1);
             var result = new
             {
-                course = 0, capabilities = header.GetProperty("capabilities").GetString(), label = "fulltas/" + name + (stretch >= 0 ? $" goal {stretch}" : ""), fulltas = name,
-                stretch = stretch >= 0 ? stretch : (int?)null,
+                course = 0, capabilities = header.GetProperty("capabilities").GetString(), label = "fulltas/" + name + (stretch >= 0 ? $" goal {stretch} ({labels[stretch]})" : ""), fulltas = name,
+                stretch = stretchId,
                 bounds = new[] { x0, y0, x1, y1 },
                 states = WorldStates(world.RootElement).states,
                 solids = Solids(world.RootElement, origin, x0, y0, x1, y1),
@@ -333,10 +338,10 @@ namespace IGTAP.EngineSim.Cli
                 grown = tree.Shapes, treeSteps = tree.Steps,
                 markers = Markers(world.RootElement, origin).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1)
                     .Concat(goals.Select(g => new Marker("goal", "goal " + (g.index - 1) + " " + g.label, Round((g.box[0] + g.box[2]) / 2), Round((g.box[1] + g.box[3]) / 2)))),
-                // Each box and when it cuts: from After goals reached until Until (0: no end), and its one-way sides (OfflineSolver.Box).
-                avoid = avoid.Avoid.Select(b => new[] { b.X0, b.Y0, b.X1, b.Y1, b.After, b.Until, b.From }),
+                // Each box, the goal whose it is (null: the run's own) and when it cuts, and its one-way sides (OfflineSolver.Box).
+                avoid,
                 via = goals.Select(g => g.box),
-                goals = goals.Select(g => new { index = g.index, label = g.label, box = g.box }),
+                goals = goals.Select(g => new { id = ids[g.index - 1], label = g.label, box = g.box }),
                 routes = paths.Select(p => RouteJson(p, -1)),
                 explored = new
                 {
@@ -345,9 +350,44 @@ namespace IGTAP.EngineSim.Cli
                 },
             };
             Solve.WriteShared(output, JsonSerializer.Serialize(result));
-            Console.WriteLine($"map fulltas/{name}: {paths.Count} routes, {visits.Count} explored cells, {goals.Count} at: goals, {avoid.Avoid.Count} avoid boxes -> {output}");
+            Console.WriteLine($"map fulltas/{name}: {paths.Count} routes, {visits.Count} explored cells, {goals.Count} at: goals, {avoid.Count} avoid boxes -> {output}");
             return 0;
         }
+
+        /// <summary>An avoid box as the map draws it: its corners, its one-way sides (<see cref="OfflineSolver.Box.From"/>), the goal
+        /// whose block it is (its id; null: the run-wide blocks) and when it cuts: "always", "heading" (while the run heads for that
+        /// goal) or "after" (once the run has reached it); a run-wide block's goals while heading for which it is off.</summary>
+        internal sealed record AvoidDrawn(float[] box, int from, string goal, string when,
+            [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string[] offFor = null);
+
+        /// <summary>The run definition's avoid boxes (Solve.FullTasPaths' source) for the map; with a stretch (a goal's place), only
+        /// those that cut while the run heads for that goal.</summary>
+        static List<AvoidDrawn> DrawnAvoids(string run, string[] ids, int stretch)
+        {
+            var drawn = new List<AvoidDrawn>();
+            Solve.RunAvoids def = Solve.RunDefinitionAvoids(run);
+            if (def == null) return drawn;
+            int At(string id) => Array.IndexOf(ids, id);
+            foreach (Solve.AvoidBlock block in def.Avoid ?? Array.Empty<Solve.AvoidBlock>())
+            {
+                if (stretch >= 0 && block.OffFor != null && block.OffFor.Any(id => At(id) == stretch)) continue;
+                foreach (float[] c in block.Boxes ?? Array.Empty<float[]>()) drawn.Add(new AvoidDrawn(Corners(c), Solve.SidesOf(block.From), null, "always", block.OffFor));
+            }
+            foreach (Solve.RunGoal goal in def.Goals ?? Array.Empty<Solve.RunGoal>())
+            {
+                int i = goal.Id == null ? -1 : At(goal.Id);
+                if (i < 0) continue;
+                if (stretch < 0 || stretch == i)
+                    foreach (Solve.AvoidBlock block in goal.Avoid ?? Array.Empty<Solve.AvoidBlock>())
+                        foreach (float[] c in block.Boxes ?? Array.Empty<float[]>()) drawn.Add(new AvoidDrawn(Corners(c), Solve.SidesOf(block.From), goal.Id, "heading"));
+                if (stretch < 0 || stretch > i)
+                    foreach (Solve.AvoidBlock block in goal.AvoidAfter ?? Array.Empty<Solve.AvoidBlock>())
+                        foreach (float[] c in block.Boxes ?? Array.Empty<float[]>()) drawn.Add(new AvoidDrawn(Corners(c), Solve.SidesOf(block.From), goal.Id, "after"));
+            }
+            return drawn;
+        }
+
+        static float[] Corners(float[] c) => new[] { Math.Min(c[0], c[2]), Math.Min(c[1], c[3]), Math.Max(c[0], c[2]), Math.Max(c[1], c[3]) };
 
         /// <summary>The box around the paths' points, the cells (cell units on a side) and the boxes, 300 units of margin
         /// around; null when there is nothing to draw.</summary>
