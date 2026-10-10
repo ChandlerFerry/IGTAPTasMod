@@ -45,6 +45,10 @@ def show(name):
         if row["kind"] == "tick":
             tick_frame[row["physics"]] = row["frame"]
             ticked = True
+            if "mode" not in row:  # a lean probe's row: what the aligner compares
+                print(f"tick {row['physics']:4} in {row['input']:4} held {row['held']:3} pos {row['x']:9.2f},{row['y']:9.2f}"
+                      f" body {row['bodyX']:9.2f},{row['bodyY']:9.2f} v {row['vx']:8.2f},{row['vy']:8.2f} cash {row['cashPre']:.6g}")
+                continue
             print(f"tick {row['physics']:4} in {row['input']:4} pos {row['x']:9.2f},{row['y']:9.2f} v {row['vx']:8.2f},{row['vy']:8.2f}"
                   f" m {row['mx']:8.2f},{row['my']:8.2f} {row['mode']:5} dash={row['dash']} f={row['f']} wall={row['wall']} ground={row['ground']}")
             continue

@@ -435,8 +435,12 @@ namespace IGTAP.EngineSim.Cli.Runs
             Check(shortFreeze.Parted && shortFreeze.Field == "held" && shortFreeze.Physics == 10 && shortFreeze.Compared == 9, "a freeze a frame short at 1x parts on held at its tick (" + OneX.Describe(shortFreeze) + ")");
             OneX.Result later = OneX.Align(engine, AsProbe(full).Where(t => t.Physics >= 30).ToList());
             Check(!later.Parted && later.Compared == 31, "a log from a later tick (logFrom) compares from there");
-            OneX.Result x = Changed(21, t => { t.X += 0.05; return t; });
-            Check(x.Parted && x.Field == "x" && x.Physics == 20, "the body 0.05 off parts on x at the tick before the row (" + OneX.Describe(x) + ")");
+            OneX.Result x = OneX.Align(engine, AsProbe(full).Select(t => { if (t.Physics >= 21) t.X += 0.05; return t; }).ToList());
+            Check(x.Parted && x.Field == "x" && x.Physics == 20, "the body 0.05 off from a tick on parts on x at the tick before the row (" + OneX.Describe(x) + ")");
+            Check(!Changed(21, t => { t.Y -= 3.86; return t; }).Parted, "the body off on one tick only (a step-up's transform the body follows a step later) doesn't part");
+            Check(!OneX.Align(engine.Select(t => { if (t.Physics == 25) t.Vy = 0; return t; }).ToList(), AsProbe(full)).Parted, "engine vy 0 (OnCollisionStay2D after 1x's row) doesn't part");
+            OneX.Result vy = Changed(25, t => { t.Vy = 0; return t; });
+            Check(vy.Parted && vy.Field == "vy" && vy.Physics == 25, "1x vy 0 where the engine's isn't parts on vy (" + OneX.Describe(vy) + ")");
             Check(!Changed(31, t => { t.Cash *= 1 + 1e-13; return t; }).Parted, "Cash within a relative 1e-9 is the same");
             OneX.Result cash = Changed(31, t => { t.Cash *= 1 + 1e-8; return t; });
             Check(cash.Parted && cash.Field == "cash" && cash.Physics == 30, "Cash 1e-8 off parts on cash");

@@ -12,7 +12,11 @@ namespace IGTAP.EngineSim.Cli.Runs
     // physics tick. The probe's tick row is taken inside its tick, after Movement.FixedUpdate: its input and Velocity are the
     // engine's row of that tick; its body position, held frames and Cash before the tick's NP payout (econPre) are what the tick
     // before left, the engine's row of the tick before (taken after that tick's rendered frames, a dash freeze's held ones
-    // included). Both write a row every physics tick; one either side lacks isn't compared.
+    // included). Both write a row every physics tick; one either side lacks isn't compared. Two differences are where the probe
+    // reads, not the engine: Movement.OnCollisionStay2D zeroes Velocity.y on a floor or ceiling after FixedUpdate, after the
+    // probe's row (engine vy 0); and a step-up in a rendered frame moves the transform, which the body follows only at the next
+    // physics step, after the probe's row (a body off on one tick only). FalseEnding%-280's 1x reference has both on every
+    // landing; neither parts.
     static class OneX
     {
         internal struct Tick
@@ -36,15 +40,19 @@ namespace IGTAP.EngineSim.Cli.Runs
             var at = new Dictionary<long, Tick>();
             foreach (Tick g in game) at[g.Physics] = g;
             var r = new Result { EngineLast = engine.Count == 0 ? 0 : engine[^1].Physics, GameLast = game.Count == 0 ? 0 : game[^1].Physics };
+            var engineAt = new Dictionary<long, Tick>();
+            foreach (Tick e in engine) engineAt[e.Physics] = e;
+            bool Body(Tick e, Tick g) => Math.Abs(e.X - g.X) <= pos && Math.Abs(e.Y - g.Y) <= pos;
             foreach (Tick e in engine)
             {
                 if (!at.TryGetValue(e.Physics, out Tick now) || !at.TryGetValue(e.Physics + 1, out Tick next)) continue;
+                bool body = Body(e, next) || engineAt.TryGetValue(e.Physics + 1, out Tick e1) && at.TryGetValue(e.Physics + 2, out Tick next1) && Body(e1, next1);
                 var fields = new (string name, double engine, double game, bool same)[]
                 {
                     ("input", e.Input, now.Input, e.Input == now.Input),
                     ("held", e.Held, next.Held, next.Held < 0 || e.Held == next.Held),
-                    ("x", e.X, next.X, Math.Abs(e.X - next.X) <= pos), ("y", e.Y, next.Y, Math.Abs(e.Y - next.Y) <= pos),
-                    ("vx", e.Vx, now.Vx, Math.Abs(e.Vx - now.Vx) <= vel), ("vy", e.Vy, now.Vy, Math.Abs(e.Vy - now.Vy) <= vel),
+                    ("x", e.X, next.X, body || Math.Abs(e.X - next.X) <= pos), ("y", e.Y, next.Y, body || Math.Abs(e.Y - next.Y) <= pos),
+                    ("vx", e.Vx, now.Vx, Math.Abs(e.Vx - now.Vx) <= vel), ("vy", e.Vy, now.Vy, e.Vy == 0 || Math.Abs(e.Vy - now.Vy) <= vel),
                     ("cash", e.Cash, next.Cash, e.Cash == next.Cash || Math.Abs(e.Cash - next.Cash) <= cashRel * Math.Max(Math.Abs(e.Cash), Math.Abs(next.Cash))),
                 };
                 foreach (var f in fields)

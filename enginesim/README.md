@@ -890,7 +890,10 @@ physics tick and prints the first tick and field that part (exit 1), else the ti
 and its row `p + 1` for the body (`bodyX`, `bodyY`, within 0.01 u), `held` (exact; a dash freeze's frames counted where
 the engine counts them) and Cash (`cashPre` or `econPre.cash`, relative 1e-9), what tick `p` left: checked on
 `esc73h` (ZipEscape% from tick 73000) against `--ticks-out`, `y` and Cash equal on every tick to the door landing; its
-`x` is 11.58 u off from the old turbo handoff. `check` runs it on each complete run's 1x reference (docs/fulltas.md).
+`x` is 11.58 u off from the old turbo handoff. Two differences are the probe's reading point and don't part: engine `vy`
+0 where 1x's isn't (`OnCollisionStay2D` zeroes it on a floor or ceiling after the probe's row) and a body off on one tick
+only (a frame's step-up moves the transform; the body follows at the next physics step, after the row). With them
+FalseEnding%-280's 1x reference (118 quick restarts, 3868 held frames) matches on all 16973 ticks. `check` runs it on each complete run's 1x reference (docs/fulltas.md).
 `run-selftest` checks it on synthetic rows (a freeze a frame short parts on `held`, the body on `x`, Cash, the input
 count, a log from a later tick) and, with `--ticks-self <ticks-out>`, on a real run's rows against themselves. `fields` (Movement field names)
 adds those fields to every row, as `probe`'s `fields` do; every row also lists the zip movers within 300 u (`movers`: world
