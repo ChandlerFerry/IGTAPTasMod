@@ -46,9 +46,8 @@ namespace IGTAP.EngineSim.Cli
                     case "timeloss": return TimeLoss.Run(args.Skip(1).ToArray());
                     case "map": return Map.Run(args.Skip(1).ToArray());
                     case "ultras": return Ultras.Run(args.Skip(1).ToArray());
-                    // fulltas <trace>: solve-run; --check and --waste-audit still inspect a route the old way.
-                    case "fulltas": return args.Contains("--check") || args.Contains("--waste-audit") ? FullTas.Run(args.Skip(1).ToArray()) : Runs.RunSolve.Run(args.Skip(1).ToArray());
-                    case "macros": return FullTasAutoMacros.Command(args.Skip(1).ToArray());
+                    // fulltas <trace>: solve-run; --check replays a route.
+                    case "fulltas": return args.Contains("--check") ? FullTasCheck(args.Skip(1).ToArray()) : Runs.RunSolve.Run(args.Skip(1).ToArray());
                     case "body-selftest": return BodyEnableCheck.Run();
                     case "plan-check": return PlanCheck(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
@@ -58,7 +57,6 @@ namespace IGTAP.EngineSim.Cli
                     case "techgrafts": return TechGrafts.Command(args.Skip(1).ToArray());
                     case "routegrafts": return TechGrafts.RouteCommand(args.Skip(1).ToArray());
                     case "clip": return ClipLab.Run(args.Skip(1).ToArray());
-                    case "join-check": return FullTas.JoinCheck(args.Skip(1).ToArray());
                     case "lab": return Lab.Run(args.Skip(1).ToArray());
                     case "path":
                     {
@@ -304,10 +302,126 @@ namespace IGTAP.EngineSim.Cli
             return (sim, trace, inputs);
         }
 
+        /// <summary>
+        /// fulltas &lt;trace&gt; --check &lt;route.json&gt; [--goals FILE] [--loose-buys] [--class C] [--ticks-out FILE [--watch [PARENT/]NAME]]:
+        /// a route (a run file's "inputs" or an offline best's "ticks") replayed from the trace's start under its goals (or FILE's
+        /// "goals"): each goal's physics and input tick, live time and held frames, the purchases (--loose-buys: a stray one doesn't end
+        /// the replay, as a trace capture plays on) and how it ended. Searches and writes nothing but --ticks-out: every physics tick
+        /// (physics and input count, world position, velocity, momentum, held frames, ground, air dashes and jumps left, Cash, the
+        /// economy, --watch's upgrade box) and each clone spawn and RNG draw as JSON lines, to line up with a 1x probe (align-1x,
+        /// tools/economy-diff.py).
+        /// </summary>
+        static int FullTasCheck(string[] args)
+        {
+            string file = Solve.Option<string>(args, "--check", null), ticksOut = Solve.Option<string>(args, "--ticks-out", null);
+            var run = Runs.RunContext.Open(args[0], Glitches.Parse(Solve.Option(args, "--class", "major")));
+            FullTasGoal[] goals = run.HeaderGoals;
+            string goalsFile = Solve.Option<string>(args, "--goals", null);
+            if (goalsFile != null)
+            {
+                using JsonDocument d = JsonDocument.Parse(File.ReadAllText(goalsFile));
+                goals = d.RootElement.GetProperty("goals").EnumerateArray().Select(g => Runs.RunGoals.Goal(FullTas.LabelOf(g), run.Known)).ToArray();
+            }
+            List<InputTick> inputs = Plan.ReadRoute(file);
+            Solve.OnThread(() =>
+            {
+                Simulation sim = run.Make();
+                sim.StrictBuys = !args.Contains("--loose-buys");
+                sim.UseGoals(sim.Goals.For(goals));
+                var bought = new List<string>();
+                sim.Purchased = path => bought.Add($"{path} (tick {sim.Engine.PhysicsTicks}, input {sim.Engine.RunTicks})");
+                using StreamWriter w = ticksOut == null ? null : new StreamWriter(ticksOut);
+                Action<int> row = null;
+                if (w != null)
+                {
+                    if (sim.Shop.Economy != null)
+                        sim.Shop.Economy.Spawned = (course, id, onScreen, divisor, i, j, pay) =>
+                        {
+                            UnityEngine.Random.State s = UnityEngine.Random.state;
+                            w.WriteLine(JsonSerializer.Serialize(new { kind = "clone", physics = sim.Engine.PhysicsTicks, input = sim.Engine.RunTicks, course, id, onScreen, divisor, i, j, pay,
+                                random = new[] { s.s0, s.s1, s.s2, s.s3 } }));
+                        };
+                    UnityEngine.Random.Drawn = caller => w.WriteLine(JsonSerializer.Serialize(new { kind = "rng", physics = sim.Engine.PhysicsTicks, input = sim.Engine.RunTicks, caller }));
+                    string watchName = Solve.Option(args, "--watch", (string)null);
+                    string[] watchPath = watchName?.Split('/');
+                    upgradeBox[] watched = watchName == null ? null : sim.World.All<upgradeBox>().Where(x => x.gameObject.name == watchPath[^1]
+                        && (watchPath.Length == 1 || x.transform.parent != null && x.transform.parent.gameObject.name == watchPath[0])).ToArray();
+                    row = _ =>
+                    {
+                        WorldPos p = sim.PlayerWorld;
+                        UnityEngine.Random.State rng = UnityEngine.Random.state;
+                        w.WriteLine(JsonSerializer.Serialize(new { physics = sim.Engine.PhysicsTicks, input = sim.Engine.RunTicks, goal = sim.Progress, x = p.x, y = p.y,
+                            vx = sim.Player.Velocity.x, vy = sim.Player.Velocity.y, mx = sim.Player.momentum.x, my = sim.Player.momentum.y,
+                            held = sim.Engine.HeldFrames, ground = sim.Player.onGround, wall = sim.Player.OnWall, respawn = new[] { sim.Player.respawnPoint.x, sim.Player.respawnPoint.y },
+                            dashes = sim.Player.airDashesLeft, jumps = sim.Player.airJumpsLeft, omni = sim.Player.omniDashUnlocked, maxJumps = sim.Player.maxAirJumps,
+                            cash = sim.Shop.CashNow, npBoost = Singleton<globalStats>.Instance?.EffectOfNpCompBoost ?? 1.0,
+                            rewards = sim.Courses.Select(c => new[] { c.courseNumber, c.reward, c.rewardTier, c.gameObject.activeInHierarchy ? 1 : 0, c.compBoostTimeLeft }),
+                            clones = sim.Shop.Economy?.CloneStates(), econ = EconomyRow(sim),
+                            random = new[] { rng.s0, rng.s1, rng.s2, rng.s3 },
+                            watch = watched?.Select(x => new[] { x.transform.position.x, x.transform.position.y, x.gameObject.activeInHierarchy ? 1 : 0 }) }));
+                    };
+                }
+                RunResult r;
+                try { r = sim.Run(inputs, null, null, 1000000, row); }
+                finally { UnityEngine.Random.Drawn = null; }
+                long last = 0;
+                for (int g = 0; g < goals.Length; g++)
+                {
+                    long t = g < r.Progress ? r.GoalPhysicsTicks[g] : -1;
+                    Console.WriteLine($"goal {g + 1,2} {goals[g].label,-42} " + (t < 0 ? "-" : $"{t,5} ({MacroEngine.LiveSeconds(t, r.GoalHeldFrames[g]),6:0.00} s live, {r.GoalHeldFrames[g],3} held, +{t - last,4}) input {r.GoalInputTicks[g]}"));
+                    if (t >= 0) last = t;
+                }
+                WorldPos at = sim.PlayerWorld;
+                Console.WriteLine($"{Path.GetFileName(file)}: {inputs.Count} inputs, {r.Progress} of {goals.Length} goals"
+                    + (r.Progress == goals.Length ? $", {MacroEngine.LiveSeconds(last, r.GoalHeldFrames[^1]):0.00} s live ({last} ticks, {r.GoalHeldFrames[^1]} held frames)" : "")
+                    + $"; ended after input {sim.Engine.RunTicks} at {at.x:0.0},{at.y:0.0}: {r.EndReason}");
+                Console.WriteLine($"purchases ({(sim.Goals.Loose ? "loose" : "strict")} buys): " + (bought.Count == 0 ? "none" : string.Join("; ", bought)));
+                if (ticksOut != null) Console.WriteLine($"ticks -> {ticksOut}");
+            });
+            return 0;
+        }
+
+        /// <summary>
+        /// The economy as a `--ticks-out` row (and `replay --ticks-out`) carries it, under the names the plugin's 1x probe rows and
+        /// trace ticks use (TasPlugin.EconomyNow), for tools/economy-diff.py: each currency held, the atom collider's atoms per tier
+        /// and waiting atoms, globalStats' NP per tick, its cap, the comp boost's NP factor and the clone dust multiplier, and the
+        /// upgrade trees' grown segments, how far each door box's door is from its box (the atom box's, the Area 2 door box's:
+        /// upgradeBox.doorToOpen, a PlatformMover; -1 without one) and the tree boxes on (treeBoxes, WokenStarts.Describe).
+        /// </summary>
+        internal static Dictionary<string, object> EconomyRow(Simulation sim)
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            Func<globalStats.Currencies, double> held = c => sim.Shop.Holds(c);
+            return new Dictionary<string, object>
+            {
+                ["cash"] = held(globalStats.Currencies.Cash), ["gp"] = held(globalStats.Currencies.GreenPower),
+                ["np"] = held(globalStats.Currencies.AtomicPower), ["cd"] = held(globalStats.Currencies.CloneDust),
+                ["rp"] = held(globalStats.Currencies.RedPower), ["atoms"] = sim.Shop.Economy?.AtomCounts ?? Array.Empty<int>(),
+                ["waiting"] = sim.Shop.Economy?.WaitingAtoms ?? 0, ["npTick"] = stats?.NPrewardPerTick ?? 0.0, ["npCap"] = stats?.NPrewardCap ?? 0.0,
+                ["npBoost"] = stats?.EffectOfNpCompBoost ?? 1.0, ["cdMult"] = sim.Shop.Economy?.CdMult ?? 1.0,
+                ["gridCalls"] = sim.Shop.Economy?.GridCalls ?? 0, ["segments"] = sim.World.All<TreeController>().Sum(t => t.GrownSegments.Count),
+                ["doorAtom"] = Door(sim, globalStats.globalUpgradeSet.spawnNewAtom), ["doorArea2"] = Door(sim, globalStats.globalUpgradeSet.area2DoorOpen),
+                ["treeBoxes"] = sim.World.All<upgradeBox>().Where(b => b.gameObject.activeInHierarchy && BoxTree.GetValue(b) is TreeController t && (object)t != null)
+                    .Select(WokenStarts.Describe).OrderBy(d => d, StringComparer.Ordinal).Aggregate("", WokenStarts.Join),
+            };
+        }
+
+        static readonly FieldInfo BoxTree = typeof(upgradeBox).GetField("upgradeTree", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+        static readonly FieldInfo DoorToOpen = typeof(upgradeBox).GetField("doorToOpen", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+
+        /// <summary>The distance from the global box of this kind that has a door to its door (rounded to 0.01 u); -1: none.</summary>
+        static double Door(Simulation sim, globalStats.globalUpgradeSet kind)
+        {
+            foreach (upgradeBox b in sim.World.All<upgradeBox>())
+                if (b.upgrade == localUpgrades.localUpgradeSet.GLOBAL && b.globalUpgrade == kind && DoorToOpen.GetValue(b) is PlatformMover door && (object)door != null)
+                    return Math.Round(Vector2.Distance(door.transform.position, b.transform.position), 2);
+            return -1;
+        }
+
         static int Replay(string[] args)
         {
             bool verbose = args.Contains("--verbose");
-            // --ticks-out FILE: the offline economy per physics tick (FullTas.EconomyRow), as `fulltas --check --ticks-out` writes
+            // --ticks-out FILE: the offline economy per physics tick (EconomyRow), as `fulltas --check --ticks-out` writes
             // it, for tools/economy-diff.py against a 1x probe of the same inputs.
             string ticksOut = Solve.Option(args, "--ticks-out", (string)null);
             using StreamWriter econOut = ticksOut == null ? null : new StreamWriter(ticksOut);
@@ -326,7 +440,7 @@ namespace IGTAP.EngineSim.Cli
                 string cashLine = null, randomLine = null, bigCashLine = null;
                 RunResult run = sim.Run(inputs, extraTicks: 1000000, onStep: step =>
                 {
-                    Dictionary<string, object> econ = econOut == null && (step >= ticks.Length || !ticks[step].TryGetProperty("econ", out _)) ? null : FullTas.EconomyRow(sim);
+                    Dictionary<string, object> econ = econOut == null && (step >= ticks.Length || !ticks[step].TryGetProperty("econ", out _)) ? null : EconomyRow(sim);
                     econOut?.WriteLine(JsonSerializer.Serialize(new { physics = sim.Engine.PhysicsTicks, input = sim.Engine.RunTicks, econ }));
                     if (step >= ticks.Length || firstDiff >= 0 && !verbose) return;
                     var here = new List<string>();
@@ -820,7 +934,7 @@ namespace IGTAP.EngineSim.Cli
                 routines = q.Routines.Where(r => !(r.Target is Movement)).Select(r => r.Target.name + " " + r.Wait + (r.Wait == Scheduler.Wait.Seconds ? " in " + (r.Due - q.Tick) : "")).ToArray(),
             });
             f["courses"] = J(sim.Courses.Select(c => new object[] { c.courseNumber, c.reward, c.gpReward, c.rpReward, c.CdReward, c.compBoostTimeLeft, c.compBoostBonus, c.rewardTier }).ToArray());
-            Dictionary<string, object> row = FullTas.EconomyRow(sim);
+            Dictionary<string, object> row = EconomyRow(sim);
             row.Remove("gridCalls");   // a diagnostic count, not in snapshots
             f["globalStats"] = J(row);
             f["boxes"] = J(sim.World.All<upgradeBox>().Select(b => new object[] { b.TimesUsed, b.upgradeCost, b.isActive, (float)BoxCooldown.GetValue(b) }).ToArray());

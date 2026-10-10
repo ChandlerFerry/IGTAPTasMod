@@ -8,80 +8,14 @@ using IGTAPTasMod;
 namespace IGTAP.EngineSim.Cli
 {
     // Goal ids (docs/fulltas.md, "Goal ids"): a file, a flag, the gate or an event names a goal by its id, never by its place in
-    // the list. The search itself works on places (_labels, Route.GoalInput): they never leave the process.
-    sealed partial class FullTas
+    // the list. A Full-TAS trace's and a saved route's goal lists, read for the tools (map, plan, techs-used, ultras, searchbench).
+    static class FullTas
     {
-        /// <summary>The run's goal ids, one per <see cref="_labels"/> entry.</summary>
-        string[] _ids;
-
         /// <summary>A goal list with its ids: what a file or the gate takes (<see cref="Json"/>: [{id, goal}]).</summary>
         internal sealed record GoalList(string[] Ids, string[] Labels)
         {
             public object Json => Ids.Select((id, i) => new { id, goal = Labels[i] }).ToArray();
             public bool Same(GoalList o) => o != null && Ids.SequenceEqual(o.Ids) && Labels.SequenceEqual(o.Labels);
-        }
-
-        GoalList Goals => new GoalList(_ids, _labels);
-
-        /// <summary>
-        /// The run's goals become <paramref name="labels"/>: with <paramref name="ids"/>, those; without, a goal the old list shares
-        /// keeps its id and a new one gets a new id (<see cref="FullTasGoalIds.Carry"/>).
-        /// </summary>
-        void SetGoals(string[] labels, string[] ids = null)
-        {
-            ids ??= FullTasGoalIds.Carry(_ids, _labels, labels);
-            string invalid = FullTasGoalIds.Invalid(ids, labels.Length);
-            if (invalid != null) throw new InvalidOperationException($"{_name}: {invalid}");
-            _ids = ids;
-            _labels = labels;
-            _goals = labels.Length;
-        }
-
-        /// <summary>Goal k's id (k from 1, as the search counts goals); null for no goal (0, or past the list).</summary>
-        string IdOf(int k) => k >= 1 && k <= _ids.Length ? _ids[k - 1] : null;
-
-        /// <summary>A goal's place in the run's list by its id (a flag's, a request's); throws for an id the run doesn't have.</summary>
-        int GoalAt(string id)
-        {
-            int i = Array.IndexOf(_ids, id);
-            if (i < 0) throw new ArgumentException($"{_name} has no goal with id \"{id}\" (goal ids are runs/{_name}.json's \"goals\"[].id)");
-            return i;
-        }
-
-        /// <summary>A goal named for a flag (`--from`, `--until`, `--stretch`): its id, else its label's first place.</summary>
-        int GoalNamed(string idOrLabel)
-        {
-            int i = Array.IndexOf(_ids, idOrLabel);
-            if (i < 0) i = Array.IndexOf(_labels, idOrLabel);
-            if (i < 0) throw new ArgumentException($"{_name} has no goal \"{idOrLabel}\" (an id or a label)");
-            return i;
-        }
-
-        /// <summary>
-        /// The run definition's goals (runs/&lt;run&gt;.json "goals") as the run's are now: [{id, goal, ...}], each goal's own fields (its
-        /// avoids) kept by its id; a goal no longer in the run takes them with it.
-        /// </summary>
-        JsonArray RunDefGoals(JsonArray old)
-        {
-            var byId = new Dictionary<string, JsonObject>();
-            foreach (JsonNode g in old ?? new JsonArray())
-                if (g is JsonObject o && o["id"]?.GetValue<string>() is string id) byId[id] = o;
-            return new JsonArray(_ids.Select((id, i) =>
-            {
-                var goal = new JsonObject { ["id"] = id, ["goal"] = _labels[i] };
-                if (byId.TryGetValue(id, out JsonObject was))
-                    foreach (var field in was)
-                        if (field.Key != "id" && field.Key != "goal") goal[field.Key] = field.Value?.DeepClone();
-                return (JsonNode)goal;
-            }).ToArray());
-        }
-
-        /// <summary>The run's avoid boxes (<see cref="Solve.FullTasPaths"/>) for a window heading for the goals with these labels
-        /// (null: every block on).</summary>
-        OfflineSolver.ForcedPath Avoids(IEnumerable<string> heading)
-        {
-            HashSet<string> to = heading == null ? null : new HashSet<string>(heading);
-            return Solve.FullTasPaths(_name, _ids, to == null ? null : Enumerable.Range(0, _goals).Where(i => to.Contains(_labels[i])).ToHashSet());
         }
 
         /// <summary>A Full-TAS trace header's goals ("fulltas"."goals"[]: {id, label, ...}).</summary>
@@ -138,27 +72,41 @@ namespace IGTAP.EngineSim.Cli
             return (rows.Select(g => g.Label).ToArray(), rows.Select(g => g.Input).ToArray());
         }
 
-        /// <summary>A route's goals as a saved route keeps them: each goal's id and label, where the route reached it and its idle.</summary>
-        object SavedGoalsJson(Route r)
+        /// <summary>A saved route's inputs that still hold under <paramref name="labels"/>: all of them while its goals are those, else
+        /// those up to the last goal the two lists share in order, when the route reached it (else all).</summary>
+        internal static int CurrentInputs(string[] solved, long[] goalInputTicks, string[] labels, int count)
         {
-            Dictionary<int, IdleSpan> idles = null;
-            try { idles = Idles(r).ToDictionary(i => i.Goal - 1); }
-            catch (InvalidOperationException ex) { Log("idles: not measured: " + ex.Message); }
-            return _labels.Select((label, g) =>
+            int changed = 0;
+            while (changed < solved.Length && changed < labels.Length && solved[changed] == labels[changed]) changed++;
+            if (changed == solved.Length && changed == labels.Length) return count;
+            int reached = 0;
+            while (reached < changed && reached < goalInputTicks.Length && goalInputTicks[reached] >= 0) reached++;
+            if (reached < changed) return count;
+            return changed == 0 ? 0 : (int)Math.Min(goalInputTicks[changed - 1], count);
+        }
+
+        /// <summary>A Full-TAS trace's header with this goal list, its ids dropped: each goal's own entry from the header, a grouped
+        /// buy (buy:a+b) made of its boxes' entries.</summary>
+        internal static JsonElement GoalsHeader(JsonElement header, string[] labels)
+        {
+            JsonNode node = JsonNode.Parse(header.GetRawText());
+            JsonArray old = node["fulltas"]["goals"].AsArray();
+            var byLabel = new Dictionary<string, JsonNode>();
+            foreach (JsonNode g in old) byLabel.TryAdd(g["label"].GetValue<string>(), g);
+            var goals = new JsonArray();
+            foreach (string l in labels)
             {
-                bool reached = g < r.Progress;
-                IdleSpan idle = idles != null && idles.TryGetValue(g, out IdleSpan i) ? i : null;
-                return new
-                {
-                    id = _ids[g],
-                    label,
-                    input = reached ? r.GoalInput[g] : -1,
-                    physics = reached ? r.GoalPhysics[g] : -1,
-                    held = reached && r.GoalHeld != null ? r.GoalHeld[g] : -1,
-                    // A buy's wait for its Cash, standing at its box (FullTasIdles.cs): the studio's wait rows, the overlay's banner.
-                    idle = idle == null ? null : new { arrive = new[] { idle.ArrivePhysics, idle.ArriveHeld }, afford = new[] { idle.AffordPhysics, idle.AffordHeld } },
-                };
-            }).ToArray();
+                if (byLabel.TryGetValue(l, out JsonNode g)) { goals.Add(g.DeepClone()); continue; }
+                string[] parts = l.Substring("buy:".Length).Split('+');
+                JsonNode first = byLabel["buy:" + parts[0]].DeepClone();
+                first["label"] = l;
+                first["boxes"] = new JsonArray(parts.SelectMany(p => byLabel["buy:" + p]["boxes"].AsArray().Select(b => (JsonNode)b.GetValue<string>())).ToArray());
+                goals.Add(first);
+            }
+            foreach (JsonNode g in goals) g.AsObject().Remove("id");
+            node["fulltas"]["goals"] = goals;
+            using JsonDocument doc = JsonDocument.Parse(node.ToJsonString(), new JsonDocumentOptions { MaxDepth = 256 });
+            return doc.RootElement.Clone();
         }
     }
 }

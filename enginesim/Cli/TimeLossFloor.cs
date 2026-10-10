@@ -12,19 +12,103 @@ namespace IGTAP.EngineSim.Cli
     /// <summary>
     /// <c>timeloss floor &lt;trace.json&gt; &lt;route.json&gt; [--json]</c> (enginesim/README.md "Time loss"): per segment of a course route
     /// (<see cref="Difficulty.Anchors(Simulation, List{InputTick}, SimSnapshot, bool)"/> on its own inputs), a floor on its physics ticks
-    /// as <c>fulltas --auto</c>'s per-goal model bounds a goal (FullTasAuto.cs <c>BuildModel</c>): the walkable distance
+    /// as the old <c>fulltas --auto</c>'s per-goal model bounded a goal: the walkable distance
     /// (<see cref="DistanceField"/>, 8 u cells, through the air as through a corridor) from where the segment starts, or lands after a
     /// teleport in it (a tick more), to the next anchor's place (the last segment of a finished route: the finish; while a course's timer
     /// is off, by a start gate and on from where the route crossed it) over the top path speed with the segment's unlocks (the fastest
-    /// <see cref="FullTas.SpeedWindow"/>-tick mean of the route's path and of fulltas's speed probes from every anchor). A model, not a
+    /// <see cref="SpeedWindow"/>-tick mean of the route's path and of the speed probes from every anchor). A model, not a
     /// proof: a peak above that mean beats it. Slack = the route's ticks - the floor, and the course timer's share of both (the timed
     /// floor: from where the timer starts in the segment); the timed segments by timed slack first, then the untimed ones by slack.
     /// </summary>
     static class TimeLossFloor
     {
         const string Usage = "usage: timeloss floor <trace.json> <route.json> [--json]";
-        /// <summary>The field cell (plan's --field-cell default, fulltas --auto's bounds).</summary>
+        /// <summary>The field cell (plan's --field-cell default).</summary>
         const float Cell = 8f;
+        const int SpeedWindow = 10;
+        // A tick's move longer than twice what the player's speed (|Velocity + momentum|) covers in it, plus this slack, is a quick
+        // restart's or a respawn's teleport, not movement.
+        const float TeleportSlack = 20f;
+
+        /// <summary>The player on one physics tick: where (world), |Velocity + momentum| and its unlocks.</summary>
+        struct Sample
+        {
+            public long Tick;
+            public int Input;
+            public float X, Y, Speed;
+            public string Caps;
+        }
+
+        /// <summary>The fastest path speed (units per physics tick over SpeedWindow ticks, teleports excluded) per unlock set, into
+        /// <paramref name="top"/> where it beats what is there.</summary>
+        static void Sustained(List<Sample> s, float dt, Dictionary<string, (float speed, string how)> top, string how)
+        {
+            float sum = 0f;
+            var steps = new Queue<float>();
+            for (int i = 1; i < s.Count; i++)
+            {
+                float dx = s[i].X - s[i - 1].X, dy = s[i].Y - s[i - 1].Y, step = (float)Math.Sqrt(dx * dx + dy * dy);
+                if (Jumped(s[i - 1], s[i], dt) || s[i].Caps != s[i - 1].Caps) { steps.Clear(); sum = 0f; continue; }
+                steps.Enqueue(step);
+                sum += step;
+                if (steps.Count > SpeedWindow) sum -= steps.Dequeue();
+                if (steps.Count < SpeedWindow) continue;
+                float v = sum / SpeedWindow;
+                if (!top.TryGetValue(s[i].Caps, out var known) || v > known.speed) top[s[i].Caps] = (v, $"{how}, tick {s[i].Tick}");
+            }
+        }
+
+        static bool Jumped(Sample a, Sample b, float dt)
+        {
+            float dx = b.X - a.X, dy = b.Y - a.Y, step = (float)Math.Sqrt(dx * dx + dy * dy);
+            return step > 2f * Math.Max(a.Speed, b.Speed) * dt + TeleportSlack;
+        }
+
+        static InputTick Stick(float x, float y, bool held, bool press = false, bool release = false)
+        {
+            return new InputTick { x = x, y = y, held = held || press, press = press, release = release && !held && !press };
+        }
+
+        /// <summary>The moves that build speed, played on their own: a dash each way, dash jumps, and with the omnidash the down-dash
+        /// landing chain of 2-6 links, both sides.</summary>
+        static IEnumerable<(List<InputTick> moves, int links)> SpeedMoves(bool omni)
+        {
+            foreach (float side in new[] { -1f, 1f })
+            {
+                var dash = new List<InputTick> { new InputTick { x = side, dash = true } };
+                dash.AddRange(Enumerable.Repeat(Stick(side, 0f, false), 40));
+                yield return (dash, 0);
+                foreach (int jump in new[] { 3, 5, 7 })
+                {
+                    var super = new List<InputTick> { new InputTick { x = side, dash = true, dashJump = jump, lockX = side } };
+                    super.AddRange(Enumerable.Repeat(Stick(side, 0f, true), 6));
+                    super.Add(Stick(side, 0f, false, release: true));
+                    super.AddRange(Enumerable.Repeat(Stick(side, 0f, false), 40));
+                    yield return (super, 0);
+                }
+                if (!omni) continue;
+                // Planner.BounceChain's shape: a dash straight down with a jump frame, the jump out of the landing held 3 ticks, air.
+                foreach (int links in new[] { 2, 3, 4, 5, 6 })
+                    foreach (int gap in new[] { 3, 7 })
+                        foreach (int jump in new[] { 3, 6 })
+                        {
+                            var t = new List<InputTick>();
+                            for (int l = 0; l < links; l++)
+                            {
+                                InputTick d = Stick(0f, -1f, false);
+                                d.dash = true;
+                                d.dashJump = jump;
+                                d.lockX = side;
+                                t.Add(d);
+                                for (int i = 0; i < 3; i++) t.Add(Stick(side, 0f, true));
+                                t.Add(Stick(side, 0f, false, release: true));
+                                for (int i = 0; i < gap; i++) t.Add(Stick(side, 0f, false));
+                            }
+                            t.AddRange(Enumerable.Repeat(Stick(side, 0f, false), 20));
+                            yield return (t, links);
+                        }
+            }
+        }
 
         /// <summary>One segment: anchors <see cref="Index"/> and the next, their input ticks and physics ticks, its ticks and the course
         /// timer's share of them, its floor and the timer's share of that (from where the timer starts in it, else its start), the
@@ -64,7 +148,7 @@ namespace IGTAP.EngineSim.Cli
         internal static Result Measure(string tracePath, string routePath)
         {
             var (header, labels, inputs) = TechsUsed.Load(tracePath, routePath, "timeloss floor");
-            if (labels != null) throw new ArgumentException("timeloss floor: a course trace; a Full-TAS run's per-goal bounds are fulltas --auto --minutes 0's");
+            if (labels != null) throw new ArgumentException("timeloss floor: a course trace, not a Full-TAS run's");
             var worker = new Worker<Simulation>(() => TechsUsed.Create(tracePath, header, null), "timeloss floor");
             Result result = null;
             float cell = DistanceField.CellSize;
@@ -108,13 +192,13 @@ namespace IGTAP.EngineSim.Cli
             }
 
             // The field's grid covers every place asked about so far and coarsens as it grows: a first pass grows it over the whole
-            // route, so the measured pass has one grid from start to end (as fulltas --auto's model does).
+            // route, so the measured pass has one grid from start to end.
             bool gates = sim.Goals == null && !sim.TimedFromRunStart;
             Profile(sim, inputs, anchors, field, SegmentAt, gates);
-            (List<FullTas.Sample> path, float[] dist, float[] gate) = Profile(sim, inputs, anchors, field, SegmentAt, gates);
+            (List<Sample> path, float[] dist, float[] gate) = Profile(sim, inputs, anchors, field, SegmentAt, gates);
 
             var speeds = new Dictionary<string, (float speed, string how)>();
-            FullTas.Sustained(path, dt, speeds, "the route's path");
+            Sustained(path, dt, speeds, "the route's path");
             for (int a = 0; a < segments; a++) Probe(sim, inputs, anchors[a], dt, speeds);
 
             var rows = new List<Row>();
@@ -146,7 +230,7 @@ namespace IGTAP.EngineSim.Cli
                 // Where the segment can be started from: its first tick, and after each teleport in it (a quick restart costs a tick).
                 double best = row.Distance / row.VTop;
                 for (int k = start + 1; k < path.Count && path[k].Tick < to.Physics; k++)
-                    if (FullTas.Jumped(path[k - 1], path[k], dt)) best = Math.Min(best, 1 + Walk(k) / row.VTop);
+                    if (Jumped(path[k - 1], path[k], dt)) best = Math.Min(best, 1 + Walk(k) / row.VTop);
                 row.Floor = Math.Max(1, (long)Math.Ceiling(best));
                 row.TimedFloor = row.Timed == 0 ? 0 : crossing < 0 ? row.Floor : Math.Max(1, (long)Math.Ceiling(Dist(crossing) / row.VTop));
             }
@@ -159,10 +243,10 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>The route replayed: the player at the start and after every physics tick up to its last anchor (world place, speed
         /// |Velocity + momentum|, unlocks), and each one's walkable distance to its segment's target and, with <paramref name="gates"/>, to
         /// the course's start gates (NaN where the field has none).</summary>
-        static (List<FullTas.Sample> path, float[] dist, float[] gate) Profile(Simulation sim, List<InputTick> inputs, List<Difficulty.Anchor> anchors,
+        static (List<Sample> path, float[] dist, float[] gate) Profile(Simulation sim, List<InputTick> inputs, List<Difficulty.Anchor> anchors,
             DistanceField field, Func<long, int> segmentAt, bool gates)
         {
-            var path = new List<FullTas.Sample>();
+            var path = new List<Sample>();
             var dist = new List<float>();
             var gate = new List<float>();
             long end = anchors[anchors.Count - 1].Physics;
@@ -172,7 +256,7 @@ namespace IGTAP.EngineSim.Cli
                 Movement m = sim.Player;
                 WorldPos w = sim.PlayerWorld;
                 CapturePos c = sim.PlayerAtCapture;
-                path.Add(new FullTas.Sample
+                path.Add(new Sample
                 {
                     Tick = tick, Input = (int)sim.Engine.RunTicks, X = w.x, Y = w.y, Speed = (m.Velocity + m.momentum).magnitude, Caps = PlayerCaps.Of(sim).Id,
                 });
@@ -188,22 +272,22 @@ namespace IGTAP.EngineSim.Cli
             return (path, dist.ToArray(), gate.ToArray());
         }
 
-        /// <summary>fulltas --auto's speed probes (<see cref="FullTas.SpeedMoves"/>) from the route's state at an anchor, into the top speeds.</summary>
+        /// <summary>The speed probes (<see cref="SpeedMoves"/>) from the route's state at an anchor, into the top speeds.</summary>
         static void Probe(Simulation sim, List<InputTick> inputs, Difficulty.Anchor at, float dt, Dictionary<string, (float speed, string how)> speeds)
         {
             if (at.State == null) return;
             sim.Restore(at.State);
             string caps = PlayerCaps.Of(sim).Id;
-            foreach (var (moves, links) in FullTas.SpeedMoves(caps.Contains("om", StringComparison.OrdinalIgnoreCase)))
+            foreach (var (moves, links) in SpeedMoves(caps.Contains("om", StringComparison.OrdinalIgnoreCase)))
             {
-                var s = new List<FullTas.Sample>();
+                var s = new List<Sample>();
                 List<InputTick> probe = inputs.Take(at.Tick).Concat(moves).ToList();
                 sim.Run(probe, at.State, null, 20, _ =>
                 {
                     WorldPos w = sim.PlayerWorld;
-                    s.Add(new FullTas.Sample { Tick = sim.Engine.PhysicsTicks, X = w.x, Y = w.y, Speed = (sim.Player.Velocity + sim.Player.momentum).magnitude, Caps = caps });
+                    s.Add(new Sample { Tick = sim.Engine.PhysicsTicks, X = w.x, Y = w.y, Speed = (sim.Player.Velocity + sim.Player.momentum).magnitude, Caps = caps });
                 });
-                FullTas.Sustained(s, dt, speeds, $"speed probe from input tick {at.Tick}" + (links > 0 ? $", a {links}-link bounce chain" : ""));
+                Sustained(s, dt, speeds, $"speed probe from input tick {at.Tick}" + (links > 0 ? $", a {links}-link bounce chain" : ""));
             }
         }
 
@@ -214,7 +298,7 @@ namespace IGTAP.EngineSim.Cli
         internal static string Header(Result r)
         {
             return $"{r.Route}: " + (r.Finished ? $"finished, {r.Time.ToString("0.00", CultureInfo.InvariantCulture)} s on the course timer" : "not finished")
-                + $", {r.Ticks} physics ticks, {r.Rows.Count} segments; top path speed (u/tick over {FullTas.SpeedWindow} ticks): "
+                + $", {r.Ticks} physics ticks, {r.Rows.Count} segments; top path speed (u/tick over {SpeedWindow} ticks): "
                 + string.Join("; ", r.Speeds.OrderBy(v => v.Key).Select(v => $"{v.Key} {v.Value.speed.ToString("0.0", CultureInfo.InvariantCulture)} ({v.Value.how})"));
         }
 

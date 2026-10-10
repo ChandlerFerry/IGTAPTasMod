@@ -314,9 +314,10 @@ namespace IGTAP.EngineSim.Cli
                 goals.Add((i + 1, labels[i], new[] { v[0] - v[2] / 2, v[1] - v[3] / 2, v[0] + v[2] / 2, v[1] + v[3] / 2 }));
             }
             List<AvoidDrawn> avoid = DrawnAvoids(name, ids, stretch);
-            Dictionary<long, float> visits = (FullTas.StartChanged(dir, name, FullTas.StartKey(header).ToString("x16")) ? null
-                : FullTas.ReadVisits(FullTas.VisitsFile(dir, name), ids)) ?? new Dictionary<long, float>();
-            const float cell = FullTas.VisitCell;
+            // ponytail: no explored cells since the old window search (which wrote archive\fulltas-<run>.visits.json) went; the v2
+            // segment search keeps none on disk. Draw them again if it does.
+            var visits = new Dictionary<long, float>();
+            const float cell = 16f;
 
             // A stretch's box is its path and goal's; the explored cells drawn are those inside it.
             if (stretch >= 0 && Bounds(paths, Array.Empty<long>(), cell, goals.Select(g => g.box)) is var (sx0, sy0, sx1, sy1))
