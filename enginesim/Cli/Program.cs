@@ -24,6 +24,7 @@ namespace IGTAP.EngineSim.Cli
                 switch (args.FirstOrDefault())
                 {
                     case "replay": return Replay(args.Skip(1).ToArray());
+                    case "check": return Runs.RunCheck.Run(args.Skip(1).ToArray());
                     case "bench": return Bench(args.Skip(1).ToArray());
                     case "determinism": return Determinism.Run(args.Skip(1).ToArray());
                     case "enginebench": return EngineBench.Run(args.Skip(1).ToArray());
