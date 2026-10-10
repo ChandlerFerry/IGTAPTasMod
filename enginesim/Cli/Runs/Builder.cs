@@ -18,6 +18,8 @@ namespace IGTAP.EngineSim.Cli.Runs
     {
         public string Kind, Label, Text, Key;
         public int Goal;
+        // A no-income buy: the share of its price held when the income stopped (a currency at its cap, or nothing paying).
+        public double Progress;
     }
 
     sealed class Built
@@ -43,7 +45,23 @@ namespace IGTAP.EngineSim.Cli.Runs
             if (Complete) return MacroEngine.LiveUnits(Physics[^1], Held[^1]) < MacroEngine.LiveUnits(o.Physics[^1], o.Held[^1]);
             (int n, long at) = Skeleton();
             (int on, long oat) = o.Skeleton();
-            return n != on ? n > on : n > 0 && at < oat;
+            if (n != on) return n > on;
+            // A run stuck for want of income never reaches its next skeleton goal, however soon it reached the last: fewer economy
+            // buys left stuck before that goal first (one nothing pays for is dead weight), then more of the stuck buy's price held
+            // (an income or a cap raised), then time. A plateau of moves that each stop at the same goal and tick climbs this way.
+            bool stuck = Failure?.Kind == "no-income", ostuck = o.Failure?.Kind == "no-income";
+            if (stuck != ostuck) return stuck;
+            if (stuck && StuckBefore() != o.StuckBefore()) return StuckBefore() < o.StuckBefore();
+            if (stuck && Failure.Progress != o.Failure.Progress) return Failure.Progress > o.Failure.Progress;
+            return n > 0 && at < oat;
+        }
+
+        // The economy goals from the failing one up to the next skeleton goal: 0 when the skeleton goal itself is stuck.
+        int StuckBefore()
+        {
+            int g = Failure.Goal;
+            while (g < Plan.Count && RunGoals.Editable(Plan.Labels[g])) g++;
+            return g - Failure.Goal;
         }
 
         // Plans differ in their economy goals; the skeleton (unlocks, areas, rewards) is the same, so progress counts it alone.
@@ -71,7 +89,6 @@ namespace IGTAP.EngineSim.Cli.Runs
         readonly Simulation _sim;
         readonly FullTasTracker _base;
         readonly SimSnapshot _origin;
-        public readonly List<(int goal, byte[] state, List<InputTick> prefix, string key)> Misses = new List<(int, byte[], List<InputTick>, string)>();
         public Action<string> Log = _ => { };
         public int MaxSearches = int.MaxValue;
         public long MaxBudget = Budgets[^1];
@@ -356,16 +373,15 @@ namespace IGTAP.EngineSim.Cli.Runs
                 built.Failure = Unreachable(j, label, c, Budgets[^1]);
                 return null;
             }
+            if (!_searchMisses || built.Searches >= MaxSearches)
+            {
+                built.Failure = new Failure { Kind = "miss", Goal = j, Label = label, Key = key, Text = $"goal {j + 1} {label}: no library segment from ({c.X:0}, {c.Y:0}); queued for a search" };
+                return null;
+            }
             _sim.Restore(start);
             byte[] bytes = null;
             try { bytes = new SnapshotStore(_sim).Save(start); }
             catch (NotSupportedException) { }
-            if (!_searchMisses || built.Searches >= MaxSearches)
-            {
-                Misses.Add((j, bytes, prefix.ToList(), key));
-                built.Failure = new Failure { Kind = "miss", Goal = j, Label = label, Key = key, Text = $"goal {j + 1} {label}: no library segment from ({c.X:0}, {c.Y:0}); queued for a search" };
-                return null;
-            }
             List<List<InputTick>> seeds = _lib.Candidates(label, c.Unlocks, c.X, c.Y, c.Phase, c.Facing, 8, float.MaxValue).Select(s => s.Inputs).Where(Allowed).ToList();
             for (; budget != 0; budget = Budgets.FirstOrDefault(b => b > budget && b <= MaxBudget && !_facts.Failed(key, b)))
             {
@@ -420,7 +436,7 @@ namespace IGTAP.EngineSim.Cli.Runs
 
             // The idling itself can buy it: the player may be standing in the box.
             int affordAt = -1, quiet = 0, inactive = 0;
-            double lastHeld = startHeld;
+            double lastHeld = startHeld, progress = 0;
             string why = null;
             var idle = Enumerable.Repeat(new InputTick(), IdleCap).ToList();
             _sim.SetStart(start, inputBase);
@@ -436,6 +452,9 @@ namespace IGTAP.EngineSim.Cli.Runs
                     if (active == null) { if ((inactive += IncomeWindow) >= InactiveCap) { why = $"{label}'s box never came on"; return false; } return true; }
                     inactive = 0;
                     double held = currency < 0 ? 0 : _sim.Shop.Holds(currencies[currency]);
+                    // Against the price now: a buy-max routine on the box raises it while it spends.
+                    double[] price = _sim.Shop.Need(goal.boxes);
+                    if (currency >= 0 && price != null && price[currency] > 0) progress = Math.Min(1, held / price[currency]);
                     if (held <= lastHeld) { if (++quiet >= QuietWindows) { why = $"nothing paid {currencies[Math.Max(0, currency)]} toward {label} for {quiet * IncomeWindow} ticks"; return false; } }
                     else quiet = 0;
                     lastHeld = held;
@@ -445,7 +464,8 @@ namespace IGTAP.EngineSim.Cli.Runs
             finally { _sim.Goals.Limit = limit; }
             if (affordAt < 0)
             {
-                built.Failure = new Failure { Kind = "no-income", Goal = j, Label = label, Text = why ?? $"{label} not paid for after {IdleCap} ticks of waiting" };
+                built.Failure = new Failure { Kind = "no-income", Goal = j, Label = label, Text = (why ?? $"{label} not paid for after {IdleCap} ticks of waiting") + $" ({progress:P0} of its price held)",
+                    Progress = progress };
                 return;
             }
             var wait = new Wait { Goal = j, Label = label, X = c.X, Y = c.Y, Currency = currency < 0 ? null : currencies[currency].ToString(), Short = shortBy,

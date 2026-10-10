@@ -27,6 +27,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 MadeGoals();
                 Library();
                 Splits();
+                StuckRanking();
                 OneXAlign();
                 if (Solve.Option<string>(args, "--ticks-self", null) is string ticksOut) OneXSelf(ticksOut);
                 ResumeKeepsEarlyPress();
@@ -208,6 +209,34 @@ namespace IGTAP.EngineSim.Cli.Runs
                 && events[^1].Contains("\"goal\":2"), "a split one tick off: refused, naming goal 2");
             Check(!Confirm.Compare(b, Verdict("{\"splits\":[{\"ticks\":100,\"held\":0}]}"), e => events.Add(JsonSerializer.Serialize(e)), _ => { }),
                 "the game short of the engine's goals: refused");
+        }
+
+        // ZipEscape%'s goal 831 plateau: every move failed at the same goal and tick, so none was kept.
+        static void StuckRanking()
+        {
+            var full = new RunPlan(new[] { "t00001", "a00001", "a00002", "s00007" }, new[] { "buy:buytree1", "buy:buyatom", "buy:buyatom", "buy:buytree7" });
+            Built Stuck(RunPlan plan, int at, string kind, double progress)
+            {
+                var b = new Built { Plan = plan, Failure = new Failure { Kind = kind, Goal = at, Label = plan.Labels[at], Progress = progress } };
+                for (int g = 0; g < at; g++) { b.StepEnd.Add(10 * (g + 1)); b.Physics.Add(100 * (g + 1)); b.Held.Add(0); b.InputAt.Add(10 * (g + 1)); }
+                return b;
+            }
+            Built best = Stuck(full, 2, "no-income", 0.25), dropped = Stuck(full.RemoveAt(2), 2, "no-income", 0.81);
+            Check(dropped.Better(best) && !best.Better(dropped), "stuck paying for the next skeleton goal beats stuck on an economy buy before it");
+            Check(Stuck(full.RemoveAt(2), 2, "no-income", 0.9).Better(dropped) && !Stuck(full.RemoveAt(2), 2, "no-income", 0.5).Better(dropped),
+                "stuck at the same goal: more of its price held is ahead");
+            Check(Stuck(full, 2, "no-income", 0.3).Better(best), "the same economy buy, more of its price held: ahead");
+            Built inserted = Stuck(full.Insert(2, "buy:buytree0"), 2, "no-income", 0.95);
+            Check(!inserted.Better(dropped) && !inserted.Better(best) && best.Better(inserted), "a buy put in and stuck at 95% is dead weight: behind both");
+            Check(!Stuck(full.RemoveAt(2), 2, "miss", 0).Better(best), "a miss isn't ahead of a stuck run");
+            Built sooner = Stuck(full.RemoveAt(2), 2, "no-income", 0.5), later = Stuck(full.RemoveAt(2), 2, "no-income", 0.81);
+            sooner.Physics[0] = 99;
+            later.Physics[0] = 101;
+            Check(dropped.Better(sooner) && later.Better(sooner), "stuck: the price held counts before reaching the last skeleton goal sooner");
+            Check(dropped.Better(later) && !later.Better(dropped), "stuck alike: the sooner is ahead");
+            Built a = Stuck(full, 1, "unreachable", 0), b = Stuck(full, 1, "unreachable", 0);
+            b.Physics[0] = 99;
+            Check(b.Better(a) && !a.Better(b), "not stuck for income: the last skeleton goal's tick decides, as before");
         }
 
         // A goal's avoid boxes follow it to its place in an edited plan (one goal more before it), not stay at its old index.

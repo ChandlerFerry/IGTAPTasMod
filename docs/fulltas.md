@@ -858,8 +858,13 @@ The design is `docs/superpowers/specs/2026-10-09-fulltas-v2-design.md`; the code
   (`fulltas/<run>.problems.json`): `unreachable` (add an avoid box or a waypoint there), `no-income`.
 - **Improve:** moves on the best, longest wait first (a lap of each course, an economy buy, a later economy goal pulled
   ahead, at the wait and up to 3 goals before it), then dropped laps and swapped or shifted buys. A candidate rebuilds from
-  its first changed goal; it is kept only when the run replayed straight from the start is faster. It runs until a pass
-  finds nothing and nothing is left to search, or "stop" on stdin.
+  its first changed goal; it is kept only when the run replayed straight from the start is faster. An incomplete best's
+  failure comes first: its goal dropped (an economy goal), a lap or buy put in at it and up to 3 goals before it (a buy-max
+  touch there then waits and buys more at once), and the misses there searched first. Incomplete runs rank by skeleton goals
+  reached; then a run stuck for want of income (`no-income`) is ahead of one that isn't, with fewer economy goals stuck before
+  the next skeleton goal, then more of the stuck buy's price held (a cap or an income raised), then the last skeleton goal's
+  tick: ZipEscape%'s goal 831, where every single move stopped at the same goal and tick, climbs that way. It runs until a
+  pass finds nothing and nothing is left to search, or "stop" on stdin.
 - **Every faster complete run** goes to the gate with its goals; the gate's per-goal splits are compared with the engine's,
   and a disagreement captures the game's trace, replays it here and names the first tick and field that differ
   (`fulltas/<run>.confirm.json`); nothing more is built on that engine.

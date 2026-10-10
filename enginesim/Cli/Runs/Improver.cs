@@ -134,26 +134,11 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         Outcome Pass(Worker coord, Worker[] workers, Func<bool> stop)
         {
-            List<Move> moves = Moves(Best);
-            var misses = new List<(Move move, long gain)>();
-            for (int i = 0; i < moves.Count && !stop(); i += workers.Length)
-            {
-                Move[] batch = moves.Skip(i).Take(workers.Length).ToArray();
-                Task<Built>[] runs = batch.Select((m, k) => workers[k].Do(b => b.Build(m.Plan, workers[k].Mine, m.Keep))).ToArray();
-                Task.WaitAll(runs);
-                Built[] got = runs.Select(r => r.Result).ToArray();
-                if (LogCandidates)
-                    for (int k = 0; k < got.Length; k++) Log($"  candidate {batch[k].What}: {Describe(got[k])}");
-                int win = -1;
-                for (int k = 0; k < got.Length; k++)
-                {
-                    if (got[k].Better(Best) && (win < 0 || got[k].Better(got[win]))) win = k;
-                    if (got[k].Failure?.Kind == "miss" && Ahead(got[k]) is long gain && gain > 0) misses.Add((batch[k], gain));
-                }
-                Event?.Invoke(new { type = "status", moves = moves.Count, tried = Math.Min(moves.Count, i + batch.Length), best = Best.Live, reached = Best.Reached, misses = misses.Count });
-                if (win >= 0 && Accept(got[win], batch[win].What, coord, workers)) return Outcome.Gained;
-            }
-            var untried = misses.Where(m => !_triedMisses.Contains(Key(m.move))).OrderByDescending(m => m.gain).ToList();
+            // The same best has the same moves and builds: a pass that only searched misses goes on with the next ones. A segment
+            // a search filed reaches the later misses as they're built.
+            if (_missesOf != Best) Evaluate(coord, workers, stop);
+            if (_missesOf != Best) return stop() ? Outcome.Searching : Outcome.Gained;
+            var untried = _misses.Where(m => !_triedMisses.Contains(Key(m.move))).OrderByDescending(m => m.gain).ToList();
             foreach (var (move, _) in untried.Take(MissesPerPass))
             {
                 if (stop()) return Outcome.Searching;
@@ -169,11 +154,51 @@ namespace IGTAP.EngineSim.Cli.Runs
             return untried.Count > MissesPerPass ? Outcome.Searching : Outcome.Converged;
         }
 
+        Built _missesOf;
+        List<(Move move, long gain)> _misses;
+
+        void Evaluate(Worker coord, Worker[] workers, Func<bool> stop)
+        {
+            List<Move> moves = Moves(Best);
+            var misses = new List<(Move move, long gain)>();
+            for (int i = 0; i < moves.Count; i += workers.Length)
+            {
+                if (stop()) return;
+                Move[] batch = moves.Skip(i).Take(workers.Length).ToArray();
+                Task<Built>[] runs = batch.Select((m, k) => workers[k].Do(b => b.Build(m.Plan, workers[k].Mine, m.Keep))).ToArray();
+                Task.WaitAll(runs);
+                Built[] got = runs.Select(r => r.Result).ToArray();
+                if (LogCandidates)
+                    for (int k = 0; k < got.Length; k++) Log($"  candidate {batch[k].What}: {Describe(got[k])}");
+                int win = -1;
+                for (int k = 0; k < got.Length; k++)
+                {
+                    if (got[k].Better(Best) && (win < 0 || got[k].Better(got[win]))) win = k;
+                    if (got[k].Failure?.Kind == "miss" && Ahead(got[k]) is long gain && gain > 0) misses.Add((batch[k], gain));
+                }
+                Event?.Invoke(new { type = "status", moves = moves.Count, tried = Math.Min(moves.Count, i + batch.Length), best = Best.Live, reached = Best.Reached, misses = misses.Count });
+                if (win >= 0 && Accept(got[win], batch[win].What, coord, workers)) return;
+            }
+            (_missesOf, _misses) = (Best, misses);
+        }
+
+        // How far ahead of the best a candidate that stopped at a miss is, at the last goal both have (a goal the move put in isn't
+        // the best's). A miss no later than an incomplete best within the goals its failure's moves edit is the only way past
+        // that failure: searched first, the goals the best reached last first (where the player stands: short searches; a lap of a
+        // course left long ago has no distance to steer by).
+        // ponytail: recency stands in for the distance to the goal; a distance field per miss if it misorders.
         long? Ahead(Built c)
         {
-            if (c.Reached == 0) return null;
-            int at = Array.IndexOf(Best.Plan.Ids, c.Plan.Ids[c.Reached - 1]);
-            return at < 0 || at >= Best.Reached ? (long?)null : Best.Physics[at] - c.Physics[c.Reached - 1];
+            const long Frontier = 1L << 40;
+            for (int k = c.Reached - 1; k >= 0; k--)
+            {
+                int at = Array.IndexOf(Best.Plan.Ids, c.Plan.Ids[k]);
+                if (at < 0) continue;
+                long gain = at >= Best.Reached ? 0 : Best.Physics[at] - c.Physics[k];
+                return at >= Best.Reached || !Best.Complete && gain >= 0 && at >= Best.Reached - 1 - FillBack
+                    ? Frontier + Array.LastIndexOf(Best.Plan.Labels, c.Failure.Label, Math.Max(0, Best.Reached - 1)) : gain;
+            }
+            return null;
         }
 
         List<Move> Moves(Built best)
@@ -196,8 +221,10 @@ namespace IGTAP.EngineSim.Cli.Runs
             if (!best.Complete && best.Failure != null)
             {
                 int f = best.Failure.Goal;
-                Fill(f, best.Failure.Kind);
                 if (RunGoals.Editable(p.Labels[f])) Add($"drop goal {f + 1} {p.Labels[f]} ({best.Failure.Kind})", p.RemoveAt(f));
+                // What a goal lacks is often set by a step before it (a buy-max touch spends all it holds the first tick one level
+                // is paid for): a lap or a buy before that step makes it wait, and buy more at once.
+                for (int back = 0; back <= FillBack && f - back >= 0; back++) Fill(f - back, $"{best.Failure.Kind} at goal {f + 1}");
             }
             foreach (Wait w in best.Waits.OrderByDescending(w => w.Ticks).ThenBy(w => w.Goal))
             {
