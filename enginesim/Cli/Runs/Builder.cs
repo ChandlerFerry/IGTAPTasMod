@@ -298,13 +298,16 @@ namespace IGTAP.EngineSim.Cli.Runs
             // The first that replays, nearest start first: what was filed from this very state reproduces what followed it.
             foreach (Segment s in _lib.Candidates(label, c.Unlocks, c.X, c.Y, c.Phase, c.Facing, fp: c.Fp))
             {
-                if (afterReset && s.Inputs.Count > 0 && s.Inputs[0].reset) continue;
+                if (afterReset && s.Inputs.Count > 0 && s.Inputs[0].reset || !Allowed(s.Inputs)) continue;
                 if (TryPlay(start, inputBase, s.Inputs, j) is var (inputs, at)) return (inputs, at);
             }
             return null;
         }
 
         const int MinWait = 8;
+
+        // A class without major techs plays no pause (the pauselift); techs-used checks the rest before a best is kept.
+        bool Allowed(List<InputTick> inputs) => !Glitches.NoMajors(_run.Class) || inputs.All(t => t.pause == 0);
 
         static bool Neutral(InputTick t) => t.x == 0 && t.y == 0 && !t.held && !t.press && !t.release && !t.dash && !t.reset && t.dashJump == 0 && t.pause == 0;
 
@@ -360,7 +363,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 built.Failure = new Failure { Kind = "miss", Goal = j, Label = label, Key = key, Text = $"goal {j + 1} {label}: no library segment from ({c.X:0}, {c.Y:0}); queued for a search" };
                 return null;
             }
-            List<List<InputTick>> seeds = _lib.Candidates(label, c.Unlocks, c.X, c.Y, c.Phase, c.Facing, 8, float.MaxValue).Select(s => s.Inputs).ToList();
+            List<List<InputTick>> seeds = _lib.Candidates(label, c.Unlocks, c.X, c.Y, c.Phase, c.Facing, 8, float.MaxValue).Select(s => s.Inputs).Where(Allowed).ToList();
             for (; budget != 0; budget = Budgets.FirstOrDefault(b => b > budget && b <= MaxBudget && !_facts.Failed(key, b)))
             {
                 Log($"search: goal {j + 1} {label} from ({c.X:0}, {c.Y:0}) with {c.Unlocks}, {budget / 1_000_000}M ticks, {seeds.Count} seeds");

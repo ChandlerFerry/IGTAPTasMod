@@ -16,8 +16,9 @@ namespace IGTAP.EngineSim.Cli.Runs
         public string[] HeaderIds;
         public Dictionary<string, FullTasGoal> Known;
         public bool Loose;
+        public RunClass Class;
 
-        public static RunContext Open(string trace)
+        public static RunContext Open(string trace, RunClass cls = RunClass.Major)
         {
             trace = Path.GetFullPath(trace);
             JsonElement header = Solve.ReadHeader(trace);
@@ -27,7 +28,8 @@ namespace IGTAP.EngineSim.Cli.Runs
             string invalid = FullTasGoalIds.Invalid(ids, ids.Length);
             if (invalid != null) throw new InvalidOperationException("The trace's goals have no valid ids (" + invalid + "): capture it again");
             Func<Simulation> make = Solve.Creator(trace, header);
-            Func<Simulation> strict = () => { Simulation sim = make(); sim.StrictBuys = true; return sim; };
+            bool human = Glitches.Human(cls);
+            Func<Simulation> strict = () => { Simulation sim = make(); sim.StrictBuys = true; sim.Engine.HumanClass = human; return sim; };
             // The goals as the engine resolves them (a reward goal's box found near its rect): read on a thread of its own, since
             // a Simulation owns its thread's engine hooks.
             (FullTasGoal[] goals, bool loose) = Solve.OnThread(() => { Simulation sim = strict(); return (sim.Goals.Goals, sim.Goals.Loose); });
@@ -36,12 +38,15 @@ namespace IGTAP.EngineSim.Cli.Runs
             return new RunContext
             {
                 Trace = trace, Name = fulltas.GetProperty("name").GetString(), Dir = Path.GetDirectoryName(trace), Header = header,
-                Make = strict, HeaderGoals = goals, HeaderIds = ids, Known = known, Loose = loose,
+                Make = strict, HeaderGoals = goals, HeaderIds = ids, Known = known, Loose = loose, Class = cls,
             };
         }
 
         public FullTasGoal[] GoalsOf(RunPlan plan) => plan.Labels.Select(l => RunGoals.Goal(l, Known)).ToArray();
 
-        public string RunFile => Path.Combine(Dir, "fulltas", Name + ".json");
+        // A class's own files beside the run's (fulltas/<run>.<class>.json), as the plugin keeps class bests.
+        public string Key => Class == RunClass.Major ? Name : Name + "." + Glitches.Key(Class);
+
+        public string RunFile => Path.Combine(Dir, "fulltas", Key + ".json");
     }
 }

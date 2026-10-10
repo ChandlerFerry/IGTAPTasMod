@@ -107,7 +107,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 if (!_graftsFor.TryGetValue(caps, out patterns))
                 {
                     Caps held = Caps.Parse(caps);
-                    _graftsFor[caps] = patterns = lib.Patterns.Where(p => p.Requires.IsSubsetOf(held)).ToList();
+                    _graftsFor[caps] = patterns = lib.Patterns.Where(p => p.Requires.IsSubsetOf(held) && Glitches.Allows(_run.Class, p.Category)).ToList();
                 }
             return patterns.Count == 0 ? null : new TechGrafts { Patterns = patterns, Key = lib.Key, CacheFile = lib.CacheFile };
         }

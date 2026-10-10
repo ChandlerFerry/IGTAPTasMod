@@ -26,7 +26,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         public static int Run(string[] args)
         {
             if (args.Length == 0) { Console.Error.WriteLine("usage: solve-run <fulltas trace> [--threads N]"); return 2; }
-            RunContext run = RunContext.Open(args[0]);
+            RunContext run = RunContext.Open(args[0], Glitches.Parse(Solve.Option(args, "--class", "major")));
             int threads = Solve.Option(args, "--threads", Math.Max(1, Environment.ProcessorCount - 2));
             bool submit = !args.Contains("--no-submit");
             new Thread(WatchStdin) { IsBackground = true }.Start();
@@ -38,7 +38,8 @@ namespace IGTAP.EngineSim.Cli.Runs
                 using JsonDocument d = JsonDocument.Parse(File.ReadAllText(def));
                 if (d.RootElement.TryGetProperty("seeds", out JsonElement s)) seeds = s.EnumerateArray().Select(x => x.GetString()).ToArray();
             }
-            var lib = SegmentLibrary.Load(RunFiles.FileOf(run, ".segments.json"), seeds.Select(x => Path.Combine(run.Dir, "fulltas", x + ".segments.json")));
+            // One library for every class of a run: a segment is only ever used where it replays, under the class's own rules.
+            var lib = SegmentLibrary.Load(Path.Combine(run.Dir, "fulltas", run.Name + ".segments.json"), seeds.Select(x => Path.Combine(run.Dir, "fulltas", x + ".segments.json")));
             var facts = new SegmentFacts(RunFiles.FileOf(run, ".failures.json"));
             var search = new SegmentSearch(run) { Stop = () => _stop };
             var plan = new RunPlan(run.HeaderIds, run.HeaderGoals.Select(g => g.label).ToArray());
@@ -46,7 +47,8 @@ namespace IGTAP.EngineSim.Cli.Runs
 
             List<InputTick> route = new List<InputTick>();
             string from = "nothing (a new run)";
-            foreach (string file in new[] { run.RunFile }.Concat(seeds.Select(x => Path.Combine(run.Dir, "fulltas", x + ".json"))).Where(File.Exists))
+            // A class run with no route of its own starts from the run's major best.
+            foreach (string file in new[] { run.RunFile, Path.Combine(run.Dir, "fulltas", run.Name + ".json") }.Concat(seeds.Select(x => Path.Combine(run.Dir, "fulltas", x + ".json"))).Where(File.Exists))
             {
                 using JsonDocument d = JsonDocument.Parse(File.ReadAllText(file));
                 route = Solve.ReadInputs(d.RootElement);
@@ -74,8 +76,11 @@ namespace IGTAP.EngineSim.Cli.Runs
             improver.Event += Emit;
             improver.NewBest += (b, how) =>
             {
-                // Never replace the run's best with a worse route (a start that harvests less than the file's route reaches).
-                if (b.Complete ? b.Live < savedLive - 1e-4 || savedReached < b.Plan.Count : b.Reached > savedReached)
+                // Never replace the run's best with a worse route (a start that harvests less than the file's route reaches), nor
+                // keep one its class doesn't allow (a major span in an nmg run).
+                string refused = Glitches.NoMajors(run.Class) && (b.Complete ? b.Live < savedLive - 1e-4 || savedReached < b.Plan.Count : b.Reached > savedReached) ? MajorSpan(run, b) : null;
+                if (refused != null) Log($"not kept for {Glitches.Key(run.Class)}: {refused}");
+                if (refused == null && (b.Complete ? b.Live < savedLive - 1e-4 || savedReached < b.Plan.Count : b.Reached > savedReached))
                 {
                     string backup = RunFiles.FileOf(run, ".before-v2.json");
                     if (File.Exists(run.RunFile) && !File.Exists(backup)) File.Copy(run.RunFile, backup);
@@ -90,7 +95,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 last = now;
                 Emit(new { type = "waits", waits = b.Waits.OrderByDescending(w => w.Ticks).Take(50).Select(w => new { goal = w.Goal + 1, id = b.Plan.Ids[w.Goal], label = w.Label, x = Math.Round(w.X), y = Math.Round(w.Y), ticks = w.Ticks, currency = w.Currency, @short = w.Short }) });
                 if (b.Failure != null) Emit(new { type = "failure", kind = b.Failure.Kind, goal = b.Failure.Goal + 1, id = b.Plan.Ids[b.Failure.Goal], label = b.Failure.Label, text = b.Failure.Text });
-                if (b.Complete && b.Live < savedLive - 1e-4)
+                if (refused == null && b.Complete && b.Live < savedLive - 1e-4)
                 {
                     savedLive = b.Live;
                     Log($"offline best -> {Path.GetFileName(RunFiles.WriteOfflineBest(run, b))}");
@@ -120,6 +125,26 @@ namespace IGTAP.EngineSim.Cli.Runs
             splits = Enumerable.Range(0, b.Reached).Select(g => Math.Round(MacroEngine.LiveSeconds(b.Physics[g], b.Held[g]), 4)).ToArray(),
         };
 
+        // The engine's tech checks on the route, as the gate runs them: a class without major techs keeps no route with a major span.
+        static string MajorSpan(RunContext run, Built b)
+        {
+            string file = Path.Combine(Path.GetTempPath(), $"solve-run-{Environment.ProcessId}-techs.json");
+            File.WriteAllText(file, JsonSerializer.Serialize(new { inputs = b.Inputs.Select(t => t.ToJson()), goals = b.Plan.Ids.Select((id, i) => new { id, goal = b.Plan.Labels[i] }) }));
+            var psi = new ProcessStartInfo(Environment.ProcessPath) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+            foreach (string a in new[] { "techs-used", run.Trace, file, "--json", "--no-difficulty" }) psi.ArgumentList.Add(a);
+            using Process p = Process.Start(psi);
+            string output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit();
+            File.Delete(file);
+            string line = output.Split('\n').Select(l => l.Trim()).LastOrDefault(l => l.StartsWith("{", StringComparison.Ordinal));
+            if (line == null) return "techs-used gave no result: " + output.Trim();
+            using JsonDocument d = JsonDocument.Parse(line);
+            foreach (JsonElement span in d.RootElement.GetProperty("spans").EnumerateArray())
+                if (span.GetProperty("category").GetString() == Glitches.MajorCategory)
+                    return $"it uses {span.GetProperty("tech").GetString()} (major) at input tick {span.GetProperty("tick")}";
+            return null;
+        }
+
         static void WatchStdin()
         {
             try
@@ -141,7 +166,9 @@ namespace IGTAP.EngineSim.Cli.Runs
                 RunFiles.InstallGoals(run, b.Plan);
                 object goals = b.Plan.Ids.Select((id, i) => new { id, goal = b.Plan.Labels[i] }).ToArray();
                 object goalsFrom = new object[] { fromIds.Select((id, i) => new { id, goal = fromLabels[i] }).ToArray() };
-                string body = JsonSerializer.Serialize(new { name = run.Name, ticks = b.Inputs.Select(t => t.ToJson()), goals, goalsFrom });
+                string body = run.Class == RunClass.Major
+                    ? JsonSerializer.Serialize(new { name = run.Name, ticks = b.Inputs.Select(t => t.ToJson()), goals, goalsFrom })
+                    : JsonSerializer.Serialize(new { name = run.Name, @class = Glitches.Key(run.Class), ticks = b.Inputs.Select(t => t.ToJson()), goals, goalsFrom });
                 for (int attempt = 1; attempt <= 30; attempt++)
                 {
                     try

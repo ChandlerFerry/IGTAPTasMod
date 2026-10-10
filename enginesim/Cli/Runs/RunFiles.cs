@@ -13,7 +13,7 @@ namespace IGTAP.EngineSim.Cli.Runs
     {
         static readonly JsonSerializerOptions Compact = new JsonSerializerOptions(), Indented = new JsonSerializerOptions { WriteIndented = true };
 
-        public static string FileOf(RunContext run, string ext) => Path.Combine(run.Dir, "fulltas", run.Name + ext);
+        public static string FileOf(RunContext run, string ext) => Path.Combine(run.Dir, "fulltas", run.Key + ext);
 
         // The plugin's run file format (fulltas/<run>.json): each goal's id, label and where the route reached it (-1: not).
         public static void WriteRunFile(RunContext run, Built b, (float x, float y, bool facingRight) startAt)
@@ -136,7 +136,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         {
             string dir = Path.Combine(run.Dir, "offline-best");
             Directory.CreateDirectory(dir);
-            string file = Path.Combine(dir, "fulltas-" + run.Name + "-" + b.Live.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
+            string file = Path.Combine(dir, "fulltas-" + run.Key + "-" + b.Live.ToString("0.00", CultureInfo.InvariantCulture) + ".json");
             Solve.WriteShared(file, JsonSerializer.Serialize(new
             {
                 fulltas = run.Name, time = b.Live, runTicks = b.Physics[^1],

@@ -57,7 +57,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             public void Dispose() => _jobs.CompleteAdding();
         }
 
-        sealed record Move(string What, RunPlan Plan);
+        sealed record Move(string What, RunPlan Plan, int Keep = int.MaxValue);
 
         enum Outcome { Gained, Searching, Converged }
 
@@ -139,7 +139,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             for (int i = 0; i < moves.Count && !stop(); i += workers.Length)
             {
                 Move[] batch = moves.Skip(i).Take(workers.Length).ToArray();
-                Task<Built>[] runs = batch.Select((m, k) => workers[k].Do(b => b.Build(m.Plan, workers[k].Mine))).ToArray();
+                Task<Built>[] runs = batch.Select((m, k) => workers[k].Do(b => b.Build(m.Plan, workers[k].Mine, m.Keep))).ToArray();
                 Task.WaitAll(runs);
                 Built[] got = runs.Select(r => r.Result).ToArray();
                 if (LogCandidates)
@@ -153,15 +153,15 @@ namespace IGTAP.EngineSim.Cli.Runs
                 Event?.Invoke(new { type = "status", moves = moves.Count, tried = Math.Min(moves.Count, i + batch.Length), best = Best.Live, reached = Best.Reached, misses = misses.Count });
                 if (win >= 0 && Accept(got[win], batch[win].What, coord, workers)) return Outcome.Gained;
             }
-            var untried = misses.Where(m => !_triedMisses.Contains(Key(m.move.Plan))).OrderByDescending(m => m.gain).ToList();
+            var untried = misses.Where(m => !_triedMisses.Contains(Key(m.move))).OrderByDescending(m => m.gain).ToList();
             foreach (var (move, _) in untried.Take(MissesPerPass))
             {
                 if (stop()) return Outcome.Searching;
-                _triedMisses.Add(Key(move.Plan));
+                _triedMisses.Add(Key(move));
                 Built c = coord.Do(b =>
                 {
                     (b.MaxSearches, b.MaxBudget) = (MaxSearchesPerBuild, Builder.Budgets[0]);
-                    try { return b.Build(move.Plan, coord.Mine); }
+                    try { return b.Build(move.Plan, coord.Mine, move.Keep); }
                     finally { (b.MaxSearches, b.MaxBudget) = (int.MaxValue, Builder.Budgets[^1]); }
                 }).Result;
                 if (c.Better(Best) && Accept(c, move.What + " (searched)", coord, workers)) return Outcome.Gained;
@@ -206,6 +206,14 @@ namespace IGTAP.EngineSim.Cli.Runs
                 for (int h = w.Goal + 1, taken = 0; h < best.Reached && taken < NextSteps; h++)
                     if (RunGoals.Editable(p.Labels[h])) { Add($"goal {h + 1} {p.Labels[h]} ahead of goal {w.Goal + 1}'s wait", p.Move(h, w.Goal)); taken++; }
             }
+            // A class without major techs rebuilds every step that still holds a pause (a start taken from the major best).
+            if (Glitches.NoMajors(_run.Class))
+                for (int j = 0; j < best.Reached; j++)
+                {
+                    int from = j == 0 ? 0 : best.StepEnd[j - 1];
+                    for (int i = from; i < best.StepEnd[j]; i++)
+                        if (best.Inputs[i].pause > 0) { moves.Add(new Move($"goal {j + 1} {p.Labels[j]} without its pause", p, j)); break; }
+                }
             int n = best.Reached;
             for (int i = 0; i < n; i++)
                 if (FullTasGoal.IsLap(p.Labels[i])) Add($"drop lap {i + 1} {p.Labels[i]}", p.RemoveAt(i));
@@ -221,6 +229,8 @@ namespace IGTAP.EngineSim.Cli.Runs
         }
 
         static string Key(RunPlan p) => string.Join("|", p.Labels);
+
+        static string Key(Move m) => Key(m.Plan) + "#" + m.Keep;
 
         static bool Buy(string label) => label.StartsWith("buy:", StringComparison.Ordinal) && RunGoals.Editable(label);
     }

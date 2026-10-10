@@ -122,14 +122,14 @@ namespace IGTAPTasMod
             int threads = Number(body, "threads", 0);
             if (threads <= 0) threads = Math.Max(1, Environment.ProcessorCount - 2);
             string cls = FullTasClassOf(Text(body, "class"));
-            if (cls == MajorClass)
             {
                 var solve = new StringBuilder("solve-run ").Append(Quote(trace)).Append(" --threads ").Append(threads);
+                if (cls != MajorClass) solve.Append(" --class ").Append(cls);
                 string goalId = Text(body, "stretch");
                 if (goalId.Length > 0) solve.Append(" --segment ").Append(goalId);
                 StartFullTasProcess(run, solve.ToString(), goalId.Length > 0
                     ? "Searching " + run.name + "'s goal " + run.goals[FullTasGoalAt(run, goalId)].goal + " again on " + threads + " threads"
-                    : "Solving " + run.name + " on " + threads + " threads", "until Stop");
+                    : "Solving " + run.name + (cls == MajorClass ? "" : " (" + cls + ")") + " on " + threads + " threads", "until Stop");
                 return;
             }
             var args = new StringBuilder("fulltas ").Append(Quote(trace));
