@@ -19,6 +19,10 @@
   </ItemGroup>
 
   <Target Name="MonoFloatSemantics" AfterTargets="CoreCompile" BeforeTargets="CopyFilesToOutputDirectory">
-    <Exec Command="dotnet &quot;$(MSBuildThisFileDirectory)..\Prep\bin\$(Configuration)\net10.0\IGTAP.EngineSim.Prep.dll&quot; monofloat &quot;@(IntermediateAssembly->'%(FullPath)')&quot; UnityEngine.Vector2 UnityEngine.Vector3 UnityEngine.Rect UnityEngine.Color UnityEngine.Mathf UnityEngine.Quaternion" />
+    <!-- Prep's own output, wherever -o or the configuration put it (a clean checkout has no bin\Release copy to run). -->
+    <MSBuild Projects="..\Prep\IGTAP.EngineSim.Prep.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" PropertyName="PrepDll" />
+    </MSBuild>
+    <Exec Command="dotnet &quot;$(PrepDll)&quot; monofloat &quot;@(IntermediateAssembly->'%(FullPath)')&quot; UnityEngine.Vector2 UnityEngine.Vector3 UnityEngine.Rect UnityEngine.Color UnityEngine.Mathf UnityEngine.Quaternion" />
   </Target>
 </Project>
