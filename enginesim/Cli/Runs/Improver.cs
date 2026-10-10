@@ -139,9 +139,10 @@ namespace IGTAP.EngineSim.Cli.Runs
                 Event?.Invoke(new { type = "status", polish = j + 1, id = plan.Ids[j], best = Best.Live, reached = Best.Reached });
                 Built c = coord.Do(b =>
                 {
-                    // ponytail: a 20M-tick search per goal and at most 3 more of 20M in the rebuild after it (CourseAuto.Polish's caps);
-                    // raise them (Budgets[1]) if a run's polish stalls with goals that took 80M+ to find.
-                    (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget) = (j, Builder.Budgets[0], 4, Builder.Budgets[0]);
+                    // ponytail: a 20M-tick search per goal, and in the rebuild after it a 20M search for each later goal the change
+                    // moved, up to --segment's 25 (a changed early goal moves every later state: VMAN's candidates stopped incomplete
+                    // at 3); raise the budget (Budgets[1]) if a run's polish stalls with goals that took 80M+ to find.
+                    (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget) = (j, Builder.Budgets[0], Math.Min(plan.Count - j, SegmentSearches), Builder.Budgets[0]);
                     try { return b.Build(plan, coord.Mine, j); }
                     finally { (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget) = (-1, Builder.Budgets[1], int.MaxValue, Builder.Budgets[^1]); }
                 }).Result;
