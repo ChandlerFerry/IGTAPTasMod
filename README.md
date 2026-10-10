@@ -164,7 +164,7 @@
 2. Relaxes rule 39. The interpolation/fixed-clock patch (rules 7–9), the Vman credits' crash (below) and playback's
    wall-clock reads (the dash freeze, the camera's easing and `ObjectBobber` count the fixed clock's frame instead of
    the wall clock, [`enginesim/README.md`](enginesim/README.md#probe)) change game logic; the other places a patch does are
-   the exceptions below that relax rule 39 (3, 4, 5, 10, 11, 12 and 13), each named there.
+   the exceptions below that relax rule 39 (3, 4, 5, 10, 11, 12, 13 and 14), each named there.
 3. Relaxes rule 39. The one other patch: a Vman speedrun's credits (`FakeCreditsControlScript.IE_DoVmanCredits`, the
    `VMAN` run's last goal) crash the game on purpose (`Utils.ForceCrash`) after writing PlayerPrefs
    `VmanCoursesCompleteTemp`; the plugin drops both calls. Both come after the goal, so no route sees them.
@@ -226,6 +226,15 @@
     (`SavestateService.SetAtomDoorKey`): a Full-TAS new game loads without it (a savestate start: with the savestate's),
     a turbo restore puts its snapshot's back, and a savestate keeps it and puts it back. Category starts leave it as it is
     (21).
+14. Relaxes rule 39. Turbo's frames read the player where 1x shows it: the game code a turbo frame runs (every
+    `Movement` method, its coroutines included, `courseScript`'s and `TeleporterScript`'s, and the plugin's hooks in
+    them) reads `Transform.position` through `TurboRunner.BlendRead`, which returns the frame's interpolation blend for
+    the player's transform while turbo runs that frame's `FixedUpdate`s or `Update`s and the game hasn't written it
+    since, and the transform itself otherwise (at 1x, but for the `Movement.FixedUpdate` right after a turbo handoff).
+    Turbo used to write the blend into the transform; Unity syncs a written transform into the `Rigidbody2D`, and any
+    body write makes Box2D recompute its sweep centre from the position, a float step off the one 1x carries from step
+    to step, so turbo drifted from 1x. The transform and body are now written only where the game writes them (and a
+    turbo restore); the game's writes land as at 1x.
 
 Details: [`AGENTS.md`](AGENTS.md). The whole game from a new game as one run with goals:
 [`docs/fulltas.md`](docs/fulltas.md). What a human can put into the game, and how routes match it:

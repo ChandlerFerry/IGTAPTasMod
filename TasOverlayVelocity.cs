@@ -27,7 +27,7 @@ namespace IGTAPTasMod
             _velocityPlatform = player.movingPlatformVelocity;
             _velocityCap = player.runSpeed * 10f;
             _velocityDirty = true;
-            Vector2 nudge = (Vector2)player.transform.position - _positionBeforeTick;
+            Vector2 nudge = (Vector2)TurboRunner.BlendRead(player.transform) - _positionBeforeTick;
             if (nudge.sqrMagnitude > 1e-4f && nudge.sqrMagnitude < MaxNudge * MaxNudge)
             {
                 int x = nudge.x != 0f ? Mathf.RoundToInt(nudge.x) : int.MinValue, y = nudge.y != 0f ? Mathf.RoundToInt(nudge.y) : int.MinValue;

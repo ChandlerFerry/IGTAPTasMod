@@ -220,7 +220,7 @@ namespace IGTAPTasMod
                 // A tech demo's start (EngineSimTechTrace) runs as its playback does: from its savestate at once, no course finish needed.
                 bool tech = Instance._techStart != null;
                 Instance._engine.Run(macro, !(tech && savestateRestored), !tech, 0,
-                    movement == null ? (Vector2?)null : movement.transform.position);
+                    movement == null ? (Vector2?)null : TurboRunner.BlendRead(movement.transform));
                 return true;
             }
             if (Instance._newGamePhase == 3 && !IsMenuPlayer(__instance) && !TurboRunner.Active && Instance.NewGamePlayerAtRest(__instance)
@@ -247,7 +247,7 @@ namespace IGTAPTasMod
                 movement = FindWorldMovement();
                 Instance.ApplyCategoryAbilities(macro, movement);
                 Instance.ApplyTechAbilities(macro, movement);
-                Vector2? synchronizationPosition = movement == null ? (Vector2?)null : movement.transform.position;
+                Vector2? synchronizationPosition = movement == null ? (Vector2?)null : TurboRunner.BlendRead(movement.transform);
                 Instance.SnapCameraAtPlaybackStart(movement);
                 Instance._engine.Run(macro, !savestateRestored, !Instance.IsTechDemo(macro), startDelayTicks, synchronizationPosition);
             }

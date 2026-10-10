@@ -93,6 +93,8 @@ Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/so
   (`TurboRunner.KeepBody`, 2026-10-09; [`docs/fidelity-log.md`](docs/fidelity-log.md)): before it turbo rounded the body
   through the player's moved parent every frame, and the engine did after an in-run rebase. Routes judged before it can
   play differently at 1x (`ZipEscape%`'s 1158-goal offline best stops at goal 970 at 1x and offline): judge them again.
+  Since 2026-10-10 turbo doesn't write the player's transform or body at all where the game doesn't: its frames' game code
+  reads the blend through `TurboRunner.BlendRead` (README exception 14), so the body keeps the sweep centre 1x carries.
 - The game is build 25706930 (Steam, 2026-10-04): an on-screen clone spawn resets a timer at two intervals or more,
   so a full pool's banked timer no longer refills a freed slot on the next frame, and every clone bought recomputes
   the interval ([`docs/fulltas.md`](docs/fulltas.md#clones-on-build-25706930)). Full-TAS routes judged before it pay

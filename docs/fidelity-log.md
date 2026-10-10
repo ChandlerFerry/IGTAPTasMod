@@ -1261,3 +1261,38 @@ press or quick restart already made for the step it resumes at, as the TAS edito
 goal 12's state the run now plays on as the straight replay does (`run-selftest --restore-at 12` on that build); `run-selftest`
 checks the rule. Straight replays are unchanged: `check` against a baseline of the engine before it, 5 runs and 482 traces,
 0 differ.
+
+## 2026-10-10: turbo's own transform writes moved Box2D's sweep centre
+
+A recapture of the whole corpus (480 traces) left 190 traces whose turbo body was a float step off the engine's (most at
+tick 4, where x speed reaches 460) and 45 tech demos whose resting body's y velocity differed by about 1e-6; 1x probes
+(`cr-rand-c1-none-0`, `cr-c6-orb-idle`) agreed with the engine, not turbo. Turbo wrote the frame's interpolation blend into
+the player's transform before `Movement.FixedUpdate` and each frame's `Update`, and put the transform back on the body
+before the next query (`Place`, `FrameStart`, `KeepBody`). Every `Rigidbody2D.position` write, a synced transform's or
+`KeepBody`'s, makes Box2D recompute its sweep centre from the position (`c = p + R·centerOfMass`, the player's about (5,
+1.155)), dropping the precision `c` carries from step to step; 1x and the engine never write the body there. Offline,
+recomputing `c` from `p` every tick reproduced turbo exactly.
+
+Turbo now writes neither (README exception 14): the game code its frames run (every `Movement` method and coroutine,
+`courseScript`'s, `TeleporterScript`'s; a Harmony transpiler) and the plugin's hooks in them (a run's start pin, the TAS
+editor's trace, the overlay) read `Transform.position` through `TurboRunner.BlendRead`: the blend, as a write would read
+back through the player's parent (a bare transform beside the player rounds it), until the game writes the transform; the
+transform itself otherwise. A frame's start only syncs (a write still pending, the tick's last frame's, is put back on the
+body first, as before), and the 1x tick after a handoff reads the blend the same way.
+
+- 1x probes, velocities exact and positions to the probe's precision: `cr-rand-c1-none-0` matches turbo on all 31 inputs
+  (before: one step off from input 20); 1x probes of tech demos `super`, `super-ground-bounce`, `dash-momentum-storage`,
+  `corner-jump`, `backwards-dash-jump`, `boosted-double-jump`, `dash-bounce` and of `go5-bonus5-4.66`, `rand-c4-wjds-0`
+  and `seed-c3-…-1.22` match turbo on every tick, where the engine splits from both.
+- The corpus recaptured: 417 of 480 traces identical to the engine (210 before; 26 of the gain is `replay` skipping the
+  tick a run ends on, 3e049db). Left: 50 resting-contact residual velocities (about 1e-6; the engine's, by the probes
+  above), the 6 bonus10 starts (velocity -2.1e-23 at tick 0), Course 2's `collidingBodies` order on one tick, 5 others
+  (`go5`/`zs-bonus5-4.66` and the two above, the engine's; `zone12r-turbo`, `tech-late-gate-touch`).
+- Not turbo's writes, still open: turbo's restore settles the player's contacts once at rest (`SettleContacts`), from
+  whatever contacts ran before it; Unity can't set Box2D's warm-start impulses. The bonus10 starts' -2.1e-23 is that: the
+  settle's impulse (0.002 from the live game's 138024) against the run's own (3e-11), so the next step's residual differs.
+  Which tech demos split from the engine on a residual changes from capture to capture for the same reason. Fresh
+  contacts at a restore (the 1x savestate's `simulated` off and on) matched the engine on those 6 starts but split from 1x
+  on 4 of the 8 probed tech demos, so it was dropped.
+- `tools/tas-check.py` (Course 5's 11.26): a seek holds what 1x plays at inputs 40 and 120; its trace still differs from
+  1x's by an ulp from input 4 (the blend's rounding, 2026-10-09 above).

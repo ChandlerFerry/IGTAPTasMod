@@ -192,7 +192,7 @@ namespace IGTAPTasMod
             TasPlugin p = Instance;
             p._techSuperJumpBuffer = DebugFields.JumpBuffer(__instance);
             p._techSuperHyper = DebugFields.CanHyper(__instance);
-            float lifted = __instance.transform.position.y + 2f, lastHyper = DebugFields.LastHyperY(__instance);
+            float lifted = TurboRunner.BlendRead(__instance.transform).y + 2f, lastHyper = DebugFields.LastHyperY(__instance);
             p._techSuperUltra = Mathf.Sign(DebugFields.PreDashMomentum(__instance).x) == Mathf.Sign(DebugFields.DashDirection(__instance).x)
                 && lifted < lastHyper - 4f;
             // A float ultra: the second hyper of a chain passes the game's check only because a rebase moved the dot since the
@@ -382,7 +382,7 @@ namespace IGTAPTasMod
             int mask = Physics2D.GetLayerCollisionMask(player.gameObject.layer);
             var filter = new ContactFilter2D { useTriggers = false, useLayerMask = true, layerMask = mask };
             Rigidbody2D own = player.GetComponent<Rigidbody2D>();
-            int count = Physics2D.Raycast(player.transform.position, new Vector2(side, 0f), filter, _techHits, 40f);
+            int count = Physics2D.Raycast(TurboRunner.BlendRead(player.transform), new Vector2(side, 0f), filter, _techHits, 40f);
             for (int i = 0; i < count; i++)
                 if (_techHits[i].rigidbody != own) return true;
             return false;
