@@ -83,7 +83,8 @@ namespace IGTAP.EngineSim.Cli.Runs
                     Log("the start's straight replay falls short of its build: starting from its harvest");
                     Accept(coord.Do(b => coord.Mine = b.Harvest(plan, inputs, "harvest")).Result, "start (harvest)", coord, workers);
                 }
-                while (!stop() && Pass(coord, workers, stop) != Outcome.Converged) { }
+                // Nothing left in the economy: the movement polish searches each goal's segment again; a gain opens new moves.
+                while (!stop() && (Pass(coord, workers, stop) != Outcome.Converged || Polish(coord, workers, stop))) { }
                 Event?.Invoke(new { type = "plan", converged = !stop(), reached = Best.Reached, of = Best.Plan.Count, live = Best.Live, waits = Best.Waits.Sum(w => w.Ticks) });
             }
             finally
@@ -109,6 +110,48 @@ namespace IGTAP.EngineSim.Cli.Runs
             Log($"segment: goal {goal + 1} {plan.Labels[goal]} searched again: {Describe(c)} against {Describe(Best)}");
             if (!stop() && c.Better(Best)) Accept(c, $"goal {goal + 1} {plan.Labels[goal]} searched again", coord, Array.Empty<Worker>());
             Event?.Invoke(new { type = "plan", converged = true, reached = Best.Reached, of = Best.Plan.Count, live = Best.Live, waits = Best.Waits.Sum(w => w.Ticks) });
+        }
+
+        // (goal id, inputs hash through its segment): a goal's search depends only on its start and its own segment (the seed),
+        // so a gain later in the run doesn't search the goals before it again.
+        readonly HashSet<(string, ulong)> _polished = new HashSet<(string, ulong)>();
+
+        internal static (string, ulong) PolishKey(Built b, int j) => (b.Plan.Ids[j], SnapshotIndex.Hash(b.Inputs, b.StepEnd[j]));
+
+        // The goals not yet polished on this best, the longest segments first (their waits left out): the most time to win.
+        internal static List<int> PolishOrder(Built b, HashSet<(string, ulong)> tried) => Enumerable.Range(0, b.Reached)
+            .Where(j => !tried.Contains(PolishKey(b, j)))
+            .OrderByDescending(j => b.Physics[j] - (j == 0 ? 0 : b.Physics[j - 1]) - b.Waits.Where(w => w.Goal == j).Sum(w => w.Ticks)).ThenBy(j => j).ToList();
+
+        // Each goal's segment searched again from its real start (RunSegment's forced search) and the run rebuilt after it, kept when
+        // the whole run's straight replay is better. True on a gain. A build allowed no searches (MaxSearchesPerBuild 0) polishes nothing.
+        bool Polish(Worker coord, Worker[] workers, Func<bool> stop)
+        {
+            List<int> goals = MaxSearchesPerBuild == 0 ? new List<int>() : PolishOrder(Best, _polished);
+            if (goals.Count == 0) return false;
+            Log($"polish: {goals.Count} goals' segments searched again, longest first");
+            Event?.Invoke(new { type = "note", level = "info", text = $"Movement polish: searching {goals.Count} goals' segments again, longest first" });
+            foreach (int j in goals)
+            {
+                if (stop()) return false;
+                _polished.Add(PolishKey(Best, j));
+                RunPlan plan = Best.Plan;
+                Event?.Invoke(new { type = "status", polish = j + 1, id = plan.Ids[j], best = Best.Live, reached = Best.Reached });
+                Built c = coord.Do(b =>
+                {
+                    // ponytail: a 20M-tick search per goal and at most 3 more of 20M in the rebuild after it (CourseAuto.Polish's caps);
+                    // raise them (Budgets[1]) if a run's polish stalls with goals that took 80M+ to find.
+                    (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget) = (j, Builder.Budgets[0], 4, Builder.Budgets[0]);
+                    try { return b.Build(plan, coord.Mine, j); }
+                    finally { (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget) = (-1, Builder.Budgets[1], int.MaxValue, Builder.Budgets[^1]); }
+                }).Result;
+                // Each search's 16 solvers are garbage now: server GC would let them pile up toward its hard limit.
+                GC.Collect();
+                Log($"polish: goal {j + 1} {plan.Labels[j]}: {Describe(c)} against {Describe(Best)}");
+                if (!stop() && c.Better(Best) && Accept(c, $"goal {j + 1} {plan.Labels[j]} polished", coord, workers)) return true;
+            }
+            Event?.Invoke(new { type = "note", level = "info", text = "Movement polish: no goal's segment searched again saves time" });
+            return false;
         }
 
         // A candidate is kept only as its straight replay from the run's start plays it (Builder.Verify).

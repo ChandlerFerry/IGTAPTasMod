@@ -17,6 +17,8 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         readonly RunContext _run;
         public Func<bool> Stop = () => false;
+        // How many of the SearchWorkers solvers run at once (solve-run's --threads): each ends at its own share, so finds don't change.
+        public int Parallelism = SearchWorkers;
         // Each worker's explore archive and state cache, bytes.
         public long ArchiveBudget = 1L << 29, StateBudget = 1L << 30;
         public bool Stopped { get; private set; }
@@ -89,7 +91,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                     if (Stop()) { Stopped = true; foreach (OfflineSolver x in solvers) x.Stop(); return; }
             }) { IsBackground = true };
             watch.Start();
-            Parallel.For(0, SearchWorkers, new ParallelOptions { MaxDegreeOfParallelism = SearchWorkers }, i =>
+            Parallel.For(0, SearchWorkers, new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(Parallelism, 1, SearchWorkers) }, i =>
             {
                 foreach (Thread t in solvers[i].Start(1)) t.Join();
                 solvers[i].Stop();

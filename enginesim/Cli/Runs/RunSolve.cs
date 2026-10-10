@@ -41,7 +41,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             // One library for every class of a run: a segment is only ever used where it replays, under the class's own rules.
             var lib = SegmentLibrary.Load(Path.Combine(run.Dir, "fulltas", run.Name + ".segments.json"), seeds.Select(x => Path.Combine(run.Dir, "fulltas", x + ".segments.json")));
             var facts = new SegmentFacts(RunFiles.FileOf(run, ".failures.json"));
-            var search = new SegmentSearch(run) { Stop = () => _stop };
+            var search = new SegmentSearch(run) { Stop = () => _stop, Parallelism = threads };
             var plan = new RunPlan(run.HeaderIds, run.HeaderGoals.Select(g => g.label).ToArray());
             (float, float, bool) startAt = Solve.OnThread(() => { Simulation sim = run.Make(); sim.Restore(sim.Start); return (sim.PlayerWorld.x, sim.PlayerWorld.y, sim.Player.facingRight); });
 

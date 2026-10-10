@@ -33,6 +33,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 if (Solve.Option<string>(args, "--ticks-self", null) is string ticksOut) OneXSelf(ticksOut);
                 ResumeKeepsEarlyPress();
                 AvoidsByPlanIds();
+                PolishBookkeeping();
                 int reach = Array.IndexOf(args, "--course-reach");
                 if (reach >= 0 && reach + 2 < args.Length)
                 {
@@ -247,6 +248,23 @@ namespace IGTAP.EngineSim.Cli.Runs
         }
 
         // A course's own score (its game timer) ranks complete runs, not their live time.
+        static void PolishBookkeeping()
+        {
+            var b = new Built { Plan = new RunPlan(new[] { "a00001", "b00002", "c00003" }, new[] { "at:1,1,1,1", "at:2,2,2,2", "at:3,3,3,3" }) };
+            b.Inputs.AddRange(Enumerable.Range(0, 30).Select(i => new InputTick { x = i % 2 }));
+            b.StepEnd.AddRange(new[] { 10, 20, 30 });
+            b.Physics.AddRange(new long[] { 10, 40, 50 });
+            b.Held.AddRange(new long[] { 0, 0, 0 });
+            var tried = new HashSet<(string, ulong)>();
+            Check(Improver.PolishOrder(b, tried).SequenceEqual(new[] { 1, 0, 2 }), "polish: the longest segment first, then in order");
+            tried.Add(Improver.PolishKey(b, 1));
+            Check(Improver.PolishOrder(b, tried).SequenceEqual(new[] { 0, 2 }), "polish: a goal tried on this best is skipped");
+            b.Inputs[25] = new InputTick { x = 1, held = true };
+            Check(Improver.PolishOrder(b, tried).SequenceEqual(new[] { 0, 2 }), "polish: a change after a tried goal's segment doesn't try it again");
+            b.Inputs[5] = new InputTick { x = 1, held = true };
+            Check(Improver.PolishOrder(b, tried).SequenceEqual(new[] { 1, 0, 2 }), "polish: a change before it does");
+        }
+
         static void ScoreRanking()
         {
             var plan = new RunPlan(new[] { "a00001" }, new[] { "farm:4" });

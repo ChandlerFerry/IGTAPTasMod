@@ -863,8 +863,10 @@ The design is `docs/superpowers/specs/2026-10-09-fulltas-v2-design.md`; the code
   touch there then waits and buys more at once), and the misses there searched first. Incomplete runs rank by skeleton goals
   reached; then a run stuck for want of income (`no-income`) is ahead of one that isn't, with fewer economy goals stuck before
   the next skeleton goal, then more of the stuck buy's price held (a cap or an income raised), then the last skeleton goal's
-  tick: ZipEscape%'s goal 831, where every single move stopped at the same goal and tick, climbs that way. It runs until a
-  pass finds nothing and nothing is left to search, or "stop" on stdin.
+  tick: ZipEscape%'s goal 831, where every single move stopped at the same goal and tick, climbs that way. With no move or
+  miss left, a **movement polish** searches each goal's segment again from its real start (20M ticks, the longest segments
+  first; the rebuild after it may search 3 more of 20M), kept as any move is; a goal is searched once per inputs through its
+  segment (`Improver.Polish`). It runs until the polish gains nothing too, or "stop" on stdin.
 - **Every faster complete run** goes to the gate with its goals; the gate's per-goal splits are compared with the engine's,
   and a disagreement captures the game's trace, replays it here and names the first tick and field that differ
   (`fulltas/<run>.confirm.json`); nothing more is built on that engine.
