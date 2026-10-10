@@ -1249,3 +1249,15 @@ in the engine now and in a 1x play from its new game, the same goal and box. A s
 what 1x plays there. What's left: on about 7% of frames Unity's interpolation blend rounds to the neighbouring local step from
 turbo's `Lerp` (no alpha or lerp form tried matches every frame; best 92.6%), which reaches the body only on a tick whose
 FixedUpdate writes the position.
+
+## 2026-10-10: a resume inside a dash pressed the next step twice
+
+`solve-run` on VMAN built all 21 goals goal to goal, and the straight replay of that build died at goal 13. Goal 12 is reached
+in an up-dash along a wall, and the dash's wall touch presses the next step (a jump) early (`MacroEngine.WallTouch`). The goal's
+state (`Simulation.AdvanceToGoal`, captured in the dash's locked ticks) holds that press. `MacroEngine.ResumeOwned`, which every
+engine restore and turbo's (`Solver.cs`, `FullTasPlugin.Goals.cs`) resume through, cleared it, so the step was pressed again on
+the next locked tick: a second press that buffered a jump the straight run never made (tick 1247). `ResumeOwned` now keeps a
+press or quick restart already made for the step it resumes at, as the TAS editor's `ResumeAt` (now the same call) did. From
+goal 12's state the run now plays on as the straight replay does (`run-selftest --restore-at 12` on that build); `run-selftest`
+checks the rule. Straight replays are unchanged: `check` against a baseline of the engine before it, 5 runs and 482 traces,
+0 differ.

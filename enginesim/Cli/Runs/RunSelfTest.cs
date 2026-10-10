@@ -29,6 +29,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 Splits();
                 OneXAlign();
                 if (Solve.Option<string>(args, "--ticks-self", null) is string ticksOut) OneXSelf(ticksOut);
+                ResumeKeepsEarlyPress();
                 string trace = Solve.Option<string>(args, "--trace", null), best = Solve.Option<string>(args, "--best", null);
                 if (trace != null && best != null && args.Contains("--confirm-live")) ConfirmLive(trace, best);
                 if (trace != null && best != null && args.Contains("--harvest-vs-straight")) HarvestVsStraight(trace, best, Solve.Option(args, "--rebuild-from", 300));
@@ -175,6 +176,20 @@ namespace IGTAP.EngineSim.Cli.Runs
             Check(built.Complete && built.Searches == 0 && built.Live == harvested.Live, $"{ctx.Name}: the plan built on the harvest: {built.Reached} goals, {built.Live:0.0000} s, {built.Searches} searches");
             Console.WriteLine($"  {ctx.Name}: a greedy rebuild from the library alone reaches {greedy.Reached} of {plan.Count} goals" + (greedy.Failure == null ? $", {greedy.Live:0.0000} s" : $" ({greedy.Failure.Text})"));
             Directory.Delete(dir, true);
+        }
+
+        // A goal state captured in a dash lock whose wall touch pressed the next step early (VMAN goal 13).
+        static void ResumeKeepsEarlyPress()
+        {
+            var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var engine = new MacroEngine { Quiet = true };
+            int Field(string name) => (int)typeof(MacroEngine).GetField(name, flags).GetValue(engine);
+            foreach (string name in new[] { "_stepIndex", "_pressedStep", "_quickRestartStep" }) typeof(MacroEngine).GetField(name, flags).SetValue(engine, 7);
+            object[] state = engine.CaptureState();
+            engine.ResumeOwned(state, new List<MacroStep>(), 0);
+            Check(Field("_pressedStep") == 0 && Field("_quickRestartStep") == 0, "a resume at a step already pressed early keeps it pressed (no second press or restart)");
+            engine.ResumeOwned(state, new List<MacroStep>(), 3);
+            Check(Field("_pressedStep") == -1 && Field("_quickRestartStep") == -1, "a resume inside a step presses nothing it didn't");
         }
 
         static void Splits()

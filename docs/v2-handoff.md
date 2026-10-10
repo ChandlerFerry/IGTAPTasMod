@@ -53,7 +53,13 @@ run file on every new best and submits complete faster runs to the gate. Stop it
   every best is now replayed straight before it's kept (`Builder.Verify`), so nothing wrong is saved; root cause not found.
 - **Ripple**: a change mid-run moves every later state, so later goals often need new searches; `--segment` caps its
   rebuild at 25 searches, the improver's searched candidates at 3 searches of 20M ticks.
-- VMAN's installed route dies at action 191 (predates this branch).
+- VMAN's installed route (`fulltas/VMAN.json`, 2348 ticks, found 2026-09-28) dies at action 191 (input 341, Course 1's
+  spike pit at x 2858): it was judged on the old six-frames-a-tick grid, and on the continuous 280 fps grid (2026-09-30) its
+  jump at input 75 lags 1.48 u further back, so it hits the Omni Dash box's side instead of its corner; the buy comes 50
+  ticks late and the rest runs out of step. On the old grid the current engine plays its first 17 goals at their recorded
+  ticks. It needs solving again: a private `solve-run` (4 threads, 24 min) rebuilt it complete in 54.96 s once a resume
+  inside a dash stopped pressing the next step twice (fidelity log, 2026-10-10); before that its 21-goal build failed its
+  straight replay at goal 13 and was refused.
 
 ## How to run
 
