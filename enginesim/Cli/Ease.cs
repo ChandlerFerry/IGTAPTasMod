@@ -125,12 +125,12 @@ namespace IGTAP.EngineSim.Cli
             foreach (Thread t in workers) t.Join(60000);
 
             using var pool = new Pool(tracePath, header, null, threads);
-            // The seeds (the route given, every --seed, the trace's own), each also with its part tilts snapped (FullTas.Digital):
+            // The seeds (the route given, every --seed, the trace's own), each also with its part tilts snapped (CourseAuto.Digital):
             // the ones that finish as a human class plays them are parents, and the best of them by score the one to beat.
             var seeds = new List<(string name, List<InputTick> inputs)> { (Path.GetFileName(tracePath), Solve.ReadInputs(header)) };
             foreach (string path in (routePath == null ? new string[0] : new[] { routePath }).Concat(Solve.Args(args, "--seed")))
                 seeds.Add((Path.GetFileName(path), Plan.ReadRoute(path)));
-            seeds.AddRange(seeds.ToList().Select(s => (s.name + " (digital)", FullTas.Digital(s.inputs))));
+            seeds.AddRange(seeds.ToList().Select(s => (s.name + " (digital)", CourseAuto.Digital(s.inputs))));
             RunResult[] seedRuns = pool.Play(seeds.Select(s => s.inputs).ToList(), true);
             float fastest = seedRuns.Where(r => r.Finished).Select(r => r.Time).DefaultIfEmpty(float.PositiveInfinity).Min();
             float cap = float.IsFinite(maxTime) ? maxTime : Math.Min(best, fastest) + slack;

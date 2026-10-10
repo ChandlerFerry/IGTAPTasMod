@@ -36,7 +36,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 int reach = Array.IndexOf(args, "--course-reach");
                 if (reach >= 0 && reach + 2 < args.Length)
                 {
-                    string why = FullTas.ReachSelfTest(args[reach + 1], Inputs(args[reach + 2]), Solve.Option(args, "--minutes", 10.0));
+                    string why = CourseAuto.ReachSelfTest(args[reach + 1], Inputs(args[reach + 2]), Solve.Option(args, "--minutes", 10.0));
                     Check(why == null, $"a course reached from half its best's inputs finishes on its forced path ({why})");
                 }
                 string trace = Solve.Option<string>(args, "--trace", null), best = Solve.Option<string>(args, "--best", null);

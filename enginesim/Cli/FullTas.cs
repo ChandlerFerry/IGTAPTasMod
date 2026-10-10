@@ -118,6 +118,7 @@ namespace IGTAP.EngineSim.Cli
         Latest<Submission> _pending;
         readonly Dictionary<(int, string), List<List<InputTick>>> _memo = new Dictionary<(int, string), List<List<InputTick>>>();
         OfflineSolver.ForcedPath _path;
+        CourseAuto.CourseRun _course;
 
         public const float VisitCell = 16f;
         // Bumped when older visits can't be trusted. 2: solver threads used to share the game's statics (the last world

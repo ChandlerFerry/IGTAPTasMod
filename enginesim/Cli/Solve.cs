@@ -25,7 +25,7 @@ namespace IGTAP.EngineSim.Cli
         {
             best = null;
             // --auto: the Full-TAS --auto loop over the course's waypoints (CourseAuto.cs).
-            if (args.Contains("--auto")) return FullTas.CourseAuto(args);
+            if (args.Contains("--auto")) return CourseAuto.Run(args);
             string startTrace = args[0];
             int threads = Option(args, "--threads", Environment.ProcessorCount);
             double minutes = Option(args, "--minutes", 60.0);
@@ -58,7 +58,7 @@ namespace IGTAP.EngineSim.Cli
             seeds.AddRange(seedPaths.Select(Plan.ReadRoute));
             // Nothing finishes in this category yet: along another category's way first, up to half the minutes (CourseAuto.cs).
             var firstClock = Stopwatch.StartNew();
-            if (!args.Contains("--no-first-finish") && FullTas.FirstFinish(startTrace, header, forced, seeds, seedPaths, minutes / 2) is List<InputTick> first) seeds.Add(first);
+            if (!args.Contains("--no-first-finish") && CourseAuto.FirstFinish(startTrace, header, forced, seeds, seedPaths, minutes / 2) is List<InputTick> first) seeds.Add(first);
             minutes -= firstClock.Elapsed.TotalMinutes;
 
             Func<Simulation> create = Creator(startTrace, header);
@@ -132,7 +132,7 @@ namespace IGTAP.EngineSim.Cli
                 + (guide ? $", guide weight {guideWeight}" : ", no guide"));
             Thread[] workers = solver.Start(threads);
             // --walk-seed: routes from another start a run can walk to (a tree transition's into this course), played on from there.
-            Action<OfflineSolver> walks = FullTas.PlainWalks(create, Args(args, "--walk-seed").ToList(), caps, line => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] walk: {line}"));
+            Action<OfflineSolver> walks = CourseAuto.PlainWalks(create, Args(args, "--walk-seed").ToList(), caps, line => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] walk: {line}"));
             Thread confirmer = submit ? new Thread(() => Confirm(target, pending, clock)) { IsBackground = true } : null;
             confirmer?.Start();
             long lastRuns = 0, lastTicks = 0;

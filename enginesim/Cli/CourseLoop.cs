@@ -17,7 +17,7 @@ namespace IGTAP.EngineSim.Cli
     // last one's finish: one, or more when what a lap carries into the next (a buffered jump, a coyote count) alternates). Its
     // time is the loop's cycle once the loop repeats exactly, a lap's share of it: the lead and LoopRepeats loops played back
     // to back, every loop finishing on its own last input, the last two cycles equal.
-    sealed partial class FullTas
+    static partial class CourseAuto
     {
         /// <summary>Loops played after the lead to find the steady cycle.</summary>
         internal const int LoopRepeats = 4;

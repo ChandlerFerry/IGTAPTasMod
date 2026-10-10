@@ -13,16 +13,15 @@ using FullTasGoal = IGTAPTasMod.FullTasGoal;
 
 namespace IGTAP.EngineSim.Cli
 {
-    // solve <course trace> --auto (enginesim/README.md, "Course --auto"): the Full-TAS --auto loop on a course. The course becomes a
-    // Full-TAS run whose goals are its waypoints (CourseWaypoints.Build: area goals along the best's path, the course's checkpoints,
-    // in record timing the start-gate crossing) and its finish, so the windows, library, tail windows, combine, scheduler,
-    // cost-to-go and macros all work goal to goal. Waypoints are checkpoints, not cut points: a window runs through them from the
-    // state the route has there, and is scored on arrival. The run lives in <traces>/course-auto/ (its trace, world, run file,
-    // archive, refs); every kept best is replayed on the plain course simulation and written to <traces>/offline-best/ as solve
-    // writes it, so the plugin judges it (record, then farm) as any solve's.
-    sealed partial class FullTas
+    // solve <course trace> --auto (enginesim/README.md, "Course --auto"): Improve on the Full-TAS v2 pieces (Runs/). The course
+    // becomes a Full-TAS run whose goals are its waypoints (CourseWaypoints.Build: area goals along the best's path, the course's
+    // checkpoints, in record timing the start-gate crossing) and its finish, so the builder and its segment search work goal to goal.
+    // Waypoints are checkpoints, not cut points: a search runs through them from the state the route has there. The run lives in
+    // <traces>/course-auto/ (its trace, world, run file, segment library); every kept best is replayed on the plain course simulation
+    // and written to <traces>/offline-best/ as solve writes it, so the plugin judges it (record, then farm) as any solve's.
+    static partial class CourseAuto
     {
-        sealed class CourseRun
+        internal sealed class CourseRun
         {
             public string Trace, Label, Name, Timing, WaypointsFile, LogJson;
             public int Course;
@@ -85,7 +84,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>The direction blocks (forced-paths.json): a course with both lets a run go either way from the start.</summary>
         static readonly string[] Directions = { "avoid-forwards", "avoid-backwards" };
 
-        public static int CourseAuto(string[] args)
+        public static int Run(string[] args)
         {
             string trace = Path.GetFullPath(args[0]);
             bool farm = args.Contains("--farm");
@@ -137,14 +136,14 @@ namespace IGTAP.EngineSim.Cli
                 foreach (string block in run.Timing == "farm" ? new[] { "avoid-backwards", "avoid-forwards" } : new[] { "avoid-forwards", "avoid-backwards" })
                 {
                     Console.WriteLine($"--auto: course {course} goes either way from its start; {block} for {minutes / 2:0.##} min");
-                    code = Math.Min(code, CourseAuto(rest.Concat(new[] { "--optional", block, "--minutes", (minutes / 2).ToString(CultureInfo.InvariantCulture) }).ToArray()));
+                    code = Math.Min(code, Run(rest.Concat(new[] { "--optional", block, "--minutes", (minutes / 2).ToString(CultureInfo.InvariantCulture) }).ToArray()));
                 }
                 return code;
             }
             OfflineSolver.ForcedPath rules = Solve.ForcedPaths(args, course, caps);
             run.Rules = rules;
             run.Name = "course" + course + "_" + caps + (optional.Count == 0 ? "" : "-opt-" + string.Join("+", optional)) + (run.Timing == "farm" ? "-farm" : "");
-            // A class's own run file (FullTas.Suffix): fulltas/<name>.<class>.json.
+            // A class's own run file: fulltas/<name>.<class>.json.
             string runKey = run.Name + (run.Human == null ? "" : "." + run.Human);
             string dir = Path.Combine(Path.GetDirectoryName(trace), "course-auto");
             Directory.CreateDirectory(dir);
@@ -266,7 +265,7 @@ namespace IGTAP.EngineSim.Cli
                     // ponytail: a 20M-tick search per goal and 3 of 20M for the rebuild after it (the Full-TAS improver's searched
                     // candidates); raise them if polishes stall short of the minutes.
                     var improver = new Improver(ctx, lib, search, facts, 1)
-                        { SegmentBudget = Runs.Builder.Budgets[0], RebuildBudget = Runs.Builder.Budgets[0], SegmentSearches = 3, Log = Log };
+                        { SegmentBudget = Builder.Budgets[0], RebuildBudget = Builder.Budgets[0], SegmentSearches = 3, Log = Log };
                     improver.NewBest += (b, how) =>
                     {
                         if (how == "start") return;
@@ -470,6 +469,119 @@ namespace IGTAP.EngineSim.Cli
             };
         }
 
+        /// <summary>A walk seed: a route with its own start (its "trace"'s, or its "start" {x, y, facingRight}, world: a hand
+        /// recording's), where its player stands still before these inputs, and the unlocks it was solved with.</summary>
+        sealed class Seed
+        {
+            public string Name;
+            public IGTAPTasMod.Caps Caps;
+            public List<InputTick> Inputs;
+            public SeedStart At;
+        }
+
+        sealed class SeedStart
+        {
+            public float X, Y;
+            public bool FacingRight;
+        }
+
+        // Walking to a seed's start: how far (world units), how many held ticks at most, how far off the stand may end, how many
+        // walks to keep, and how long to stand there (a run's start is 10 ticks at rest; Still stops after 3). Per check, the
+        // explored cells nearest the start, within a walk of it and a couple of squares above or below it.
+        const float MaxWalk = 1500f, MaxWalkMiss = 8f, MaxWalkRise = 4f, CellWalkRise = 96f;
+        const int MaxWalkTicks = 240, MaxWalks = 3, StandTicks = 7, CellWalksPerCheck = 4;
+
+        static Seed ReadSeed(string path)
+        {
+            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions { MaxDepth = 256 });
+            JsonElement root = doc.RootElement;
+            return new Seed
+            {
+                Name = root.TryGetProperty("name", out JsonElement n) && n.ValueKind == JsonValueKind.String ? n.GetString() : Path.GetFileName(path),
+                Caps = !root.TryGetProperty("capabilities", out JsonElement caps) || caps.ValueKind != JsonValueKind.String
+                    || !IGTAPTasMod.Caps.TryParse(caps.GetString(), out IGTAPTasMod.Caps seedCaps) ? default : seedCaps,
+                Inputs = Solve.ReadInputs(root),
+                At = root.TryGetProperty("start", out JsonElement start) && start.ValueKind == JsonValueKind.Object
+                    ? new SeedStart { X = start.GetProperty("x").GetSingle(), Y = start.GetProperty("y").GetSingle(), FacingRight = start.GetProperty("facingRight").GetBoolean() }
+                    : root.TryGetProperty("trace", out JsonElement trace) && trace.ValueKind == JsonValueKind.String ? StartOf(trace.GetString()) : null,
+            };
+        }
+
+        /// <summary>A trace's start (its player stands still there), null when the trace is missing.</summary>
+        static SeedStart StartOf(string trace)
+        {
+            if (!File.Exists(trace)) return null;
+            JsonElement start = Solve.ReadHeader(trace).GetProperty("start");
+            JsonElement position = start.GetProperty("position"), origin = start.GetProperty("origin");
+            // The movement state is [type, field, value] rows.
+            JsonElement facing = start.GetProperty("movement").EnumerateArray().First(f => f[1].GetString() == "facingRight")[2];
+            return new SeedStart
+            {
+                X = position.GetProperty("x").GetSingle() - origin.GetProperty("x").GetSingle(),
+                Y = position.GetProperty("y").GetSingle() - origin.GetProperty("y").GetSingle(),
+                FacingRight = facing.GetBoolean(),
+            };
+        }
+
+        /// <summary>
+        /// A seed played from its own start: walk from <paramref name="eval"/>'s state to that spot (held for n ticks, the last one
+        /// maybe partial), stand still, tap the start's way once when the walk faced the other, stand still again, then play the
+        /// seed. The closest stands first; none when the spot is too far or no walk ends on its floor facing its way.
+        /// </summary>
+        static List<(string how, List<InputTick> inputs)> WalkedStarts(Simulation eval, Seed s)
+        {
+            var found = new List<(float miss, string how, List<InputTick> inputs)>();
+            SeedStart to = s.At;
+            eval.Restore(eval.Start);
+            float dx = to.X - eval.PlayerWorld.x;
+            if (Math.Abs(dx) > MaxWalk) return new List<(string, List<InputTick>)>();
+            float dir = dx < 0f ? -1f : 1f, face = to.FacingRight ? 1f : -1f;
+            // Walks, stands, taps `turn` of the start's way (0: none) and stands again: how far past the spot it stands, null when
+            // it never stands on the spot's floor.
+            float? Stand(int n, float last, float turn)
+            {
+                var walk = Enumerable.Range(0, n).Select(i => new InputTick { x = i == n - 1 ? dir * last : dir }).ToList();
+                int still = eval.Still(walk, 300);
+                if (still < 0) return null;
+                if (turn > 0f)
+                {
+                    walk.AddRange(Enumerable.Repeat(new InputTick(), still - walk.Count));
+                    walk.Add(new InputTick { x = face * turn });
+                    still = eval.Still(walk, 300);
+                    if (still < 0) return null;
+                }
+                WorldPos p = eval.PlayerWorld;
+                if (Math.Abs(p.y - to.Y) > MaxWalkRise) return null;
+                float miss = Math.Abs(p.x - to.X);
+                if (miss <= MaxWalkMiss && eval.Player.facingRight == to.FacingRight)
+                {
+                    walk.AddRange(Enumerable.Repeat(new InputTick(), still - walk.Count + StandTicks));
+                    walk.AddRange(s.Inputs);
+                    found.Add((miss, $"{s.Name}, after walking {n} ticks to its start ({miss:0.0} off) and standing still", walk));
+                }
+                return (p.x - to.X) * dir;
+            }
+            // Walking faces the walk's way: a start facing the other way takes the tap.
+            float tap = face == dir ? 0f : 1f;
+            int best = -1, blocked = 0;
+            float bestMiss = float.MaxValue;
+            float? before = null;
+            for (int n = 0; n <= MaxWalkTicks && blocked < 5; n++)
+            {
+                float? past = Stand(n, 1f, tap);
+                if (past.HasValue && Math.Abs(past.Value) < bestMiss) { bestMiss = Math.Abs(past.Value); best = n; }
+                if (past > MaxWalkMiss) break;
+                // A wall ends the walk: longer ones stand on the same spot.
+                blocked = past.HasValue && past == before ? blocked + 1 : 0;
+                before = past;
+            }
+            if (best >= 0)
+                foreach (int n in new[] { best - 1, best, best + 1 }.Where(n => n > 0))
+                    for (int last = 1; last <= 10; last++)
+                        for (int turn = (int)tap; turn <= 10 * tap; turn++) Stand(n, last / 10f, turn / 10f);
+            return found.OrderBy(f => f.miss).GroupBy(f => f.miss).Select(g => g.First()).Take(MaxWalks).Select(f => (f.how, f.inputs)).ToList();
+        }
+
         /// <summary>
         /// A course run's goals reached on v2 (FirstFinish, RepairLoopLap): <paramref name="carried"/> harvested goal by goal, the
         /// rest built (searched) from where it breaks, under <paramref name="path"/>; a waypoint no search reaches is dropped and the
@@ -483,8 +595,8 @@ namespace IGTAP.EngineSim.Cli
             var plan = new RunPlan(ctx.HeaderIds, ctx.HeaderGoals.Select(g => g.label).ToArray());
             return Solve.OnThread(() =>
             {
-                var builder = new Runs.Builder(ctx, lib, search, facts, searchMisses: true) { Log = m => Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] {m}") };
-                for (Runs.Built b = builder.Harvest(plan, carried, "carried"); ; )
+                var builder = new Builder(ctx, lib, search, facts, searchMisses: true) { Log = m => Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] {m}") };
+                for (Built b = builder.Harvest(plan, carried, "carried"); ; )
                 {
                     b = builder.Build(b.Plan, b);
                     if (b.Complete) return b.Inputs;
@@ -508,8 +620,6 @@ namespace IGTAP.EngineSim.Cli
                 // A course's goals are seconds apart: an eighth of a Full-TAS search's memory (16 workers in 3 GB, not 24).
                 new SegmentSearch(ctx) { Stop = () => DateTime.UtcNow > deadline, ArchiveBudget = 1L << 26, StateBudget = 1L << 27 });
         }
-
-        CourseRun _course;
 
         /// <summary>The course trace as a Full-TAS run's: its header with the goals added and the best as its inputs, and its world
         /// (another run's <paramref name="name"/> and <paramref name="goals"/>: a farm loop's lap repair).</summary>
