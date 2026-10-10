@@ -503,12 +503,11 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>
         /// `solve --auto --farm` on a gated course (README ### Rules 30): the farm loop to start from (<see cref="StartLoop"/>: a
         /// saved loop, else loop laps searched for half the minutes each), its goals (a finish per lead lap,
-        /// then per loop lap the first lap's waypoints it passes and its finish), timed from the lead's last finish
-        /// (<see cref="TimerGoal"/>, <see cref="LoopTiming"/>), and the Full-TAS --auto loop over them.
+        /// then per loop lap the first lap's waypoints it passes and its finish), and the polish over the loop's goals, scored by
+        /// its steady lap in live time (<see cref="LoopOf"/>).
         /// </summary>
         static int LoopAuto(CourseRun run, string[] args, List<(string how, List<InputTick> inputs)> candidates, string dir)
         {
-            run.Loop = true;
             // A farm lap's cut boxes hold on the course only (ForcedPath.OnCourseOnly), not on the way back to its start.
             run.Rules.OnCourseOnly = true;
             double minutes = Solve.Option(args, "--minutes", 60.0);
@@ -524,35 +523,44 @@ namespace IGTAP.EngineSim.Cli
                 return 1;
             }
             var (route, cycle, how) = start.Value;
-            TimerGoal = route.LeadLaps;
-            LoopTiming = true;
-            TickTiming = false;
-            run.LoopLaps = route.LoopLaps;
-            // The loop the run starts from is a kept best too: the plugin judges only offline-best files, and the loop writes only what
-            // it improves on (LoopCommitted). A loop the lap search just found or a seed's (a library route) reaches the judge here; the
-            // last --auto best was written when kept, and a read-only run (--waypoints-out) writes nothing.
+            // The loop the run starts from is a kept best too: the plugin judges only offline-best files, and the polish writes only
+            // what it improves on. A loop the lap search just found or a seed's (a library route) reaches the judge here; the last
+            // --auto best was written when kept, and a read-only run (--waypoints-out) writes nothing.
             if (run.WaypointsFile == null) WriteStartingLoop(run, route, cycle, candidates.Any(c => c.how == how) ? "start: " + how : how);
             List<FullTasGoal> lap = LoopLapWaypoints(run, route, options);
             run.Goals = LoopGoals(run, route, lap);
+            if (run.WaypointsFile != null)
+            {
+                WriteLoopWaypoints(run, route, cycle);
+                return 0;
+            }
             string synthetic = WriteCourseTrace(run, dir, route.Inputs);
             Solve.CourseRuns[run.Name] = run.Rules;
             Console.WriteLine($"Course {run.Course} ({run.Caps}) --auto, farm loop timing, from {how}: {cycle}; {route.LeadLaps} lead laps, "
                 + $"{run.Goals.Count} goals ({run.Goals.Count(g => g.kind == FullTasGoal.At)} waypoints on the loop): {string.Join(" ", run.Goals.Select(g => g.label))}");
-            // The lap search's minutes come out of the run's.
-            string[] rest = args.ToArray();
-            int at = Array.IndexOf(rest, "--minutes");
-            if (at >= 0 && at + 1 < rest.Length)
-                rest[at + 1] = Math.Max(0.25, minutes - run.Clock.Elapsed.TotalMinutes).ToString("0.##", CultureInfo.InvariantCulture);
-            var loop = new FullTas(FullArgs(synthetic, rest, run.Goals).ToArray());
-            loop._course = run;
-            loop._committed = loop.CourseCommitted;
-            if (run.WaypointsFile != null)
-            {
-                loop.Open();
-                loop.WriteLoopWaypoints(loop._best, loop._best.Progress == loop._goals ? MeasureLoop(run, loop.RouteLoop(loop._best)) : cycle);
-                return 0;
-            }
-            return loop.Search();
+            (int from, int to) = Span(args, run.Goals.Count, route.LeadLaps);
+            int leadLaps = route.LeadLaps, loopLaps = route.LoopLaps;
+            string runFile = System.IO.Path.Combine(dir, "fulltas", run.Name + ".json");
+            Polish(run, synthetic, from, to, minutes - run.Clock.Elapsed.TotalMinutes, false, inputs => LoopOf(run, inputs, leadLaps, loopLaps).cycle is { Steady: true } c ? c.Live : long.MaxValue,
+                (inputs, kept) =>
+                {
+                    var (r, c) = LoopOf(run, inputs, leadLaps, loopLaps);
+                    WriteLoopBest(run, r, c, "auto: " + kept);
+                    Solve.WriteShared(runFile, System.Text.Json.JsonSerializer.Serialize(new { inputs = r.Inputs.Select(t => t.ToJson()) }));
+                    WriteLoopWaypoints(run, r, c);
+                });
+            return 0;
+        }
+
+        /// <summary>A route of the loop's goals as its farm loop: cut at its first <paramref name="leadLaps"/> + <paramref name="loopLaps"/>
+        /// finishes (<see cref="Laps"/>' idle ticks can add a finish after a short lap), its last <paramref name="loopLaps"/> laps the
+        /// loop, and the loop's steady-state check (not steady: short of the finishes).</summary>
+        static (LoopRoute route, LoopCycle cycle) LoopOf(CourseRun run, List<InputTick> inputs, int leadLaps, int loopLaps)
+        {
+            var l = Laps(run, inputs);
+            if (l.cuts.Count < leadLaps + loopLaps) return (null, new LoopCycle());
+            LoopRoute r = AsLoop((l.inputs, l.cuts.Take(leadLaps + loopLaps).ToList(), l.first), loopLaps);
+            return (r, MeasureLoop(run, r));
         }
 
         /// <summary>
@@ -602,56 +610,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>The loop route of a complete run: its inputs through the lead's last finish, then through the loop's.</summary>
-        LoopRoute RouteLoop(Route r)
-        {
-            List<InputTick> idled = r.Inputs.Concat(Enumerable.Repeat(new InputTick(), 60)).ToList();
-            int a = (int)r.GoalInput[TimerGoal - 1], b = (int)r.GoalInput[_goals - 1];
-            return new LoopRoute { Lead = idled.GetRange(0, a), LeadLaps = TimerGoal, Loop = idled.GetRange(a, b - a), LoopLaps = _course.LoopLaps };
-        }
-
-        /// <summary>The last complete route whose steady-state check passed in <see cref="LoopKeeps"/> (or the best's, measured there).</summary>
-        (Route route, LoopCycle cycle) _loopChecked;
-
-        LoopCycle LoopCycleOf(Route r)
-        {
-            if (_loopChecked.route != r) _loopChecked = (r, MeasureLoop(_course, RouteLoop(r)));
-            return _loopChecked.cycle;
-        }
-
-        /// <summary>Commit's farm check, before a route becomes the best: the goals rank a loop's first pass, so a complete route is
-        /// kept only when its loop repeats exactly and its steady cycle beats the best's (README ### Rules 30, 52).</summary>
-        bool LoopKeeps(Route r, string where)
-        {
-            if (r.Progress < _goals) return true;
-            LoopCycle best = _best.Progress == _goals ? LoopCycleOf(_best) : null;
-            LoopCycle c = MeasureLoop(_course, RouteLoop(r));
-            if (!c.Steady)
-            {
-                Log($"farm loop check ({where}): {Describe(r)} doesn't repeat exactly ({c}); not kept");
-                return false;
-            }
-            if (best != null && best.Steady && c.Live * best.Laps >= best.Live * c.Laps)
-            {
-                Log($"farm loop check ({where}): {Describe(r)} repeats at {c.Lap:0.0000}s a lap, no faster than the best's {best.Lap:0.0000}s; not kept");
-                return false;
-            }
-            _loopChecked = (r, c);
-            return true;
-        }
-
-        /// <summary>A kept farm loop best: its steady-state check (<see cref="LoopKeeps"/> passed it), its waypoints, written for
-        /// the plugin to judge as the farm route (<see cref="WriteLoopBest"/>).</summary>
-        void LoopCommitted(Route r, string where)
-        {
-            LoopCycle c = LoopCycleOf(r);
-            LoopRoute route = RouteLoop(r);
-            WriteLoopWaypoints(r, c);
-            if (c.Live != r.Live)
-                Log($"farm loop check: the loop's steady cycle is {c.Live / 1400.0:0.0000}s, its first {r.LiveSeconds:0.0000}s");
-            WriteLoopBest(_course, route, c, "auto: " + where);
-        }
-
         /// <summary>A steady farm loop written to offline-best as <c>&lt;course&gt;_&lt;caps&gt;-loop-&lt;lap seconds&gt;.json</c> (the
         /// inputs, where the loop starts, its laps and cycle), and the `offline best farm loop` line the plugin reads.</summary>
         static void WriteLoopBest(CourseRun run, LoopRoute route, LoopCycle c, string how)
@@ -691,27 +649,21 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>The waypoints of a farm loop (WriteWaypoints' list, the lead's finishes first) with its steady-state check:
         /// `loop` (a lap's share of the cycle, steady or not, its laps, the loops before it settled, each loop's cycle) and the
         /// loop finish's near miss.</summary>
-        void WriteLoopWaypoints(Route r, LoopCycle c)
+        static void WriteLoopWaypoints(CourseRun run, LoopRoute route, LoopCycle c)
         {
-            string json = System.Text.Json.JsonSerializer.Serialize(new
+            var (rects, world) = Rects(run);
+            WaypointsLine(run, new
             {
                 timing = "farm",
-                route = c.Steady ? c.Lap.ToString("0.0000", CultureInfo.InvariantCulture) + "s a lap, looped" : Describe(r) + " (not a steady loop)",
-                goals = _labels,
-                rects = _course.Goals.Select(g => g.kind == FullTasGoal.At ? new[] { g.x, g.y, g.w, g.h } : null),
-                world = _course.Goals.Select(g =>
-                {
-                    if (g.kind != FullTasGoal.At) return null;
-                    WorldPos at = _eval.ToWorld(new CapturePos(g.x, g.y));
-                    return new[] { at.x, at.y, g.w, g.h };
-                }),
-                splits = Enumerable.Range(0, _goals).Select(k => k < r.Progress ? r.GoalPhysics[k] : -1),
-                timerGoal = TimerGoal,
+                route = c.Steady ? c.Lap.ToString("0.0000", CultureInfo.InvariantCulture) + "s a lap, looped" : "not a steady loop",
+                goals = run.Goals.Select(g => g.label),
+                rects,
+                world,
+                splits = CourseWaypoints.Check(run.Trace, route.Inputs, run.Goals),
+                timerGoal = route.LeadLaps,
                 loop = new { steady = c.Steady, laps = c.Laps, ticks = c.Ticks, held = c.Held, live = c.Live, lap = Math.Round(c.Lap, 4), settled = c.Settled, cycles = c.Cycles },
                 bus = c.Finish == null ? null : new { gate = (object)null, finish = BusJson(c.Finish) },
             });
-            Console.WriteLine("waypoints " + json);
-            if (_course.WaypointsFile != null) Solve.WriteShared(_course.WaypointsFile, json);
         }
     }
 }

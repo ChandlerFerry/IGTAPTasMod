@@ -32,10 +32,7 @@ namespace IGTAP.EngineSim.Cli
             public OfflineSolver.ForcedPath Rules;
             public List<FullTasGoal> Goals;
             public Stopwatch Clock;
-            /// <summary>A gated course's farm: a steady-state loop (CourseLoop.cs), timed finish to finish, of this many laps.</summary>
-            public bool Loop;
-            public int LoopLaps = 1;
-            /// <summary>--class human-major|human-nmg: the record by the class's score, played as a human class plays it
+            /// <summary>--class human-major|human-nmg with --waypoints-out: the record as a human class plays it
             /// (MacroEngine.HumanClass: digital stick, two jump buttons); null: by the game timer.</summary>
             public string Human;
         }
@@ -266,9 +263,10 @@ namespace IGTAP.EngineSim.Cli
                 for (int j = from; j <= to && !search.Stop(); j++)
                 {
                     if (plan.Labels[j] == "start:" + run.Course || !tried.Add((j, SnapshotIndex.Hash(best, best.Count)))) continue;
-                    // ponytail: a 20M-tick search per goal and 3 for the rebuild after it (the Full-TAS improver's searched candidates);
-                    // raise them if polishes stall short of the minutes.
-                    var improver = new Improver(ctx, lib, search, facts, 1) { SegmentBudget = Runs.Builder.Budgets[0], SegmentSearches = 3, Log = Log };
+                    // ponytail: a 20M-tick search per goal and 3 of 20M for the rebuild after it (the Full-TAS improver's searched
+                    // candidates); raise them if polishes stall short of the minutes.
+                    var improver = new Improver(ctx, lib, search, facts, 1)
+                        { SegmentBudget = Runs.Builder.Budgets[0], RebuildBudget = Runs.Builder.Budgets[0], SegmentSearches = 3, Log = Log };
                     improver.NewBest += (b, how) =>
                     {
                         if (how == "start") return;
@@ -277,6 +275,8 @@ namespace IGTAP.EngineSim.Cli
                         kept(b.Inputs, how);
                     };
                     improver.RunSegment(plan, best, j, search.Stop);
+                    // Each search's 16 solvers are garbage now: server GC would let them pile up toward its hard limit.
+                    GC.Collect();
                     Console.WriteLine("@fulltas " + JsonSerializer.Serialize(new { type = "pull", pull = ++pulls }));
                 }
             }
@@ -505,43 +505,8 @@ namespace IGTAP.EngineSim.Cli
             if (tickTimed) ctx.Make = () => { Simulation sim = make(); sim.TickTimed = true; return sim; };
             DateTime deadline = DateTime.UtcNow.AddMinutes(minutes);
             return (ctx, SegmentLibrary.Load(RunFiles.FileOf(ctx, ".segments.json"), Array.Empty<string>()), new SegmentFacts(RunFiles.FileOf(ctx, ".failures.json")),
-                new SegmentSearch(ctx) { Stop = () => DateTime.UtcNow > deadline });
-        }
-
-        /// <summary>
-        /// The Full-TAS --auto loop's arguments for a course run: its synthetic trace, then the solve's own options it takes. A
-        /// run timed from a later goal (<see cref="TimerGoal"/>: a record's start gate, a farm loop's lead finish) is scored on
-        /// arrival ticks that are its time only once that goal is in a window's prefix, so its windows start after that goal
-        /// unless --focus says otherwise (combine, which compares the run's time, still splices anywhere).
-        /// </summary>
-        static List<string> FullArgs(string synthetic, string[] args, List<FullTasGoal> goals)
-        {
-            // The run's goal ids, as WriteCourseTrace gives them; a course --focus a-b (waypoints from 1) becomes theirs.
-            string[] ids = IGTAPTasMod.FullTasGoalIds.Derived(goals.Select(g => g.label).ToList());
-            string Span(int a, int b) => ids[Math.Clamp(a, 1, ids.Length) - 1] + "-" + ids[Math.Clamp(b, 1, ids.Length) - 1];
-            var fullArgs = new List<string> { synthetic, "--auto", "--no-submit" };
-            if (TimerGoal > 0 && !args.Contains("--focus")) fullArgs.AddRange(new[] { "--focus", Span(TimerGoal + 1, goals.Count) });
-            for (int i = 1; i < args.Length; i++)
-            {
-                string a = args[i];
-                if (a == "--focus" && i + 1 < args.Length)
-                {
-                    string[] ends = args[++i].Split('-');
-                    fullArgs.AddRange(new[] { "--focus", Span(int.Parse(ends[0], CultureInfo.InvariantCulture), int.Parse(ends[^1], CultureInfo.InvariantCulture)) });
-                    continue;
-                }
-                if (a == "--seed" || a == "--walk-seed" || a == "--waypoints-out" || a == "--log-json" || a == "--optional" || a == "--no-optional" || a == "--via" || a == "--avoid"
-                    || a == "--stall-minutes" || a == "--rng" || a == "--tech-cache" || a == "--tech-dir" || a == "--guide-weight" || a == "--path-name"
-                    || a == "--whole-minutes")
-                {
-                    i++;
-                    continue;
-                }
-                if (a == "--auto" || a == "--farm" || a == "--other-ways" || a == "--no-submit" || a == "--no-humanize" || a == "--no-tech-grafts" || a == "--guide" || a == "--plan"
-                    || a == "--no-whole") continue;
-                fullArgs.Add(a);
-            }
-            return fullArgs;
+                // A course's goals are seconds apart: an eighth of a Full-TAS search's memory (16 workers in 3 GB, not 24).
+                new SegmentSearch(ctx) { Stop = () => DateTime.UtcNow > deadline, ArchiveBudget = 1L << 26, StateBudget = 1L << 27 });
         }
 
         CourseRun _course;
@@ -682,12 +647,6 @@ namespace IGTAP.EngineSim.Cli
             return bus;
         }
 
-        /// <summary>A kept farm loop best (the old loop's commit).</summary>
-        void CourseCommitted(Route r, string where)
-        {
-            if (r.Progress == _goals) LoopCommitted(r, where);
-        }
-
         /// <summary>Where a run keeps its last --auto best (under the traces folder); a candidate by that path is that best.</summary>
         const string AutoRunDir = "course-auto/fulltas/";
 
@@ -793,20 +752,27 @@ namespace IGTAP.EngineSim.Cli
         /// courses.json's, the map's), each goal's physics tick, the goal the timer counts from (1-based, 0: the start).</summary>
         static void WriteWaypoints(CourseRun run, List<InputTick> inputs, CourseResult c, int timerGoal)
         {
-            CapturePos origin = Solve.OnThread(() => run.Plain().WorldOriginInCapture);
+            var (rects, world) = Rects(run);
             WaypointsLine(run, new
             {
                 timing = run.Timing,
                 route = c.Finished ? (run.Timing == "record" ? c.Time : c.RunTicks * .02f).ToString("0.00", CultureInfo.InvariantCulture) + "s" : "no finish",
                 goals = run.Goals.Select(g => g.label),
-                rects = run.Goals.Select(g => g.kind == FullTasGoal.At ? new[] { g.x, g.y, g.w, g.h } : null),
-                world = run.Goals.Select(g => g.kind == FullTasGoal.At ? new[] { g.x - origin.x, g.y - origin.y, g.w, g.h } : null),
+                rects,
+                world,
                 splits = CourseWaypoints.Check(run.Trace, inputs, run.Goals),
                 timerGoal,
                 record = c.Finished ? (long?)Math.Round(c.Time / .02f) : null,
                 farm = c.Finished ? (long?)c.RunTicks : null,
                 bus = c.Bus == null ? null : new { gate = BusJson(c.Bus.Gate), finish = BusJson(c.Bus.Finish) },
             });
+        }
+
+        static (float[][] rects, float[][] world) Rects(CourseRun run)
+        {
+            CapturePos origin = Solve.OnThread(() => run.Plain().WorldOriginInCapture);
+            return (run.Goals.Select(g => g.kind == FullTasGoal.At ? new[] { g.x, g.y, g.w, g.h } : null).ToArray(),
+                run.Goals.Select(g => g.kind == FullTasGoal.At ? new[] { g.x - origin.x, g.y - origin.y, g.w, g.h } : null).ToArray());
         }
 
         static void WaypointsLine(CourseRun run, object waypoints)

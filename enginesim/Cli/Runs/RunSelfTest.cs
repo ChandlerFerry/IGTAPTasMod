@@ -323,6 +323,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 return (harvested.Reached, hd, rebuilt.Reached, Differ(rebuilt));
             });
             Directory.Delete(dir, true);
+            Console.WriteLine($"  {ctx.Name}: the harvest reaches {h} of {plan.Count} goals, the rebuild after goal {from} {b}");
             Check(hDiffer == null, $"{ctx.Name}: the harvest ({h} goals) replays straight: {hDiffer}");
             Check(bDiffer == null, $"{ctx.Name}: the rebuild after goal {from} ({b} goals) replays straight: {bDiffer}");
         }

@@ -21,8 +21,8 @@ namespace IGTAP.EngineSim.Cli.Runs
         readonly SegmentFacts _facts;
         readonly int _threads;
         public int MaxSearchesPerBuild = 3;
-        // RunSegment's forced search and the searches its rebuild may make after it.
-        public long SegmentBudget = Builder.Budgets[1];
+        // RunSegment's forced search, the searches its rebuild may make after it and the most each of those may take.
+        public long SegmentBudget = Builder.Budgets[1], RebuildBudget = Builder.Budgets[^1];
         public int SegmentSearches = 25;
         public Built Best { get; private set; }
         public readonly List<string> Accepted = new List<string>();
@@ -102,9 +102,9 @@ namespace IGTAP.EngineSim.Cli.Runs
             if (goal >= start.Reached) { Log($"segment: the best doesn't reach goal {goal + 1} yet"); return; }
             Built c = coord.Do(b =>
             {
-                (b.ForceSearchAt, b.ForceBudget, b.MaxSearches) = (goal, SegmentBudget, SegmentSearches);
+                (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget) = (goal, SegmentBudget, SegmentSearches, RebuildBudget);
                 try { return b.Build(plan, coord.Mine, goal); }
-                finally { (b.ForceSearchAt, b.ForceBudget, b.MaxSearches) = (-1, Builder.Budgets[1], int.MaxValue); }
+                finally { (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget) = (-1, Builder.Budgets[1], int.MaxValue, Builder.Budgets[^1]); }
             }).Result;
             Log($"segment: goal {goal + 1} {plan.Labels[goal]} searched again: {Describe(c)} against {Describe(Best)}");
             if (!stop() && c.Better(Best)) Accept(c, $"goal {goal + 1} {plan.Labels[goal]} searched again", coord, Array.Empty<Worker>());

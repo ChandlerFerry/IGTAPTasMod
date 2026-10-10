@@ -326,6 +326,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 forced.Avoid.AddRange(course.Avoid);
                 forced.Discourage.AddRange(course.Discourage);
+                forced.OnCourseOnly = course.OnCourseOnly;
                 return forced;
             }
             RunAvoids def = RunDefinitionAvoids(run);

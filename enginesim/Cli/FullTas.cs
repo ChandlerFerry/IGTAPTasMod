@@ -2024,7 +2024,6 @@ namespace IGTAP.EngineSim.Cli
         {
             r = Padded(r);
             if (_verify != null && (r = _verify(r, where)) == null) return;
-            if (_course != null && _course.Loop && !LoopKeeps(r, where)) return;
             Route previous = _best;
             // A class writes and submits only a route its inputs play from the run's start to the goal ticks it claims (the report it
             // was ranked by is then its own).
