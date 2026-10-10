@@ -13,7 +13,7 @@ namespace IGTAP.EngineSim.Cli.Runs
     // parallel and resolved in move order, so the same start gives the same result.
     sealed class Improver
     {
-        const int MissesPerPass = 8, NextSteps = 3, FillBack = 3, SegmentRebuildSearches = 25;
+        const int MissesPerPass = 8, NextSteps = 3, FillBack = 3;
 
         readonly RunContext _run;
         readonly SegmentLibrary _lib;
@@ -21,6 +21,9 @@ namespace IGTAP.EngineSim.Cli.Runs
         readonly SegmentFacts _facts;
         readonly int _threads;
         public int MaxSearchesPerBuild = 3;
+        // RunSegment's forced search and the searches its rebuild may make after it.
+        public long SegmentBudget = Builder.Budgets[1];
+        public int SegmentSearches = 25;
         public Built Best { get; private set; }
         public readonly List<string> Accepted = new List<string>();
         public event Action<Built, string> NewBest;
@@ -99,9 +102,9 @@ namespace IGTAP.EngineSim.Cli.Runs
             if (goal >= start.Reached) { Log($"segment: the best doesn't reach goal {goal + 1} yet"); return; }
             Built c = coord.Do(b =>
             {
-                (b.ForceSearchAt, b.MaxSearches) = (goal, SegmentRebuildSearches);
+                (b.ForceSearchAt, b.ForceBudget, b.MaxSearches) = (goal, SegmentBudget, SegmentSearches);
                 try { return b.Build(plan, coord.Mine, goal); }
-                finally { (b.ForceSearchAt, b.MaxSearches) = (-1, int.MaxValue); }
+                finally { (b.ForceSearchAt, b.ForceBudget, b.MaxSearches) = (-1, Builder.Budgets[1], int.MaxValue); }
             }).Result;
             Log($"segment: goal {goal + 1} {plan.Labels[goal]} searched again: {Describe(c)} against {Describe(Best)}");
             if (!stop() && c.Better(Best)) Accept(c, $"goal {goal + 1} {plan.Labels[goal]} searched again", coord, Array.Empty<Worker>());

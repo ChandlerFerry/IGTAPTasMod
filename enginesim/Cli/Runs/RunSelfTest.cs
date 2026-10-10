@@ -28,6 +28,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 Library();
                 Splits();
                 StuckRanking();
+                ScoreRanking();
                 OneXAlign();
                 if (Solve.Option<string>(args, "--ticks-self", null) is string ticksOut) OneXSelf(ticksOut);
                 ResumeKeepsEarlyPress();
@@ -237,6 +238,21 @@ namespace IGTAP.EngineSim.Cli.Runs
             Built a = Stuck(full, 1, "unreachable", 0), b = Stuck(full, 1, "unreachable", 0);
             b.Physics[0] = 99;
             Check(b.Better(a) && !a.Better(b), "not stuck for income: the last skeleton goal's tick decides, as before");
+        }
+
+        // A course's own score (its game timer) ranks complete runs, not their live time.
+        static void ScoreRanking()
+        {
+            var plan = new RunPlan(new[] { "a00001" }, new[] { "farm:4" });
+            Built Done(long physics, Func<List<InputTick>, long> score)
+            {
+                var b = new Built { Plan = plan, Scorer = score };
+                b.StepEnd.Add(1); b.Physics.Add(physics); b.Held.Add(0); b.InputAt.Add(1);
+                return b;
+            }
+            Check(Done(100, null).Better(Done(120, null)), "no score: the sooner run is ahead");
+            Check(Done(120, _ => 5).Better(Done(100, _ => 9)) && !Done(100, _ => 9).Better(Done(120, _ => 5)), "a score reverses live time: the lower score is ahead");
+            Check(!Done(100, _ => 5).Better(Done(120, _ => 5)), "the same score: not ahead");
         }
 
         // A goal's avoid boxes follow it to its place in an edited plan (one goal more before it), not stay at its old index.

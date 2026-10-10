@@ -17,6 +17,8 @@ namespace IGTAP.EngineSim.Cli.Runs
         public Dictionary<string, FullTasGoal> Known;
         public bool Loose;
         public RunClass Class;
+        // A course's own timing (its game timer, a farm loop's steady lap), lower is better; null: live time.
+        public Func<List<InputTick>, long> Score;
 
         public static RunContext Open(string trace, RunClass cls = RunClass.Major)
         {

@@ -37,11 +37,16 @@ namespace IGTAP.EngineSim.Cli.Runs
         public int Reached => StepEnd.Count;
         public bool Complete => Plan != null && Reached == Plan.Count;
         public double Live => Reached == 0 ? 0 : Math.Round(MacroEngine.LiveSeconds(Physics[^1], Held[^1]), 4);
+        internal Func<List<InputTick>, long> Scorer;
+        long? _score;
+        // The inputs don't change once built (Verify only re-times the goals), so the score is cached.
+        public long Score => _score ??= Scorer(Inputs);
 
         public bool Better(Built o)
         {
             if (o == null) return true;
             if (Complete != o.Complete) return Complete;
+            if (Complete && Scorer != null && o.Scorer != null) return Score < o.Score;
             if (Complete) return MacroEngine.LiveUnits(Physics[^1], Held[^1]) < MacroEngine.LiveUnits(o.Physics[^1], o.Held[^1]);
             (int n, long at) = Skeleton();
             (int on, long oat) = o.Skeleton();
@@ -107,7 +112,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         {
             FullTasGoal[] goals = _run.GoalsOf(plan);
             _sim.UseGoals(_base.For(goals));
-            var built = new Built { Plan = plan, Owner = this };
+            var built = new Built { Plan = plan, Owner = this, Scorer = _run.Score };
             int keep = 0;
             if (reuse != null && reuse.Owner == this)
                 while (keep < reuse.Reached && keep < plan.Count && keep < keepUpTo && reuse.Plan.Labels[keep] == plan.Labels[keep]) keep++;
@@ -129,7 +134,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         {
             FullTasGoal[] goals = _run.GoalsOf(plan);
             _sim.UseGoals(_base.For(goals));
-            var built = new Built { Plan = plan, Owner = this };
+            var built = new Built { Plan = plan, Owner = this, Scorer = _run.Score };
             int keep = 0;
             if (reuse != null && reuse.Owner == this)
                 while (keep < reuse.Reached && keep < plan.Count && reuse.Plan.Labels[keep] == plan.Labels[keep] && reuse.StepEnd[keep] <= route.Count
