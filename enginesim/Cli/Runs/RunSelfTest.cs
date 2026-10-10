@@ -29,7 +29,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 Splits();
                 string trace = Solve.Option<string>(args, "--trace", null), best = Solve.Option<string>(args, "--best", null);
                 if (trace != null && best != null && args.Contains("--confirm-live")) ConfirmLive(trace, best);
-                if (trace != null && best != null && args.Contains("--harvest-vs-straight")) HarvestVsStraight(trace, best);
+                if (trace != null && best != null && args.Contains("--harvest-vs-straight")) HarvestVsStraight(trace, best, Solve.Option(args, "--rebuild-from", 300));
                 if (trace != null && best != null && !args.Contains("--no-search")) Search(trace, best);
                 if (trace != null && best != null && args.Contains("--build")) Rebuild(trace, best, Solve.Option(args, "--live", double.MaxValue));
                 if (trace != null && best != null && args.Contains("--improve-smoke")) ImproveSmoke(trace, best);
@@ -208,24 +208,33 @@ namespace IGTAP.EngineSim.Cli.Runs
             Directory.Delete(dir, true);
         }
 
-        static void HarvestVsStraight(string trace, string best)
+        // Goal to goal from captured states, the harvest and a rebuild after goal `from` out of its library (other segments than
+        // the route's: TouchGrass-ANY% from 300 picks another goal 312) must replay straight to the same goals on the same ticks.
+        static void HarvestVsStraight(string trace, string best, int from)
         {
             RunContext ctx = RunContext.Open(trace);
             List<InputTick> inputs = Inputs(best);
             var plan = new RunPlan(ctx.HeaderIds, ctx.HeaderGoals.Select(g => g.label).ToArray());
             string dir = Path.Combine(Path.GetTempPath(), "igtap-run-hvs-" + Environment.ProcessId);
             Directory.CreateDirectory(dir);
-            Console.WriteLine(Solve.OnThread(() =>
+            var (h, hDiffer, b, bDiffer) = Solve.OnThread(() =>
             {
                 var builder = new Builder(ctx, SegmentLibrary.Load(Path.Combine(dir, "s.json"), Array.Empty<string>()), new SegmentSearch(ctx), new SegmentFacts(Path.Combine(dir, "f.json")), false);
-                Built h = builder.Harvest(plan, inputs, "harvest");
-                Simulation sim = ctx.Make();
-                RunResult r = sim.Run(inputs, null, null, 1000000);
-                var differ = Enumerable.Range(0, Math.Min(h.Reached, r.Progress)).Where(g => h.Physics[g] != r.GoalPhysicsTicks[g]).ToList();
-                return $"harvest reaches {h.Reached}, straight {r.Progress}; goals whose ticks differ: {differ.Count}"
-                    + string.Concat(differ.Take(12).Select(g => $"{Environment.NewLine}  goal {g + 1} {plan.Labels[g]}: harvest {h.Physics[g]} straight {r.GoalPhysicsTicks[g]}"));
-            }));
+                string Differ(Built x)
+                {
+                    long[] built = x.Physics.ToArray();
+                    if (builder.Verify(x) == null) return "its straight replay reaches fewer goals";
+                    int g = Enumerable.Range(0, x.Reached).FirstOrDefault(i => built[i] != x.Physics[i], -1);
+                    return g < 0 ? null : $"goal {g + 1} {plan.Labels[g]}: built {built[g]}, straight {x.Physics[g]}";
+                }
+                Built harvested = builder.Harvest(plan, inputs, "harvest");
+                string hd = Differ(harvested);
+                Built rebuilt = builder.Build(plan, harvested, from);
+                return (harvested.Reached, hd, rebuilt.Reached, Differ(rebuilt));
+            });
             Directory.Delete(dir, true);
+            Check(hDiffer == null, $"{ctx.Name}: the harvest ({h} goals) replays straight: {hDiffer}");
+            Check(bDiffer == null, $"{ctx.Name}: the rebuild after goal {from} ({b} goals) replays straight: {bDiffer}");
         }
 
         static void ImproveSmoke(string trace, string best)

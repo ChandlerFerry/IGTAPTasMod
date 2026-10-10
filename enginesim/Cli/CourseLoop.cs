@@ -380,7 +380,7 @@ namespace IGTAP.EngineSim.Cli
             // record, 64 ticks on): Advance stops where the next input is asked, before them, and every lap searched from there
             // "finished" on the lead's own finish. The state at that finish instead, its next input the lap's first.
             if (sim.Progress < route.LeadLaps)
-                at = sim.AdvanceToGoal(route.Lead.Concat(Enumerable.Repeat(new InputTick(), 60)).ToList(), route.LeadLaps, out _) ?? at;
+                at = sim.AdvanceToGoal(route.Lead.Concat(Enumerable.Repeat(new InputTick(), 60)).ToList(), route.LeadLaps, out _, inLock: true) ?? at;
             sim.SetStart(at, route.Lead.Count);
             sim.UseGoals(null);
             sim.TargetCourse = run.Course;

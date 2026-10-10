@@ -447,13 +447,15 @@ namespace IGTAP.EngineSim
 
         /// <summary>
         /// The state where goal <paramref name="goal"/> (1-based) is reached replaying <paramref name="inputs"/> from the start: the end
-        /// of the physics tick that reaches it, an input's tick or one of the ticks after an input that take none (a dash's, a
-        /// spring's; TouchGrass-ANY%'s goals 478-479 come in a 269-tick fall). <see cref="Advance"/> stops where the next input is
-        /// asked, before such ticks. Rebased as Advance's: from it the next input played is inputs[<paramref name="consumed"/>],
-        /// after the rest of a no-input stretch. The goal never ends the run here (the tracker's Limit is past it while it plays),
-        /// so a run's last goal is a start too. Null when the run stops or its inputs end first.
+        /// of the physics tick that reaches it, or, reached in a tick that takes no input (a dash's, a spring's), of the next tick
+        /// that takes one. Those ticks read that input already (the stick's y a lock holds, MacroEngine.BeforeTick; a wall touch's
+        /// early press, MacroEngine.WallTouch), so a state cut among them plays on as the straight replay only before that same
+        /// input: the builder's goal-to-goal replay put TouchGrass-ANY%'s goals a tick off. <paramref name="inLock"/> cuts there
+        /// anyway (a course lead whose finish comes in a lock, its next input the lap's first). Rebased as Advance's: from it the next
+        /// input played is inputs[<paramref name="consumed"/>]. The goals never end the run here (the tracker's Limit is past them
+        /// while it plays), so a run's last goal is a start too. Null when the run stops or its inputs end first.
         /// </summary>
-        public SimSnapshot AdvanceToGoal(IReadOnlyList<InputTick> inputs, int goal, out int consumed)
+        public SimSnapshot AdvanceToGoal(IReadOnlyList<InputTick> inputs, int goal, out int consumed, bool inLock = false)
         {
             consumed = 0;
             if (goal <= 0) return _start;
@@ -465,6 +467,8 @@ namespace IGTAP.EngineSim
                 Run(inputs, null, null, 1000000, _ =>
                 {
                     if (at != null || !Engine.IsRunning || Goals.Next < goal) return;
+                    // Goals reached on the way to that tick don't end the run either (a strict run's finish clears once not Done).
+                    if (Engine.TickLocked && !inLock) { Goals.Limit = int.MaxValue; return; }
                     used = (int)Engine.RunTicks;
                     Engine.RebaseInputs();
                     at = Capture(0);
