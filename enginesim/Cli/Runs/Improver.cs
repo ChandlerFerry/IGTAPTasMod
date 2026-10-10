@@ -13,7 +13,7 @@ namespace IGTAP.EngineSim.Cli.Runs
     // parallel and resolved in move order, so the same start gives the same result.
     sealed class Improver
     {
-        const int MissesPerPass = 8, NextSteps = 3, FillBack = 3;
+        const int MissesPerPass = 8, NextSteps = 3, FillBack = 3, SegmentRebuildSearches = 25;
 
         readonly RunContext _run;
         readonly SegmentLibrary _lib;
@@ -87,6 +87,25 @@ namespace IGTAP.EngineSim.Cli.Runs
             {
                 foreach (Worker w in workers) w.Dispose();
             }
+        }
+
+        // One goal's step searched again from its real start with a long budget (the studio's stretch), kept when the whole run
+        // gets faster.
+        public void RunSegment(RunPlan plan, List<InputTick> inputs, int goal, Func<bool> stop)
+        {
+            using var coord = new Worker(() => new Builder(_run, _lib, _search, _facts, searchMisses: true) { Log = Log });
+            Built start = coord.Do(b => coord.Mine = b.Harvest(plan, inputs, "harvest")).Result;
+            if (!Accept(start, "start", coord, Array.Empty<Worker>())) return;
+            if (goal >= start.Reached) { Log($"segment: the best doesn't reach goal {goal + 1} yet"); return; }
+            Built c = coord.Do(b =>
+            {
+                (b.ForceSearchAt, b.MaxSearches) = (goal, SegmentRebuildSearches);
+                try { return b.Build(plan, coord.Mine, goal); }
+                finally { (b.ForceSearchAt, b.MaxSearches) = (-1, int.MaxValue); }
+            }).Result;
+            Log($"segment: goal {goal + 1} {plan.Labels[goal]} searched again: {Describe(c)} against {Describe(Best)}");
+            if (!stop() && c.Better(Best)) Accept(c, $"goal {goal + 1} {plan.Labels[goal]} searched again", coord, Array.Empty<Worker>());
+            Event?.Invoke(new { type = "plan", converged = true, reached = Best.Reached, of = Best.Plan.Count, live = Best.Live, waits = Best.Waits.Sum(w => w.Ticks) });
         }
 
         // A candidate is kept only as its straight replay from the run's start plays it (Builder.Verify).

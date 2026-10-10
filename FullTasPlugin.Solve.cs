@@ -119,11 +119,21 @@ namespace IGTAPTasMod
         /// </summary>
         void LaunchFullTasSolve(FullTasRunDef run, string trace, JObject body)
         {
-            var args = new StringBuilder("fulltas ").Append(Quote(trace));
             int threads = Number(body, "threads", 0);
             if (threads <= 0) threads = Math.Max(1, Environment.ProcessorCount - 2);
-            args.Append(" --threads ").Append(threads);
             string cls = FullTasClassOf(Text(body, "class"));
+            if (cls == MajorClass)
+            {
+                var solve = new StringBuilder("solve-run ").Append(Quote(trace)).Append(" --threads ").Append(threads);
+                string goalId = Text(body, "stretch");
+                if (goalId.Length > 0) solve.Append(" --segment ").Append(goalId);
+                StartFullTasProcess(run, solve.ToString(), goalId.Length > 0
+                    ? "Searching " + run.name + "'s goal " + run.goals[FullTasGoalAt(run, goalId)].goal + " again on " + threads + " threads"
+                    : "Solving " + run.name + " on " + threads + " threads", "until Stop");
+                return;
+            }
+            var args = new StringBuilder("fulltas ").Append(Quote(trace));
+            args.Append(" --threads ").Append(threads);
             if (cls != MajorClass) args.Append(" --class ").Append(cls);
             bool unsolved = Truthy(body, "unsolved");
             // Improve runs until Stop (a day's worth of minutes); the reach search keeps its hour.
@@ -167,8 +177,13 @@ namespace IGTAPTasMod
                 what = "Improving " + of + (focus == null ? "" : " goals " + (focus[0] - 1) + "-" + (focus[1] - 1))
                     + (record == null && reached < run.goals.Count ? " (the best reaches " + reached + " of " + run.goals.Count + " goals)" : "") + " on " + threads + " threads";
             }
+            StartFullTasProcess(run, args.ToString(), what, minutes.ToString(CultureInfo.InvariantCulture) + " min at most");
+        }
+
+        void StartFullTasProcess(FullTasRunDef run, string args, string what, string limit)
+        {
             while (_fullTasOutput.TryDequeue(out _)) { }
-            _fullTasProcess = StartEngineSim(args.ToString(), _fullTasOutput, stdin: true);
+            _fullTasProcess = StartEngineSim(args, _fullTasOutput, stdin: true);
             _fullTasKillAt = null;
             _fullTasSolveRun = run.name;
             _fullTasEvents.Clear();
@@ -179,7 +194,7 @@ namespace IGTAPTasMod
             _fullTasSolveError = null;
             _fullTasCommand = EngineSimExe + " " + args;
             _fullTasSolveStatus = what;
-            FullTasLog(what + " (" + minutes.ToString(CultureInfo.InvariantCulture) + " min at most)");
+            FullTasLog(what + " (" + limit + ")");
         }
 
         int WriteFullTasSeeds(FullTasRunDef run, StringBuilder args)

@@ -53,22 +53,24 @@ namespace IGTAP.EngineSim.Cli.Runs
                 from = Path.GetFileName(file);
                 break;
             }
-            Emit(new { type = "session", run = run.Name, goals = plan.Labels, ids = plan.Ids, threads, engine = BuildInfo.Commit, from, segments = lib.Count });
             Log($"solve-run {run.Name}: {plan.Count} goals, {threads} threads, engine {BuildInfo.Commit}, from {from} ({route.Count} inputs), {lib.Count} library segments");
-
             var improver = new Improver(run, lib, search, facts, threads) { Log = Log };
             var pending = new BlockingCollection<Built>(new ConcurrentQueue<Built>(), 1);
-            Built submitted = null;
-            // What the run file's route does on this engine, not what it recorded (a fidelity fix can have broken it).
-            (int savedReached, double savedLive) = (0, double.MaxValue);
-            if (File.Exists(run.RunFile) && from == Path.GetFileName(run.RunFile))
-                (savedReached, savedLive) = Solve.OnThread(() =>
+            // What the starting route does on this engine, not what it recorded (a fidelity fix can have broken it).
+            (int savedReached, double savedLive, object startJson) = (0, double.MaxValue, new { progress = 0, time = (double?)null, splits = Array.Empty<double>() });
+            if (route.Count > 0)
+                (savedReached, savedLive, startJson) = Solve.OnThread(() =>
                 {
                     Simulation sim = run.Make();
                     RunResult r = sim.Run(route, null, null, 1000000);
-                    return (r.Progress, r.Progress == plan.Count ? Math.Round(MacroEngine.LiveSeconds(r.GoalPhysicsTicks[^1], r.GoalHeldFrames[^1]), 4) : double.MaxValue);
+                    double[] splits = Enumerable.Range(0, r.Progress).Select(g => Math.Round(MacroEngine.LiveSeconds(r.GoalPhysicsTicks[g], r.GoalHeldFrames[g]), 4)).ToArray();
+                    return (r.Progress, r.Progress == plan.Count ? splits[^1] : double.MaxValue, (object)new { progress = r.Progress, time = r.Progress == 0 ? (double?)null : splits[^1], splits });
                 });
-            Log($"the run file's route reaches {savedReached} of {plan.Count} goals on this engine" + (savedLive < double.MaxValue ? $" in {savedLive:0.0000} s" : ""));
+            Log($"the starting route reaches {savedReached} of {plan.Count} goals on this engine" + (savedLive < double.MaxValue ? $" in {savedLive:0.0000} s" : ""));
+            // A seed run's route isn't this run's file: any route of this run's own beats having none.
+            if (from != Path.GetFileName(run.RunFile)) (savedReached, savedLive) = (0, double.MaxValue);
+            Emit(new { type = "session", run = run.Name, goals = plan.Ids.Select((id, i) => new { id, goal = plan.Labels[i] }), threads, engine = BuildInfo.Commit, from, segments = lib.Count, best = startJson });
+            object last = startJson;
             improver.Event += Emit;
             improver.NewBest += (b, how) =>
             {
@@ -83,13 +85,11 @@ namespace IGTAP.EngineSim.Cli.Runs
                 RunFiles.WriteWaits(run, b);
                 RunFiles.WriteFailure(run, b.Failure, b.Failure == null ? null : b.Plan.Ids[b.Failure.Goal]);
                 lib.Save();
-                Emit(new
-                {
-                    type = "record", how, complete = b.Complete, reached = b.Reached, of = b.Plan.Count, time = b.Reached == 0 ? (double?)null : b.Live,
-                    ticks = b.Reached == 0 ? (long?)null : b.Physics[^1], waits = b.Waits.Sum(w => w.Ticks),
-                });
-                Emit(new { type = "waits", waits = b.Waits.OrderByDescending(w => w.Ticks).Take(50).Select(w => new { goal = w.Goal + 1, id = b.Plan.Ids[w.Goal], w.Label, x = Math.Round(w.X), y = Math.Round(w.Y), w.Ticks, w.Currency, w.Short }) });
-                if (b.Failure != null) Emit(new { type = "failure", b.Failure.Kind, goal = b.Failure.Goal + 1, id = b.Plan.Ids[b.Failure.Goal], b.Failure.Label, b.Failure.Text });
+                object now = RouteJson(b);
+                Emit(new { type = "record", how, previous = last, best = now, complete = b.Complete, waits = b.Waits.Sum(w => w.Ticks) });
+                last = now;
+                Emit(new { type = "waits", waits = b.Waits.OrderByDescending(w => w.Ticks).Take(50).Select(w => new { goal = w.Goal + 1, id = b.Plan.Ids[w.Goal], label = w.Label, x = Math.Round(w.X), y = Math.Round(w.Y), ticks = w.Ticks, currency = w.Currency, @short = w.Short }) });
+                if (b.Failure != null) Emit(new { type = "failure", kind = b.Failure.Kind, goal = b.Failure.Goal + 1, id = b.Plan.Ids[b.Failure.Goal], label = b.Failure.Label, text = b.Failure.Text });
                 if (b.Complete && b.Live < savedLive - 1e-4)
                 {
                     savedLive = b.Live;
@@ -98,14 +98,27 @@ namespace IGTAP.EngineSim.Cli.Runs
                 }
             };
             if (submit) new Thread(() => Submitter(run, pending)) { IsBackground = true }.Start();
-            improver.Run(plan, route, () => _stop);
+            string segment = Solve.Option<string>(args, "--segment", null);
+            if (segment != null)
+            {
+                int goal = Array.IndexOf(plan.Ids, segment);
+                if (goal < 0) { Console.Error.WriteLine($"solve-run: {run.Name} has no goal with id {segment}"); return 2; }
+                improver.RunSegment(plan, route, goal, () => _stop);
+            }
+            else improver.Run(plan, route, () => _stop);
             lib.Save();
-            Emit(new { type = "done", run = run.Name, complete = improver.Best?.Complete ?? false, time = improver.Best?.Live, reached = improver.Best?.Reached ?? 0 });
+            Emit(new { type = "done", run = run.Name, best = improver.Best == null ? last : RouteJson(improver.Best) });
             Log("solve-run: done" + (_stop ? " (stopped)" : ""));
             // Let a pending submission finish before the process ends.
             for (int i = 0; i < 600 && submit && pending.Count > 0; i++) Thread.Sleep(100);
             return 0;
         }
+
+        static object RouteJson(Built b) => new
+        {
+            progress = b.Reached, time = b.Reached == 0 ? (double?)null : b.Live, ticks = b.Reached == 0 ? (long?)null : b.Physics[^1],
+            splits = Enumerable.Range(0, b.Reached).Select(g => Math.Round(MacroEngine.LiveSeconds(b.Physics[g], b.Held[g]), 4)).ToArray(),
+        };
 
         static void WatchStdin()
         {

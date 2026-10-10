@@ -75,6 +75,8 @@ namespace IGTAP.EngineSim.Cli.Runs
         public Action<string> Log = _ => { };
         public int MaxSearches = int.MaxValue;
         public long MaxBudget = Budgets[^1];
+        public int ForceSearchAt = -1;
+        public long ForceBudget = Budgets[1];
 
         public Builder(RunContext run, SegmentLibrary lib, SegmentSearch search, SegmentFacts facts, bool searchMisses)
         {
@@ -84,14 +86,14 @@ namespace IGTAP.EngineSim.Cli.Runs
             _origin = _sim.Start;
         }
 
-        public Built Build(RunPlan plan, Built reuse = null)
+        public Built Build(RunPlan plan, Built reuse = null, int keepUpTo = int.MaxValue)
         {
             FullTasGoal[] goals = _run.GoalsOf(plan);
             _sim.UseGoals(_base.For(goals));
             var built = new Built { Plan = plan, Owner = this };
             int keep = 0;
             if (reuse != null && reuse.Owner == this)
-                while (keep < reuse.Reached && keep < plan.Count && reuse.Plan.Labels[keep] == plan.Labels[keep]) keep++;
+                while (keep < reuse.Reached && keep < plan.Count && keep < keepUpTo && reuse.Plan.Labels[keep] == plan.Labels[keep]) keep++;
             if (keep > 0)
             {
                 built.Inputs.AddRange(reuse.Inputs.Take(reuse.StepEnd[keep - 1]));
@@ -271,7 +273,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             bool afterReset = built.Inputs.Count > 0 && built.Inputs[^1].reset;
             FullTasGoal goal = goals[j];
             bool buy = (goal.kind == FullTasGoal.Buy || goal.kind == FullTasGoal.Reward) && goal.boxes != null;
-            if (Best(start, inputBase, c, label, j, afterReset) is var (bestInputs, bestAt))
+            if (j != ForceSearchAt && Best(start, inputBase, c, label, j, afterReset) is var (bestInputs, bestAt))
             {
                 if (buy) (bestInputs, bestAt) = TrimIdle(start, inputBase, j, bestInputs, bestAt);
                 Append(built, j, bestInputs, bestAt);
@@ -342,7 +344,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         (List<InputTick>, SimSnapshot)? Searched(Built built, FullTasGoal[] goals, int j, SimSnapshot start, int inputBase, Context c, bool afterReset, List<InputTick> prefix)
         {
             string label = built.Plan.Labels[j], key = KeyOf(label, c);
-            long budget = Budgets.FirstOrDefault(b => b <= MaxBudget && !_facts.Failed(key, b));
+            long budget = j == ForceSearchAt ? ForceBudget : Budgets.FirstOrDefault(b => b <= MaxBudget && !_facts.Failed(key, b));
             if (budget == 0)
             {
                 built.Failure = Unreachable(j, label, c, Budgets[^1]);

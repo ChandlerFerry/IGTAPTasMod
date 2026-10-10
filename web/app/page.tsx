@@ -1330,16 +1330,15 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
         <div className="fullTasSolve">
           {reached > 0 && <div className={`ftFocus ${picked ? "on" : ""}`}>
             {picked
-              ? <><span>Improve selected: <b>{goalSpan(picked)}</b> ({picked[1] - picked[0] + 1} goal{picked[1] > picked[0] ? "s" : ""}, {pickedSeconds?.toFixed(2)} s in the record)</span>
+              ? <><span>Selected: <b>{goalSpan(picked)}</b> ({picked[1] - picked[0] + 1} goal{picked[1] > picked[0] ? "s" : ""}, {pickedSeconds?.toFixed(2)} s in the record){picked[0] !== picked[1] ? ". Pick one goal to search its way again." : ""}</span>
                 <button className="secondary" onClick={() => setPicked(null)}>Clear selection</button></>
-              : <span>{complete ? "Improve searches the whole run. Think a stretch is slow? Click its goals or segment bar below (shift-click extends)." : "Click reached goals or a segment bar below (shift-click extends) to improve just them."}</span>}
+              : <span>Solve builds what the best doesn't reach yet, then improves the whole run. Think one goal's way is slow? Click it below and search it again.</span>}
           </div>}
           <div className="ftImprove">
-            {complete || !run || picked
-              ? <button className="primary" disabled={busy || !(complete || picked)} title={picked ? `Searches only windows starting in ${goalSpan(picked)}; known faster pieces still join anywhere.` : "Searches the whole run from its record until Stop."}
-                onClick={() => onCommand("/fulltas/solve", picked ? { name, focus: [ids[picked[0] - 1], ids[picked[1] - 1]] } : { name })}>{picked ? `Improve ${goalSpan(picked)}` : "Improve"}</button>
-              : <button className="primary" disabled={busy || !run.goals.length} title="The best misses goals: searches for them in order first. Improve works once every goal is reached."
-                onClick={() => onCommand("/fulltas/solve", { name, unsolved: true })}>Reach missing goals</button>}
+            <button className="primary" disabled={busy || !run?.goals.length} title="Builds whatever the best doesn't reach yet, then improves the whole run until it converges or Stop."
+              onClick={() => onCommand("/fulltas/solve", { name })}>Solve</button>
+            {picked && picked[0] === picked[1] && <button className="secondary" disabled={busy} title={`Searches the way to ${goalSpan(picked)} again from where the run starts it, longer; kept when the whole run gets faster.`}
+              onClick={() => onCommand("/fulltas/solve", { name, stretch: ids[picked[0] - 1] })}>Search {goalSpan(picked)} again</button>}
             <button className="danger" disabled={!busy} onClick={() => onCommand("/fulltas/stop")}>Stop</button>
           </div>
           <div className="buttonRow">
