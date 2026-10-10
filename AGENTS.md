@@ -69,6 +69,11 @@ Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/so
   "Don't touch my unlocks" is on, and the game autosaves these edits.
 - `POST /api/oracle/bootstrap` loads the scene without the menu. The game autosaves, so a relaunch can change the save.
 - Rebuilding the plugin: `python tools/enginesim-redeploy.py`.
+- Engine changes: one agent edits `enginesim/` (and the root sources it compiles) at a time. Every engine change goes
+  through `IGTAP.EngineSim check`, which replays the complete Full-TAS runs and the trace corpus against
+  `enginesim/check/baseline.json` (about 25 s). The pre-commit hook runs it (`python tools/setup-hooks.py` turns the
+  hooks on). An intended change commits its new baseline (`check --accept`) in the same commit, so every changed result is
+  in the diff. Long searches run on a private build of committed code.
 - Several searches share `enginesim\Cli\bin\Release\net10.0\IGTAP.EngineSim.exe` (the plugin's Optimize and Full-TAS
   solves, other agents). Stop only your own engine processes, by PID, never `taskkill /IM IGTAP.EngineSim.exe`; while
   others run, build an engine of your own to a private folder (`dotnet build enginesim\Cli\IGTAP.EngineSim.csproj -c
