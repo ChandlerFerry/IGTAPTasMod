@@ -27,13 +27,15 @@ namespace IGTAP.EngineSim.Cli.Runs
                 MadeGoals();
                 Library();
                 string trace = Solve.Option<string>(args, "--trace", null), best = Solve.Option<string>(args, "--best", null);
-                if (trace != null && best != null) Search(trace, best);
+                if (trace != null && best != null && !args.Contains("--no-search")) Search(trace, best);
+                if (trace != null && best != null && args.Contains("--build")) Rebuild(trace, best, Solve.Option(args, "--live", double.MaxValue));
                 Console.WriteLine($"run-selftest: {_passed} checks passed");
                 return 0;
             }
             catch (InvalidOperationException ex)
             {
                 Console.WriteLine(ex.Message);
+                if (ex.InnerException != null) Console.WriteLine(ex.InnerException);
                 return 1;
             }
         }
@@ -145,6 +147,26 @@ namespace IGTAP.EngineSim.Cli.Runs
             List<List<InputTick>> b = search.Find(state, prefix, ctx.HeaderGoals, k, new List<List<InputTick>>(), 2_000_000, out _);
             Check(a.Count > 0, $"a search finds goal {k + 1} {ctx.HeaderGoals[k].label} of {ctx.Name} from its state ({nearA})");
             Check(a.Count == b.Count && a[0].SequenceEqual(b[0]), "the same search finds the same routes");
+        }
+
+        static void Rebuild(string trace, string best, double live)
+        {
+            RunContext ctx = RunContext.Open(trace);
+            List<InputTick> inputs = Inputs(best);
+            string dir = Path.Combine(Path.GetTempPath(), "igtap-run-build-" + Environment.ProcessId);
+            Directory.CreateDirectory(dir);
+            var plan = new RunPlan(ctx.HeaderIds, ctx.HeaderGoals.Select(g => g.label).ToArray());
+            (Built harvested, Built built, Built greedy) = Solve.OnThread(() =>
+            {
+                SegmentLibrary lib = SegmentLibrary.Load(Path.Combine(dir, "lib.segments.json"), Array.Empty<string>());
+                var builder = new Builder(ctx, lib, new SegmentSearch(ctx), new SegmentFacts(Path.Combine(dir, "lib.failures.json")), searchMisses: false);
+                Built h = builder.Harvest(plan, inputs, "harvest");
+                return (h, builder.Build(plan, h), builder.Build(plan));
+            });
+            Check(harvested.Complete && harvested.Live <= live + 1e-4, $"{ctx.Name}: the best harvested: {harvested.Reached} of {plan.Count} goals, {harvested.Live:0.0000} s (no slower than {live})");
+            Check(built.Complete && built.Searches == 0 && built.Live == harvested.Live, $"{ctx.Name}: the plan built on the harvest: {built.Reached} goals, {built.Live:0.0000} s, {built.Searches} searches");
+            Console.WriteLine($"  {ctx.Name}: a greedy rebuild from the library alone reaches {greedy.Reached} of {plan.Count} goals" + (greedy.Failure == null ? $", {greedy.Live:0.0000} s" : $" ({greedy.Failure.Text})"));
+            Directory.Delete(dir, true);
         }
     }
 }
