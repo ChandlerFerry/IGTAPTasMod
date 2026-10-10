@@ -382,7 +382,7 @@ namespace IGTAP.EngineSim.Cli
             string stretches = string.Join("; ", FullTas.Stretches(new[] { "record:1", "buy:buyreward", "buy:buywj", "start:2", "reward:bonus1", "farm:2",
                 "buy:buyds", "at:1", "reward:bonus2", "at:2", "reward:bonus3", "start:3", "buy:buyreward3", "buy:buystatue", "buy:buyclone2", "buy:buydj", "at:3" })
                 .Select(s => $"{s.kept}-{s.target}" + string.Concat(s.bonuses.Select(b => " " + b))));
-            Check(stretches == "3-6 reward:bonus1; 11-13; 14-15", $"goals stretches: {stretches} (3-6 reward:bonus1; 11-13; 14-15)");
+            Check(stretches == "3-6 reward:bonus1; 11-15", $"goals stretches: {stretches} (3-6 reward:bonus1; 11-15: buystatue is an economy goal)");
             // fulltas-plan --install's header splice: the goals replaced (brackets and quotes in labels too), the rest byte for byte.
             string trace = Path.Combine(Path.GetTempPath(), $"plan-selftest-{Environment.ProcessId}.json");
             string Header(string goals) => "{\"course\":0,\"fulltas\":{\"name\":\"T\",\"goals\":" + goals + ",\"buys\":\"strict\"},\"ticks\":[{\"goals\":[1]}]}";
