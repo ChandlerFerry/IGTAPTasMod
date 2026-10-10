@@ -93,6 +93,8 @@ namespace IGTAPTasMod
                         pauseAt = body["pauseAt"] == null ? -1 : (long)body["pauseAt"], pauseOffset = Number(body, "pauseOffset", 0),
                         pauseFrames = Number(body, "pauseFrames", 0),
                         fps = Number(body, "fps", 0), omniDash = Truthy(body, "omniDash"), lean = Truthy(body, "lean"), fast = Truthy(body, "fast") };
+                    // The first row can come before this probe's first globalStats.FixedUpdate: not the last probe's Cash.
+                    _cashPre = globalStats.currencyLookup[globalStats.Currencies.Cash];
                     var macro = new MacroDefinition { id = ProbeRouteId, name = route + " probe " + name, savestateId = savestateId, steps = ToSteps(ticks) };
                     Match fullTas = FullTasRouteName.Match(macro.name);
                     if (fullTas.Success && savestateId.Length == 0)
