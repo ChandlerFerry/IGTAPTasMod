@@ -873,7 +873,15 @@ The design is `docs/superpowers/specs/2026-10-09-fulltas-v2-design.md`; the code
   touch there then waits and buys more at once), and the misses there searched first. Incomplete runs rank by skeleton goals
   reached; then a run stuck for want of income (`no-income`) is ahead of one that isn't, with fewer economy goals stuck before
   the next skeleton goal, then more of the stuck buy's price held (a cap or an income raised), then the last skeleton goal's
-  tick: ZipEscape%'s goal 831, where every single move stopped at the same goal and tick, climbs that way. With no move or
+  tick: ZipEscape%'s goal 831, where every single move stopped at the same goal and tick, climbs that way. A `no-income`
+  best is met first by **income moves** (`Income.cs`, `Improver.IncomeFirst`): where it stands before the stuck goal, the
+  economy drive (`Simulation.EconomyFinish`/`EconomyBuy`/`EconomyIdle`) plays each course's lap and each economy box
+  affordable within 1000 ticks, then idles 1000 ticks, against idling alone; what adds the missing currency is a producer,
+  ranked by that gain per tick it costs (the lap or the wait, and a straight-line walk). The best 6 go in before the goal (a
+  lap as one record, and as the laps that pay the shortfall; a buy), with the stuck goal moved before the goal within 8 back
+  whose step cut its income (an atom reset); these few are built, and their misses searched (up to 80M ticks a goal), before
+  the thousands of generic moves. ZipEscape%'s goal 841 `buy:buyclonecd8` (2 CloneDust short after the atom reset) finds
+  `record:8` (10 CloneDust a lap, Course 8 never in its plan): 844 of 850 in 10 minutes. With no move or
   miss left, a **movement polish** searches each goal's segment again from its real start (20M ticks, the longest segments
   first; the rebuild after it may search 3 more of 20M), kept as any move is; a goal is searched once per inputs through its
   segment (`Improver.Polish`). It runs until the polish gains nothing too, or "stop" on stdin.

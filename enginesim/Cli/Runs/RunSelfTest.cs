@@ -49,6 +49,8 @@ namespace IGTAP.EngineSim.Cli.Runs
                 if (trace != null && best != null && args.Contains("--rejoin")) RejoinBroken(trace, best);
                 if (trace != null && best != null && Solve.Option(args, "--restore-at", -1) is int restoreAt && restoreAt >= 0) RestoreAt(trace, best, restoreAt);
                 if (trace != null && best != null && Solve.Option(args, "--chain-to", -1) is int chainTo && chainTo >= 0) ChainTo(trace, best, chainTo);
+                int producers = Array.IndexOf(args, "--producers");
+                if (trace != null && best != null && producers >= 0 && producers + 2 < args.Length) Producers(trace, best, int.Parse(args[producers + 1]), args[producers + 2]);
                 Console.WriteLine($"run-selftest: {_passed} checks passed");
                 return 0;
             }
@@ -423,6 +425,29 @@ namespace IGTAP.EngineSim.Cli.Runs
                     + string.Join(Environment.NewLine + "  ", rows);
             });
             Console.WriteLine(report);
+        }
+
+        // `--producers N LABEL`: where the best stands after goal N (1-based), the economy drive finds LABEL among the producers of the
+        // currency goal N+1 is short of (ZipEscape%: after goal 840 buy:buycd8, record:8 pays the CloneDust buy:buyclonecd8 lacks).
+        static void Producers(string trace, string best, int n, string label)
+        {
+            RunContext ctx = RunContext.Open(trace);
+            List<InputTick> inputs = Inputs(best);
+            using JsonDocument d = JsonDocument.Parse(File.ReadAllText(best));
+            string[] labels = d.RootElement.TryGetProperty("goals", out JsonElement g) ? g.EnumerateArray().Select(x => x.GetProperty("label").GetString()).ToArray()
+                : ctx.HeaderGoals.Select(x => x.label).ToArray();
+            FullTasGoal[] goals = labels.Select(l => RunGoals.Goal(l, ctx.Known)).ToArray();
+            var (shortOf, found) = Solve.OnThread(() =>
+            {
+                Simulation sim = ctx.Make();
+                sim.UseGoals(sim.Goals.For(goals));
+                SimSnapshot at = sim.AdvanceToGoal(inputs, n, out _) ?? throw new InvalidOperationException($"FAIL: the best doesn't reach goal {n}");
+                var need = Income.Short(sim, at, goals[n].boxes) ?? throw new InvalidOperationException($"FAIL: goal {n + 1} {labels[n]} is short of nothing");
+                return (need, Income.Of(sim, at, need.currency));
+            });
+            Console.WriteLine($"  after goal {n}: {labels[n]} is {shortOf.by:G4} {shortOf.currency} short; producers: "
+                + string.Join(", ", found.Select(p => $"{p.Label} {p.Gain:G3} in {p.Ticks:0} ticks")));
+            Check(found.Any(p => p.Label == label), $"{ctx.Name}: {label} pays the {shortOf.currency} goal {n + 1} {labels[n]} lacks");
         }
 
         // Goal by goal from captured states (as the builder plays), against one straight replay: where do they part?

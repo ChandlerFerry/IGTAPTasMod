@@ -92,6 +92,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         readonly SegmentFacts _facts;
         readonly bool _searchMisses;
         readonly Simulation _sim;
+        internal Simulation Sim => _sim;
         readonly FullTasTracker _base;
         readonly SimSnapshot _origin;
         public Action<string> Log = _ => { };

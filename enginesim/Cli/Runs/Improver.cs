@@ -189,6 +189,11 @@ namespace IGTAP.EngineSim.Cli.Runs
                 Built built = coord.Do(b => b.Build(Best.Plan, coord.Mine)).Result;
                 if (built.Better(Best) && Accept(built, $"goal {Best.Failure.Goal + 1} {Best.Failure.Label} searched", coord, workers)) return Outcome.Gained;
             }
+            if (_incomeOf != Best)
+            {
+                _incomeOf = Best;
+                if (IncomeFirst(coord, workers, stop)) return Outcome.Gained;
+            }
             if (_missesOf != Best) Evaluate(coord, workers, stop);
             if (_missesOf != Best) return stop() ? Outcome.Searching : Outcome.Gained;
             var untried = _misses.Where(m => !_triedMisses.Contains(Key(m.move))).OrderByDescending(m => m.gain).ToList();
@@ -252,6 +257,79 @@ namespace IGTAP.EngineSim.Cli.Runs
                     ? Frontier + Array.LastIndexOf(Best.Plan.Labels, c.Failure.Label, Math.Max(0, Best.Reached - 1)) : gain;
             }
             return null;
+        }
+
+        const int TopProducers = 6, MaxLaps = 12, ResetBack = 8;
+        Built _incomeOf;
+
+        // A no-income failure is met by what makes its currency where the best stands before that goal (Income: the economy drive's
+        // projection), ranked by the currency each adds per tick it costs: a producer's laps (as many as pay the shortfall, and one
+        // alone) or its buy, put in before the goal. These few are built, and their misses searched, before the generic moves (a
+        // pass over those is thousands of builds).
+        bool IncomeFirst(Worker coord, Worker[] workers, Func<bool> stop)
+        {
+            if (Best.Complete || Best.Failure?.Kind != "no-income" || workers.Length == 0) return false;
+            RunPlan p = Best.Plan;
+            int f = Best.Failure.Goal;
+            string[] boxes = _run.GoalsOf(p)[f].boxes;
+            if (boxes == null) return false;
+            var income = coord.Do(b =>
+            {
+                Built mine = coord.Mine;
+                if (mine == null || mine.Reached < f || !mine.Plan.Same(p)) return null;
+                SimSnapshot Before(int g) => g == 0 ? b.Sim.Start : mine.States[g - 1];
+                if (!(Income.Short(b.Sim, Before(f), boxes) is var (currency, by))) return null;
+                // The goal whose step cut the currency's income (an atom buy resets the courses that paid it), within ResetBack goals.
+                int cut = -1;
+                if (Income.Idle(b.Sim, Before(f), currency) <= 0)
+                    for (int g = f - 1; g >= Math.Max(0, f - ResetBack); g--)
+                        if (Income.Idle(b.Sim, Before(g), currency) > 0) { cut = g; break; }
+                return ((globalStats.Currencies, double, List<Income.Producer>, int)?)(currency, by, Income.Of(b.Sim, Before(f), currency), cut);
+            }).Result;
+            if (!(income is var (cur, shortBy, producers, cut))) return false;
+            Log($"income: goal {f + 1} {p.Labels[f]} is {shortBy:G4} {cur} short" + (cut >= 0 ? $", its income cut at goal {cut + 1} {p.Labels[cut]}" : "") + "; producers: "
+                + (producers.Count == 0 ? "none" : string.Join(", ", producers.Take(TopProducers).Select(x => $"{x.Label} {x.Gain:G3} in {x.Ticks:0} ticks"))));
+            var seen = new HashSet<string>();
+            var moves = new List<Move>();
+            void Add(string what, RunPlan q) { if (seen.Add(Key(q))) moves.Add(new Move(what, q)); }
+            // Bought while the income still came: before the step that cut it.
+            if (cut >= 0 && RunGoals.Editable(p.Labels[f])) Add($"goal {f + 1} {p.Labels[f]} before goal {cut + 1} {p.Labels[cut]}, which cut its {cur} income", p.Move(f, cut));
+            foreach (Income.Producer pr in producers.Take(TopProducers))
+            {
+                string why = $"income: {pr.Gain:G3} {cur} in {pr.Ticks:0} ticks";
+                int course = FullTasGoal.CourseOf(pr.Label);
+                if (course == 0) { Add($"{pr.Label} before goal {f + 1} ({why})", p.Insert(f, pr.Label)); continue; }
+                int laps = (int)Math.Clamp(Math.Ceiling(shortBy / pr.Gain), 1, MaxLaps);
+                RunPlan q = p.Insert(f, "record:" + course);
+                for (int i = 1; i < laps; i++) q = q.Insert(f + i, "farm:" + course);
+                Add($"{laps} laps of course {course} before goal {f + 1} ({why} a lap)", q);
+                Add($"record:{course} before goal {f + 1} ({why})", p.Insert(f, "record:" + course));
+            }
+            Built[] got = moves.Select((m, k) => workers[k % workers.Length].Do(b => b.Build(m.Plan, workers[k % workers.Length].Mine, m.Keep))).ToArray()
+                .Select(t => t.Result).ToArray();
+            int win = -1;
+            for (int k = 0; k < got.Length; k++)
+            {
+                if (LogCandidates) Log($"  candidate {moves[k].What}: {Describe(got[k])}");
+                if (got[k].Better(Best) && (win < 0 || got[k].Better(got[win]))) win = k;
+            }
+            if (win >= 0 && Accept(got[win], moves[win].What, coord, workers)) return true;
+            for (int k = 0; k < got.Length; k++)
+            {
+                if (stop()) return false;
+                if (got[k].Failure?.Kind != "miss" || !_triedMisses.Add(Key(moves[k]))) continue;
+                // A new lap or buy has no segment yet: searched (up to 80M ticks) for each goal the move put in, and a few more.
+                Built c = coord.Do(b =>
+                {
+                    (b.MaxSearches, b.MaxBudget) = (MaxSearchesPerBuild + moves[k].Plan.Count - p.Count, Builder.Budgets[1]);
+                    try { return b.Build(moves[k].Plan, coord.Mine, moves[k].Keep); }
+                    finally { (b.MaxSearches, b.MaxBudget) = (int.MaxValue, Builder.Budgets[^1]); }
+                }).Result;
+                GC.Collect();
+                Log($"income: {moves[k].What}, searched: {Describe(c)}");
+                if (c.Better(Best) && Accept(c, moves[k].What + " (searched)", coord, workers)) return true;
+            }
+            return false;
         }
 
         List<Move> Moves(Built best)
