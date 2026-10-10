@@ -402,36 +402,27 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// A loop lap repaired where the lap search found none: the lap before (the route's loop, else its first lap after a quick
-        /// restart) played after the lead, and the reach windows (FullTas --unsolved) take it on from where it breaks, through the
+        /// restart) played after the lead, and the v2 builder (<see cref="Reach"/>) takes it on from where it breaks, through the
         /// first lap's waypoints to the finish. The finish clears the course reset point, so the restart lands on the course's
         /// checkpoint, which needn't be the course start (Course 3: 1 u right of it): a first lap through spikes on grace breaks
         /// there, and the lap search has no seed that finishes. The lap cut at its finish, or null when the reach doesn't get there.
         /// </summary>
-        static List<InputTick> RepairLoopLap(CourseRun run, LoopRoute route, WaypointOptions options, string dir, double minutes, int threads)
+        static List<InputTick> RepairLoopLap(CourseRun run, LoopRoute route, WaypointOptions options, string dir, double minutes)
         {
             List<InputTick> lap = route.Loop ?? new[] { new InputTick(), new InputTick { reset = true } }.Concat(route.FirstLap).ToList();
             List<FullTasGoal> goals = Enumerable.Range(0, route.LeadLaps).Select(_ => FinishGoal(run.Course))
                 .Concat(CourseWaypoints.Build(run.Trace, route.FirstLap, options).Goals.Where(g => g.kind == FullTasGoal.At))
                 .Append(FinishGoal(run.Course)).ToList();
-            string name = run.Name + "-lap";
-            string synthetic = WriteCourseTrace(run, dir, route.Lead.Concat(lap).ToList(), name, goals);
-            Solve.CourseRuns[name] = run.Rules;
-            TimerGoal = route.LeadLaps;
-            LoopTiming = true;
-            TickTiming = false;
             Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: repairing the lap before from where it breaks, through {goals.Count - route.LeadLaps - 1} "
                 + $"waypoints to the finish, for {minutes:0.##} min");
-            var repair = new FullTas(new[] { synthetic, "--unsolved", "--fresh", "--no-submit", "--threads", threads.ToString(CultureInfo.InvariantCulture),
-                "--minutes", minutes.ToString("0.##", CultureInfo.InvariantCulture) }) { _course = run, _reachOnly = true };
-            repair.Search();
-            Route best = repair._best;
-            if (best.Progress < goals.Count)
+            List<InputTick> best = Reach(run, dir, run.Name + "-lap", goals, route.Lead.Concat(lap).ToList(), run.Rules, minutes, false);
+            if (best == null)
             {
-                Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: the repair reached {best.Progress} of {goals.Count} goals");
+                Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: the repair reached no finish");
                 return null;
             }
             // The reach may redo the lead's inputs: the lap is replayed after the route's own lead, null if it needs the redone one.
-            return CutAtFinish(run, route, best.Inputs.Skip(route.Lead.Count).ToList());
+            return CutAtFinish(run, route, best.Skip(route.Lead.Count).ToList());
         }
 
         /// <summary>
@@ -489,7 +480,7 @@ namespace IGTAP.EngineSim.Cli
                     var r = new LoopRoute { Lead = at.Lead, LeadLaps = at.LeadLaps, Loop = steady, FirstLap = at.FirstLap, FirstTicks = at.FirstTicks };
                     Consider(r, MeasureLoop(run, r), from);
                 }
-                List<InputTick> lap = fastest ?? (best == null && steady == null ? RepairLoopLap(run, at, options, dir, left, threads) : null);
+                List<InputTick> lap = fastest ?? (best == null && steady == null ? RepairLoopLap(run, at, options, dir, left) : null);
                 if (lap == null) break;
                 found.Add(lap);
                 for (int p = 1; p <= found.Count && p <= MaxLoopLaps; p++)

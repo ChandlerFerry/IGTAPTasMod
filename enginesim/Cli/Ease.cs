@@ -244,7 +244,7 @@ namespace IGTAP.EngineSim.Cli
             }
             Console.WriteLine($"in {dir}");
             Console.WriteLine($@"to judge a pick: copy it to offline-best\{course}_{caps}-{cls}-<score>.json (the gate saves it under a strictly lower score)");
-            // The lowest score, when it beats every seed's, goes to the plugin's gate as Improve's class bests do (WriteClassBest).
+            // The lowest score, when it beats every seed's, goes to the plugin's gate (offline-best\<course>_<caps>-<class>-<score>.json).
             Find lowest = list.OrderBy(f => f.Score).FirstOrDefault();
             if (lowest != null && (yours == null || lowest.Score < yours.Score))
             {

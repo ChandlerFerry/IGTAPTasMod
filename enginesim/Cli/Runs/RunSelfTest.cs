@@ -33,6 +33,12 @@ namespace IGTAP.EngineSim.Cli.Runs
                 if (Solve.Option<string>(args, "--ticks-self", null) is string ticksOut) OneXSelf(ticksOut);
                 ResumeKeepsEarlyPress();
                 AvoidsByPlanIds();
+                int reach = Array.IndexOf(args, "--course-reach");
+                if (reach >= 0 && reach + 2 < args.Length)
+                {
+                    string why = FullTas.ReachSelfTest(args[reach + 1], Inputs(args[reach + 2]), Solve.Option(args, "--minutes", 10.0));
+                    Check(why == null, $"a course reached from half its best's inputs finishes on its forced path ({why})");
+                }
                 string trace = Solve.Option<string>(args, "--trace", null), best = Solve.Option<string>(args, "--best", null);
                 if (trace != null && best != null && args.Contains("--confirm-live")) ConfirmLive(trace, best);
                 if (trace != null && best != null && args.Contains("--harvest-vs-straight")) HarvestVsStraight(trace, best, Solve.Option(args, "--rebuild-from", 300));

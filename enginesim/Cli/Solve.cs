@@ -58,7 +58,7 @@ namespace IGTAP.EngineSim.Cli
             seeds.AddRange(seedPaths.Select(Plan.ReadRoute));
             // Nothing finishes in this category yet: along another category's way first, up to half the minutes (CourseAuto.cs).
             var firstClock = Stopwatch.StartNew();
-            if (!args.Contains("--no-first-finish") && FullTas.FirstFinish(startTrace, header, forced, seeds, seedPaths, threads, minutes / 2) is List<InputTick> first) seeds.Add(first);
+            if (!args.Contains("--no-first-finish") && FullTas.FirstFinish(startTrace, header, forced, seeds, seedPaths, minutes / 2) is List<InputTick> first) seeds.Add(first);
             minutes -= firstClock.Elapsed.TotalMinutes;
 
             Func<Simulation> create = Creator(startTrace, header);
