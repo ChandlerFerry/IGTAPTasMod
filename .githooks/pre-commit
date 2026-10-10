@@ -10,6 +10,7 @@ scratch="${TMPDIR:-/tmp}/igtap-check-$(basename "$top")"
 # The commit's temporary index belongs to this worktree, not the scratch one.
 unset GIT_INDEX_FILE
 [ -d "$scratch" ] || git worktree add --detach "$scratch" HEAD >/dev/null 2>&1
+git -C "$scratch" update-ref --no-deref HEAD "$(git rev-parse HEAD)"
 git -C "$scratch" read-tree -u --reset "$tree"
 echo "pre-commit: building the staged tree and running the engine check"
 dotnet build "$scratch/enginesim/Cli/IGTAP.EngineSim.csproj" -c Release -o "$scratch/.check-bin" -v q -nologo 2>&1 | grep -E " error |Error\(s\)" || true
