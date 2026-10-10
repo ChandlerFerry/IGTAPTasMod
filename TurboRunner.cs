@@ -219,7 +219,9 @@ namespace IGTAPTasMod
         static void CollectStartWaiting()
         {
             StartWaiting.Clear();
-            foreach (Behaviour b in NeverStarted()) if (!b.isActiveAndEnabled) StartWaiting.Add(b);
+            // On ones too: one woken just before the run (a category start's refill orbs, their LightFlicker) starts in the run's
+            // first frame at 1x, as the engine's first Start pass draws it (Economy's neverStarted).
+            StartWaiting.AddRange(NeverStarted());
         }
 
         /// <summary>A modelled frame's Start pass, before its Updates: each waiting behaviour now on draws what its Start draws
@@ -441,7 +443,7 @@ namespace IGTAPTasMod
             if (Active || _handoff == null) return;
             Vector2 body = _handoff.Value.body;
             _handoff = null;
-            if (movement.transform.position != _handoffLag) return;
+            if (!Same(movement.transform.position, _handoffLag)) return;
             Place(movement.transform, body);
             Physics2D.SyncTransforms();
             KeepBody(movement.GetComponent<Rigidbody2D>(), body);
@@ -1399,8 +1401,13 @@ namespace IGTAPTasMod
         /// </summary>
         static void KeepBody(Rigidbody2D body, Vector2 at)
         {
-            if (body.position != at) body.position = at;
+            if (!Same(body.position, at)) body.position = at;
         }
+
+        /// <summary>Exactly equal: Unity's Vector ==/!= call anything within 1e-5 equal, which kept a read-back rounding under it in the
+        /// body (Course 1's start: 9e-6) and missed writes as small.</summary>
+        static bool Same(Vector2 a, Vector2 b) { return a.x == b.x && a.y == b.y; }
+        static bool Same(Vector3 a, Vector3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
 
         /// <summary>Puts the player's transform at a position (its z kept) and returns what it reads back, to tell a game write from it.</summary>
         static Vector3 Place(Transform t, Vector2 at)
@@ -1498,10 +1505,10 @@ namespace IGTAPTasMod
                     // No write: the blend was never the body's, so the sync before the step leaves the body where it is (a frame's
                     // write still pending, _stepTo off the body, moves it as at 1x).
                     Vector2 still = body.position;
-                    bool wrote = player.position != lag;
+                    bool wrote = !Same(player.position, lag);
                     if (!wrote) Place(player, _stepTo);
                     Physics2D.SyncTransforms();
-                    if (!wrote && _stepTo == still) KeepBody(body, still);
+                    if (!wrote && Same(_stepTo, still)) KeepBody(body, still);
                     _stepFrom = body.position;
                     Physics2D.Simulate(dt);
                     // A physics callback's write (a sideways spring's push, Movement.hitSpring) moves the body there at once and
@@ -1550,7 +1557,7 @@ namespace IGTAPTasMod
                             if (StartWaiting.Count > 0) StartPass();
                             Vector3 at = Place(player, Vector2.Lerp(_stepFrom, _stepTo, alphas[k]));
                             _update(movement);
-                            if (player.position != at)
+                            if (!Same(player.position, at))
                             {
                                 // The tick's last frame: the write reaches the body at the next step's sync, as at 1x, so the
                                 // next FixedUpdate's squish check (Collider2D.Distance) still sees the body where it was.
@@ -1584,7 +1591,7 @@ namespace IGTAPTasMod
                                     if (teleporter != null) CallInvoked(teleporter, PollCall);
                                 }
                                 // A teleport's write, as an Update's.
-                                if (player.position != before)
+                                if (!Same(player.position, before))
                                 {
                                     if (k < alphas.Length - 1 || repeat > 0) Physics2D.SyncTransforms();
                                     _stepFrom = _stepTo = player.position;
