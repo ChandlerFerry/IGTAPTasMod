@@ -46,6 +46,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 if (trace != null && best != null && !args.Contains("--no-search")) Search(trace, best);
                 if (trace != null && best != null && args.Contains("--build")) Rebuild(trace, best, Solve.Option(args, "--live", double.MaxValue));
                 if (trace != null && best != null && args.Contains("--improve-smoke")) ImproveSmoke(trace, best);
+                if (trace != null && best != null && args.Contains("--rejoin")) RejoinBroken(trace, best);
                 if (trace != null && best != null && Solve.Option(args, "--restore-at", -1) is int restoreAt && restoreAt >= 0) RestoreAt(trace, best, restoreAt);
                 if (trace != null && best != null && Solve.Option(args, "--chain-to", -1) is int chainTo && chainTo >= 0) ChainTo(trace, best, chainTo);
                 Console.WriteLine($"run-selftest: {_passed} checks passed");
@@ -368,6 +369,40 @@ namespace IGTAP.EngineSim.Cli.Runs
             Check(got.Complete, $"{ctx.Name}: the improver builds goals 1-{end} without lap {lap + 1} ({full.Labels[lap]}): {got.Reached} of {without.Count} ({got.Failure?.Text})");
             Check(got.Live <= original + 1e-4, $"{ctx.Name}: improved to {got.Live:0.0000} s against the original {original:0.0000} s ({string.Join(", ", improver.Accepted)})");
             Directory.Delete(dir, true);
+        }
+
+        // A best broken as a fidelity fix breaks a route (a jump pressed a tick late, mid-run), its own replay the old path and
+        // goal ticks: the rejoin gets it back to every goal the best reaches.
+        static void RejoinBroken(string trace, string best)
+        {
+            RunContext ctx = RunContext.Open(trace);
+            List<InputTick> inputs = Inputs(best);
+            var plan = new RunPlan(ctx.HeaderIds, ctx.HeaderGoals.Select(g => g.label).ToArray());
+            (int reached, long[] at, long[] atPhysics, Rejoin.Path path, List<InputTick> broken, int where, int brokenReached) = Solve.OnThread(() =>
+            {
+                Simulation sim = ctx.Make();
+                var rows = new List<(long, long, int, float, float)>();
+                RunResult r = sim.Run(inputs, null, null, 1000000, _ => rows.Add((sim.Engine.PhysicsTicks, sim.Engine.RunTicks, sim.Progress, sim.PlayerWorld.x, sim.PlayerWorld.y)));
+                long[] Pad(long[] a) => a.Take(r.Progress).Concat(Enumerable.Repeat(-1L, plan.Count - r.Progress)).ToArray();
+                (long[] goalInput, long[] goalPhysics) = (Pad(r.GoalInputTicks), Pad(r.GoalPhysicsTicks));
+                Rejoin.Path p = Rejoin.Path.Of(rows, r.GoalPhysicsTicks.Take(r.Progress).ToArray());
+                // The first jump past mid-run whose press a tick later breaks the run.
+                for (int i = inputs.Count / 2; i + 1 < inputs.Count; i++)
+                {
+                    if (!inputs[i].press || inputs[i + 1].press || inputs[i + 1].release || !inputs[i + 1].held) continue;
+                    var b = inputs.ToList();
+                    b[i] = b[i] with { press = false, held = false };
+                    b[i + 1] = b[i + 1] with { press = true };
+                    RunResult rb = sim.Run(b, null, null, 1000000);
+                    if (rb.Progress < r.Progress) return (r.Progress, goalInput, goalPhysics, p, b, i, rb.Progress);
+                }
+                return (r.Progress, goalInput, goalPhysics, p, (List<InputTick>)null, -1, 0);
+            });
+            Check(broken != null, $"{ctx.Name}: a jump pressed a tick late past mid-run breaks the best");
+            var rejoin = new Rejoin(ctx, plan, broken, at, atPhysics, path, new SegmentSearch(ctx) { Parallelism = 4 }, 4) { Log = Console.WriteLine, Budget = TimeSpan.FromMinutes(5) };
+            List<InputTick> repaired = rejoin.Repair();
+            int got = Solve.OnThread(() => ctx.Make().Run(repaired, null, null, 1000000).Progress);
+            Check(got >= reached, $"{ctx.Name}: broken at input {where} (reaches {brokenReached} of {reached} goals), rejoined to {got}");
         }
 
         // A state captured at goal k and restored must play on exactly as the straight replay does.

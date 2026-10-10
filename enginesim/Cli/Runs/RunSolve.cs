@@ -77,6 +77,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                     return (r.Progress, r.Progress == plan.Count ? splits[^1] : double.MaxValue, (object)new { progress = r.Progress, time = r.Progress == 0 ? (double?)null : splits[^1], splits });
                 });
             Log($"the starting route reaches {savedReached} of {plan.Count} goals on this engine" + (savedLive < double.MaxValue ? $" in {savedLive:0.0000} s" : ""));
+            route = Repaired(args, run, plan, search, threads, route) ?? route;
             // A seed run's route isn't this run's file: any route of this run's own beats having none.
             if (from != Path.GetFileName(run.RunFile)) (savedReached, savedLive) = (0, double.MaxValue);
             Emit(new { type = "session", run = run.Name, goals = plan.Ids.Select((id, i) => new { id, goal = plan.Labels[i] }), threads, engine = BuildInfo.Commit, from, segments = lib.Count, best = startJson });
@@ -126,6 +127,44 @@ namespace IGTAP.EngineSim.Cli.Runs
             for (int i = 0; i < 600 && submit && pending.Count > 0; i++) Thread.Sleep(100);
             return 0;
         }
+
+        // A route that stops here before the goals it recorded (`--repair FILE`, else the run's best, else <run>.before-v2.json) is
+        // repaired by rejoin (Rejoin.cs); the repair is the start when its straight replay gets further, or as far sooner, than `start`.
+        // `--repair-path FILE`: its path where it was found (a `fulltas --check --ticks-out` there); `--repair-minutes M` (30).
+        static List<InputTick> Repaired(string[] args, RunContext run, RunPlan plan, SegmentSearch search, int threads, List<InputTick> start)
+        {
+            string only = Solve.Option<string>(args, "--repair", null);
+            foreach (string file in (only != null ? new[] { only } : new[] { run.RunFile, RunFiles.FileOf(run, ".before-v2.json") }).Where(File.Exists))
+            {
+                using JsonDocument d = JsonDocument.Parse(File.ReadAllText(file));
+                List<InputTick> old = Solve.ReadInputs(d.RootElement);
+                (long[] input, long[] physics) = Rejoin.Recorded(d.RootElement, plan);
+                int recorded = input.TakeWhile(i => i >= 0).Count();
+                (int reaches, _) = Straight(run, plan, old);
+                if (reaches >= recorded) continue;
+                Log($"rejoin: {Path.GetFileName(file)} recorded {recorded} goals and reaches {reaches} here: repairing it");
+                string pathFile = Solve.Option<string>(args, "--repair-path", null);
+                Rejoin.Path path = pathFile == null ? null : Rejoin.Path.Load(pathFile, physics);
+                if (path != null) Log($"rejoin: the old path from {Path.GetFileName(pathFile)}, {path.X.Length} ticks");
+                var rejoin = new Rejoin(run, plan, old, input, physics, path, search, threads)
+                    { Log = Log, Stop = () => _stop, Budget = TimeSpan.FromMinutes(Solve.Option(args, "--repair-minutes", 30.0)) };
+                List<InputTick> repaired = rejoin.Repair();
+                var (n, units) = Straight(run, plan, repaired);
+                var (sn, sunits) = start.Count == 0 ? (0, long.MaxValue) : Straight(run, plan, start);
+                Log($"rejoin: the repair reaches {n} goals straight, the start {sn}");
+                return n > sn || n == sn && n > 0 && units < sunits ? repaired : null;
+            }
+            return null;
+        }
+
+        // A route's straight replay: goals reached and the last one's live time.
+        static (int progress, long units) Straight(RunContext run, RunPlan plan, List<InputTick> inputs) => Solve.OnThread(() =>
+        {
+            Simulation sim = run.Make();
+            sim.UseGoals(sim.Goals.For(run.GoalsOf(plan)));
+            RunResult r = sim.Run(inputs, null, null, 1000000);
+            return (r.Progress, r.Progress == 0 ? long.MaxValue : MacroEngine.LiveUnits(r.GoalPhysicsTicks[r.Progress - 1], r.GoalHeldFrames[r.Progress - 1]));
+        });
 
         static object RouteJson(Built b) => new
         {

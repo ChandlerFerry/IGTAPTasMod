@@ -848,6 +848,16 @@ The design is `docs/superpowers/specs/2026-10-09-fulltas-v2-design.md`; the code
 
 - **Start:** the run's best (`fulltas/<run>.json`), else its seed runs' bests, replayed straight on this engine first: what
   it reaches now, not what it recorded, is what a new best has to beat.
+- **Repair by rejoin** (`Runs/Rejoin.cs`, the old stack's transplant): a route that stops here before the goals it recorded
+  (`--repair FILE`, else the run's best, else `<run>.before-v2.json`) keeps its inputs. Its replay is followed against its
+  own path where it was found (`--repair-path`: a `fulltas --check --ticks-out` of it on that engine, kept through the last
+  goal it reaches on its recorded tick) and its recorded goal inputs. At the first break (6 u off the path for 3 ticks, a
+  goal's recorded input passed without it, a death) the inputs just before it change (a tick held or dropped, a press,
+  release or dash moved a tick, the stick re-aimed; else a pair); else a 20M search from 40 inputs before it to an `at:` box
+  on the path 30 ticks past it; else a search of the goal it misses (20M, 80M). Each find is spliced to the old inputs
+  where it comes back onto the path, or where the route reached that goal (-4..+4), and the splice that plays furthest is
+  kept; then the next break (`--repair-minutes`, 30). The repair is the improver's start when its straight replay gets
+  further, or as far sooner, than the run's best.
 - **Plan:** the run's goal list. Its skeleton (unlocks, areas, rewards, tree boxes) stays in order; its economy goals (laps
   and `FullTasGoal.EconomyBoxes` buys) are the solver's to add, drop and move. The gate adopts the new list with the route.
 - **Build:** goal by goal from the run's start. Each goal's way is a library segment (`fulltas/<run>.segments.json`)
