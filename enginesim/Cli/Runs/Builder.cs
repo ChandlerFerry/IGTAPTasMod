@@ -42,6 +42,8 @@ namespace IGTAP.EngineSim.Cli.Runs
         // The inputs don't change once built (Verify only re-times the goals), so the score is cached.
         public long Score => _score ??= Scorer(Inputs);
 
+        const double MinProgress = 0.01;
+
         public bool Better(Built o)
         {
             if (o == null) return true;
@@ -57,7 +59,8 @@ namespace IGTAP.EngineSim.Cli.Runs
             bool stuck = Failure?.Kind == "no-income", ostuck = o.Failure?.Kind == "no-income";
             if (stuck != ostuck) return stuck;
             if (stuck && StuckBefore() != o.StuckBefore()) return StuckBefore() < o.StuckBefore();
-            if (stuck && Failure.Progress != o.Failure.Progress) return Failure.Progress > o.Failure.Progress;
+            // A point of the price at least: slivers (a 105-GreenPower lap against 2E+07) would climb one goal at a time for ever.
+            if (stuck && Math.Abs(Failure.Progress - o.Failure.Progress) >= MinProgress) return Failure.Progress > o.Failure.Progress;
             return n > 0 && at < oat;
         }
 
