@@ -401,6 +401,8 @@ namespace IGTAP.EngineSim.Cli
                     Dictionary<string, object> econ = econOut == null && (step >= ticks.Length || !ticks[step].TryGetProperty("econ", out _)) ? null : EconomyRow(sim);
                     econOut?.WriteLine(JsonSerializer.Serialize(new { physics = sim.Engine.PhysicsTicks, input = sim.Engine.RunTicks, econ }));
                     if (step >= ticks.Length || firstDiff >= 0 && !verbose) return;
+                    // The tick a death or finish ends the run stops partway here and runs whole in turbo; 1x logs no row for it.
+                    if (!sim.Engine.IsRunning) return;
                     var here = new List<string>();
                     JsonElement t = ticks[step];
                     Compare(here, "position", Json(sim.Player.transform.position), t.GetProperty("position"));

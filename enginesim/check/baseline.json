@@ -1,5 +1,5 @@
 {
-  "engine": "54e34b0-dirty",
+  "engine": "5afdd78-dirty",
   "runs": {
     "FalseEnding%-280": {
       "run": "FalseEnding%-280",
@@ -5706,115 +5706,115 @@
       "reached": 21,
       "of": 21,
       "end": "Full-TAS goals reached",
-      "live": 54.9607,
+      "live": 51.3,
       "goals": [
         [
-          131,
-          131,
+          86,
+          86,
           0
         ],
         [
-          200,
-          241,
+          155,
+          196,
           104
         ],
         [
-          225,
-          275,
+          180,
+          230,
           117
         ],
         [
-          319,
-          391,
+          274,
+          346,
           208
         ],
         [
-          497,
-          667,
+          452,
+          622,
           455
         ],
         [
-          517,
-          710,
+          472,
+          665,
           481
         ],
         [
-          531,
-          743,
+          486,
+          698,
           533
         ],
         [
-          606,
-          862,
+          561,
+          817,
           676
         ],
         [
-          665,
-          972,
+          620,
+          927,
           780
         ],
         [
-          720,
-          1060,
+          675,
+          1015,
           871
         ],
         [
-          778,
-          1182,
+          733,
+          1137,
           1066
         ],
         [
-          812,
-          1238,
+          767,
+          1193,
           1118
         ],
         [
-          909,
-          1406,
+          844,
+          1334,
           1287
         ],
         [
-          975,
-          1521,
+          912,
+          1449,
           1430
         ],
         [
-          999,
-          1565,
+          936,
+          1493,
           1482
         ],
         [
-          1056,
-          1673,
+          991,
+          1597,
           1612
         ],
         [
-          1114,
-          1779,
-          1742
+          1051,
+          1699,
+          1729
         ],
         [
-          1210,
-          1916,
-          1859
+          1096,
+          1782,
+          1872
         ],
         [
-          1431,
-          2209,
-          2067
+          1260,
+          2019,
+          2080
         ],
         [
-          1466,
-          2264,
-          2119
+          1293,
+          2072,
+          2132
         ],
         [
-          1556,
-          2365,
-          2145
+          1376,
+          2175,
+          2184
         ]
       ],
-      "stamp": "51950713:639271969595664315|316214:639272616897902976"
+      "stamp": "51950713:639271969595664315|279461:639272670798074808"
     },
     "Zip%": {
       "run": "Zip%",
@@ -9930,11 +9930,11 @@
     },
     "fresh-cbonus2-wjds.json": {
       "stamp": "1884783:639272254475566596",
-      "line": "fresh-cbonus2-wjds.json: 54/54 ticks, first difference at tick 53; random first difference at tick 53, cash identical on every tick, result finish 1.07999957 vs turbo finish 1.07999957 [MATCH]"
+      "line": "fresh-cbonus2-wjds.json: 54/54 ticks, every tick identical; random identical on every tick, cash identical on every tick, result finish 1.07999957 vs turbo finish 1.07999957 [MATCH]"
     },
     "fresh-cbonus3-wjds.json": {
       "stamp": "1472216:639272254515444049",
-      "line": "fresh-cbonus3-wjds.json: 40/40 ticks, first difference at tick 39; random identical on every tick, cash identical on every tick, result no finish (Player death at action 24) vs turbo no finish [MATCH]"
+      "line": "fresh-cbonus3-wjds.json: 40/40 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 24) vs turbo no finish [MATCH]"
     },
     "fresh-cbonus5-wjds.json": {
       "stamp": "8709502:639272254559302051",
@@ -9966,15 +9966,15 @@
     },
     "fulltas-Test-No-Omni-Skip.json": {
       "stamp": "8415193:639272265011170330",
-      "line": "fulltas-Test-No-Omni-Skip.json: 264/265 ticks, first difference at tick 263; random identical on every tick, cash identical on every tick, result finish 5.6514287 vs turbo finish 5.6514287 [MATCH]"
+      "line": "fulltas-Test-No-Omni-Skip.json: 264/265 ticks, every tick identical; random identical on every tick, cash identical on every tick, result finish 5.6514287 vs turbo finish 5.6514287 [MATCH]"
     },
     "fulltas-Test-Pauselift-Option4-Double.json": {
       "stamp": "791374:639272266612806858",
-      "line": "fulltas-Test-Pauselift-Option4-Double.json: 18/18 ticks, first difference at tick 17; random identical on every tick, cash identical on every tick, result no finish (Player death at action 7) vs turbo no finish [MATCH]"
+      "line": "fulltas-Test-Pauselift-Option4-Double.json: 18/18 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 7) vs turbo no finish [MATCH]"
     },
     "fulltas-Test-Pauselift-Option4-PushOff.json": {
       "stamp": "4000312:639272266667267547",
-      "line": "fulltas-Test-Pauselift-Option4-PushOff.json: 120/120 ticks, first difference at tick 119; random identical on every tick, cash identical on every tick, result no finish (Player death at action 25) vs turbo no finish [MATCH]"
+      "line": "fulltas-Test-Pauselift-Option4-PushOff.json: 120/120 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 25) vs turbo no finish [MATCH]"
     },
     "fulltas-Test-Pauselift-Option4-Zip.json": {
       "stamp": "5630892:639272266723234994",
@@ -9982,7 +9982,7 @@
     },
     "fulltas-Test-Pauselift-Option4-nogoal1.json": {
       "stamp": "817324:639272266775088498",
-      "line": "fulltas-Test-Pauselift-Option4-nogoal1.json: 19/19 ticks, first difference at tick 18; random identical on every tick, cash identical on every tick, result no finish (Player death at action 6) vs turbo no finish [MATCH]"
+      "line": "fulltas-Test-Pauselift-Option4-nogoal1.json: 19/19 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 6) vs turbo no finish [MATCH]"
     },
     "fulltas-Test-Pauselift-Option4.json": {
       "stamp": "2355596:639272266560446769",
@@ -10030,7 +10030,7 @@
     },
     "gt-staticspike-prerebase-c3to4.json": {
       "stamp": "6839906:639272254744155160",
-      "line": "gt-staticspike-prerebase-c3to4.json: 214/214 ticks, first difference at tick 213; random identical on every tick, cash identical on every tick, result no finish (Player death at action 2) vs turbo no finish [MATCH]"
+      "line": "gt-staticspike-prerebase-c3to4.json: 214/214 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 2) vs turbo no finish [MATCH]"
     },
     "judge-c4-wjdsdj-11.24.json": {
       "stamp": "7185149:639272254787188715",
@@ -10526,7 +10526,7 @@
     },
     "rand-c1-wjds-1.json": {
       "stamp": "1940726:639272257488546232",
-      "line": "rand-c1-wjds-1.json: 54/54 ticks, first difference at tick 53; random identical on every tick, cash identical on every tick, result no finish (Player death at action 5) vs turbo no finish [MATCH]"
+      "line": "rand-c1-wjds-1.json: 54/54 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 5) vs turbo no finish [MATCH]"
     },
     "rand-c1-wjds-2.json": {
       "stamp": "1971828:639272257499528391",
@@ -10550,11 +10550,11 @@
     },
     "rand-c101-wj-1.json": {
       "stamp": "2560707:639272257593566055",
-      "line": "rand-c101-wj-1.json: 74/74 ticks, first difference at tick 73; random identical on every tick, cash identical on every tick, result no finish (Player death at action 7) vs turbo no finish [MATCH]"
+      "line": "rand-c101-wj-1.json: 74/74 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 7) vs turbo no finish [MATCH]"
     },
     "rand-c101-wj-2.json": {
       "stamp": "2645718:639272257604776361",
-      "line": "rand-c101-wj-2.json: 77/77 ticks, first difference at tick 76; random identical on every tick, cash identical on every tick, result no finish (Player death at action 8) vs turbo no finish [MATCH]"
+      "line": "rand-c101-wj-2.json: 77/77 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 8) vs turbo no finish [MATCH]"
     },
     "rand-c11-wjdsdjbs-0.json": {
       "stamp": "11783448:639272257650916743",
@@ -10574,11 +10574,11 @@
     },
     "rand-c12-wjdsdjbs-1.json": {
       "stamp": "4224408:639272257759680811",
-      "line": "rand-c12-wjdsdjbs-1.json: 128/128 ticks, first difference at tick 127; random identical on every tick, cash identical on every tick, result no finish (Player death at action 11) vs turbo no finish [MATCH]"
+      "line": "rand-c12-wjdsdjbs-1.json: 128/128 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 11) vs turbo no finish [MATCH]"
     },
     "rand-c12-wjdsdjbs-2.json": {
       "stamp": "4002205:639272257801205286",
-      "line": "rand-c12-wjdsdjbs-2.json: 121/121 ticks, first difference at tick 120; random identical on every tick, cash identical on every tick, result no finish (Player death at action 11) vs turbo no finish [MATCH]"
+      "line": "rand-c12-wjdsdjbs-2.json: 121/121 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 11) vs turbo no finish [MATCH]"
     },
     "rand-c13-wjdsdjbs-0.json": {
       "stamp": "10777572:639272257847896155",
@@ -10618,15 +10618,15 @@
     },
     "rand-c2-wj-0.json": {
       "stamp": "3537383:639272258181287185",
-      "line": "rand-c2-wj-0.json: 106/106 ticks, first difference at tick 105; random identical on every tick, cash identical on every tick, result no finish (Player death at action 9) vs turbo no finish [MATCH]"
+      "line": "rand-c2-wj-0.json: 106/106 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 9) vs turbo no finish [MATCH]"
     },
     "rand-c2-wj-1.json": {
       "stamp": "2647737:639272258194286958",
-      "line": "rand-c2-wj-1.json: 77/77 ticks, first difference at tick 76; random identical on every tick, cash identical on every tick, result no finish (Player death at action 8) vs turbo no finish [MATCH]"
+      "line": "rand-c2-wj-1.json: 77/77 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 8) vs turbo no finish [MATCH]"
     },
     "rand-c2-wj-2.json": {
       "stamp": "3541184:639272258207056934",
-      "line": "rand-c2-wj-2.json: 106/106 ticks, first difference at tick 105; random identical on every tick, cash identical on every tick, result no finish (Player death at action 11) vs turbo no finish [MATCH]"
+      "line": "rand-c2-wj-2.json: 106/106 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 11) vs turbo no finish [MATCH]"
     },
     "rand-c2-wjds-0.json": {
       "stamp": "12973988:639272258225418975",
@@ -10650,11 +10650,11 @@
     },
     "rand-c2-wjdsdj-2.json": {
       "stamp": "5563182:639272258299715086",
-      "line": "rand-c2-wjdsdj-2.json: 172/172 ticks, first difference at tick 171; random identical on every tick, cash identical on every tick, result no finish (Player death at action 13) vs turbo no finish [MATCH]"
+      "line": "rand-c2-wjdsdj-2.json: 172/172 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 13) vs turbo no finish [MATCH]"
     },
     "rand-c3-wj-0.json": {
       "stamp": "2799272:639272258340832166",
-      "line": "rand-c3-wj-0.json: 82/82 ticks, first difference at tick 81; random identical on every tick, cash identical on every tick, result no finish (Player death at action 6) vs turbo no finish [MATCH]"
+      "line": "rand-c3-wj-0.json: 82/82 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 6) vs turbo no finish [MATCH]"
     },
     "rand-c3-wj-1.json": {
       "stamp": "10392678:639272258357044977",
@@ -10662,31 +10662,31 @@
     },
     "rand-c3-wj-2.json": {
       "stamp": "1821810:639272258368839326",
-      "line": "rand-c3-wj-2.json: 50/50 ticks, first difference at tick 49; random identical on every tick, cash identical on every tick, result no finish (Player death at action 5) vs turbo no finish [MATCH]"
+      "line": "rand-c3-wj-2.json: 50/50 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 5) vs turbo no finish [MATCH]"
     },
     "rand-c3-wjds-0.json": {
       "stamp": "3903008:639272258381280059",
-      "line": "rand-c3-wjds-0.json: 118/118 ticks, first difference at tick 117; random identical on every tick, cash identical on every tick, result no finish (Player death at action 9) vs turbo no finish [MATCH]"
+      "line": "rand-c3-wjds-0.json: 118/118 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 9) vs turbo no finish [MATCH]"
     },
     "rand-c3-wjds-1.json": {
       "stamp": "4022620:639272258394476037",
-      "line": "rand-c3-wjds-1.json: 122/122 ticks, first difference at tick 121; random identical on every tick, cash identical on every tick, result no finish (Player death at action 12) vs turbo no finish [MATCH]"
+      "line": "rand-c3-wjds-1.json: 122/122 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 12) vs turbo no finish [MATCH]"
     },
     "rand-c3-wjds-2.json": {
       "stamp": "1853370:639272258405833473",
-      "line": "rand-c3-wjds-2.json: 51/51 ticks, first difference at tick 50; random identical on every tick, cash identical on every tick, result no finish (Player death at action 7) vs turbo no finish [MATCH]"
+      "line": "rand-c3-wjds-2.json: 51/51 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 7) vs turbo no finish [MATCH]"
     },
     "rand-c3-wjdsdj-0.json": {
       "stamp": "6447048:639272258419576923",
-      "line": "rand-c3-wjdsdj-0.json: 201/201 ticks, first difference at tick 200; random identical on every tick, cash identical on every tick, result no finish (Player death at action 17) vs turbo no finish [MATCH]"
+      "line": "rand-c3-wjdsdj-0.json: 201/201 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 17) vs turbo no finish [MATCH]"
     },
     "rand-c3-wjdsdj-1.json": {
       "stamp": "1850989:639272258431015880",
-      "line": "rand-c3-wjdsdj-1.json: 51/51 ticks, first difference at tick 50; random identical on every tick, cash identical on every tick, result no finish (Player death at action 5) vs turbo no finish [MATCH]"
+      "line": "rand-c3-wjdsdj-1.json: 51/51 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 5) vs turbo no finish [MATCH]"
     },
     "rand-c3-wjdsdj-2.json": {
       "stamp": "7515506:639272258446244516",
-      "line": "rand-c3-wjdsdj-2.json: 236/236 ticks, first difference at tick 235; random identical on every tick, cash identical on every tick, result no finish (Player death at action 33) vs turbo no finish [MATCH]"
+      "line": "rand-c3-wjdsdj-2.json: 236/236 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 33) vs turbo no finish [MATCH]"
     },
     "rand-c4-wjds-0.json": {
       "stamp": "11685573:639272258492957470",
@@ -10706,7 +10706,7 @@
     },
     "rand-c4-wjdsdj-1.json": {
       "stamp": "2584010:639272258578468461",
-      "line": "rand-c4-wjdsdj-1.json: 75/75 ticks, first difference at tick 74; random identical on every tick, cash identical on every tick, result no finish (Player death at action 11) vs turbo no finish [MATCH]"
+      "line": "rand-c4-wjdsdj-1.json: 75/75 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 11) vs turbo no finish [MATCH]"
     },
     "rand-c4-wjdsdj-2.json": {
       "stamp": "6136698:639272258593190954",
@@ -10746,11 +10746,11 @@
     },
     "seed-c3-wjds-3-WJ-DS-farm-5.06.json": {
       "stamp": "3338646:639272258963083533",
-      "line": "seed-c3-wjds-3-WJ-DS-farm-5.06.json: 100/100 ticks, first difference at tick 99; random identical on every tick, cash identical on every tick, result no finish (Player death at action 77) vs turbo no finish [MATCH]"
+      "line": "seed-c3-wjds-3-WJ-DS-farm-5.06.json: 100/100 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 77) vs turbo no finish [MATCH]"
     },
     "seed-c3-wjdsdj-3-WJ-DS-DJ-3.06.json": {
       "stamp": "3605456:639272259004703369",
-      "line": "seed-c3-wjdsdj-3-WJ-DS-DJ-3.06.json: 109/109 ticks, first difference at tick 108; random identical on every tick, cash identical on every tick, result no finish (Player death at action 76) vs turbo no finish [MATCH]"
+      "line": "seed-c3-wjdsdj-3-WJ-DS-DJ-3.06.json: 109/109 ticks, every tick identical; random identical on every tick, cash identical on every tick, result no finish (Player death at action 76) vs turbo no finish [MATCH]"
     },
     "seed-c3-wjdsdjbsorbzipom-3-WJ-DS-DJ-BS-ORB-ZIP-OM-1.22.json": {
       "stamp": "4289768:639272259047701292",
