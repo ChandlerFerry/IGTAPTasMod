@@ -60,7 +60,7 @@ namespace IGTAP.EngineSim.Cli
         readonly HashSet<string> _stretchPulled = new HashSet<string>();
         string _stretchMoves;
         /// <summary>fulltas/&lt;run&gt;.moves.json's write time and length ("" when there is none).</summary>
-        string MovesStamp() => File.Exists(MovesFile) ? $"{File.GetLastWriteTimeUtc(MovesFile).Ticks}/{new FileInfo(MovesFile).Length}" : "";
+        string MovesStamp() => "";
         /// <summary>When the last goals pull ended: the other parts get as long after it as it took (a pull plans for up to
         /// --stretch-minutes a stretch), so a short run's windows, idle, waste and grafts get turns between them.</summary>
         TimeSpan _goalsEnd;
@@ -85,125 +85,9 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         bool GoalsPull()
         {
-            Route best = _best;
-            _goalsFor = best;
-            _goalsAt = _clock.Elapsed;
-            double c0 = CpuSeconds();
-            var w0 = _clock.Elapsed;
-            List<(int kept, int target, string[] bonuses)> own = Stretches(_labels);
-            int count = own.Count;
-            // Each stretch's share of the time left goes by the best's ticks in it (FalseEnding%-280: 5371, 3322 and 896).
-            long[] weight = own.Select(s => Math.Max(1, s.target < best.Progress ? best.GoalPhysics[s.target] - best.GoalPhysics[s.kept - 1] : 1)).ToArray();
-            if (count == 0)
-            {
-                Log("auto: goals: the run has no economy stretch (from an unlock buy or reward goal to the next unlock buy)");
-                return false;
-            }
-            _pullNo++;
-            int pull = _pullNo;
-            // At most half the session's time left: the other parts get their turns.
-            double deadline = _clock.Elapsed.TotalSeconds + Math.Max(60, Math.Min(_stretchMinutes * count, (_minutes - _clock.Elapsed.TotalMinutes) / 2) * 60);
-            if (_stretchMoves != MovesStamp()) _stretchPulled.Clear();
-            Log($"auto: pull {pull}: goals, the economy planner on {count} stretches in order, {deadline - _clock.Elapsed.TotalSeconds:0} s shared");
-            // The route the next stretch is planned on, its goals and per goal the best's goal (-1: a planned one).
-            Route on = best;
-            string[] labels = _labels;
-            int[] map = Enumerable.Range(0, _goals).ToArray();
-            var planned = new List<string>();
-            (Route route, string[] labels, int[] map, string text, int first) win = default;
-            int first = 0;
-            for (int i = 0; i < count && ReferenceEquals(_best, best) && !TimeUp; i++)
-            {
-                List<(int kept, int target, string[] bonuses)> stretches = Stretches(labels);
-                if (i >= stretches.Count) break;
-                var (kept, t, bonuses) = stretches[i];
-                string what = $"stretch {i + 1}/{count}, goals {kept + 1}-{t + 1} ({labels[kept - 1]} to {labels[t]}{(bonuses.Length > 0 ? ", " + string.Join(" ", bonuses) + " offered" : "")})";
-                int ot = map[t];
-                long bestTick = ot >= 0 && ot < best.Progress ? best.GoalPhysics[ot] : -1;
-                bool through = on.Progress > t;
-                Route from = through ? on : Onto(on, labels, map, kept, t, best);
-                if (from == null)
-                {
-                    Log($"auto goals: {what}: the route planned so far stops at goal {on.Progress + 1} ({(on.Progress < labels.Length ? labels[on.Progress] : "")}: {on.EndReason}), "
-                        + "before the stretch's start or with no way of the best's on after its target; the stretches after it aren't planned");
-                    break;
-                }
-                // Planned to the end before from this route with these moves and minutes (an earlier pull or session): it plans the
-                // same way again.
-                string key = Hex(SnapshotIndex.Hash(from.Inputs, (int)Math.Min(from.GoalInput[kept - 1], from.Inputs.Count))) + ":" + labels[t]
-                    + ":" + _stretchMinutes.ToString(CultureInfo.InvariantCulture);
-                if (_stretchPulled.Contains(key))
-                {
-                    Log($"auto goals: {what}: planned before from this route, the movement table unchanged since");
-                    if (through) continue;
-                    break;
-                }
-                // A plan that buys the target no sooner than the route it replaces (or, where that stops short, the best) isn't realized.
-                long cap = through ? on.GoalPhysics[t] : bestTick < 0 ? best.Last : bestTick;
-                double seconds = Math.Max(30, (deadline - _clock.Elapsed.TotalSeconds) * weight[i] / weight.Skip(i).Sum());
-                PlanResult p;
-                try { p = Replan(from, GoalsOf(labels), kept, new[] { labels[t] }, true, cap, seconds, bonuses); }
-                catch (Exception ex)
-                {
-                    Log($"auto goals: {what}: {ex.GetBaseException().Message}");
-                    if (through) continue;
-                    break;
-                }
-                if (p.Complete) _stretchPulled.Add(key);
-                Route r = p.Run;
-                bool whole = r != null && r.Progress == p.Goals.Length;
-                string plans = p.PlanTicks == null || p.PlanTicks.Length == 0 ? "no plan" : "planned " + string.Join(" > ", p.PlanTicks.Select(x => x < 0 ? "-" : x.ToString(CultureInfo.InvariantCulture)));
-                string verdict = !p.Done ? $"not built ({p.Why})"
-                    : $"built tick {p.Tick} ({p.Tick - cap:+0;-0} against {(through ? "the route's" : "the best's")} {cap}{(through && bestTick >= 0 && bestTick != cap ? $", {p.Tick - bestTick:+0;-0} against the best's {bestTick}" : "")}); "
-                    + (r == null ? "not joined" : whole ? $"whole route {r.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s ({r.Last - best.Last:+0;-0} ticks against the best)"
-                        : $"the route on stops at goal {r.Progress + 1} of {p.Goals.Length} ({(r.Progress < p.Goals.Length ? p.Goals[r.Progress] : "")}: {r.EndReason})");
-                Log($"auto goals: {what}: {plans}, {verdict}");
-                AutoWrite(new { type = "goalEdit", pull, kind = "plan", text = what, from = labels[kept - 1], to = labels[t], goals = p.Goals.Length,
-                    plans = p.PlanTicks, built = p.Done ? p.Tick : -1, cap, bestTick, time = whole ? r.LiveSeconds : (double?)null, gain = whole ? best.Last - r.Last : (long?)null, why = p.Why });
-                // Built, but no sooner than the route it would replace: that route stays (realize checks the cap on plans, not builds).
-                if (!p.Done || r == null || through && p.Tick >= cap)
-                {
-                    if (through) continue;
-                    break;
-                }
-                int[] prev = map;
-                map = p.OldOf.Select(j => j < 0 ? -1 : prev[j]).ToArray();
-                labels = p.Goals;
-                on = r;
-                Known(labels);
-                FindCashGoals();
-                if (first == 0) first = kept + 1;
-                planned.Add($"goals {kept + 1}-{t + 1} planned to {p.Target} on tick {p.Tick}");
-                if (whole && (win.route == null || r.Live < win.route.Live)) win = (r, labels, map, "economy planned: " + string.Join("; ", planned), first);
-            }
-            bool adopted = false;
-            if (win.route != null && win.route.Live < best.Live && ReferenceEquals(_best, best))
-            {
-                var e = new GoalEdit { Kind = "plan", Text = win.text, Key = "plan", Labels = win.labels, OldOf = win.map, Inputs = win.route.Inputs,
-                    First = win.first, Last = win.labels.Length };
-                adopted = AdoptGoals(e, win.route, best);
-            }
-            string outcome = win.route == null ? "no stretch's plan gave a whole route"
-                : win.route.Live >= best.Live ? $"the fastest whole route planned, {win.route.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s on {win.labels.Length} goals, is no faster than the best" : $"{win.text}: {win.route.LiveSeconds.ToString("0.00", CultureInfo.InvariantCulture)}s on {win.labels.Length} goals";
-            _goalsAgain = adopted;
+            // Economy stretches are solve-run's now (enginesim/Cli/Runs): the old planner this pull ran is gone.
             _goalsEnd = _clock.Elapsed;
-            _stretchMoves = MovesStamp();
-            SaveMemory();
-            double cpu = CpuSeconds() - c0, wall = (_clock.Elapsed - w0).TotalSeconds;
-            long gain = GainTicks(best);
-            _order.Add("goals" + (gain > 0 ? $"(-{gain})" : ""));
-            Log($"auto: pull {pull} goals: {outcome}; {(gain > 0 ? $"GAINED {gain} ticks" : "no gain")} in {cpu:0} CPU s, {wall:0} s; best {Describe(_best)}");
-            AutoWrite(new { type = "pull", pull, lever = "goals", goal = IdOf(win.first), label = "goals", budget = 0, outcome, gain, cpu = Math.Round(cpu, 1),
-                wall = Math.Round((_clock.Elapsed - _autoWall0).TotalSeconds, 1), best = _best.LiveSeconds, score = double.NaN });
-            if (gain > 0)
-            {
-                _curve.Add(((_clock.Elapsed - _autoWall0).TotalSeconds, CpuSeconds() - _autoCpu0, _best.Last, "goals", win.first));
-                AutoWrite(new { type = "record", lever = "goals", goal = IdOf(win.first), gain, time = _best.LiveSeconds, ticks = _best.Last,
-                    wall = Math.Round((_clock.Elapsed - _autoWall0).TotalSeconds, 1), cpu = Math.Round(CpuSeconds() - _autoCpu0, 1),
-                    splits = Enumerable.Range(1, _goals).Select(k => Split(_best.GoalPhysics, k)).ToArray(), goals = Goals.Json });
-            }
-            Outlook();
-            return adopted;
+            return false;
         }
 
         /// <summary>

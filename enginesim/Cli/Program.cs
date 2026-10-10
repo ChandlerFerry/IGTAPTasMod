@@ -45,12 +45,10 @@ namespace IGTAP.EngineSim.Cli
                     case "timeloss": return TimeLoss.Run(args.Skip(1).ToArray());
                     case "map": return Map.Run(args.Skip(1).ToArray());
                     case "ultras": return Ultras.Run(args.Skip(1).ToArray());
-                    case "fulltas": return FullTas.Run(args.Skip(1).ToArray());
+                    // fulltas <trace>: solve-run; --check and --waste-audit still inspect a route the old way.
+                    case "fulltas": return args.Contains("--check") || args.Contains("--waste-audit") ? FullTas.Run(args.Skip(1).ToArray()) : Runs.RunSolve.Run(args.Skip(1).ToArray());
                     case "macros": return FullTasAutoMacros.Command(args.Skip(1).ToArray());
-                    case "fulltas-plan": return EconomyPlan.Run(args.Skip(1).ToArray());
-                    case "plan-selftest": return EconomyPlanCheck.Run();
                     case "body-selftest": return BodyEnableCheck.Run();
-                    case "fulltas-buytable": return FullTas.BuyTable(args.Skip(1).ToArray());
                     case "plan-check": return PlanCheck(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
                     case "grid": return Grid();
@@ -590,8 +588,6 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         static int PlanCheck(string[] args)
         {
-            if (args.Contains("--moves")) return FullTas.MovesCheck(args.Where(a => a != "--moves").ToArray());
-            if (args.Contains("--tree-drop")) return EconomyPlanCheck.TreeDrop(args.First(a => a != "--tree-drop"));
             string tracePath = args[0];
             List<InputTick> route = Plan.ReadRoute(args[1]);
             int at = Solve.Option(args, "--at", -1), idle = Solve.Option(args, "--ticks", 2000);
