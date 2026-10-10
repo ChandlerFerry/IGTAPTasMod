@@ -136,6 +136,13 @@ namespace IGTAP.EngineSim.Cli.Runs
         {
             // The same best has the same moves and builds: a pass that only searched misses goes on with the next ones. A segment
             // a search filed reaches the later misses as they're built.
+            if (Best.Failure?.Kind == "miss" && _triedMisses.Add(Key(Best.Plan) + "#best"))
+            {
+                // A best that stops at a miss (its searched build ran out of searches) is built on as the start is, before any move
+                // gets the chance to drop the goal it hasn't searched yet.
+                Built built = coord.Do(b => b.Build(Best.Plan, coord.Mine)).Result;
+                if (built.Better(Best) && Accept(built, $"goal {Best.Failure.Goal + 1} {Best.Failure.Label} searched", coord, workers)) return Outcome.Gained;
+            }
             if (_missesOf != Best) Evaluate(coord, workers, stop);
             if (_missesOf != Best) return stop() ? Outcome.Searching : Outcome.Gained;
             var untried = _misses.Where(m => !_triedMisses.Contains(Key(m.move))).OrderByDescending(m => m.gain).ToList();
