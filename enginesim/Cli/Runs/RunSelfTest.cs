@@ -27,6 +27,8 @@ namespace IGTAP.EngineSim.Cli.Runs
                 MadeGoals();
                 Library();
                 Splits();
+                OneXAlign();
+                if (Solve.Option<string>(args, "--ticks-self", null) is string ticksOut) OneXSelf(ticksOut);
                 string trace = Solve.Option<string>(args, "--trace", null), best = Solve.Option<string>(args, "--best", null);
                 if (trace != null && best != null && args.Contains("--confirm-live")) ConfirmLive(trace, best);
                 if (trace != null && best != null && args.Contains("--harvest-vs-straight")) HarvestVsStraight(trace, best, Solve.Option(args, "--rebuild-from", 300));
@@ -307,6 +309,71 @@ namespace IGTAP.EngineSim.Cli.Runs
                 RunResult on = sim.Run(inputs.Skip(used).ToList(), null, null, 1000000);
                 return $"chain to goal {k} matches the straight replay; from there it reaches {on.Progress} of the straight replay's {straight.Progress} ({on.EndReason})";
             }));
+        }
+
+        // A probe's rows as 1x would log the engine's: every physics tick, its input and Velocity that tick's, its body, held frames
+        // and Cash the tick before's (OneX).
+        static List<OneX.Tick> AsProbe(IReadOnlyList<OneX.Tick> full)
+        {
+            var game = new List<OneX.Tick>();
+            for (int i = 0; i < full.Count; i++)
+            {
+                OneX.Tick now = full[i], before = i == 0 ? new OneX.Tick() : full[i - 1];
+                game.Add(new OneX.Tick { Physics = now.Physics, Input = now.Input, Vx = now.Vx, Vy = now.Vy, X = before.X, Y = before.Y, Held = before.Held, Cash = before.Cash });
+            }
+            OneX.Tick last = full[^1];
+            game.Add(new OneX.Tick { Physics = last.Physics + 1, Input = last.Input + 1, X = last.X, Y = last.Y, Held = last.Held, Cash = last.Cash });
+            return game;
+        }
+
+        static void OneXAlign()
+        {
+            // 60 ticks; a dash on input 10: two locked ticks (11, 12) take no input and a 12-frame freeze holds after tick 10.
+            var full = new List<OneX.Tick>();
+            long input = 0, held = 0;
+            for (long p = 1; p <= 60; p++)
+            {
+                if (p != 11 && p != 12) input++;
+                if (p == 10) held += 12;
+                full.Add(new OneX.Tick { Physics = p, Input = input, Held = held, X = 100 + 9.2 * p, Y = -300 - p * p * 0.1, Vx = 460, Vy = -10 * p, Cash = 1e12 + 37 * p });
+            }
+            List<OneX.Tick> engine = full;
+            OneX.Result same = OneX.Align(engine, AsProbe(full));
+            Check(!same.Parted && same.Compared == engine.Count, $"1x rows of the engine's own run align on every tick ({same.Compared} of {engine.Count})");
+            OneX.Result Changed(long physics, Func<OneX.Tick, OneX.Tick> edit) =>
+                OneX.Align(engine, AsProbe(full).Select(t => t.Physics == physics ? edit(t) : t).ToList());
+            OneX.Result shortFreeze = Changed(11, t => { t.Held--; return t; });
+            Check(shortFreeze.Parted && shortFreeze.Field == "held" && shortFreeze.Physics == 10 && shortFreeze.Compared == 9, "a freeze a frame short at 1x parts on held at its tick (" + OneX.Describe(shortFreeze) + ")");
+            OneX.Result later = OneX.Align(engine, AsProbe(full).Where(t => t.Physics >= 30).ToList());
+            Check(!later.Parted && later.Compared == 31, "a log from a later tick (logFrom) compares from there");
+            OneX.Result x = Changed(21, t => { t.X += 0.05; return t; });
+            Check(x.Parted && x.Field == "x" && x.Physics == 20, "the body 0.05 off parts on x at the tick before the row (" + OneX.Describe(x) + ")");
+            Check(!Changed(31, t => { t.Cash *= 1 + 1e-13; return t; }).Parted, "Cash within a relative 1e-9 is the same");
+            OneX.Result cash = Changed(31, t => { t.Cash *= 1 + 1e-8; return t; });
+            Check(cash.Parted && cash.Field == "cash" && cash.Physics == 30, "Cash 1e-8 off parts on cash");
+            OneX.Result input2 = Changed(40, t => { t.Input++; return t; });
+            Check(input2.Parted && input2.Field == "input" && input2.Physics == 40, "another input count parts on input at its own tick");
+            Check(!OneX.Align(engine, AsProbe(full).Select(t => { t.Held = -1; return t; }).ToList()).Parted, "a log without held frames (before they were logged) skips them");
+        }
+
+        static void OneXSelf(string ticksOut)
+        {
+            List<OneX.Tick> engine = OneX.EngineRows(ticksOut);
+            var game = new Dictionary<long, OneX.Tick>();
+            foreach (OneX.Tick e in engine)
+            {
+                game.TryGetValue(e.Physics, out OneX.Tick now);
+                (now.Physics, now.Input, now.Vx, now.Vy) = (e.Physics, e.Input, e.Vx, e.Vy);
+                game[e.Physics] = now;
+                game.TryGetValue(e.Physics + 1, out OneX.Tick next);
+                (next.Physics, next.X, next.Y, next.Held, next.Cash) = (e.Physics + 1, e.X, e.Y, e.Held, e.Cash);
+                game[e.Physics + 1] = next;
+            }
+            OneX.Result r = OneX.Align(engine, game.Values.OrderBy(t => t.Physics).ToList());
+            Check(!r.Parted && r.Compared == engine.Count, $"{Path.GetFileName(ticksOut)} against itself as 1x would log it: {OneX.Describe(r)}");
+            OneX.Tick[] moved = engine.Select(t => { t.Held += t.Physics > engine[engine.Count / 2].Physics ? 1 : 0; return t; }).ToArray();
+            OneX.Result off = OneX.Align(moved, game.Values.OrderBy(t => t.Physics).ToList());
+            Check(off.Parted && off.Field == "held" && off.Physics > engine[engine.Count / 2].Physics, "one more held frame from mid-run parts there: " + OneX.Describe(off));
         }
     }
 }

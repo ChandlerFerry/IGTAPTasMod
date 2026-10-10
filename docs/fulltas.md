@@ -864,6 +864,16 @@ The design is `docs/superpowers/specs/2026-10-09-fulltas-v2-design.md`; the code
   and a disagreement captures the game's trace, replays it here and names the first tick and field that differ
   (`fulltas/<run>.confirm.json`); nothing more is built on that engine.
 - **Before any engine commit:** `IGTAP.EngineSim check` (the pre-commit hook runs it).
+- **1x confirmation:** the plugin's 1x job plays each run's current best (`FullTasPlayableRoute`; test runs left out,
+  complete runs first) at 1x with Fast playback as a lean probe (tick rows only), when the game is idle: the studio's **1x
+  when idle** (settings `idle1x`, `POST /api/probe/1x/idle {"on": true}`) starts it after 60 s with no command (a non-GET
+  request) and no keyboard or gamepad input; `POST /api/probe/1x {name?}` starts one now; `GET /api/probe/1x/status`.
+  Any command or input stops it and drops its log. Each best is played once, logged to the config's
+  `1x\<run>-<inputs hash>.json`; a complete run's first log is also copied to `1x\<run>.json`, its **1x reference**
+  (delete it to take a new one). `check` replays each complete run's reference inputs from its trace and aligns the
+  engine's rows with the reference's (`align-1x`, [`enginesim/README.md`](../enginesim/README.md#probe)): the ticks that
+  match and the first tick and field that part go into the baseline's `1x` section. Fewer ticks matching than the
+  baseline differs; more is a warning (nearer 1x). A run with no reference is skipped.
 
 The old Full-TAS economy planner (`fulltas-plan`, `--stages`, the buy and movement tables, realize) and the old stretch
 search are gone; the old `--auto` machinery stays only for the course Optimize tab's Improve (`solve --auto`, CourseAuto.cs)

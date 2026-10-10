@@ -26,6 +26,7 @@ namespace IGTAP.EngineSim.Cli
                     case "replay": return Replay(args.Skip(1).ToArray());
                     case "check": return Runs.RunCheck.Run(args.Skip(1).ToArray());
                     case "run-selftest": return Runs.RunSelfTest.Run(args.Skip(1).ToArray());
+                    case "align-1x": return Runs.OneX.Command(args.Skip(1).ToArray());
                     case "solve-run": return Runs.RunSolve.Run(args.Skip(1).ToArray());
                     case "bench": return Bench(args.Skip(1).ToArray());
                     case "determinism": return Determinism.Run(args.Skip(1).ToArray());

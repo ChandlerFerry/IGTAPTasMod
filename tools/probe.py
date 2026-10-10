@@ -1,7 +1,7 @@
 """Run a 1x probe in the game and summarise its log (ProbeRunner.cs; enginesim/README.md#probe).
 
   probe.py <name> <route> <ticks.json> [--savestate ID] [--capture-at N] [--from-tick N] [--fps N] [--omni]
-           [--pause-at N [--pause-offset K] --pause-frames F]
+           [--pause-at N [--pause-offset K] --pause-frames F] [--fast] [--lean]
   probe.py <name> --tech ID [...]   a tech demo as its playback plays it (its start, inputs, savestate or lab map)
   probe.py --show <name>          summarise a probe log already written
 
@@ -74,6 +74,8 @@ def main():
     parser.add_argument("--from-tick", type=int, help="a Full-TAS probe: its first N physics ticks in turbo")
     parser.add_argument("--log-from", type=int, help="log only from this physics tick on")
     parser.add_argument("--omni", action="store_true", help="play with the omnidirectional dash too (restored after)")
+    parser.add_argument("--fast", action="store_true", help="Fast playback whatever the setting (at the playback rate only)")
+    parser.add_argument("--lean", action="store_true", help="tick rows only, what enginesim align-1x compares")
     parser.add_argument("--fps", type=int, default=0, help="playback fixed-clock frame rate (default 280), e.g. 60, 144, 240")
     parser.add_argument("--pause-at", type=int, help="open the pause menu right after this physics tick")
     parser.add_argument("--pause-offset", type=int, default=0, help="Movement.Update frames after --pause-at before pausing")
@@ -81,7 +83,8 @@ def main():
     args = parser.parse_args()
     if not args.tech and not (args.route and args.ticks):
         parser.error("route and ticks.json are required without --tech")
-    body = {"name": args.name, "route": args.route, "savestateId": args.savestate, "fps": args.fps, "omniDash": args.omni}
+    body = {"name": args.name, "route": args.route, "savestateId": args.savestate, "fps": args.fps, "omniDash": args.omni,
+            "fast": args.fast, "lean": args.lean}
     if args.ticks:
         body["ticks"] = json.load(open(args.ticks))
     if args.tech:

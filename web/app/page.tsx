@@ -61,7 +61,7 @@ type FullTasRun = { name: string; start?: string | null; savestate?: string | nu
   & Partial<Omit<FullTasClassRun, "name">>;
 type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string; queue?: FullTasQueue | null; difficulty?: FullTasDifficultyJob | null };
 type StudioState = {
-  connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean; checkpointRespawns?: boolean; fastPlayback?: boolean; tasSkin?: boolean; tasSkinOutline?: boolean;
+  connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean; checkpointRespawns?: boolean; fastPlayback?: boolean; idle1x?: boolean; tasSkin?: boolean; tasSkinOutline?: boolean;
   saveUnlocks?: Caps | null;
   selectedRouteId: string; routes: Route[]; categories: Category[]; courses?: Course[]; recordings: Recording[]; savestates: Savestate[]; solver: SolverState;
   fullTas?: FullTasState;
@@ -163,8 +163,11 @@ export default function Studio() {
         <div><p className="eyebrow">SELECTED ROUTE</p><h1>{route?.name ?? "No route"}</h1><p className="statusLine"><span className={state.running ? "pulse" : "dot"} />{state.humanPlayback && <span className="humanBadge" title="Human offline best: same time, fewer perfect inputs. Never saved.">HUMANIZED</span>}{state.engineStatus}</p>{inert?.text && inert.routeId === route?.id && <p className="statusLine">{inert.text}</p>}</div>
         <div className="transport">
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/run")}>▶ Run route</button>
-          <label className={`fastPlayback ${state.fastPlayback ? "on" : ""}`} title="On: 1x playback doesn't wait for real time and runs as fast as the game renders. Game time per frame stays fixed, so it plays the same. Walks and probes stay paced.">
+          <label className={`fastPlayback ${state.fastPlayback ? "on" : ""}`} title="On: 1x playback doesn't wait for real time and runs as fast as the game renders. Game time per frame stays fixed, so it plays the same. Walks and probes at another frame rate stay paced.">
             <input type="checkbox" checked={!!state.fastPlayback} disabled={!state.connected} onChange={e => command("/settings/fast-playback", { on: e.target.checked })} />Fast
+          </label>
+          <label className={`fastPlayback ${state.idle1x ? "on" : ""}`} title="On: after a minute with no command or input, each Full-TAS run's current best plays at 1x (Fast) and is logged per tick to the config's 1x folder; a complete run's first log is its 1x reference for the engine's check. Any command or input stops it.">
+            <input type="checkbox" checked={!!state.idle1x} disabled={!state.connected} onChange={e => command("/probe/1x/idle", { on: e.target.checked })} />1x when idle
           </label>
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/walk", { slowdown: 10 })} title={"Replays the route 10× slower, human version when it's as fast."}>⏵ Walk route</button>
           <button className="secondary" disabled={!route || inert?.text === null} onClick={findInert} title={"Replays the route offline without each input in turn; the overlay then leaves out the inputs that change nothing in the game. Run it before recording."}>{inert?.text === null ? "Finding inert inputs…" : "Hide inert inputs"}</button>

@@ -285,8 +285,8 @@ rest, and the playback's speed against real time).
 default) drops the wait, so a route plays as fast as the game renders. The simulation is unchanged: each frame's game
 time is the fixed clock's step (`Time.captureDeltaTime` on the 280 fps grid, `FixedClockStep`), never the wall clock,
 and vsync off, `Time.maximumDeltaTime` and the wall-clock patches stay as they are. A walk waits for its slowdown times
-the fixed clock. A probe (`ProbeRunner`, its frame rate is what it measures) keeps Unity's cap
-(`Application.targetFrameRate`).
+the fixed clock. A probe (`ProbeRunner`) at the playback rate honours Fast (or its own `fast`); one at another frame rate
+(its `fps`, what it measures) keeps Unity's cap (`Application.targetFrameRate`).
 
 A slower frame rate plays the same frames, only later. In every mode (a listed playback, hand play, turbo) the overlay
 draws its input panel, pad and velocity panel into a texture once a physics tick, or when a setting, the unlocks or a

@@ -42,7 +42,8 @@ run file on every new best and submits complete faster runs to the gate. Stop it
 3. **The rest of the old stack**: course Optimize's Improve (`solve --auto`, `CourseAuto.cs`, `CourseLoop.cs`) runs on the
    old `FullTas` partial class (a spec defect: the spec assumed it was Full-TAS only), so it stays until course Improve moves
    to v2.
-4. **1x confirmation** (plan Task 16) and recapturing the trace corpus (428 of 566 traces already differ from their turbo
+4. **1x confirmation** (plan Task 16): built (the 1x job, `align-1x`, references in `check`; docs/fulltas.md "Solving
+   (v2)"), not yet run in the game. Recapturing the trace corpus (428 of 566 traces already differ from their turbo
    captures, 29 no longer load).
 5. **Merge**: review the branch (`git log 6b52557..solver-v2`), then merge to main.
 

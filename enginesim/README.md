@@ -876,7 +876,22 @@ tick rows carry the course timer (`courseTime`, null while no course is timing),
 the RNG's last word (`random`) and the atom grid's calls so far (`gridCalls`). Playback runs on a fixed clock at 280 fps with
 vsync off (`TasPlugin.PacePlayback`); `fps` sets that rate instead (turbo and enginesim model 280). Keep
 it at 50 or more: playback runs at most one physics tick per frame (`Time.maximumDeltaTime`), so below 50 the game slows
-down. `GET /api/probe/status` says whether one is running and the last file written. `fields` (Movement field names)
+down. `GET /api/probe/status` says whether one is running and the last file written. `fast: true` plays it with Fast playback
+whatever the setting (only at the playback rate; the setting does too: a probe at another `fps` stays capped), and `lean:
+true` logs tick rows only, with what the aligner compares (`physics`, `input`, `held`, positions, body, velocity,
+momentum, origin, `cash` and `cashPre`, Cash at `econPre`'s point): the 1x job's probes (docs/fulltas.md, 1x
+confirmation). Every tick row has `held`, the held frames so far.
+
+`align-1x <probe.json> (<ticks-out.jsonl> | --trace <trace.json>)` aligns a probe's tick rows with the engine's rows of
+the same inputs (`fulltas --check --ticks-out` lines, or the probe's `ticks` replayed from the trace, loose buys) by
+physics tick and prints the first tick and field that part (exit 1), else the ticks compared. Engine row `p` (after tick
+`p`'s rendered frames) against the probe's row `p` for `input`, `vx`, `vy` (taken in the tick, after Movement.FixedUpdate)
+and its row `p + 1` for the body (`bodyX`, `bodyY`, within 0.01 u), `held` (exact; a dash freeze's frames counted where
+the engine counts them) and Cash (`cashPre` or `econPre.cash`, relative 1e-9), what tick `p` left: checked on
+`esc73h` (ZipEscape% from tick 73000) against `--ticks-out`, `y` and Cash equal on every tick to the door landing; its
+`x` is 11.58 u off from the old turbo handoff. `check` runs it on each complete run's 1x reference (docs/fulltas.md).
+`run-selftest` checks it on synthetic rows (a freeze a frame short parts on `held`, the body on `x`, Cash, the input
+count, a log from a later tick) and, with `--ticks-self <ticks-out>`, on a real run's rows against themselves. `fields` (Movement field names)
 adds those fields to every row, as `probe`'s `fields` do; every row also lists the zip movers within 300 u (`movers`: world
 position and `layer`, 7 Ground, 0 while `MakeIntangible` holds it).
 

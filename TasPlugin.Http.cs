@@ -23,6 +23,7 @@ namespace IGTAPTasMod
             // Any command can change what GET /api/state/static returns, but an open TAS session's own commands (step, seek, edit,
             // hover...) change only the live part: its route reaches routes.json, and the static part, when the session closes.
             if (request.Method != "GET" && !TasSessionCommand(request.Path)) BumpWebState();
+            if (request.Method != "GET") OneXCommand(request.Path);
             JObject body = string.IsNullOrWhiteSpace(request.Body) ? new JObject() : JObject.Parse(request.Body);
             // An avoid box drawn on a course's search map edits forced-paths.json (a new partial file, not the engine bridge).
             if (request.Path == "/api/enginesim/avoid") return HandleCourseAvoid(body);
@@ -493,6 +494,7 @@ namespace IGTAPTasMod
                 breakerLightsForced = _settings.forceBreakerLights,
                 checkpointRespawns = _settings.checkpointRespawns,
                 fastPlayback = _settings.fastPlayback,
+                idle1x = _settings.idle1x,
                 tasSkin = _settings.tasSkin,
                 tasSkinOutline = _settings.tasSkinOutline,
                 running = PlaybackActive,
