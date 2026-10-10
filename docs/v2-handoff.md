@@ -39,9 +39,10 @@ run file on every new best and submits complete faster runs to the gate. Stop it
    (`python tools/enginesim-redeploy.py` from the worktree with the game closed; then the Full-TAS tab's Solve).
 2. **Zip% repair** (685 goals after 807; hours): `fulltas "$CFG\fulltas-Zip%.json"`. Then `check --accept` and commit the
    baseline (TouchGrass-ANY% and ZipEscape% already show "changed since baseline" warnings).
-3. **The rest of the old stack**: course Optimize's Improve (`solve --auto`, `CourseAuto.cs`, `CourseLoop.cs`) runs on the
-   old `FullTas` partial class (a spec defect: the spec assumed it was Full-TAS only), so it stays until course Improve moves
-   to v2.
+3. ~~**The rest of the old stack**~~ done 2026-10-10 (`docs/superpowers/plans/2026-10-10-course-improve-v2.md`): course
+   Improve (`solve --auto`) runs on v2 (`CourseAuto.Polish`/`Reach` over `Improver.RunSegment` and `Builder`, scored by
+   `RunContext.Score`), and `enginesim/Cli/FullTas*.cs` is gone but `FullTasGoalList.cs` (the goal-list readers);
+   `fulltas --check` is a plain replay that keeps `--ticks-out`.
 4. **1x confirmation** (plan Task 16): built (the 1x job, `align-1x`, references in `check`; docs/fulltas.md "Solving
    (v2)"), not yet run in the game. Recapturing the trace corpus (428 of 566 traces already differ from their turbo
    captures, 29 no longer load).

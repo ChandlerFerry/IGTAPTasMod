@@ -113,15 +113,16 @@ studio Optimize run holds the queue only while it starts each target, and its ru
 **First finish along another category's way.** When none of the seeds finishes in the trace's category (on its forced
 path), `solve` first takes the fastest seed of another category that finishes in that category's own trace (the newest
 `*-<caps>.json` of the course beside it: an omnidash route, say) as the way: 12 stretches of waypoints along its path
-(`CourseWaypoints`, carried to this trace's frame), and the reach windows (`fulltas --unsolved`, the target's forced
-path) take that seed's inputs on from where they break here, waypoint to waypoint, to the finish; a waypoint they don't
-get to is dropped and they go on from the one before (`FullTas.FirstFinish`, `Cli\CourseAuto.cs`; up to half of
-`--minutes`, `--no-first-finish` skips it). The route that finishes is a seed. Aimed at the finish, a search spreads over
+(`CourseWaypoints`, carried to this trace's frame), and the Full-TAS v2 builder (`CourseAuto.Reach`: `Builder.Harvest`
+of that seed's inputs goal by goal, then `Builder.Build`, each missing goal a deterministic segment search under the
+target's forced path) takes them on from where they break here, waypoint to waypoint, to the finish; a waypoint no search
+reaches is dropped and the build goes on from the one before (`CourseAuto.FirstFinish`, `Cli\CourseAuto.cs`; up to half
+of `--minutes`, `--no-first-finish` skips it). The route that finishes is a seed. Aimed at the finish, a search spreads over
 whatever is open toward it: tree27to10 `WJ_DS_DJ_BS` climbs the left side to y 6400-7300 first, away from Course 10, and
 the plain solve found no finish in an hour (its runs piled up on the open floor to the right, and under the checkpoint at
 (25844, 6264), a dead end); along `ORB_ZIP_OM 16.40`'s way it finished in 5 minutes on 12 threads (43.62 s, the hops 1-17
-s each, one 3 minutes). It is only a first finish: the search improves from it, and `--other-ways` (Course --auto)
-looks for different ones. Without a seed of another category that finishes, the plain solve alone.
+s each, one 3 minutes; the old reach windows, before 2026-10-10). It is only a first finish: the search improves from it.
+Without a seed of another category that finishes, the plain solve alone.
 
 Splicing joins explored segments onto the best (`splices` in the progress line). The best's replay records the course
 time and input tick of its first arrival in each map cell. An explore run that reaches one of those cells at least a
@@ -511,20 +512,31 @@ finish ended.
 ### Course --auto
 
 ```powershell
-& $exe solve $traces\start-c4-wjdsdj.json --auto --threads 4 --minutes 5 --window-minutes 0.25   # --farm, --class human-major|human-nmg, --seed FILE, --parts LIST, --focus a-b, --waypoints-out FILE, --fresh, --log-json FILE, --whole-minutes M, --no-whole
+& $exe solve $traces\start-c4-wjdsdj.json --auto --threads 4 --minutes 5   # --farm, --class human-major|human-nmg, --seed FILE, --focus a-b, --waypoints-out FILE, --fresh, --log-json FILE, --whole-minutes M, --no-whole
 ```
 
-`--auto` (`Cli\CourseAuto.cs`) runs the Full-TAS `--auto` loop ([`docs/fulltas.md`](../docs/fulltas.md#auto), its parts
-included) on a course. The course becomes a Full-TAS run: its goals are waypoints along the best's path
-(`CourseWaypoints.For`: area goals, the course's checkpoints and springs, forced-path `via` boxes; in record timing the
-start-gate crossing `start:<course>`) and the finish (`farm:<course>`; a bonus's reward rect, a transition's next
-`start:`). Waypoints are checkpoints, not cut points: every window plays on from the state the route has there, so
-momentum carries through them, and a window is scored on its arrival. No waypoint, a checkpoint's included, goes inside
-a sideways out-and-back of the best's (300 units or more out within 150 ticks and back within a quarter of that, not
-turning off a wall; `CourseWaypoints.Detours`): every window would have to keep the detour (Course 9 `WJ_DS_DJ_BS`
+`--auto` (`Cli\CourseAuto.cs`) is the course Optimize tab's Improve, on the Full-TAS v2 pieces (`Cli\Runs\`,
+[`docs/fulltas.md`](../docs/fulltas.md#solving-v2-fulltas-trace-is-solve-run)). The course becomes a Full-TAS run: its goals
+are waypoints along the best's path (`CourseWaypoints.Build`: area goals, the course's checkpoints and springs,
+forced-path `via` boxes; in record timing the start-gate crossing `start:<course>`) and the finish (`farm:<course>`; a
+bonus's reward rect, a transition's next `start:`). Waypoints are checkpoints, not cut points: every search plays on from
+the state the route has there, so momentum carries through them. No waypoint, a checkpoint's included, goes inside a
+sideways out-and-back of the best's (300 units or more out within 150 ticks and back within a quarter of that, not
+turning off a wall; `CourseWaypoints.Detours`): every search would have to keep the detour (Course 9 `WJ_DS_DJ_BS`
 32.58's dash past the wall at x 21780 to the checkpoint and a landing at 22459, its fall's drift left to 11593).
 
-- **Whole-route search first.** Before the loop (record timing, or a bonus or transition; not the farm loop, a human
+- **Polish** (`Polish`): goal by goal over the span, the goal's way searched again from the best's own state there
+  (`Improver.RunSegment`: a deterministic 16-worker segment search of 20M ticks, then the goals after it rebuilt from the
+  segment library, at most 3 more searches of 20M) and kept only when the whole route, replayed straight, scores lower
+  (`RunContext.Score`: a record's game timer, then its ticks from the start; a farm loop's steady lap). Pass after pass
+  until a pass gains nothing (exit 0 then, before the minutes are up) or the minutes run out; a goal is searched once per
+  best, a failed search is not repeated on the same engine build (`fulltas\<run>.failures.json`), and each search is one
+  `@fulltas {"type":"pull"}` event (the studio's pull count). The span: `--focus a-b`, else a record's goals after the
+  start gate, a bonus's or transition's all, a farm loop's after its lead. A course's searches keep 3 GB (the Full-TAS
+  ones 24). A sooner arrival at one goal can leave a state the next goals can't be reached from: the rebuild fails, and the
+  score decides. Before 2026-10-10 this was the old Full-TAS `--auto` loop (windows, combine, scheduler, cost-to-go,
+  macros), which gained nothing in the 2026-09-29 head-to-head below at 7.6-10.5 GB.
+- **Whole-route search first.** Before the polish (record timing, or a bonus or transition; not the farm loop, a human
   class, `--focus` or `--waypoints-out`), the plain solve (`Solve.Run`) runs on the course for `--whole-minutes` (half
   the minutes; `--no-whole` skips it), in rounds: a round ends after 5 minutes without a faster route and the next
   searches afresh (new archive and RNG) from its best until the budget is spent (before 2026-10-07 one round, then the
@@ -532,10 +544,10 @@ turning off a wall; `CourseWaypoints.Detours`): every window would have to keep 
   to 0.94 in minutes). A course run may quick-restart in its set-up before the timer (`OfflineSolver`'s `reset`
   mutations, outside a Full-TAS window only there): a restart's landing is another start than the category's. Seeded with
   the trace's route, every `--seed` (the plugin passes every category's and, on a tree transition, every tree level's
-  routes to the course; one that dies in this category still gives its cells) and the loop's run file; with
+  routes to the course; one that dies in this category still gives its cells) and the run file; with
   `--no-archive` (no archive read or written: each Improve searches as a target's first does, and the target's archive
   is left as it is) and `--no-submit` (its bests are written to `offline-best` as a plain solve's and judged after the
-  session with the loop's). Its best joins the candidates the loop starts from; the loop gets the minutes left. Why: the
+  session with the polish's). Its best joins the candidates the polish starts from; the polish gets the minutes left. Why: the
   plugin runs the plain solve only for a target with no route of its own (`Solver.cs` `CourseSolveArgs`), so each new
   target's first Improve gained what the loop on an old one couldn't (2026-10-05, `WJ_DS_DJ_BS`: tree27to10's
   `--auto` went 21.74 to 21.70 while the plain solve took the same routes to 19.20 on tree22to10, where 19.20 also plays
@@ -543,30 +555,24 @@ turning off a wall; `CourseWaypoints.Detours`): every window would have to keep 
   loop's windows had found such gains (a find 45 ticks ahead at waypoint 3, one 20 ahead at waypoint 2) and lost them at
   the merge; the merge's join ([`docs/fulltas.md`](../docs/fulltas.md), "The join") keeps more of them now.
 
-- **Human class** (`--class human-major|human-nmg`, record timing on a gated course only): the loop plays as the class
-  plays (`MacroEngine.HumanClass`: digital stick, two jump buttons) and ranks by the class's score (the Full-TAS
-  classes' `Better`/`Ahead`, [`docs/fulltas.md`](../docs/fulltas.md#classes)); its difficulty is measured on the course's
-  own trace to its finish, as `techs-used` measures it for the gate. The candidates are tried as they are and with their
-  part tilts snapped to full or rest (`Digital`). With none a human class plays to the finish (the solver tunes speed with
-  0.6-0.8 tilts), `HumanReach` places the waypoints on the fastest route that finishes and runs the reach windows
-  (`fulltas --unsolved`, under the class) on its digital version for half the minutes, then improves from what it
-  reached; short of the finish, the next Improve goes on from the run file (`course-auto\fulltas\<run>.<class>.json`).
-  Each kept best, and the route it starts from, is written as `offline-best\<course>_<caps>-<class>-<score>.json`
-  (`course`, `capabilities`, `class`, `score` on the game timer, `time`, `runTicks`, `ticks`), which the plugin judges for
-  the class's record (README `### Rules` 54).
-- **Timing.** Record (the default on a gated course): the game timer, the finish's tick less the start-gate goal's
-  (`FullTas.TimerGoal`; `Route.Last` compares that, `Route.End` is the finish's tick from the quick restart). A window is
-  scored on its arrival's physics tick, which is the timer's only once the gate crossing is in its prefix, so in record
-  timing the loop's windows start after the gate (`--focus` defaults to the goals after `start:`; combine still splices
-  the run-up). `--farm` on a gated course: the farm loop (below). A bonus or transition is timed from its start either
-  way, in physics ticks as its record is (README `### Rules` 31): no held frames count (`FullTas.TickTiming`, every
-  course run but the farm loop; its windows' searches rank their finds so too, `Simulation.TickTimed`). Before 2026-10-05 a transition's loop ranked its runs in live time (tree27to10: 23.09 s
-  against its 21.74 record), a dash some 2.7 ticks dearer than the record has it.
+- **Human class** (`--class human-major|human-nmg`, record timing on a gated course only): `ease` ([Techs](#techs),
+  `Difficulty.Ease`), which searches on the class's score itself from every seed and writes its lowest as
+  `offline-best\<course>_<caps>-<class>-<score>.json` (`course`, `capabilities`, `class`, `score` on the game timer, `time`,
+  `runTicks`, `ticks`), which the plugin judges for the class's record (README `### Rules` 54). With `--waypoints-out`
+  the waypoints of the fastest route the class plays to the finish (digital stick, two jump buttons; the candidates also
+  with their part tilts snapped, `Digital`).
+- **Timing.** Record (the default on a gated course): the game timer (`CourseScore`: `PlayCourse`'s time in ticks, ties
+  by the ticks from the run's start; another course's finish or one off the forced path never counts). A search ranks its
+  finds by their arrival at its goal, which only the goals after the start gate turn into timer ticks, so a record's span
+  starts after the gate. `--farm` on a gated course: the farm loop (below). A bonus or transition is timed from its start
+  either way, in physics ticks as its record is (README `### Rules` 31): no held frames count (its searches rank their
+  finds so too, `Simulation.TickTimed`).
 - **Farm loop** (`Cli\CourseLoop.cs`, README `### Rules` 30). The farm is the course's steady-state loop: a lead (the
   course start through its last lead finish) and the loop (the laps after it through the last one's finish), timed from
-  the lead's last finish in live time (`TimerGoal` that finish, `FullTas.LoopTiming`: held frames count from it). The
-  goals: a `farm:<course>` per lead lap, then per loop lap the first lap's waypoints it passes in order and its finish,
-  under a goal tracker so a finish doesn't end the run (`LoopSim`). `MeasureLoop` plays the lead and the loop 4 times: it
+  the lead's last finish in live time (held frames count). The goals: a `farm:<course>` per lead lap, then per loop lap
+  the first lap's waypoints it passes in order and its finish, under a goal tracker so a finish doesn't end the run
+  (`LoopSim`); the polish's score is the steady lap (`LoopOf`: the route cut at its lead's and loop's finishes, `Laps`'
+  idle ticks adding none after a short lap; `long.MaxValue` when it doesn't repeat). `MeasureLoop` plays the lead and the loop 4 times: it
   repeats exactly when every loop finishes on its own last input and the last two cycles are equal; the farm time is a
   lap's share of that cycle. One that doesn't logs why (the first loop that broke: its death or end, or the input it
   finished on). Its run has no tick cap but the goals' (`Run`'s cap counts physics ticks, a dash's no-input ones too:
@@ -590,15 +596,16 @@ turning off a wall; `CourseWaypoints.Detours`): every window would have to keep 
   1.5557 s lap died on its second play and nothing was saved). Before 2026-10-02 it ran its minutes out and kept only the
   fastest lap, so Course 3 `WJ_DS_DJ` sat 5 minutes a lap with nothing shown. A lap the search doesn't
   find is repaired (`RepairLoopLap`): the lap before (the first lap after a quick restart) played after the lead, and the
-  reach windows (`fulltas --unsolved`, stopping once every goal is reached) take it on from where it breaks through the
-  first lap's waypoints to the finish; a course run reaches its finish as a waypoint, not from loop pieces. After each, the loops
+  v2 builder (`Reach`, as a first finish's) takes it on from where it breaks through the first lap's waypoints to the
+  finish; a course run reaches its finish as a waypoint, not from loop pieces. After each, the loops
   ending with the newest lap are checked, so laps whose carried state alternates (a buffered jump carried through one
   restart and not the next) still make a loop. The loop the run starts from is written at once (the search's, or a
-  seed's; not the last `--auto` best's, written when kept, nor a file already there, waiting or judged). The goals rank a
-  loop's first pass, so a complete route is kept as the search's best only when its loop repeats exactly and its steady
-  lap beats the best's (`LoopKeeps`; else `farm loop check (...): ... not kept`): a faster loop that almost repeats
-  (Course 1 `WJ_DS`, 2026-10-02: 1.49 s and 1.51 s laps that break on the 2nd and 4th loop) never becomes the working
-  route. Every kept best is written to `offline-best\<course>_<caps>-loop-<lap>.json` (`loopFrom`, `loopLaps`,
+  seed's; not the last `--auto` best's, written when kept, nor a file already there, waiting or judged). Then the polish
+  over the loop's goals: a route is kept only when its loop repeats exactly and its steady lap beats the best's (a faster
+  loop that almost repeats, Course 1 `WJ_DS`, 2026-10-02: 1.49 s and 1.51 s laps that break on the 2nd and 4th loop,
+  never becomes the working route). A farm run's avoid boxes hold on the course only (`ForcedPath.OnCourseOnly`, carried
+  into the run's searches by `Solve.FullTasPaths` since 2026-10-10: before, a lap's way back to the start was cut, and no
+  search from a lead's finish found its next waypoint). Every kept best is written to `offline-best\<course>_<caps>-loop-<lap>.json` (`loopFrom`, `loopLaps`,
   `loopTicks`, `loopHeld`, `loopLive`, `ticks`) with the line `offline best farm loop X.XXXXs via ...`. Course 1 `NONE`,
   2026-10-01: the 2.18 s one-lap farm doesn't loop (the restart carries its last jump press: the next lap starts in the
   air and dies); the lap search found a loop of 2 laps, 225
@@ -608,21 +615,14 @@ turning off a wall; `CourseWaypoints.Detours`): every window would have to keep 
   none in 13.8M runs. The repair takes a lap there through the waypoints to the finish in seconds (6.93 s live); seeded
   with it, the next lap search finishes at once. With the 4th-lap cap gone, a 15-minute Improve (avoid-backwards) keeps
   a steady one-lap loop, 5.2179 s a lap.
-- **Rules.** The course and category's `forced-paths.json` rules (with `--optional`/`--no-optional`) are every window's
-  and every polish's avoid boxes; the start's player must have the category's unlocks (the trace's `capabilities`),
-  else it stops.
-- **Start.** The fastest finishing route (on the timing) of the trace's own, each `--seed` and the last `--auto` best
-  that keeps the rules (no avoid box, every via box): the waypoints follow it, so a route through a picked direction
-  block can't be it. The others that keep them are the loop's `--ref` routes (combine splices their goal runs in). None:
-  the plain solve finds a first finish under the rules, along another category's way first (below).
-- **Other ways** (`--other-ways`, off by default). The loop's waypoints follow its best's way, so a different way (a
-  pauselift up a wall instead of a climb) is never tried. With it, before the loop, the reach windows (`fulltas
-  --unsolved`) run from the start to the finish with the known route's corridor discouraged (`ForcedPath.Discourage`:
-  320-unit boxes on its path every 10 physics ticks, none within 600 of the start or the finish; an explore cell filed
-  inside one is picked a fiftieth as often, never cut), then with each way found discouraged too, until one finds none,
-  for up to a quarter of `--minutes`. A way that finishes on the forced path is a candidate like a seed. Once per known
-  route (`course-auto\course<N>_<caps>-ways.json` holds the routes done). Tree27to10 `WJ_DS_DJ_BS` from the 23.16 route,
-  2026-10-05: none in 15 minutes (the search climbed the right side to (26300, 5122), under the checkpoint pocket).
+- **Rules.** The course and category's `forced-paths.json` rules (with `--optional`/`--no-optional`) are every search's
+  avoid boxes; the start's player must have the category's unlocks (the trace's `capabilities`), else it stops.
+- **Start.** The fastest finishing route (on the timing) of the trace's own, each `--seed`, the whole-route search's and
+  the last `--auto` best that keeps the rules (no avoid box, every via box): the waypoints follow it, so a route through a
+  picked direction block can't be it. None: the plain solve finds a first finish under the rules, along another
+  category's way first (above). The polish keeps to the way its best takes; the whole-route search is what finds another
+  (`--other-ways`, the old reach windows with the known way's corridor discouraged, went with them on 2026-10-10: on
+  tree27to10 `WJ_DS_DJ_BS` it had found none in 15 minutes).
 - **Directions.** Courses 1-3 go either way from the start (`avoid-forwards` and `avoid-backwards` in
   `forced-paths.json`; backwards usually for the record, forwards for the farm). A job that picks neither runs each
   direction in turn, half the minutes each (farm forwards first, record backwards first), each with its own run and
@@ -633,12 +633,13 @@ turning off a wall; `CourseWaypoints.Detours`): every window would have to keep 
   so it cuts leaving the start the wrong way and not a farm lap coming back through it. Course 3's `avoid-backwards`
   (from `bottom`) sits under the end gate: a forwards farm lap drops through it to the start, which a plain box cut. The
   guide's distance field leaves one-way boxes out. `IGTAP.EngineSim oneway` checks the crossing test.
-- **Files.** The run lives in `<traces>\course-auto\` (`fulltas-<run>.json` and its world, `fulltas\<run>.json`, the
-  archive, `.auto.jsonl`, `.auto-refs.json`), the run named `course<N>_<caps>[-opt-...][-farm]`. Every kept record best
-  is played again on the plain course simulation and written to `offline-best\<course>_<caps>-<time>.json` as `solve`
-  writes it (the game timer's time, `runTicks`), so the plugin judges it for the record as any solve's; the log line is
-  solve's `offline best X.XXs via auto: ...`, and `course check: DISAGREES` flags a timing the course simulation doesn't
-  confirm. The loop writes only what it improves on, so the best it starts from is written first the same way
+- **Files.** The run lives in `<traces>\course-auto\` (`fulltas-<run>.json` and its world, `fulltas\<run>.json` the last
+  kept best's inputs, `fulltas\<run>.segments.json` the segment library and `fulltas\<run>.failures.json`), the run named
+  `course<N>_<caps>[-opt-...][-farm]` (a first finish's `-first`, a lap repair's `-lap`). Every kept record best is played
+  again on the plain course simulation, its idle pauses dropped where the time holds, and written to
+  `offline-best\<course>_<caps>-<time>.json` as `solve` writes it (the game timer's time, `runTicks`), so the plugin judges
+  it for the record as any solve's; the log line is solve's `offline best X.XXs via auto: ...`. The polish writes only what
+  it improves on, so the best it starts from is written first the same way
   (`offline best X.XXs via start: <candidate>`): a seed that already beats the saved route (a library route; Course 1
   `WJ_DS`'s 1.02 s one against the saved 1.42 s, 2026-10-01) would otherwise never reach the judge, which sees only
   `offline-best\` files. Not written: the last `--auto` best (written when kept), a route whose file (same inputs and
@@ -674,12 +675,9 @@ turning off a wall; `CourseWaypoints.Detours`): every window would have to keep 
   `WJ_DS_DJ_BS_ZIP` route dies in `WJ_DS_DJ_BS_ORB_ZIP_OM`). The plugin launches `solve <start> --seed
   <each library route of the course> [--optional/--no-optional] --threads <cores - 4> --minutes M --auto [--farm]
   [--focus a-b]`; `POST /api/solver/preview` (the start body) returns each job's command without starting anything.
-  Below the counts, the panel's "Should it keep going?" card shows the engine's last `outlook`: the verdict, what to do,
-  the chance of a gain per hour and within the run's remaining minutes, the median wait, what the odds rest on (the
-  folder's other Improve runs and their gains past a dry spell this long), the search spent on this target across every
-  Improve, the room to the floor, and the pulls running now with how often such pulls gained before (`outlook` and
-  `pullStart`, [`docs/fulltas.md`](../docs/fulltas.md)).
-  The raw engine log is folded under it.
+  The counts show the polish's searches as pulls (`@fulltas {"type":"pull"}`); the "Should it keep going?" card read the
+  old loop's `outlook` and `pullStart` events, which the polish doesn't send, so it stays hidden. The raw engine log is
+  folded under the counts.
 
 ## Search bench
 
@@ -906,7 +904,7 @@ screen, divisor, fastness and bigness rolled, payout) and per draw (the engine m
 sequence of values each side takes, not tick by tick: 1x's physics count runs ahead through dash freezes.
 
 The economy has one shape in all three legs, `econ` (`TasPlugin.EconomyNow` on every probe row and every trace tick,
-`FullTas.EconomyRow` on every `--ticks-out` line): `cash`, `gp`, `np`, `cd`, `rp` (held), `atoms` (the atom collider's
+`Program.EconomyRow` on every `--ticks-out` line): `cash`, `gp`, `np`, `cd`, `rp` (held), `atoms` (the atom collider's
 atoms per tier), `waiting` (atoms bought, not landed), `npTick`, `npCap`, `npBoost` (`globalStats`' NP per tick, its cap,
 the comp boost's NP factor), `cdMult` (`CloneDustGpCdMult`), `segments` (the upgrade trees' grown segments),
 `doorAtom` and `doorArea2` (how far the atom box's and the Area 2 door box's door, `upgradeBox.doorToOpen`, is from its
@@ -1380,22 +1378,10 @@ section.
   best (`--no-polish` skips).
 - `solve --plan [--plan-minutes M]`: the planner and polish first (a third of `--minutes` by default, inside it; the
   solve's seeds that finish guide it), its route a seed and a `how: "plan"` line in `--log-json`.
-- `fulltas <trace> --auto` (`Cli\FullTasAuto.cs`, [docs/fulltas.md](../docs/fulltas.md#auto)): the levers above and the
-  solve's own (window, lookahead window, reset study, the transplant's bridges and splices from any known route) as arms of
-  a bandit over (lever, goal), rewarded in ticks gained per CPU second. It needs no reference route: a per-goal lower
-  bound (walkable `DistanceField` distance over the fastest path speed the engine has shown with the goal's unlocks, from
-  the best's path and speed probes including the bounce chain), the best's slow stretches and the routes the loop itself
-  found rank the goals; every window gain has its tail re-found (`Repair`, dropped once the lower bounds say it can't
-  win); every new best is replayed on a fresh simulation before it is kept. `--minutes 0` prints the lower-bound table.
-  `--parts` (default `lib,tail,combine,sched,ctg,macros,stray,goals,idle`; `none` is the loop above alone) adds the goal-state
-  library (the wait fix, route-sync, tail windows after a broken splice, `combine`: known routes' faster goal runs spliced
-  into each new best), the pull scheduler in place of the bandit while it has pulls, the cost-to-go repair bound, mined
-  macro seeds and goal-list edits (`goals`: lap drops and adds, buy regroups, record laps, adopted when the whole run is
-  faster; the game takes the list with the record it judges)
-  ([docs/fulltas.md](../docs/fulltas.md#parts-goal-state-library-tail-windows-combine-scheduler-cost-to-go-macros-goals)).
-  `--focus ID-ID` (goal ids, docs/fulltas.md "Goal ids") keeps every pull's window starting in those goals (combine still splices anywhere); a complete `--ref`
-  faster than the best is the loop's start. The studio's **Improve** runs this with the saved record as `--ref` and the
-  picked goals as `--focus`. Over several 10-minute `--auto` sessions `FalseEnding-Any%` went from 390.38 s to the judged 379.40 s.
+- `fulltas <trace> --auto` (the bandit over levers and goals, `--parts`, its per-goal lower bound) is gone with the old
+  Full-TAS stack (2026-10-10): `fulltas <trace>` is `solve-run` ([docs/fulltas.md](../docs/fulltas.md#solving-v2-fulltas-trace-is-solve-run)),
+  and course Improve is the v2 polish ([Course --auto](#course---auto)). Over several 10-minute `--auto` sessions
+  `FalseEnding-Any%` had gone from 390.38 s to the judged 379.40 s.
 - `coverage <trace> <route-human.json>` (`Cli\Coverage.cs`): each input of a human version mapped onto the contact whose
   `Planner.Primitives` window reaches it and the kind that makes it, a mined window with it, and whether the planner's decisions make
   its value. Tables: [`docs/planner-coverage.md`](../docs/planner-coverage.md). Course 4 `WJ_DS_DJ` 11.24 (the old
@@ -1564,15 +1550,15 @@ untimed, and "timed" is the timer's share (`max(0, P − T)`, T the physics tick
   route's state at a, to the first anchor at or after b. Up to 64 gaining candidates a segment are played whole from
   the start: a segment's gain counts once it survives to the finish, and the best that beats the route goes to
   `<route>-timeloss.json`.
-- `floor` (`TimeLossFloor.cs`): per segment, a floor on its ticks as `fulltas --auto`'s per-goal model bounds a goal
-  ([`docs/fulltas.md`](../docs/fulltas.md#auto), the gap model; the same `FullTas.Sustained` and speed probes): the
+- `floor` (`TimeLossFloor.cs`): per segment, a floor on its ticks as the old `fulltas --auto`'s per-goal model bounded a goal
+  (the gap model, its `Sustained` and speed probes, kept in `TimeLossFloor.cs`): the
   walkable distance (`DistanceField`, 8 u cells) from where the segment starts, or lands after a teleport in it (a tick
   more), to the next anchor's place (a finished route's last segment: the course's end gate; while the timer is off, by a
   start gate and on from where the route crossed it) over the top path speed with the segment's unlocks (the fastest
   10-tick mean of the route's path and of the speed probes from every anchor). Slack = ticks − floor, and the timed slack
   from where the timer starts in the segment; timed segments by timed slack first. The field walks through the air like a
   corridor, so on a climb it is far under what gravity allows: a large slack says the model is loose there as much as
-  that the route is. A course trace only (a Full-TAS run's bounds are `fulltas --auto --minutes 0`'s).
+  that the route is. A course trace only.
 - `report`: one row per segment joining the three, split's by the segment's first input tick and search's best leg that
   starts in it (search's `timer` cuts a segment in two): ticks, timed, `ref` (split's
   difference, without `--ref` none), the best search gain at the finish and at the next anchor with its change, floor,

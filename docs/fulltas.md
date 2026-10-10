@@ -881,10 +881,18 @@ The design is `docs/superpowers/specs/2026-10-09-fulltas-v2-design.md`; the code
   baseline differs; more is a warning (nearer 1x). A run with no reference is skipped.
 
 The old Full-TAS economy planner (`fulltas-plan`, `--stages`, the buy and movement tables, realize) and the old stretch
-search are gone; the old `--auto` machinery stays only for the course Optimize tab's Improve (`solve --auto`, CourseAuto.cs)
-and `fulltas --check` / `--waste-audit`.
+search are gone, and since 2026-10-10 the rest of the old stack too (`enginesim/Cli/FullTas*.cs`: the window search, the
+`--auto` loop and its parts, `--waste-audit`, `--retune`, `--chain-vs`, `macros`, `join-check`): the course Optimize tab's
+Improve (`solve --auto`, CourseAuto.cs) runs on these v2 pieces ([enginesim/README.md](../enginesim/README.md#course---auto)).
+`fulltas <trace> --check <route.json> [--goals FILE] [--loose-buys] [--class C] [--ticks-out FILE [--watch NAME]]` stays, a
+plain replay (`Program.FullTasCheck`): each goal's physics and input tick, live time and held frames, the purchases and how the
+replay ended; `--ticks-out` writes every physics tick, clone spawn and RNG draw as JSON lines for `align-1x` and
+`tools/economy-diff.py` ([enginesim/README.md](../enginesim/README.md#probe)).
 
 ## Offline search
+
+The sections from here through "Loop builder" describe the old search, deleted on 2026-10-10; they are kept for what
+was learned with it (its numbers, its failures). The commands in them no longer run.
 
 ```powershell
 & $exe fulltas $traces\fulltas-main.json --minutes 60 --window-minutes 1 --window 2   # --unsolved, --no-submit, --fresh, --threads N, --goal ID, --piece-minutes P, --seed FILE, --seed-list FILE, --reach-polish S
@@ -940,9 +948,8 @@ and `fulltas --check` / `--waste-audit`.
 - `--check <route.json>` replays a route (a run file's `inputs` or an offline best's `ticks`) from the trace's start
   under the trace's goals and prints each goal's physics and input tick, its live time and held frames, and how the
   replay ended; it searches and writes nothing. `--ticks-out FILE` also writes the replay's physics ticks, clone spawns
-  and RNG draws as JSON lines, to line up with a 1x probe ([enginesim/README.md](../enginesim/README.md#probe)).
-  `--waste-audit <route.json> [--expect a-b,...]` replays a route the same way and prints its waste audit (Parts 8 under
-  [Auto](#auto)); `--expect` lists physics tick spans each finding must overlap, and exits 1 when one is missed.
+  and RNG draws as JSON lines, to line up with a 1x probe ([enginesim/README.md](../enginesim/README.md#probe)). (Still
+  there, as a plain replay: above.)
 - Routes found from a start with the same movement state for the same next goal seed each other (the repeated laps).
 - Each window's explore archive (input prefixes, as a course solve's) is kept in
   `archive\fulltas-<run>\<first>-<limit>-<hash>.json`: a retry or a later solve of the same window from the same prefix
@@ -1984,7 +1991,7 @@ A Steam update can move the Cash, the RNG or a collider, and a route that played
    changed collider.
 3. **Each goal's input.** Replay the route on the previous build's engine (`fulltas <trace> --check <route>` built
    from that commit) and write each goal's `input` column as a JSON array.
-4. **Re-time the waits.** `fulltas <trace> --check <route> --retune <goal inputs> --out <file>` moves each wait (the
+4. **Re-time the waits** (gone with the old stack, 2026-10-10: `solve-run` rebuilds a broken route goal by goal from its segments instead). `fulltas <trace> --check <route> --retune <goal inputs> --out <file>` moves each wait (the
    idle ticks before a goal's quick restart) to its Cash (`Retune`). When a goal is lost it says which, at which wait
    (the quick restart's input), what it tried (up to `RetuneCap`, 60, idle ticks added) and how the best try ended, and
    which case it is: *needs more than RetuneCap idle ticks*; *no wait site before this goal* (its walk has no quick
