@@ -595,7 +595,10 @@ namespace IGTAP.EngineSim.Cli
             var plan = new RunPlan(ctx.HeaderIds, ctx.HeaderGoals.Select(g => g.label).ToArray());
             return Solve.OnThread(() =>
             {
-                var builder = new Builder(ctx, lib, search, facts, searchMisses: true) { Log = m => Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] {m}") };
+                // One 20M-tick search a waypoint: the guide's waypoints come from other unlocks, and one this category can't reach is
+                // dropped in minutes, not after the 80M and 320M searches (tree27to10 WJ_DS_DJ_BS's third ate a 16-minute solve's half).
+                var builder = new Builder(ctx, lib, search, facts, searchMisses: true)
+                    { MaxBudget = Builder.Budgets[0], Log = m => Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] {m}") };
                 for (Built b = builder.Harvest(plan, carried, "carried"); ; )
                 {
                     b = builder.Build(b.Plan, b);

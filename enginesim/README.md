@@ -114,14 +114,17 @@ studio Optimize run holds the queue only while it starts each target, and its ru
 path), `solve` first takes the fastest seed of another category that finishes in that category's own trace (the newest
 `*-<caps>.json` of the course beside it: an omnidash route, say) as the way: 12 stretches of waypoints along its path
 (`CourseWaypoints`, carried to this trace's frame), and the Full-TAS v2 builder (`CourseAuto.Reach`: `Builder.Harvest`
-of that seed's inputs goal by goal, then `Builder.Build`, each missing goal a deterministic segment search under the
-target's forced path) takes them on from where they break here, waypoint to waypoint, to the finish; a waypoint no search
+of that seed's inputs goal by goal, then `Builder.Build`, each missing goal one deterministic 20M-tick segment search under
+the target's forced path) takes them on from where they break here, waypoint to waypoint, to the finish; a waypoint no search
 reaches is dropped and the build goes on from the one before (`CourseAuto.FirstFinish`, `Cli\CourseAuto.cs`; up to half
 of `--minutes`, `--no-first-finish` skips it). The route that finishes is a seed. Aimed at the finish, a search spreads over
 whatever is open toward it: tree27to10 `WJ_DS_DJ_BS` climbs the left side to y 6400-7300 first, away from Course 10, and
 the plain solve found no finish in an hour (its runs piled up on the open floor to the right, and under the checkpoint at
 (25844, 6264), a dead end); along `ORB_ZIP_OM 16.40`'s way it finished in 5 minutes on 12 threads (43.62 s, the hops 1-17
-s each, one 3 minutes; the old reach windows, before 2026-10-10). It is only a first finish: the search improves from it.
+s each, one 3 minutes; the old reach windows, before 2026-10-10). On 2026-10-10's engine neither way gets past that
+route's third waypoint in 8 of a 16-minute solve's minutes (old: 2 of 10 waypoints; v2: 2 of 10 in 73 s, then each
+waypoint near y 6850-7130 dropped after a 20M search from (20572, 3074)), and the plain solve's first finish came at
+about 16 minutes either way (old 64.22 then 28.64, v2 49.76 then 29.68). It is only a first finish: the search improves from it.
 Without a seed of another category that finishes, the plain solve alone.
 
 Splicing joins explored segments onto the best (`splices` in the progress line). The best's replay records the course
