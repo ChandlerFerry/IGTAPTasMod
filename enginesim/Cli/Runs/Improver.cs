@@ -59,6 +59,10 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         sealed record Move(string What, RunPlan Plan);
 
+        enum Outcome { Gained, Searching, Converged }
+
+        readonly HashSet<string> _triedMisses = new HashSet<string>();
+
         public void Run(RunPlan plan, List<InputTick> inputs, Func<bool> stop)
         {
             using var coord = new Worker(() => new Builder(_run, _lib, _search, _facts, searchMisses: true) { Log = Log });
@@ -72,7 +76,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                     return coord.Mine;
                 }).Result;
                 Accept(start, "start", coord, workers);
-                while (!stop() && Pass(coord, workers, stop)) { }
+                while (!stop() && Pass(coord, workers, stop) != Outcome.Converged) { }
                 Event?.Invoke(new { type = "plan", converged = !stop(), reached = Best.Reached, of = Best.Plan.Count, live = Best.Live, waits = Best.Waits.Sum(w => w.Ticks) });
             }
             finally
@@ -84,6 +88,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         void Accept(Built b, string what, Worker coord, Worker[] workers)
         {
             Best = b;
+            _triedMisses.Clear();
             Accepted.Add(what);
             Log($"best: {Describe(b)} ({what})");
             NewBest?.Invoke(b, what);
@@ -95,7 +100,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         static string Describe(Built b) => b.Complete ? $"{b.Live:0.0000} s, {b.Waits.Sum(w => w.Ticks)} wait ticks"
             : $"{b.Reached} of {b.Plan.Count} goals ({b.Failure?.Text ?? "stopped"})";
 
-        bool Pass(Worker coord, Worker[] workers, Func<bool> stop)
+        Outcome Pass(Worker coord, Worker[] workers, Func<bool> stop)
         {
             List<Move> moves = Moves(Best);
             var misses = new List<(Move move, long gain)>();
@@ -114,20 +119,22 @@ namespace IGTAP.EngineSim.Cli.Runs
                     if (got[k].Failure?.Kind == "miss" && Ahead(got[k]) is long gain && gain > 0) misses.Add((batch[k], gain));
                 }
                 Event?.Invoke(new { type = "status", moves = moves.Count, tried = Math.Min(moves.Count, i + batch.Length), best = Best.Live, reached = Best.Reached, misses = misses.Count });
-                if (win >= 0) { Accept(got[win], batch[win].What, coord, workers); return true; }
+                if (win >= 0) { Accept(got[win], batch[win].What, coord, workers); return Outcome.Gained; }
             }
-            foreach (var (move, _) in misses.OrderByDescending(m => m.gain).Take(MissesPerPass))
+            var untried = misses.Where(m => !_triedMisses.Contains(Key(m.move.Plan))).OrderByDescending(m => m.gain).ToList();
+            foreach (var (move, _) in untried.Take(MissesPerPass))
             {
-                if (stop()) return false;
+                if (stop()) return Outcome.Searching;
+                _triedMisses.Add(Key(move.Plan));
                 Built c = coord.Do(b =>
                 {
-                    b.MaxSearches = MaxSearchesPerBuild;
+                    (b.MaxSearches, b.MaxBudget) = (MaxSearchesPerBuild, Builder.Budgets[0]);
                     try { return b.Build(move.Plan, coord.Mine); }
-                    finally { b.MaxSearches = int.MaxValue; }
+                    finally { (b.MaxSearches, b.MaxBudget) = (int.MaxValue, Builder.Budgets[^1]); }
                 }).Result;
-                if (c.Better(Best)) { Accept(c, move.What + " (searched)", coord, workers); return true; }
+                if (c.Better(Best)) { Accept(c, move.What + " (searched)", coord, workers); return Outcome.Gained; }
             }
-            return false;
+            return untried.Count > MissesPerPass ? Outcome.Searching : Outcome.Converged;
         }
 
         long? Ahead(Built c)
@@ -180,6 +187,8 @@ namespace IGTAP.EngineSim.Cli.Runs
             }
             return moves;
         }
+
+        static string Key(RunPlan p) => string.Join("|", p.Labels);
 
         static bool Buy(string label) => label.StartsWith("buy:", StringComparison.Ordinal) && RunGoals.Editable(label);
     }

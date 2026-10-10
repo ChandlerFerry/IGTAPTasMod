@@ -16,6 +16,8 @@ namespace IGTAP.EngineSim.Cli.Runs
         const double GraftRate = .15;
 
         readonly RunContext _run;
+        public Func<bool> Stop = () => false;
+        public bool Stopped { get; private set; }
         readonly Lazy<TechGrafts> _grafts;
         readonly Dictionary<string, List<TechPattern>> _graftsFor = new Dictionary<string, List<TechPattern>>();
 
@@ -75,12 +77,23 @@ namespace IGTAP.EngineSim.Cli.Runs
                 if (solver.Mined != null) solver.GraftRate = GraftRate;
                 solver.Improved += (time, runTicks, inputs, how) => { lock (mine) mine.Add(inputs); };
             }
+            Stopped = false;
+            using var done = new ManualResetEventSlim();
+            var watch = new Thread(() =>
+            {
+                while (!done.Wait(250))
+                    if (Stop()) { Stopped = true; foreach (OfflineSolver x in solvers) x.Stop(); return; }
+            }) { IsBackground = true };
+            watch.Start();
             Parallel.For(0, SearchWorkers, new ParallelOptions { MaxDegreeOfParallelism = SearchWorkers }, i =>
             {
                 foreach (Thread t in solvers[i].Start(1)) t.Join();
                 solvers[i].Stop();
                 nearestOf[i] = solvers[i].Closest()?.Distance ?? float.NaN;
             });
+            done.Set();
+            watch.Join();
+            if (Stopped) { nearest = "stopped"; return new List<List<InputTick>>(); }
             nearest = "nearest the goal: " + string.Join(" ", nearestOf.Select(d => float.IsNaN(d) ? "-" : d.ToString("0")));
             return finds.SelectMany(f => f).ToList();
         }

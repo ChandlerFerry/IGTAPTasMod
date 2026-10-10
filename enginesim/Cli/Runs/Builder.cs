@@ -73,6 +73,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         public readonly List<(int goal, byte[] state, List<InputTick> prefix, string key)> Misses = new List<(int, byte[], List<InputTick>, string)>();
         public Action<string> Log = _ => { };
         public int MaxSearches = int.MaxValue;
+        public long MaxBudget = Budgets[^1];
 
         public Builder(RunContext run, SegmentLibrary lib, SegmentSearch search, SegmentFacts facts, bool searchMisses)
         {
@@ -310,7 +311,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         (List<InputTick>, SimSnapshot)? Searched(Built built, FullTasGoal[] goals, int j, SimSnapshot start, int inputBase, Context c, bool afterReset, List<InputTick> prefix)
         {
             string label = built.Plan.Labels[j], key = KeyOf(label, c);
-            long budget = Budgets.FirstOrDefault(b => !_facts.Failed(key, b));
+            long budget = Budgets.FirstOrDefault(b => b <= MaxBudget && !_facts.Failed(key, b));
             if (budget == 0)
             {
                 built.Failure = Unreachable(j, label, c, Budgets[^1]);
@@ -327,11 +328,16 @@ namespace IGTAP.EngineSim.Cli.Runs
                 return null;
             }
             List<List<InputTick>> seeds = _lib.Candidates(label, c.Unlocks, c.X, c.Y, c.Phase, c.Facing, 8, float.MaxValue).Select(s => s.Inputs).ToList();
-            for (; budget != 0; budget = Budgets.FirstOrDefault(b => b > budget && !_facts.Failed(key, b)))
+            for (; budget != 0; budget = Budgets.FirstOrDefault(b => b > budget && b <= MaxBudget && !_facts.Failed(key, b)))
             {
                 Log($"search: goal {j + 1} {label} from ({c.X:0}, {c.Y:0}) with {c.Unlocks}, {budget / 1_000_000}M ticks, {seeds.Count} seeds");
                 built.Searches++;
                 List<List<InputTick>> finds = _search.Find(bytes, prefix, goals, j, seeds, budget, out string nearest);
+                if (_search.Stopped)
+                {
+                    built.Failure = new Failure { Kind = "stopped", Goal = j, Label = label, Text = "stopped during a search" };
+                    return null;
+                }
                 (List<InputTick> inputs, SimSnapshot at)? best = null;
                 foreach (List<InputTick> f in finds)
                 {
