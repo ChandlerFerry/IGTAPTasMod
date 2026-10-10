@@ -21,8 +21,8 @@ namespace IGTAPTasMod
         /// <summary>
         /// Why the box's Start can't be run at the modelled frame, or null. Its door branches: the atom box's reads the machine's
         /// PlayerPrefs "OpenA2Door" (upgradeBox.cs:264-267), which the engine doesn't hold, and both jump the door
-        /// (PlatformMover.JumpToNextState, upgradeBox.cs:260-267), which turbo's put-back of the box's fields around Unity's later
-        /// Start doesn't undo.
+        /// (PlatformMover.JumpToNextState, upgradeBox.cs:260-267) at the modelled frame. (Turbo puts the door's stop back around
+        /// Unity's later real Start, TurboRunner.AfterDrawingStart, for a box bought out after its modelled Start.)
         /// </summary>
         internal static string Unmodeled(upgradeBox box)
         {

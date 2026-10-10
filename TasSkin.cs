@@ -10,11 +10,11 @@ namespace IGTAPTasMod
         readonly SpriteRenderer[] _tasSkinEdges = new SpriteRenderer[4];
         Movement _tasSkinPlayer;
         Rigidbody2D _tasSkinBody;
-        SpriteRenderer _tasSkinHidden;
+        SpriteRenderer _tasSkinHidden, _tasSkinBodySprite;
         int _tasSkinSortLayer, _tasSkinSortOrder;
         Color _tasSkinColor;
         Vector2 _tasSkinSize, _tasSkinLastVelocity, _tasSkinSlosh, _tasSkinSloshSpeed;
-        bool _tasSkinPlaced;
+        bool _tasSkinPlaced, _tasSkinOutline;
 
         static Sprite _skinGradient, _skinBlob, _skinBadge;
 
@@ -32,7 +32,8 @@ namespace IGTAPTasMod
         /// inside the outline, and a "TAS" badge. In the player's scene, not under the player: <see cref="PlaceTasSkin"/> puts
         /// it on the hurtbox every frame, so it neither trails the interpolated transform nor mirrors with the facing. The body
         /// sprite is hidden (forceRenderingOff, which the game never writes); the ability indicators under it stay. Set again
-        /// each tick, as the hurtbox may change. Its time is /api/perf's <c>skin</c>.
+        /// each tick, as the hurtbox may change. Its time is /api/perf's <c>skin</c>. With tasSkinOutline only the outline is drawn,
+        /// in the hurtbox colour, over the game's own sprite: where the hurtbox is against the art a player knows.
         /// </summary>
         void ApplyTasSkin(Movement player)
         {
@@ -47,23 +48,28 @@ namespace IGTAPTasMod
             if (_tasSkin != null) Destroy(_tasSkin.gameObject);
             if (_tasSkinHidden != null) _tasSkinHidden.forceRenderingOff = false;
             _tasSkin = null;
-            _tasSkinHidden = null;
+            _tasSkinHidden = _tasSkinBodySprite = null;
             _tasSkinPlayer = null;
         }
 
         void UpdateTasSkin(Movement player)
         {
-            if (_tasSkin == null || _tasSkinPlayer != player)
+            if (_tasSkin == null || _tasSkinPlayer != player || _tasSkinOutline != _settings.tasSkinOutline)
             {
                 RemoveTasSkin();
                 if (!_tasSkinPlaced) Application.onBeforeRender += PlaceTasSkin;
                 _tasSkinPlaced = true;
+                _tasSkinOutline = _settings.tasSkinOutline;
                 BuildTasSkin(player);
-                _tasSkinHidden = player.animator != null ? player.animator.GetComponent<SpriteRenderer>() : null;
-                if (_tasSkinHidden != null) _tasSkinHidden.forceRenderingOff = true;
+                _tasSkinBodySprite = player.animator != null ? player.animator.GetComponent<SpriteRenderer>() : null;
+                if (_tasSkinBodySprite != null && !_tasSkinOutline)
+                {
+                    _tasSkinHidden = _tasSkinBodySprite;
+                    _tasSkinHidden.forceRenderingOff = true;
+                }
                 _tasSkinSortOrder = int.MinValue;
             }
-            SpriteRenderer body = _tasSkinHidden;
+            SpriteRenderer body = _tasSkinBodySprite;
             if (body != null && (body.sortingLayerID != _tasSkinSortLayer || body.sortingOrder != _tasSkinSortOrder))
             {
                 _tasSkinSortLayer = body.sortingLayerID;
@@ -76,7 +82,12 @@ namespace IGTAPTasMod
                 foreach (SpriteRenderer edge in _tasSkinEdges) SortSkin(edge, body, 4);
             }
             Color color = _grazeTicks > 0 && !_grazeKilled ? GraceColor : HurtboxColor;
-            if (color != _tasSkinColor) _tasSkinFill.color = _tasSkinColor = color;
+            if (color != _tasSkinColor)
+            {
+                _tasSkinColor = color;
+                if (_tasSkinOutline) foreach (SpriteRenderer edge in _tasSkinEdges) edge.color = color;
+                else _tasSkinFill.color = color;
+            }
             BoxCollider2D box = Hurtbox(player, _hitboxes);
             _tasSkin.gameObject.SetActive(box != null);
             if (box == null) return;
@@ -119,6 +130,12 @@ namespace IGTAPTasMod
             _tasSkinBadge = LabBox(_tasSkin, Vector2.zero, Vector2.one, new Color(edge.r, edge.g, edge.b, 0.85f), _skinBadge);
             // Read bottom to top, as the overlay's badge (rotated -90° on screen).
             _tasSkinBadge.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
+            if (_tasSkinOutline)
+            {
+                // Only the outline, in the fill's colour, over the sprite.
+                foreach (SpriteRenderer strip in _tasSkinEdges) strip.color = _tasSkinColor;
+                foreach (SpriteRenderer part in new[] { _tasSkinFill, _tasSkinCore, _tasSkinShine, _tasSkinBadge }) part.gameObject.SetActive(false);
+            }
             _tasSkinSize = Vector2.zero;
         }
 

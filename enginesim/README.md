@@ -519,11 +519,18 @@ included) on a course. The course becomes a Full-TAS run: its goals are waypoint
 (`CourseWaypoints.For`: area goals, the course's checkpoints and springs, forced-path `via` boxes; in record timing the
 start-gate crossing `start:<course>`) and the finish (`finish:<course>`; a bonus's reward rect, a transition's next
 `start:`). Waypoints are checkpoints, not cut points: every window plays on from the state the route has there, so
-momentum carries through them, and a window is scored on its arrival.
+momentum carries through them, and a window is scored on its arrival. No waypoint, a checkpoint's included, goes inside
+a sideways out-and-back of the best's (300 units or more out within 150 ticks and back within a quarter of that, not
+turning off a wall; `CourseWaypoints.Detours`): every window would have to keep the detour (Course 9 `WJ_DS_DJ_BS`
+32.58's dash past the wall at x 21780 to the checkpoint and a landing at 22459, its fall's drift left to 11593).
 
 - **Whole-route search first.** Before the loop (record timing, or a bonus or transition; not the farm loop, a human
   class, `--focus` or `--waypoints-out`), the plain solve (`Solve.Run`) runs on the course for `--whole-minutes` (half
-  the minutes; `--no-whole` skips it), ended once it goes min(5, half that) minutes without a faster route: seeded with
+  the minutes; `--no-whole` skips it), in rounds: a round ends after 5 minutes without a faster route and the next
+  searches afresh (new archive and RNG) from its best until the budget is spent (before 2026-10-07 one round, then the
+  loop; on Course 6 `WJ_DS_DJ_BS` the loop's windows found nothing where a fresh plain solve took 1.20 to 1.10 and 1.06
+  to 0.94 in minutes). A course run may quick-restart in its set-up before the timer (`OfflineSolver`'s `reset`
+  mutations, outside a Full-TAS window only there): a restart's landing is another start than the category's. Seeded with
   the trace's route, every `--seed` (the plugin passes every category's and, on a tree transition, every tree level's
   routes to the course; one that dies in this category still gives its cells) and the loop's run file; with
   `--no-archive` (no archive read or written: each Improve searches as a target's first does, and the target's archive
@@ -564,13 +571,24 @@ momentum carries through them, and a window is scored on its arrival.
   lap's share of that cycle. One that doesn't logs why (the first loop that broke: its death or end, or the input it
   finished on). Its run has no tick cap but the goals' (`Run`'s cap counts physics ticks, a dash's no-input ones too:
   before 2026-10-02 the inputs plus none cut every loop of dashes off in its 4th lap). The start (`StartLoop`): every candidate cut at its finishes and tried as a loop of its last
-  1, 2 or 3 laps (the fewest that repeats), the loops before the steady one moved into the lead. With none, loop laps
-  are searched one after another from the fastest first lap (`SearchLoopLap`: the course solve from the state after the
-  lead, `UseGoals(null)` so the next finish ends a run, seeded with the first lap after a quick restart and a few idle
-  ticks, and after the drop through the end gate), for a third of `--minutes` (5 at most) each; each new fastest lap is
-  checked as a loop of itself as it comes, the fastest that repeats is kept over a faster one that doesn't, and once one
-  repeats the search ends 30 s after its last faster lap (before 2026-10-02 it ran its minutes out and kept only the
-  fastest lap, so Course 3 `WJ_DS_DJ` sat 5 minutes a lap with nothing shown). A lap the search doesn't
+  1, 2 or 3 laps (the fewest that repeats), the loops before the steady one moved into the lead. Then, every Improve
+  (as a record's runs the whole-route search), loop laps are searched one after another from the best loop's lead or,
+  with none, the fastest first lap (`SearchLoopLap`: the course solve from the state after the lead, `UseGoals(null)` so
+  the next finish ends a run), for half of `--minutes` in all. Its seeds: the first lap after a quick restart and a few
+  idle ticks; after the drop through the end gate; and the restart a human farms with: a tick of the stick to face the
+  first lap's way, a quick restart, the fall to the floor under the respawn point (2-12 ticks: the landing gives the air
+  dash and ground coyote back), and a second quick restart on the first lap's own first input, which then plays on the
+  respawn's tick as from the category start. The falls cover a 5-tick cycle: the 280 fps frame grid repeats every 5
+  ticks, and a frame-timed tech holds only on its phase (Course 6 `WJ_DS_DJ_BS`, 2026-10-07: the 0.94's `pauselift`
+  repeats with a 6-tick fall, 1.5357 s a lap, and with 11, 16, 21 or 26, 0.1 s a lap slower each; the farm had sat at
+  1.7357-1.9357 s, its first restart leaving no air dash or coyote for the record's opening). Each search checks its
+  new fastest laps and the 256 fastest finishing laps by the course timer (`FinishedRun`) as loops of themselves, keeps
+  the fastest that repeats, and ends after 5 minutes without a faster lap; when its fastest lap doesn't repeat (the
+  restart carries the lap's history), the next search starts after that lap, so a lap tuned to what a lap leaves may
+  repeat where one tuned to the lead's finish didn't. Before 2026-10-07 only each new fastest lap was checked, the
+  search stopped 30 s after the first steady one, and it ran only while no loop repeated (Course 6 `WJ_DS_DJ_BS`: its
+  1.5557 s lap died on its second play and nothing was saved). Before 2026-10-02 it ran its minutes out and kept only the
+  fastest lap, so Course 3 `WJ_DS_DJ` sat 5 minutes a lap with nothing shown. A lap the search doesn't
   find is repaired (`RepairLoopLap`): the lap before (the first lap after a quick restart) played after the lead, and the
   reach windows (`fulltas --unsolved`, stopping once every goal is reached) take it on from where it breaks through the
   first lap's waypoints to the finish; a course run reaches its finish as a waypoint, not from loop pieces. After each, the loops
@@ -1448,6 +1466,20 @@ in time or physics ticks is never kept, and the plugin never judges a `-human.js
 for the category with "Play human version" (`/api/enginesim/play {human: true}`), and "Walk route" plays the newest
 one as fast as the selected route (same game time for a category route, same physics ticks for a farm route) in its
 place; while it plays, the studio's top bar turns violet with a HUMANIZED badge (`/api/state` `humanPlayback`).
+
+## Effects
+
+Before recording a route: `effects <start-trace> <route.json> [--out F]` finds the inputs that change nothing in the
+game, so the overlay can leave them out. Going through the route tick by tick, it drops each input in turn from the route
+as it stands so far: a dash press, its turn, its jump on dash frame, a spring dash, a jump press, a release (the button
+held on to the next press instead), then the stick's x and its y (set to 0). A drop stays when the whole game state
+(`Simulation.Fingerprint`, the engine's input still to play, the tick, frame and Full-TAS goal counts) is the route's own
+again within 20 input ticks, or the run ends as the route's does. At the end the route is played again with every drop
+at once and has to match. Presses, dashes and releases are numbered in the order the run makes them
+(`MacroEngine.JumpPresses`, `DashPresses`, `JumpReleases`), sticks by input tick. Course 4 `WJ_DS_DJ` 13.20 takes 3 s,
+`FalseEnding%-280` 353.29 23 s. The studio's **Hide inert inputs** (`POST /api/enginesim/effects {routeId}`) runs it on
+the selected route's course or Full-TAS trace into `effects-<inputs hash>.json`, and the overlay drops those inputs while
+that route plays from its start.
 
 ## Suggest
 

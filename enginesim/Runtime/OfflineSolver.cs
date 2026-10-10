@@ -52,13 +52,18 @@ namespace IGTAP.EngineSim
             /// <summary>A standing rule's "guide": true turns the guide on for every solve it covers, as --guide does.</summary>
             public bool Guide;
             public bool IsEmpty => Via.Count == 0 && Avoid.Count == 0;
+            /// <summary>A farm's rules: the avoid boxes cut only while a course times the run (from a start gate to the finish), not
+            /// the way back from a lap's restart to the start (Course 9 WJ_DS_DJ_BS's cut beside its start stood across the only
+            /// one). Set before the search starts.</summary>
+            public bool OnCourseOnly;
 
             /// <summary>A run's step from <paramref name="prev"/> (<see cref="Simulation.PlayerStepFrom"/>) to <paramref name="p"/>: past
             /// the next via box it counts it; true when an avoid box cuts it (one cutting only after a goal once
-            /// <paramref name="progress"/> has reached it).</summary>
-            public bool Step(WorldPos prev, WorldPos p, int progress, ref int waypoints)
+            /// <paramref name="progress"/> has reached it). <paramref name="timing"/>: a course times the run (<see cref="OnCourseOnly"/>).</summary>
+            public bool Step(WorldPos prev, WorldPos p, int progress, ref int waypoints, bool timing = true)
             {
                 if (waypoints < Via.Count && Via[waypoints].Contains(p)) waypoints++;
+                if (OnCourseOnly && !timing) return false;
                 foreach (Box box in Avoid) if (box.Cuts(prev, p) && box.Live(progress)) return true;
                 return false;
             }
@@ -145,11 +150,6 @@ namespace IGTAP.EngineSim
         /// <summary>No quick restarts: no mutation adds or moves one (a Full-TAS reset study: the way on that keeps the momentum).
         /// The seeds must carry none either. Set before the search starts.</summary>
         public bool NoResets;
-        /// <summary>Cell replays that started from a stored goal state rather than a worker's own ancestor.</summary>
-        public long GoalResumes;
-        /// <summary>Mined patterns drawn per grafted contact.</summary>
-        public int MinedDraws = 1;
-        /// <summary>The share of explore runs with a contact that get a mined graft (a Full-TAS window's per-window cap).</summary>
         /// <summary>The archive's byte budget (0: a quarter of the machine's memory). Fixed, the eviction is the same on any machine.</summary>
         public long ArchiveBudget;
         /// <summary>The cached states' byte budget (0: half the machine's memory over the workers); many solvers at once set it.</summary>
@@ -160,6 +160,11 @@ namespace IGTAP.EngineSim
         long _improvedAt;
         internal bool Spent => TickLimit > 0 && (Interlocked.Read(ref Ticks) >= TickLimit
             || StallTicks > 0 && Volatile.Read(ref Shared.Version) > 0 && Interlocked.Read(ref Ticks) - Interlocked.Read(ref _improvedAt) >= StallTicks);
+        /// <summary>Cell replays that started from a stored goal state rather than a worker's own ancestor.</summary>
+        public long GoalResumes;
+        /// <summary>Mined patterns drawn per grafted contact.</summary>
+        public int MinedDraws = 1;
+        /// <summary>The share of explore runs with a contact that get a mined graft (a Full-TAS window's per-window cap).</summary>
         public double GraftRate = .5;
         /// <summary>Run input ticks (from the search's start) whose contacts a graft prefers, 3 picks in 4 (a waste audit's span); null: any.</summary>
         public (int lo, int hi)? GraftFocus;
@@ -401,7 +406,17 @@ namespace IGTAP.EngineSim
                 InputTick k = without[i];
                 k.pause = k.pauseTick = k.pauseFrame = 0;
                 without[i] = k;
-                if (kept(without)) inputs = without;
+                if (kept(without)) { inputs = without; continue; }
+                // Else its shortest length that still keeps the run (1, 2, 4, ... frames): a pause's frames are live time, so a
+                // farm lap or Full-TAS run pays every one (Course 6 WJ_DS_DJ_BS's 0.94: its pauselift lifts as well on 13 frames as on 40).
+                for (int frames = 1; frames < inputs[i].pause; frames *= 2)
+                {
+                    var shorter = new List<InputTick>(inputs);
+                    InputTick s = shorter[i];
+                    s.pause = frames;
+                    shorter[i] = s;
+                    if (kept(shorter)) { inputs = shorter; break; }
+                }
             }
             return inputs;
         }
@@ -436,6 +451,7 @@ namespace IGTAP.EngineSim
                 Shared.RunTicks = runTicks;
                 Shared.Inputs = inputs;
                 Shared.Version++;
+                Interlocked.Exchange(ref _improvedAt, Interlocked.Read(ref Ticks));
                 if (Penalty != null) _penaltyTicks[inputs] = penaltyTicks;
                 _reports.Enqueue((time, runTicks, inputs, how));
             }
@@ -451,7 +467,6 @@ namespace IGTAP.EngineSim
             while (!_reports.IsEmpty && Monitor.TryEnter(_reporting))
                 try
                 {
-                Interlocked.Exchange(ref _improvedAt, Interlocked.Read(ref Ticks));
                     while (_reports.TryDequeue(out var r)) Improved?.Invoke(r.time, r.runTicks, r.inputs, r.how);
                 }
                 finally { Monitor.Exit(_reporting); }
@@ -578,6 +593,9 @@ namespace IGTAP.EngineSim
             FullTasGoal goal = sim.Goals.Current;
             if (goal == null) return float.NaN;
             CapturePos p = sim.PlayerAtCapture;
+            // A buy or reward goal: the walkable distance to its box's touch spot, with the field on (DistanceField.TouchBoxes).
+            if (goal.kind == FullTasGoal.Buy || goal.kind == FullTasGoal.Reward) return DistanceField.Enabled ? DistanceField.For(sim).Distance(p) : float.NaN;
+            if (goal.kind != FullTasGoal.At) return float.NaN;
             if (DistanceField.Enabled) return DistanceField.For(sim).Distance(p);
             float dx = Math.Max(0f, Math.Abs(p.x - goal.x) - goal.w / 2f), dy = Math.Max(0f, Math.Abs(p.y - goal.y) - goal.h / 2f);
             return MathF.Sqrt(dx * dx + dy * dy);
@@ -593,9 +611,6 @@ namespace IGTAP.EngineSim
             if (than == null || progress != than.Progress) return than == null || progress > than.Progress;
             float d = float.IsNaN(cell.Distance) ? float.PositiveInfinity : cell.Distance;
             float old = float.IsNaN(than.Cell.Distance) ? float.PositiveInfinity : than.Cell.Distance;
-            // A buy or reward goal: the walkable distance to its box's touch spot, with the field on (DistanceField.TouchBoxes).
-            if (goal.kind == FullTasGoal.Buy || goal.kind == FullTasGoal.Reward) return DistanceField.Enabled ? DistanceField.For(sim).Distance(p) : float.NaN;
-            if (goal.kind != FullTasGoal.At) return float.NaN;
             return d < old || d == old && cell.Rank < than.Cell.Rank;
         }
 
@@ -791,6 +806,15 @@ namespace IGTAP.EngineSim
                 if (!sim.TimedFromRunStart && sim.TargetCourse > 0)
                     _gates = sim.World.All<startGate>().Where(g => g.GetComponentInParent<courseScript>() is courseScript c && c.courseNumber == sim.TargetCourse)
                         .Select(g => sim.ToWorld(ScenePos.From(g.transform.position))).ToArray();
+                // The set-up reaches as far as the search's own start, wherever that is: a farm lap starts at the checkpoint a
+                // finish's restart sends the player to, which may be farther from the gate (Course 9 WJ_DS_DJ_BS: 2600 u), and a reach
+                // short of it cut every run on its first tick (0 finishes in 2.3M runs).
+                if (_gates != null && _gates.Length > 0)
+                {
+                    // Where the search starts and where its quick restart lands (the respawn point, in world units).
+                    var from = new[] { sim.PlayerWorld, new WorldPos(sim.Player.respawnPoint.x, sim.Player.respawnPoint.y) };
+                    _setupReach = Math.Max(SetupReach, from.Max(at => _gates.Min(g => Math.Max(Math.Abs(at.x - g.x), Math.Abs(at.y - g.y)))) + 500f);
+                }
                 // A run that may quick-restart (a Full-TAS window, resets allowed) also grafts the mined windows that restart.
                 _resets = _goalMode && !owner.NoResets;
                 if (owner.GuideWeight > 0f && DistanceField.Enabled)
@@ -807,7 +831,9 @@ namespace IGTAP.EngineSim
                         "superbounce", "superbounce", "superbounce", "backdash", "backdash", "hold", "hold", "retime", "retime", "vertical", "vertical",
                         "springdash", "lockstick", "lockstick", "dashturn" }
                     : new[] { "cut", "cut", "hop", "nojump", "stick", "insert", "hold", "retime", "vertical" };
-                if (_goalMode && !owner.NoResets) _kinds = _kinds.Concat(new[] { "reset", "noreset", "movereset" }).ToArray();
+                // A course run quick-restarts too, in its set-up before the timer (Optimize's "reset"): the restart's landing is
+                // another start than the category's (Course 6 WJ_DS_DJ_BS: a farm lap from it ran 1.04 against the record's 1.06).
+                if (!owner.NoResets) _kinds = _kinds.Concat(new[] { "reset", "noreset", "movereset" }).ToArray();
                 if (_omni) _kinds = _kinds.Concat(OmniKinds).ToArray();
             }
 
@@ -1648,6 +1674,12 @@ namespace IGTAP.EngineSim
                     }
                     case "reset":
                     {
+                        // A course run's restart pays only before its timer: there, from its second input.
+                        if (!_goalMode)
+                        {
+                            int timed = Array.FindIndex(_bestRun.Elapsed, e => e >= 0f);
+                            p = 1 + _rng.Next(Math.Max(1, timed < 0 ? n : timed));
+                        }
                         if (!CanReset(t, p)) return;
                         InputTick k = t[p]; k.reset = true; t[p] = k;
                         break;
@@ -1810,7 +1842,7 @@ namespace IGTAP.EngineSim
                 }
                 if (path == null) return;
                 int before = _waypoints;
-                if (path.Step(_sim.PlayerStepFrom, p, _sim.Progress, ref _waypoints)) _avoided = true;
+                if (path.Step(_sim.PlayerStepFrom, p, _sim.Progress, ref _waypoints, !path.OnCourseOnly || _sim.TimingCourse() != null)) _avoided = true;
                 if (_waypoints > before && _waypoints > _owner.MostWaypoints)
                     lock (_owner.Shared) _owner.MostWaypoints = Math.Max(_owner.MostWaypoints, _waypoints);
             }
@@ -1874,13 +1906,14 @@ namespace IGTAP.EngineSim
             // WJ_DS_DJ_BS filed 131k of its 158k untimed cells there, out to 8600 u, and never finished.
             const float SetupReach = 2500f;
             readonly WorldPos[] _gates;
+            readonly float _setupReach = SetupReach;
 
             bool OutOfSetupReach()
             {
                 if (_gates == null || _gates.Length == 0) return false;
                 WorldPos p = _sim.PlayerWorld;
                 foreach (WorldPos g in _gates)
-                    if (Math.Max(Math.Abs(p.x - g.x), Math.Abs(p.y - g.y)) <= SetupReach) return false;
+                    if (Math.Max(Math.Abs(p.x - g.x), Math.Abs(p.y - g.y)) <= _setupReach) return false;
                 return true;
             }
 

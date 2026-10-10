@@ -36,8 +36,14 @@ namespace IGTAPTasMod
         string _overlayRoute;
         string _overlayCourse = "—";
         string _overlayClock;
-        int _overlayJumpPresses, _overlayDashPresses, _overlayJumpRelease;
+        int _overlayJumpPresses, _overlayDashPresses, _overlayJumpReleases;
+        long _overlayRunTicks;
         bool _padJump1, _padJump2, _padJump2Newer, _padDash1Last;
+        // The running route's inert inputs (TasOverlayInert.cs), numbered from the counts before its first tick; whether each
+        // pad button's hold is shown, and whether the last release did nothing (its jump cut buffer neither).
+        InertInputs _overlayInert;
+        int _inertJumpBase, _inertDashBase, _inertReleaseBase;
+        bool _padJump1Shown = true, _padJump2Shown = true, _lastReleaseInert;
         // Manual play (OverlayListsManual): the list shows the player's own ticks. A session starts at the first tick that
         // holds an input, or at a respawn, so the rows a playback left stay until the player plays.
         bool _overlayManual, _manualRestart;
@@ -188,16 +194,36 @@ namespace IGTAPTasMod
                     _overlayRoute = _engine.ActiveMacroName;
                     _overlayCourse = _runCourse != null ? _runCourse.Token : "—";
                     _overlayHeldStick = Vector2.zero;
-                    // Run clears the last release to "never": the previous run's release isn't this run's first input.
-                    if (_engine.LastJumpRelease < 0) _overlayJumpRelease = _engine.LastJumpRelease;
+                    // Numbered from the route's first input: a list started later (a TAS editor seek) can't number them.
+                    _overlayInert = _engine.RunTicks == 1 ? LoadInertInputs(_engine.ActiveMacro) : null;
+                    _inertJumpBase = _overlayJumpPresses;
+                    _inertDashBase = _overlayDashPresses;
+                    _inertReleaseBase = _overlayJumpReleases;
+                    _overlayRunTicks = 0;
+                    _lastReleaseInert = false;
                     ResetTechs(player);
                 }
                 _overlayLastTick = _engine.PhysicsTicks;
                 _overlayTicks++;
                 _ticksSinceFrame++;
                 _overlayClock = null;
-                bool jumpPress = _engine.JumpPresses != _overlayJumpPresses, jumpRelease = _engine.LastJumpRelease != _overlayJumpRelease,
+                bool jumpPress = _engine.JumpPresses != _overlayJumpPresses, jumpRelease = _engine.JumpReleases != _overlayJumpReleases,
                     dash = _engine.DashPresses != _overlayDashPresses;
+                // The route's inert inputs are left out. A tick that took no input (a dash's) holds the next input's y, unless a lock
+                // or a jump on the dash's frame sets it.
+                InertInputs inert = _overlayInert;
+                bool played = _engine.RunTicks != _overlayRunTicks;
+                long input = played ? _engine.RunTicks - 1 : _engine.RunTicks;
+                int release = _engine.JumpReleases - _inertReleaseBase - 1;
+                bool pressShown = jumpPress && (inert == null || !inert.Jumps.Contains(_engine.JumpPresses - _inertJumpBase - 1));
+                bool releaseShown = jumpRelease && (inert == null || !inert.Releases.Contains(release));
+                if (jumpRelease) _lastReleaseInert = !releaseShown;
+                // A press's hold shows while the press or its release (the next one: it lets go of both buttons) does something.
+                bool holdShown = pressShown || inert == null || !inert.Releases.Contains(jumpRelease ? release : release + 1);
+                bool dashShown = dash && (inert == null || !inert.Dashes.Contains(_engine.DashPresses - _inertDashBase - 1));
+                Vector2 axis = _overlayAxis;
+                if (inert != null && played && InertInputs.At(inert.X, input)) axis.x = 0f;
+                if (inert != null && (played || !jumpPress && !_engine.TickStickFromLockY) && InertInputs.At(inert.Y, input)) axis.y = 0f;
                 // A tech demo lists only the ticks that hold an input: its idle tail (and the stick at rest between presses) is noise.
                 // Letting go of a held stick (a freeze turn's, or the tick's) is an input, so that tick is listed.
                 Vector2? freezeStick = _engine.FreezeStick;
@@ -206,19 +232,19 @@ namespace IGTAPTasMod
                 {
                     InputRow row = NextInputRow();
                     row.tickText = _overlayTicks.ToString();
-                    row.x = _overlayAxis.x;
-                    row.y = _overlayAxis.y;
+                    row.x = axis.x;
+                    row.y = axis.y;
                     row.stickText = StickText(row.x, row.y);
                     row.jumpPress = jumpPress;
-                    row.jumpRelease = jumpRelease;
-                    row.jumpCut = JumpCutBuffer(player);
-                    row.dash = dash;
-                    AssignPadButtons(row, _engine.JumpHeld || row.jumpPress);
+                    row.jumpRelease = releaseShown;
+                    row.jumpCut = JumpCutBuffer(player) && !_lastReleaseInert;
+                    row.dash = dashShown;
+                    AssignPadButtons(row, _engine.JumpHeld || row.jumpPress, pressShown, holdShown);
                     _inputRows.Add(row);
                     row.tick = _overlayTicks;
                     // A dash's freeze stick (turnX/turnY) comes between this tick and the next and turns the dash: its own row, so
                     // the dash's two inputs read in order (press dash with this tick's stick, then this stick in the freeze).
-                    if (freezeStick is Vector2 freeze)
+                    if (freezeStick is Vector2 freeze && (inert == null || !inert.Turns.Contains(_engine.DashPresses - _inertDashBase - 1)))
                     {
                         InputRow turn = NextInputRow();
                         turn.tick = _overlayTicks;
@@ -239,7 +265,8 @@ namespace IGTAPTasMod
             }
             _overlayJumpPresses = _engine.JumpPresses;
             _overlayDashPresses = _engine.DashPresses;
-            _overlayJumpRelease = _engine.LastJumpRelease;
+            _overlayJumpReleases = _engine.JumpReleases;
+            _overlayRunTicks = _engine.RunTicks;
             _manualJump1Press = _manualJump2Press = _manualDash1Press = _manualDash2Press = _manualRelease = false;
             SampleVelocity(player);
         }
@@ -313,20 +340,21 @@ namespace IGTAPTasMod
             _inputRows.Add(row);
         }
 
-        void AssignPadButtons(InputRow row, bool jumpDown)
+        void AssignPadButtons(InputRow row, bool jumpDown, bool pressShown, bool holdShown)
         {
             if (!jumpDown) _padJump1 = _padJump2 = false;
             else if (row.jumpPress)
             {
                 bool second = _padJump1 && (!_padJump2 || !_padJump2Newer);
-                if (second) _padJump2 = true; else _padJump1 = true;
+                if (second) { _padJump2 = true; _padJump2Shown = holdShown; }
+                else { _padJump1 = true; _padJump1Shown = holdShown; }
                 _padJump2Newer = second;
             }
-            else if (!_padJump1 && !_padJump2) _padJump1 = true;
-            row.jump1 = _padJump1;
-            row.jump2 = _padJump2;
-            row.jump1Press = row.jumpPress && !_padJump2Newer;
-            row.jump2Press = row.jumpPress && _padJump2Newer;
+            else if (!_padJump1 && !_padJump2) _padJump1 = _padJump1Shown = true;
+            row.jump1 = _padJump1 && _padJump1Shown;
+            row.jump2 = _padJump2 && _padJump2Shown;
+            row.jump1Press = pressShown && !_padJump2Newer;
+            row.jump2Press = pressShown && _padJump2Newer;
             row.dash1 = row.dash && !_padDash1Last;
             row.dash2 = row.dash && _padDash1Last;
             _padDash1Last = row.dash1;
@@ -1098,6 +1126,9 @@ namespace IGTAPTasMod
                 if (row.jump2) Label(new Rect(jumpX + 40 * scale, y, 40 * scale, rowHeight), "J2", _overlayText, row.jump2Press ? JumpColor : HeldColor);
                 if (!row.jump1 && !row.jump2 && (row.jumpRelease || row.jumpCut))
                     Label(new Rect(jumpX, y, 90 * scale, rowHeight), row.jumpRelease ? "release" : "cut", _overlayText, row.jumpRelease ? PanelText : MutedColor);
+                // Letting go of one button while the other stays down still cuts the jump: the cut goes in the released button's slot.
+                else if (row.jump1 != row.jump2 && (row.jumpRelease || row.jumpCut))
+                    Label(new Rect(row.jump1 ? jumpX + 40 * scale : jumpX, y, 40 * scale, rowHeight), "cut", _overlayText, row.jumpRelease ? PanelText : MutedColor);
                 if (row.dash1) Label(new Rect(dashX, y, 40 * scale, rowHeight), "D1", _overlayText, DashColor);
                 if (row.dash2) Label(new Rect(dashX + 40 * scale, y, 40 * scale, rowHeight), "D2", _overlayText, DashColor);
             }

@@ -63,7 +63,7 @@ type FullTasRun = { name: string; start?: string | null; savestate?: string | nu
   & Partial<Omit<FullTasClassRun, "name">>;
 type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string; queue?: FullTasQueue | null; difficulty?: FullTasDifficultyJob | null };
 type StudioState = {
-  connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean; checkpointRespawns?: boolean; fastPlayback?: boolean; tasSkin?: boolean;
+  connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean; checkpointRespawns?: boolean; fastPlayback?: boolean; tasSkin?: boolean; tasSkinOutline?: boolean;
   saveUnlocks?: Caps | null;
   selectedRouteId: string; routes: Route[]; categories: Category[]; courses?: Course[]; recordings: Recording[]; savestates: Savestate[]; solver: SolverState;
   fullTas?: FullTasState;
@@ -89,6 +89,8 @@ export default function Studio() {
   const [state, setState] = useState<StudioState>(emptyState);
   const [tab, setTab] = useState("fulltas");
   const [error, setError] = useState("");
+  // Hide inert inputs (/enginesim/effects): the route it ran on, and its result or null while it runs.
+  const [inert, setInert] = useState<{ routeId: string; text: string | null } | null>(null);
   const [mapTarget, setMapTarget] = useState<MapTarget | null>(null);
   // The Optimize tab's targets: one opens in Improve a course, several (ctrl+click) run in turn.
   const [courseTargets, setCourseTargets] = useState<CourseTarget[]>([]);
@@ -116,6 +118,20 @@ export default function Studio() {
     try { setError(""); await request(path, body); return true; }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); return false; }
   };
+  const findInert = async () => {
+    if (!route) return;
+    setError("");
+    setInert({ routeId: route.id, text: null });
+    try {
+      const r = await request("/enginesim/effects", { routeId: route.id });
+      const ticks = (ranges: number[][]) => ranges.reduce((n, [a, b]) => n + b - a + 1, 0);
+      setInert({ routeId: route.id, text: `Overlay hides ${r.jump.length}/${r.totals.jump} jump presses, ${r.dash.length}/${r.totals.dash} dashes (${r.turn.length} turns), `
+        + `${r.release.length}/${r.totals.release} releases, x on ${ticks(r.x)} and y on ${ticks(r.y)} input ticks` });
+    } catch (e) {
+      setInert(null);
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
   return <main className="shell">
     <section className="workspace">
       <div className="toggleBar">
@@ -132,6 +148,10 @@ export default function Studio() {
           <input type="checkbox" checked={!!state.tasSkin} disabled={!state.connected} onChange={e => command("/settings/tas-skin", { on: e.target.checked })} />
           <strong>TAS skin</strong>
         </label>
+        <label className={`capabilityLock executable ${state.tasSkinOutline ? "on" : ""}`} title="In game: the TAS skin as the hurtbox's outline only, over the game's own sprite.">
+          <input type="checkbox" checked={!!state.tasSkinOutline} disabled={!state.connected || !state.tasSkin} onChange={e => command("/settings/tas-skin-outline", { on: e.target.checked })} />
+          <strong>Outline only</strong>
+        </label>
         <label className={`capabilityLock executable ${state.breakerLightsForced ? "on" : ""}`} title="In game: Area 1 lit as before the breaker. Saved lights unchanged.">
           <input type="checkbox" checked={!!state.breakerLightsForced} disabled={!state.connected} onChange={e => command("/settings/breaker-lights", { on: e.target.checked })} />
           <strong>Breaker lights</strong>
@@ -142,13 +162,14 @@ export default function Studio() {
         </label>
       </div>
       <header className={`topbar ${state.humanPlayback ? "humanized" : ""}`}>
-        <div><p className="eyebrow">SELECTED ROUTE</p><h1>{route?.name ?? "No route"}</h1><p className="statusLine"><span className={state.running ? "pulse" : "dot"} />{state.humanPlayback && <span className="humanBadge" title="Human offline best: same time, fewer perfect inputs. Never saved.">HUMANIZED</span>}{state.engineStatus}</p></div>
+        <div><p className="eyebrow">SELECTED ROUTE</p><h1>{route?.name ?? "No route"}</h1><p className="statusLine"><span className={state.running ? "pulse" : "dot"} />{state.humanPlayback && <span className="humanBadge" title="Human offline best: same time, fewer perfect inputs. Never saved.">HUMANIZED</span>}{state.engineStatus}</p>{inert?.text && inert.routeId === route?.id && <p className="statusLine">{inert.text}</p>}</div>
         <div className="transport">
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/run")}>▶ Run route</button>
           <label className={`fastPlayback ${state.fastPlayback ? "on" : ""}`} title="On: 1x playback doesn't wait for real time and runs as fast as the game renders. Game time per frame stays fixed, so it plays the same. Walks and probes stay paced.">
             <input type="checkbox" checked={!!state.fastPlayback} disabled={!state.connected} onChange={e => command("/settings/fast-playback", { on: e.target.checked })} />Fast
           </label>
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/walk", { slowdown: 10 })} title={"Replays the route 10× slower, human version when it's as fast."}>⏵ Walk route</button>
+          <button className="secondary" disabled={!route || inert?.text === null} onClick={findInert} title={"Replays the route offline without each input in turn; the overlay then leaves out the inputs that change nothing in the game. Run it before recording."}>{inert?.text === null ? "Finding inert inputs…" : "Hide inert inputs"}</button>
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/duplicate")}>Duplicate</button>
           <button className="secondary" disabled={!route} onClick={() => { const name=window.prompt("Rename route",route?.name); if(name?.trim()) command("/routes/rename",{routeId:route?.id,name:name.trim()}); }}>Rename</button>
           <button className="danger" disabled={!state.running && !state.recording} onClick={() => command("/routes/stop")}>Stop</button>
@@ -1132,7 +1153,7 @@ function SolveMap({target,courses,runs,goals,busy,onClose}:{target:MapTarget;cou
       <label className="ghostPick" title="Its number as the goals table shows it. Also fades the boxes that don't cut there.">Goal
         <input type="number" min={0} style={{ width: 80 }} placeholder="any" value={avoidGoal} onChange={e => setAvoidGoal(e.target.value)}/>
       </label>
-      {focus != null && <code className="hint">{goals?.[focus] ?? "no such goal"}</code>}
+      {focus != null && <code className="hint">{goals?.[focus] ?? "no such goal"}</code>}</>}
       <span className="ghostPick" title="Runs may enter the box across these sides; it cuts entering across the rest. None: any tick inside is cut.">Open sides
         {SIDES.map(side => <label key={side} className="passLoop"><input type="checkbox" checked={avoidOpen.includes(side)} onChange={() => setAvoidOpen(o => o.includes(side) ? o.filter(k => k !== side) : [...o, side])}/>{side}</label>)}
       </span>

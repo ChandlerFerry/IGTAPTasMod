@@ -120,6 +120,8 @@ namespace IGTAPTasMod
             ("buytree20", "zone 2/TreeArea/The Tree/TreePart20/MoreOrbs", 3),
             ("buytree21", "zone 2/TreeArea/The Tree/TreePart21/5xIncWatts", 2),
             ("buytree22", "zone 2/TreeArea/The Tree/TreePart22/exempt c8 from prestige", 0),
+            // The OmniDash box: its first buy turns Area 1 overgrown and opens the Zone 2→1 path (Economy.OmniDashFirstBuy).
+            ("buytree23", "zone 2/TreeArea/The Tree/TreePart23/OmniDash", 2),
             ("buytree24", "zone 2/TreeArea/The Tree/TreePart24/5xGP", 2),
             ("buytree25", "zone 2/TreeArea/The Tree/TreePart25/BuyMaxC6", 0),
             ("buytree26", "zone 2/TreeArea/The Tree/TreePart26/BuyMaxBox", 0),

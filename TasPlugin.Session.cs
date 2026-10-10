@@ -306,18 +306,18 @@ namespace IGTAPTasMod
             return null;
         }
 
-        void StartNewGame(WebStudioRequest request, bool vman, string savestate, Vector2? rebaseAt = null, int? tree = null)
+        void StartNewGame(WebStudioRequest request, bool vman, string savestate, Vector2? rebaseAt = null, JToken tree = null)
         {
             if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
             if (_solverRunning) throw new InvalidOperationException("Stop the solver first.");
             LoadNewGame(request, vman, savestate, rebaseAt, tree);
         }
 
-        void LoadNewGame(WebStudioRequest request, bool vman, string savestate, Vector2? rebaseAt = null, int? tree = null)
+        void LoadNewGame(WebStudioRequest request, bool vman, string savestate, Vector2? rebaseAt = null, JToken tree = null)
         {
             if (_newGamePhase != 0) throw new InvalidOperationException("A new game is already loading.");
             if (_bootstrapRequest != null) throw new InvalidOperationException("A bootstrap is in progress.");
-            Savestate state = savestate == null ? null : _savestates.Find(s => s.id == savestate);
+            Savestate state = savestate == null ? null : ReloadSavestate(savestate);
             if (savestate != null && state == null) throw new InvalidOperationException("No savestate " + savestate + ".");
             if (!_newGameSession)
             {
@@ -502,7 +502,7 @@ namespace IGTAPTasMod
             request.Completed.Set();
         }
 
-        bool NewGameIs(FullTasRunDef run) { return _newGameVman == run.Vman && _newGameSavestate == run.savestate && _newGameRebaseAt == run.RebaseAt && _newGameTree == run.tree; }
+        bool NewGameIs(FullTasRunDef run) { return _newGameVman == run.Vman && _newGameSavestate == run.savestate && _newGameRebaseAt == run.RebaseAt && JToken.DeepEquals(_newGameTree, run.tree); }
 
         TurboRunner.Snapshot NewGameStart(FullTasRunDef run)
         {

@@ -1552,16 +1552,10 @@ namespace IGTAP.EngineSim
                 _pauseFrames = Engine.TakePause(out _pauseAfter);
                 if (_pauseFrames > 0) Events |= StepEvents.Paused;
                 EconomyFixedUpdates();
-                // No write: the blend was never the body's, so the sync leaves the body where the step put it (turbo's too). After a
-                // rebase every body syncs to its transform, and the blend there pulled the player back by the frame's lag.
-                // Once a rebase has run in this run, turbo's step-end transform write (Place(player, _stepTo)) moves the body on
-                // every tick to what the transform reads back through the moved parent, rounded (1x too: VMAN 46.96's route died
-                // at action 486 in both while this engine finished it). A capture taken after the game's own rebases doesn't.
-                if (Player.transform.m_Position == lag)
-                {
-                    Player.transform.StoreWorldPosition(_stepTo);
-                    if (Rebased && Player.transform.m_Position != BodyPosition()) Physics.TransformChanged(Player.transform, true);
-                }
+                // No write: the blend was never the body's, so the sync leaves the body where the step put it, exactly: 1x never
+                // syncs its transform's read-back through the moved parent into the body (turbo keeps it too, TurboRunner.KeepBody).
+                // After a rebase every body syncs to its transform, and the blend there pulled the player back by the frame's lag.
+                if (Player.transform.m_Position == lag) Player.transform.StoreWorldPosition(_stepTo);
                 Physics.SyncTransforms();
                 _stepFrom = BodyPosition();
                 Physics.Simulate(World.FixedDeltaTime);
@@ -1618,7 +1612,9 @@ namespace IGTAP.EngineSim
                 stepped++;
                 onStep?.Invoke(stepped - 1);
                 if (!Engine.IsRunning) continue;
-                if (Engine.InputsExhausted) idleTicks++;
+                // A run ends 20 ticks after its inputs, not counting ticks that take none: a finish in a stretch of them after the
+                // last input (Course 7 WJ_DS_DJ_BS's record and farm laps, 64 ticks on) still comes. As the gate's (Solver.cs).
+                if (Engine.InputsExhausted && !Engine.TickLocked) idleTicks++;
                 int tick = (int)Engine.RunTicks;
                 if (tick == lastTick) continue;
                 lastTick = tick;

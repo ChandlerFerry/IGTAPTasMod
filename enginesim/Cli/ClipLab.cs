@@ -234,7 +234,7 @@ namespace IGTAP.EngineSim.Cli
         struct Outcome
         {
             public int Start, Branch;
-            public float MaxY, EndY, MaxX, MinX, LaunchVy, BodyVy, BodyVx, LaunchVx;
+            public float MaxY, EndY, EndX, MaxX, MinX, LaunchVy, BodyVy, BodyVx, LaunchVx;
             public int MaxYStep;
             public string End;
             /// <summary>The first step the player was on a wall after being off one (-1: never), and where.</summary>
@@ -247,7 +247,7 @@ namespace IGTAP.EngineSim.Cli
             float maxY = float.NegativeInfinity, maxX = float.NegativeInfinity, minX = float.PositiveInfinity, launch = float.NegativeInfinity, bodyVy = float.NegativeInfinity, bodyVx = 0f, launchVx = 0f;
             int maxStep = 0, wallStep = -1;
             bool offWall = false;
-            float endY = 0f, wallX = 0f, wallY = 0f;
+            float endY = 0f, endX = 0f, wallX = 0f, wallY = 0f;
             RunResult r = sim.Run(inputs, from, extraTicks: lab.Horizon, onStep: step =>
             {
                 WorldPos p = sim.PlayerWorld;
@@ -258,11 +258,11 @@ namespace IGTAP.EngineSim.Cli
                 if (v.y + m.y > launch) { launch = v.y + m.y; launchVx = v.x + m.x; }
                 bodyVy = Math.Max(bodyVy, body.vy);
                 if (Math.Abs(body.vx) > Math.Abs(bodyVx)) bodyVx = body.vx;
-                endY = p.y;
+                endY = p.y; endX = p.x;
                 if (!sim.Player.OnWall) offWall = true;
                 else if (wallStep < 0 && offWall) { wallStep = step; wallX = p.x; wallY = p.y; }
             });
-            return new Outcome { Start = startIndex, Branch = branchIndex, MaxY = maxY, MaxYStep = maxStep, EndY = endY, MaxX = maxX, MinX = minX,
+            return new Outcome { Start = startIndex, Branch = branchIndex, MaxY = maxY, MaxYStep = maxStep, EndY = endY, EndX = endX, MaxX = maxX, MinX = minX,
                 LaunchVy = launch, BodyVy = bodyVy, BodyVx = bodyVx, LaunchVx = launchVx, End = r.EndReason, WallStep = wallStep, WallX = wallX, WallY = wallY };
         }
 
@@ -314,12 +314,12 @@ namespace IGTAP.EngineSim.Cli
             {
                 using var w = new StreamWriter(outPath);
                 string[] keys = lab.Starts.SelectMany(s => s.Keys).Where(k => k != "savestate").Distinct().ToArray();
-                w.WriteLine("start,branch," + string.Join(",", keys) + ",maxY,maxYStep,endY,minX,maxX,launchVy,launchVx,bodyVy,bodyVx,end,wallStep,wallX,wallY");
+                w.WriteLine("start,branch," + string.Join(",", keys) + ",maxY,maxYStep,endY,endX,minX,maxX,launchVy,launchVx,bodyVy,bodyVx,end,wallStep,wallX,wallY");
                 foreach (Outcome o in valid)
                 {
                     var st = lab.Starts[o.Start];
                     w.WriteLine(o.Start + ",\"" + lab.Branches[o.Branch].name + "\"," + string.Join(",", keys.Select(k => st.TryGetValue(k, out JsonElement v) ? v.GetRawText().Trim('"').Replace(',', ';') : ""))
-                        + $",{o.MaxY:0.##},{o.MaxYStep},{o.EndY:0.##},{o.MinX:0.##},{o.MaxX:0.##},{o.LaunchVy:0.#},{o.LaunchVx:0.#},{o.BodyVy:0.#},{o.BodyVx:0.#},\"{o.End}\",{o.WallStep},{o.WallX:0.##},{o.WallY:0.##}");
+                        + $",{o.MaxY:0.##},{o.MaxYStep},{o.EndY:0.##},{o.EndX:0.##},{o.MinX:0.##},{o.MaxX:0.##},{o.LaunchVy:0.#},{o.LaunchVx:0.#},{o.BodyVy:0.#},{o.BodyVx:0.#},\"{o.End}\",{o.WallStep},{o.WallX:0.##},{o.WallY:0.##}");
                 }
             }
             Console.WriteLine($"{valid.Count} runs in {clock.Elapsed.TotalSeconds:0.0}s; top {top} by maxY:");

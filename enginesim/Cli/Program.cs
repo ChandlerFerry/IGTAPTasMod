@@ -36,6 +36,7 @@ namespace IGTAP.EngineSim.Cli
                     case "suggest": return Suggest.Run(args.Skip(1).ToArray());
                     case "techs": return Techs.Run(args.Skip(1).ToArray());
                     case "techs-used": return TechsUsed.Run(args.Skip(1).ToArray());
+                    case "effects": return Effects.Run(args.Skip(1).ToArray());
                     case "difficulty": return Difficulty.Run(args.Skip(1).ToArray());
                     case "ease": return Difficulty.Ease(args.Skip(1).ToArray());
                     case "timeloss": return TimeLoss.Run(args.Skip(1).ToArray());

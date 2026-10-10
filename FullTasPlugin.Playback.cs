@@ -75,11 +75,21 @@ namespace IGTAPTasMod
             play.fastForward = 0;
             Movement player = FindWorldMovement();
             bool frames = play.fastForwardFrames;
-            TurboRunner.Run(player, () => _engine.IsRunning && (frames ? _engine.PhysicsTicks : _engine.RunTicks) < until, until * 4 + 1000, () =>
+            // As the TAS editor's seek leaves 1x (TasSeek): turbo models a dash's freeze itself, so a real IE_TimeStop it started
+            // would freeze 1x again after it (ZipEscape% from tick 73000, mid-dash: frames frozen at 1x, the run a tick behind,
+            // buycd8 missed; a stretch's play died before the stretch); one tick short, the last at 1x; the player at the last
+            // frame's blend, where 1x's next FixedUpdate reads it.
+            TurboRunner.DropTimeStops = true;
+            try
             {
-                _engine.Clock++;
-                _engineSimTickHook?.Invoke(player);
-            });
+                TurboRunner.Run(player, () => _engine.IsRunning && (frames ? _engine.PhysicsTicks : _engine.RunTicks) < until - 1, until * 4 + 1000, () =>
+                {
+                    _engine.Clock++;
+                    _engineSimTickHook?.Invoke(player);
+                });
+            }
+            finally { TurboRunner.DropTimeStops = false; }
+            TurboRunner.ShowLastFrame(player);
             Logger.LogInfo("Fast-forwarded " + play.route.name + " to " + (frames ? "frame " + _engine.PhysicsTicks : "input tick " + _engine.RunTicks) + " in turbo.");
         }
 

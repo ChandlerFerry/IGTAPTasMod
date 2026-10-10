@@ -183,21 +183,36 @@ namespace IGTAPTasMod
         /// <summary>StartPass is running a woken box's Start itself: not Unity's real one.</summary>
         static bool _modellingStart;
 
+        static readonly AccessTools.FieldRef<upgradeBox, PlatformMover> BoxDoor = AccessTools.FieldRefAccess<upgradeBox, PlatformMover>("doorToOpen");
+        static readonly AccessTools.FieldRef<PlatformMover, int> MoverStop = AccessTools.FieldRefAccess<PlatformMover, int>("indexInPositions");
+
         /// <summary>Unity's real Start of a behaviour a run modelled: the RNG and an upgrade box's fields (cap, base cap, costs) as the
-        /// modelled Start left them, put back after it (README ### Rules, exception 12), so it doesn't apply twice.</summary>
-        static void BeforeDrawingStart(Behaviour __instance, out (UnityEngine.Random.State rng, object[] box)? __state)
+        /// modelled Start left them, put back after it (README ### Rules, exception 12), so it doesn't apply twice. Its door's stop
+        /// too: the Area 2 door box modelled while still for sale and bought later in the run has a real Start that jumps the
+        /// door it opened (upgradeBox.cs:260-263, PlatformMover.JumpToNextState: ZipEscape% from tick 73000, the door mid-opening
+        /// back at its first stop and still, the player landing on it).</summary>
+        static void BeforeDrawingStart(Behaviour __instance, out (UnityEngine.Random.State rng, object[] box, PlatformMover door, int stop, Vector3 local)? __state)
         {
             __state = null;
             if (_modellingStart) return;
             StartsRun.Add(__instance);
-            if (_startsModelled.Remove(__instance)) __state = (UnityEngine.Random.state, __instance is upgradeBox box ? CaptureFields(box) : null);
+            if (!_startsModelled.Remove(__instance)) return;
+            upgradeBox box = __instance as upgradeBox;
+            PlatformMover door = box != null ? BoxDoor(box) : null;
+            __state = (UnityEngine.Random.state, box != null ? CaptureFields(box) : null, door,
+                door != null ? MoverStop(door) : 0, door != null ? door.transform.localPosition : Vector3.zero);
         }
 
-        static void AfterDrawingStart(Behaviour __instance, (UnityEngine.Random.State rng, object[] box)? __state)
+        static void AfterDrawingStart(Behaviour __instance, (UnityEngine.Random.State rng, object[] box, PlatformMover door, int stop, Vector3 local)? __state)
         {
             if (__state == null) return;
-            var (drawn, box) = __state.Value;
+            var (drawn, box, door, stop, local) = __state.Value;
             if (box != null) RestoreFields(__instance, box);
+            if (door != null && (MoverStop(door) != stop || door.transform.localPosition != local))
+            {
+                MoverStop(door) = stop;
+                door.transform.localPosition = local;
+            }
             UnityEngine.Random.state = drawn;
         }
 
@@ -396,11 +411,40 @@ namespace IGTAPTasMod
         /// </summary>
         internal static bool DropTimeStops;
 
-        /// <summary>After a run that 1x goes on from: the player where the last rendered frame's blend shows it, which is
-        /// where 1x's next FixedUpdate reads it (the run leaves it at the step's end).</summary>
+        /// <summary>The last frame's blend and the body's pose a run left for 1x's next FixedUpdate (<see cref="ShowLastFrame"/>).</summary>
+        static (Vector2 blend, Vector2 body)? _handoff;
+        static Vector3 _handoffLag;
+
+        /// <summary>
+        /// After a run that 1x goes on from: 1x's next FixedUpdate reads the player at the last rendered frame's blend, as a
+        /// run's own ticks do. Not placed now: Unity syncs a script's transform write into the body at the next frame, which
+        /// moved the body back by the blend's lag for good (ZipEscape% from tick 73000, vx -460: 1.25 u behind the engine
+        /// from the first 1x tick on). The run leaves the transform on the body; the blend is placed around that FixedUpdate
+        /// (<see cref="BeforeHandoffTick"/>, <see cref="AfterHandoffTick"/>).
+        /// </summary>
         internal static void ShowLastFrame(Movement movement)
         {
-            Place(movement.transform, Vector2.Lerp(_stepFrom, _stepTo, MacroEngine.FrameGrid.Playback.Frames(TasPlugin.GridTicks).LastAlpha));
+            _handoff = (Vector2.Lerp(_stepFrom, _stepTo, MacroEngine.FrameGrid.Playback.Frames(TasPlugin.GridTicks).LastAlpha), _stepTo);
+        }
+
+        /// <summary>1x's first FixedUpdate after a handoff, before anything of it: the player at the blend, as Run places it.</summary>
+        internal static void BeforeHandoffTick(Movement movement)
+        {
+            if (Active || _handoff == null) return;
+            _handoffLag = Place(movement.transform, _handoff.Value.blend);
+        }
+
+        /// <summary>After that tick's FixedUpdates: no write, so the transform back on the body and the step leaves the body
+        /// where it is (Run's own check).</summary>
+        internal static void AfterHandoffTick(Movement movement)
+        {
+            if (Active || _handoff == null) return;
+            Vector2 body = _handoff.Value.body;
+            _handoff = null;
+            if (movement.transform.position != _handoffLag) return;
+            Place(movement.transform, body);
+            Physics2D.SyncTransforms();
+            KeepBody(movement.GetComponent<Rigidbody2D>(), body);
         }
 
         static bool BeforeStartCoroutine(MonoBehaviour __instance, IEnumerator routine, ref Coroutine __result)
@@ -1341,8 +1385,21 @@ namespace IGTAPTasMod
         /// </summary>
         static void FrameStart(Transform player, Rigidbody2D body)
         {
-            Place(player, body.position);
+            Vector2 at = body.position;
+            Place(player, at);
             Physics2D.SyncTransforms();
+            KeepBody(body, at);
+        }
+
+        /// <summary>
+        /// The body back at its exact pose after a sync of turbo's own transform write onto it: the transform reads back through
+        /// the player's parent (PlayerObject, which every rebase and category start moves) rounded to the local position's float
+        /// steps, and the sync took that rounding into the body. 1x never writes the body so (Unity's interpolation writes
+        /// aren't synced back): a 1x probe's body sits off the parent's grid, turbo's sat on it, a float step apart a tick.
+        /// </summary>
+        static void KeepBody(Rigidbody2D body, Vector2 at)
+        {
+            if (body.position != at) body.position = at;
         }
 
         /// <summary>Puts the player's transform at a position (its z kept) and returns what it reads back, to tell a game write from it.</summary>
@@ -1371,6 +1428,7 @@ namespace IGTAPTasMod
             Pending.Clear();
             _frame = 0;
             _atomNow = false;
+            _handoff = null;
             if (resume != null) Pending.AddRange(resume.pending);
             Polls.Clear();
             if (resume?.polls != null) Polls.AddRange(resume.polls);
@@ -1437,9 +1495,13 @@ namespace IGTAPTasMod
                     // A used refill orb counts its cooldown down and grows back at its end (JiggleDropScript.FixedUpdate).
                     foreach (JiggleDropScript orb in orbs)
                         if (orb != null && orb.isActiveAndEnabled && OrbCooldown(orb) > 0f) _orbFixedUpdate(orb);
-                    // No write: the blend was never the body's, so the sync before the step leaves the body where it is.
-                    if (player.position == lag) Place(player, _stepTo);
+                    // No write: the blend was never the body's, so the sync before the step leaves the body where it is (a frame's
+                    // write still pending, _stepTo off the body, moves it as at 1x).
+                    Vector2 still = body.position;
+                    bool wrote = player.position != lag;
+                    if (!wrote) Place(player, _stepTo);
                     Physics2D.SyncTransforms();
+                    if (!wrote && _stepTo == still) KeepBody(body, still);
                     _stepFrom = body.position;
                     Physics2D.Simulate(dt);
                     // A physics callback's write (a sideways spring's push, Movement.hitSpring) moves the body there at once and

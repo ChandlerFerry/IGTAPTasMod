@@ -2256,8 +2256,68 @@ namespace IGTAP.EngineSim.Cli
                 bought = played;
                 _waited = w;
             }
-            if (bought != null) { Log($"realize: {goals[^1].label} waited {_waited} ticks for its Cash"); return bought; }
+            // The wait as an idle (standing under the box, the Full-TAS convention: docs/superpowers/specs/2026-10-06-fulltas-idles-design.md)
+            // is kept unless waiting where the step before left the player buys sooner (its courses' clones on screen can pay more).
+            int waitedHere = _waited;
+            if (levels == 1 && UnderBox(z, goals, most) is var (ui, us, ut, uw) && (bought == null || ut <= bought.Value.tick))
+            {
+                Log($"realize: {goals[^1].label} waited {uw} ticks for its Cash under its box (buys on tick {ut}"
+                    + (bought == null ? "" : $"; waiting where the step before left the player: {waitedHere} ticks, tick {bought.Value.tick}") + ")");
+                _waited = uw;
+                return (ui, us, ut);
+            }
+            if (bought != null) { Log($"realize: {goals[^1].label} waited {waitedHere} ticks for its Cash"); _waited = waitedHere; return bought; }
             _whyNot = $"{goals[^1].label}: no way buys it after waiting {paid} ticks";
+            return null;
+        }
+
+        /// <summary>
+        /// A buy short of Cash waited for as an idle: the walk to the spot under its box (where FullTasIdles counts the player as at
+        /// the box), standing there until it's paid for, then the builder's way in (a standing in its trigger buys it on its own).
+        /// The idle's ticks with the result; null when the spot or the buy doesn't play.
+        /// </summary>
+        (List<InputTick> inputs, SimSnapshot state, long tick, int idle)? UnderBox(Realization z, FullTasGoal[] goals, int most)
+        {
+            FullTasGoal buy = goals[^1];
+            if (buy.kind != FullTasGoal.Buy || buy.boxes == null) return null;
+            Read(z.State);
+            Zone zone = BoxZone(buy);
+            if (float.IsNaN(zone.x0)) return null;
+            float bottom = zone.y0 - IdleReachBelow;
+            FullTasGoal spot = NewGoal(FormattableString.Invariant($"at:{zone.Middle:0},{(bottom + zone.y1) / 2:0},{zone.x1 - zone.x0 + 2 * zone.playerHalf:0},{zone.y1 - bottom:0}"))?.goal;
+            if (spot == null) return null;
+            var walk = Play(z.State, z.Inputs, z.Planned, new[] { spot }, true);
+            if (walk == null) { Log($"realize: {buy.label}: no walk to the spot under its box ({_whyNot})"); return null; }
+            var (inputs, state, tick) = walk.Value;
+            var list = _kept.Concat(z.Planned).ToList();
+            string[] boxes = goals.SelectMany(g => g.boxes ?? Array.Empty<string>()).ToArray();
+            List<InputTick> Idle(int n) => Enumerable.Repeat(new InputTick(), n).ToList();
+            Track(list.Concat(goals).ToList());
+            SimSnapshot here = state.WithGoal(Fresh(_goals, list.Count));
+            bool Done(SimSnapshot s) => s.Goal.Next >= list.Count + goals.Length;
+            // 25 ticks at a time until it's paid for (or bought: the stand is in its trigger), then back to the first tick that pays.
+            int paid = -1;
+            SimSnapshot end = here;
+            for (int w = 25; w <= most && paid < 0; w += 25)
+            {
+                Track(list.Concat(goals).ToList());
+                SimSnapshot s = AdvanceFrom(end, inputs.Count + w - 25, Idle(25));
+                if (s == null) return null;
+                end = s;
+                if (Done(s) || Affordable(s, boxes) == true) paid = w;
+            }
+            if (paid < 0) return null;
+            for (int w = Math.Max(0, paid - 24); w <= paid; w++)
+            {
+                Track(list.Concat(goals).ToList());
+                SimSnapshot s = w == 0 ? here : AdvanceFrom(here, inputs.Count, Idle(w));
+                if (s == null) return null;
+                List<InputTick> stood = inputs.Concat(Idle(w)).ToList();
+                if (Done(s)) return (stood, s, tick + w, w);
+                if (Affordable(s, boxes) != true) continue;
+                var bought = Play(s, stood, z.Planned, goals, true);
+                return bought == null ? null : (bought.Value.inputs, bought.Value.state, bought.Value.tick, w);
+            }
             return null;
         }
     }

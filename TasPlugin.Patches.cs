@@ -191,6 +191,7 @@ namespace IGTAPTasMod
             if (Instance == null) return true;
             if (!IsMenuPlayer(__instance))
             {
+                TurboRunner.BeforeHandoffTick(__instance);
                 Instance.KeepInterpolation(__instance);
                 __instance.isRespawningAtCheckpoints = Instance.CheckpointRespawns;
                 Instance.OverlayBeforeTick(__instance);
@@ -265,6 +266,7 @@ namespace IGTAPTasMod
             if (TurboRunner.Active) TurboRunner.Pause(pause, afterFrames);
             else Instance.OpenPlaybackPause(__instance, pause, afterFrames);
             RunDeferredFixedUpdates();
+            TurboRunner.AfterHandoffTick(__instance);
         }
 
         private static bool BeforeOrderedFixedUpdate(MonoBehaviour __instance)
@@ -403,6 +405,7 @@ namespace IGTAPTasMod
                 Instance._loopFinishes.Add((Instance._engine.RunTicks, Instance._engine.PhysicsTicks, Instance._engine.HeldFrames));
                 return;
             }
+            if (Instance._farmPlayback && !Instance._silentEvaluation) return;
             Instance._recorder.MarkCourseFinish(Instance._pendingCourseTime);
             if (Instance._recorder.IsRecording) Instance.StopRecording("Course finish detected");
             Instance._engine.CompleteFromGame("Course finish detected", Instance._pendingCourseTime);

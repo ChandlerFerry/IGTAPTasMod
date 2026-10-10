@@ -1,0 +1,11 @@
+{
+  "name": "Test-C9-vman",
+  "start": "vman",
+  "savestate": "e35f03e277c2476d99a64756c6853d8a",
+  "tree": [],
+  "section": "test",
+  "goals": [
+    "start:9",
+    "finish:9"
+  ]
+}

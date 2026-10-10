@@ -37,6 +37,8 @@ ordered as the sections they came from.
   `fulltas-VMAN` positions now match on every tick (body y 7.7e-6 at 1653 and 1731); isolated in a build without it,
   both VMAN traces split at 1675 and `fulltas-VMAN` at 1590. No other corpus trace changes.
 - **Where:** `Simulation.Run` (after `LagForFixedUpdate`).
+- **Superseded 2026-10-09** (*Turbo's own transform writes rounded the body*, below): 1x never snaps; turbo's snap was the
+  divergence, and both now keep the exact body.
 
 ## Trigger touch across a pull-back
 
@@ -1210,3 +1212,40 @@ comes on camera after the physics step (`MacroEngine.OrbOnCamera`: the follow ca
 `Simulation.SeeOrbs`, `TurboRunner.SeeOrbs`), the orbs on camera in their snapshots (`SimSnapshot.OrbSeen`, snapshot format 8;
 `Snapshot.orbsSeen`). Category starts set the orbs with the unlocks (`TasPlugin.RefreshRefillOrbs`), so only a Full-TAS buy of
 `unlockJiggleDrops` or `moreRefreshOrbs` saw it. Zip%'s best replays unchanged through goal 1713.
+
+## 2026-10-09: turbo to 1x mid-movement (Play stretch best, the TAS editor's seek)
+
+**Play stretch best** for ZipEscape%'s stretch to goal 1157 (`at:28710,5876,240,400`) turbos the run to 150 ticks before the
+stretch and plays on at 1x; it died before the stretch, then stopped short of it. A 1x probe from tick 73000 (mid-air, vx -460)
+against `fulltas --check --ticks-out` found three causes, each fixed:
+
+- A real `IE_TimeStop` turbo started froze 1x again after it (84 frames at timeScale 0): the fast-forward drops them as the
+  editor's seek does (`TurboRunner.DropTimeStops`), turbos to one tick short and plays the last at 1x.
+- The handoff placed the player's transform at the last frame's blend at once (`TurboRunner.ShowLastFrame`), and Unity synced
+  that script write into the body at the next frame: the body lost the blend's lag (1.25 u at vx -460) and kept it. Now the
+  blend is placed only around 1x's next `Movement.FixedUpdate` and taken back when it didn't write, as turbo's own ticks do
+  (`BeforeHandoffTick`, `AfterHandoffTick`).
+- Unity's real `Start` of the Area 2 door box, which turbo had modelled while the box was still for sale, ran after the run
+  with the box bought out and jumped its door (`PlatformMover.JumpToNextState`, upgradeBox.cs:260-263) back to its first stop
+  mid-opening, where it stood still for the player to land on at tick 73026. The put-back around that `Start` now restores
+  the door's stop too (`TurboRunner.AfterDrawingStart`).
+
+From 73000 the probe then matches a 1x run from tick 71000 (at rest) for 506 ticks within 0.006 u, velocities exact, and the
+stretch play reaches its goal in the engine's 795 ticks. `tools/tas-check.py` still differs from 1x by an ulp or so: turbo's
+own trace differs from 1x's that much from the route's 4th input on, before any handoff.
+
+## 2026-10-09: turbo's own transform writes rounded the body
+
+`tools/tas-check.py` found turbo and 1x a float step apart from a route's 4th input on (Course 5's record), and a 1x run from tick
+71000 drifted from the engine by about 0.001 u a tick in ZipEscape%. The player's parent (`PlayerObject`) is moved by every
+rebase and category start, so its transform's local position is large (x 24594 against a world x of -1382: float steps of 0.002
+against 0.0001). Turbo put the transform on the body at every frame's start and before every step (`Place`, then
+`Physics2D.SyncTransforms`), and the sync took the parent round trip's rounding into the body; the engine copied it after an
+in-run rebase (*Rebase body snap*). A 1x probe logging the raw body, local position and parent showed the 1x body on the
+parent's grid on 20 of 507 ticks (chance), so 1x never does: Unity doesn't sync its interpolation's writes back. Turbo now puts
+the exact body back after those syncs (`TurboRunner.KeepBody`; real writes, a jump's or a step-up's, still sync as at 1x) and
+the engine no longer snaps. ZipEscape%'s 1158-goal offline best, judged with the rounding, stops at goal 970 (`buy:buytree2`)
+in the engine now and in a 1x play from its new game, the same goal and box. A seek at Course 5's input 40 now holds exactly
+what 1x plays there. What's left: on about 7% of frames Unity's interpolation blend rounds to the neighbouring local step from
+turbo's `Lerp` (no alpha or lerp form tried matches every frame; best 92.6%), which reaches the body only on a tick whose
+FixedUpdate writes the position.

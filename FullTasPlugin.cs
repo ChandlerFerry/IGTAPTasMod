@@ -31,11 +31,12 @@ namespace IGTAPTasMod
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public float[] rebaseAt;
             [JsonIgnore] public Vector2? RebaseAt { get { return rebaseAt == null || rebaseAt.Length < 2 ? (Vector2?)null : new Vector2(rebaseAt[0], rebaseAt[1]); } }
             /// <summary>
-            /// A savestate start's tree level (README ### Rules 21, <see cref="TreeLevel"/>): after the restore the zone at the
-            /// player is loaded and The Tree set to it as a tree transition's start sets it. Test runs only
+            /// A savestate start's tree (<see cref="TreeLevel"/>): a level (README ### Rules 21), set as a tree transition's start
+            /// sets it, or an array of grown segments (a save's <c>_grownSegments</c>): exactly those grown, the boxes that grow
+            /// one of them bought. After the restore the zone at the player is loaded. Test runs only
             /// (docs/fulltas.md#savestate-starts).
             /// </summary>
-            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public int? tree;
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public JToken tree;
             /// <summary>Other runs whose offline bests seed this run's solve: from each of their goals on, their inputs are tried where this run reaches that goal.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public List<string> seeds;
             /// <summary>

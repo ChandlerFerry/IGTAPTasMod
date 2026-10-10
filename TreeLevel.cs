@@ -38,10 +38,22 @@ namespace IGTAPTasMod
             return TreeSegments(tree).Select(s => s == null || s.box == null ? null : s.box.GetComponent<upgradeBox>()).ToArray();
         }
 
-        /// <summary>The boxes level L has bought: the first L boxes in segment order.</summary>
+        /// <summary>The boxes level L has bought: the plant and the first L boxes in segment order.</summary>
         static HashSet<upgradeBox> Bought(TreeController tree, int level)
         {
-            return new HashSet<upgradeBox>(Boxes(tree).Where(b => b != null).Take(level));
+            return new HashSet<upgradeBox>(Boxes(tree).Where(b => b != null).Take(level).Prepend(tree.plantTreeBox));
+        }
+
+        /// <summary>The plant and every tree box, the plant first.</summary>
+        static IEnumerable<upgradeBox> AllBoxes(TreeController tree)
+        {
+            return Boxes(tree).Where(b => b != null).Prepend(tree.plantTreeBox);
+        }
+
+        /// <summary>The boxes that grow one of these segments (the plant among them for segment 0).</summary>
+        static HashSet<upgradeBox> Growers(TreeController tree, int[] grown)
+        {
+            return new HashSet<upgradeBox>(AllBoxes(tree).Where(b => (SegmentsToTrigger(b) ?? new int[0]).Intersect(grown).Any()));
         }
 
         internal static int[] Segments(TreeController tree, int level)
@@ -62,28 +74,43 @@ namespace IGTAPTasMod
 
         internal static bool At(TreeController tree, int level)
         {
-            if (tree == null) return true;
-            int[] want = Segments(tree, level);
-            TreeSegmentActivationComponent[] segments = TreeSegments(tree);
-            HashSet<upgradeBox> bought = Bought(tree, level);
-            return tree.plantTreeBox.TimesUsed > 0 && new SortedSet<int>(tree.GrownSegments).SetEquals(want)
-                && Enumerable.Range(0, segments.Length).All(i => segments[i].gameObject.activeSelf == want.Contains(i))
-                && Boxes(tree).Where(b => b != null).All(b => (b.TimesUsed > 0) == bought.Contains(b));
+            return tree == null || At(tree, Segments(tree, level), Bought(tree, level));
         }
 
         internal static bool Apply(TreeController tree, int level)
         {
-            if (tree == null || At(tree, level)) return false;
-            int[] want = Segments(tree, level);
+            return tree != null && Apply(tree, Segments(tree, level), Bought(tree, level));
+        }
+
+        /// <summary>
+        /// Exactly these segments grown, as a save's <c>_grownSegments</c> loads them (no auto-growth added), and the boxes that
+        /// grow one of them bought. A savestate run's <c>tree</c> array (docs/fulltas.md#savestate-starts).
+        /// </summary>
+        internal static bool Apply(TreeController tree, int[] grown)
+        {
+            if (tree == null) return false;
+            int[] want = grown.Distinct().OrderBy(s => s).ToArray();
+            return Apply(tree, want, Growers(tree, want));
+        }
+
+        static bool At(TreeController tree, int[] want, HashSet<upgradeBox> bought)
+        {
             TreeSegmentActivationComponent[] segments = TreeSegments(tree);
-            HashSet<upgradeBox> bought = Bought(tree, level);
+            return new SortedSet<int>(tree.GrownSegments).SetEquals(want)
+                && Enumerable.Range(0, segments.Length).All(i => segments[i].gameObject.activeSelf == want.Contains(i))
+                && AllBoxes(tree).All(b => (b.TimesUsed > 0) == bought.Contains(b));
+        }
+
+        static bool Apply(TreeController tree, int[] want, HashSet<upgradeBox> bought)
+        {
+            if (At(tree, want, bought)) return false;
+            TreeSegmentActivationComponent[] segments = TreeSegments(tree);
             // ponytail: a growth a route started (a tree box bought mid-run) and this cut short keeps its trunk pose; a
             // scene reload resets it.
             for (int i = 0; i < segments.Length; i++) if (!want.Contains(i)) segments[i].gameObject.SetActive(false);
             tree.GrownSegments.Clear();
             tree.GrowingInProgress = false;
-            Buy(tree.plantTreeBox, true);
-            foreach (upgradeBox box in Boxes(tree).Where(b => b != null)) Buy(box, bought.Contains(box));
+            foreach (upgradeBox box in AllBoxes(tree)) Buy(box, bought.Contains(box));
             tree.instaGrowSegments(want);
             Physics2D.SyncTransforms();
             return true;

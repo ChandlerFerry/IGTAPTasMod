@@ -787,7 +787,7 @@ namespace IGTAP.EngineSim.Cli
         /// <summary>
         /// The whole-route search (Solve.Run, the plain solve) on the course: seeded with the trace's route, every --seed (another
         /// category's or tree level's route that dies here gives its cells too) and the loop's run file; for --whole-minutes (half the
-        /// minutes), ended once it goes min(5, half that) minutes without a faster route. No archive read or written, so each Improve
+        /// minutes), in rounds that each end after 5 minutes without a faster route. No archive read or written, so each Improve
         /// searches as a target's first does and the target's archive is left as it is. Its bests go to offline-best as a plain
         /// solve writes them, judged after the session with the loop's. Returns its best (null: none, or it failed).
         /// </summary>
@@ -803,15 +803,33 @@ namespace IGTAP.EngineSim.Cli
                 if (a == "--auto" || a == "--farm" || a == "--other-ways" || a == "--no-whole") continue;
                 plain.Add(a);
             }
-            plain.AddRange(new[] { "--no-archive", "--no-seed-files", "--no-submit", "--no-first-finish", "--minutes", budget.ToString(CultureInfo.InvariantCulture),
-                "--stall-minutes", Math.Min(5.0, budget / 2).ToString(CultureInfo.InvariantCulture) });
+            plain.AddRange(new[] { "--no-archive", "--no-seed-files", "--no-submit", "--no-first-finish" });
             if (runFile != null && File.Exists(runFile)) plain.AddRange(new[] { "--seed", runFile });
             Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] --auto: the whole-route search first, for {budget:0.##} min at most");
             // Solve.Run turns the distance field on for a guided rule; the loop's windows read it in their goal distance.
             bool guided = DistanceField.Enabled;
             try
             {
-                Solve.Run(plain.ToArray(), out List<InputTick> best);
+                // In rounds over the whole budget: a round that stalls (5 min without a faster route) ends, and the next searches
+                // afresh (new archive and RNG) from its best, rather than handing the rest to the --auto windows: on Course 6
+                // WJ_DS_DJ_BS the windows found nothing, where a fresh search from 1.20 found 1.10 in 2 min and from 1.06, 0.94.
+                var clock = Stopwatch.StartNew();
+                string bestFile = Path.Combine(Path.GetDirectoryName(run.Trace), "course-auto", run.Name + ".whole-best.json");
+                List<InputTick> best = null;
+                for (int round = 1; budget - clock.Elapsed.TotalMinutes >= 1; round++)
+                {
+                    double left = budget - clock.Elapsed.TotalMinutes;
+                    var args1 = plain.Concat(new[] { "--minutes", left.ToString(CultureInfo.InvariantCulture),
+                        "--stall-minutes", Math.Min(5.0, left).ToString(CultureInfo.InvariantCulture) }).ToList();
+                    if (best != null)
+                    {
+                        File.WriteAllText(bestFile, JsonSerializer.Serialize(new { ticks = best.Select(t => t.ToJson()) }));
+                        args1.AddRange(new[] { "--seed", bestFile });
+                        Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] --auto: whole-route round {round}, {left:0.##} min left, from its best");
+                    }
+                    Solve.Run(args1.ToArray(), out List<InputTick> found);
+                    best = found ?? best;
+                }
                 return best;
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)

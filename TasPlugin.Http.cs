@@ -91,6 +91,12 @@ namespace IGTAPTasMod
                 SaveSettings();
                 return new { ok = true, on = _settings.tasSkin };
             }
+            if (request.Path == "/api/settings/tas-skin-outline")
+            {
+                _settings.tasSkinOutline = Truthy(body, "on");
+                SaveSettings();
+                return new { ok = true, on = _settings.tasSkinOutline };
+            }
             if (request.Path == "/api/settings/checkpoint-respawns")
             {
                 if (PlaybackActive || _solverRunning || _fullTasProcess != null || _recorder.IsRecording)
@@ -153,7 +159,8 @@ namespace IGTAPTasMod
             }
             if (request.Path == "/api/session/newgame")
             {
-                StartNewGame(request, Truthy(body, "vman"), string.IsNullOrEmpty(Text(body, "savestate")) ? null : Text(body, "savestate"));
+                StartNewGame(request, Truthy(body, "vman"), string.IsNullOrEmpty(Text(body, "savestate")) ? null : Text(body, "savestate"),
+                    null, body?["tree"]);
                 return null;
             }
             if (request.Method == "GET" && request.Path == "/api/state/live") return BuildLiveWebState();
@@ -487,6 +494,7 @@ namespace IGTAPTasMod
                 checkpointRespawns = _settings.checkpointRespawns,
                 fastPlayback = _settings.fastPlayback,
                 tasSkin = _settings.tasSkin,
+                tasSkinOutline = _settings.tasSkinOutline,
                 running = PlaybackActive,
                 humanPlayback = _engine.IsRunning && _engine.ActiveMacro.id == HumanPlaybackId,
                 recording = _recorder.IsRecording, selectedRouteId = selected == null ? "" : selected.id,

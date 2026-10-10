@@ -75,7 +75,12 @@ namespace IGTAPTasMod
         /// skips it, so a restore keeps it.</summary>
         public bool HumanClass;
         public bool InputsExhausted { get { return _steps != null && _stepIndex >= _steps.Count; } }
+        /// <summary>This tick takes no input (a dash's, a spring's: the player's cutscene, Movement 1596-1599): a run's inputs
+        /// wait through it, and its run-out (20 ticks past the last input) doesn't count it.</summary>
+        public bool TickLocked { get { return _tickLocked; } }
         public Vector2 TickStick { get { return IsRunning ? _tickStick : Vector2.zero; } }
+        /// <summary>This tick takes no input and a lock's y holds the stick's y, not the next input's.</summary>
+        public bool TickStickFromLockY { get { return _tickLocked && _lockArmed && _lockY.HasValue; } }
 
         /// <summary>
         /// The stick the game reads (Movement.NormaliseInput). Between a dash's start and the next FixedUpdate — at 1x the
@@ -702,6 +707,9 @@ namespace IGTAPTasMod
         public int LastJumpPress = Never, LastJumpRelease = Never, LastDashPress = Never;
         const int Never = -1000000;
         public int JumpPresses, DashPresses;
+        /// <summary>Every release the engine makes, as <see cref="JumpPresses"/> counts presses (<see cref="LastJumpRelease"/> is
+        /// <see cref="Clock"/>'s, which only the gate's audit moves).</summary>
+        public int JumpReleases;
         public bool JumpHeld;
         /// <summary>The game's two jump buttons (Jump, Jump2) down: a press takes the next one, a release lifts both
         /// (docs/human-input.md).</summary>
@@ -729,6 +737,7 @@ namespace IGTAPTasMod
         private void ReleaseJump(Movement movement)
         {
             LastJumpRelease = Clock;
+            JumpReleases++;
             JumpHeld = false;
             JumpButtonsDown = 0;
             JumpCutBuffer(movement) = true;

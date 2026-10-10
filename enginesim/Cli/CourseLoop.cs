@@ -187,12 +187,12 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// A loop lap from where the lead leaves the player (after its last finish): the course solve's search (OfflineSolver),
-        /// from that state with the run's forced path, for <paramref name="minutes"/>; the lap with the least live time to
-        /// its finish, cut at the finish, or null when none finished. Seeded with the lead's first lap played after the two ways a
+        /// from that state with the run's forced path, for <paramref name="minutes"/>; the fastest lap that repeats as a loop of
+        /// itself and the fastest lap at all when that one doesn't (each cut at its finish, null: none). Seeded with the lead's first lap played after the two ways a
         /// farm loops: a quick restart (on the tick after the finish, then a few idle ticks for what the restart carries, a
         /// buffered jump among them, to land), and the drop through the end gate (idle until the player lands at the start).
         /// </summary>
-        static List<InputTick> SearchLoopLap(CourseRun run, LoopRoute route, double minutes, int threads)
+        static (List<InputTick> steady, List<InputTick> fastest) SearchLoopLap(CourseRun run, LoopRoute route, double minutes, int threads)
         {
             List<InputTick> lead = route.Lead;
             int laps = route.LeadLaps;
@@ -201,8 +201,38 @@ namespace IGTAP.EngineSim.Cli
             List<InputTick> Idle(int n) => Enumerable.Repeat(new InputTick(), n).ToList();
             var seeds = new List<List<InputTick>>();
             if (route.Loop != null) foreach (int k in new[] { 0, 1, 2 }) seeds.Add(Idle(k).Concat(route.Loop).ToList());
-            foreach (int k in new[] { 0, 10, 20, 30, 40 }) seeds.Add(new[] { new InputTick { reset = true } }.Concat(Idle(k)).Concat(lap).ToList());
+            // A lap never starts on its quick restart: a restart input fires at once, inside the stretch of no-input ticks a
+            // finish may come in (a dash, a spring), and cuts the lap before off short of its finish (Course 9 WJ_DS_DJ_BS: the
+            // record's finish comes 7 ticks after its last input). An idle input first waits that stretch out.
+            foreach (int k in new[] { 0, 10, 20, 30, 40 }) seeds.Add(new[] { new InputTick(), new InputTick { reset = true } }.Concat(Idle(k)).Concat(lap).ToList());
             foreach (int k in new[] { 20, 30, 40, 50 }) seeds.Add(Idle(k).Concat(lap).ToList());
+            // The restart a human farms with: after the finish a tick of the stick to face the first lap's way, a quick restart, the
+            // fall to the floor under the respawn point (its landing gives the air dash and ground coyote back), and a second quick
+            // restart on the first lap's own first input, which then plays on the respawn's tick as it does from the category start
+            // (a restart while standing). Course 6 WJ_DS_DJ_BS's 0.94 repeats so at 1.5357 s a lap, where the restarts above leave
+            // it no air dash or coyote for its opening. The falls cover a 5-tick cycle: the 280 fps frame grid repeats every 5 ticks,
+            // and a frame-timed tech (its pauselift) holds only on its own phase.
+            float face = Math.Sign(lap.Select(t => t.x).FirstOrDefault(x => x != 0f));
+            if (lap.Count > 0)
+                foreach (int a in new[] { 1, 2 })
+                    for (int b = 2; b <= 12; b++)
+                    {
+                        InputTick restart = lap[0];
+                        restart.reset = true;
+                        seeds.Add(Enumerable.Repeat(new InputTick { x = face == 0f ? 1f : face }, a).Append(new InputTick { reset = true })
+                            .Concat(Idle(b)).Append(restart).Concat(lap.Skip(1)).ToList());
+                    }
+            // When the finish leaves the respawn point at another checkpoint than the course start's (the last one the lap touched:
+            // Course 9 WJ_DS_DJ_BS's, 2600 u right of the start), the restart there, the way back until the start's checkpoint takes
+            // the respawn point and the landing (WayBack), then the restart on the first lap's first input: from it the lap plays as
+            // from the category start. Every phase of the 5-tick grid, as above.
+            if (lap.Count > 0 && Solve.OnThread(() => WayBack(run, Create)) is List<InputTick> back)
+                for (int w = 0; w < 5; w++)
+                {
+                    InputTick restart = lap[0];
+                    restart.reset = true;
+                    seeds.Add(back.Concat(Idle(w)).Append(restart).Concat(lap.Skip(1)).ToList());
+                }
             // How each seed plays from the lead's finish, for the log: a search with no finishing seed rarely finds a first finish.
             List<string> played = Solve.OnThread(() =>
             {
@@ -210,6 +240,10 @@ namespace IGTAP.EngineSim.Cli
                 return seeds.Select(s => { RunResult r = sim.Run(s, null, null, 60); return r.Finished ? $"finish at tick {r.PhysicsTicks}" : r.EndReason; }).ToList();
             });
             Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap seeds: {string.Join("; ", played)}");
+            // No seed finishes from the lead's finish (Course 9 WJ_DS_DJ_BS: the restart puts the player at the last checkpoint,
+            // near the end, and a lap first goes back to the start gate): the unguided search seldom finds a first finish (none in
+            // 1.4M runs), so it gets 2 minutes and the waypoint repair (RepairLoopLap), which has the course's goals to reach, the rest.
+            if (!played.Any(p => p.StartsWith("finish", StringComparison.Ordinal))) minutes = Math.Min(minutes, 2.0);
             // Ranked by live time to the lap's finish (ticks and held frames), the farm's own measure, not by the course timer.
             var solver = new OfflineSolver(Create, run.Caps, seeds, null, run.Rules) { Farm = true };
             List<InputTick> found = null;
@@ -220,44 +254,133 @@ namespace IGTAP.EngineSim.Cli
                 lock (guard) if (live < foundLive) (found, foundLive) = (inputs, live);
                 Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: finish at {live / 1400.0:0.0000}s live from the course start ({time:0.00}s on the course timer) via {how}");
             };
+            // Every finishing lap is a candidate, not only the fastest: a quick restart keeps the lap's history (lastHyperY,
+            // heightOfLastJumpStart: CourseStart.cs), so the fastest lap from the lead's finish often dies on its second play (Course 6
+            // WJ_DS_DJ_BS's 1.5557 s lap did, and no loop was found), where a slower one repeats. The fastest PoolSize by the course
+            // timer wait to be checked, fastest first. ponytail: ordered by the lap's course timer, not its live time (not reported).
+            var pool = new List<(float time, List<InputTick> inputs)>();
+            solver.FinishedRun = (inputs, time) =>
+            {
+                lock (pool)
+                {
+                    if (pool.Count >= PoolSize && time >= pool[pool.Count - 1].time) return;
+                    int at = pool.FindIndex(p => p.time > time);
+                    pool.Insert(at < 0 ? pool.Count : at, (time, inputs));
+                    if (pool.Count > PoolSize) pool.RemoveAt(pool.Count - 1);
+                }
+            };
             Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: searching Course {run.Course} ({run.Caps}) from the lead's finish {laps} "
                 + $"({lead.Count} inputs) for {minutes:0.##} min on {threads} threads");
             // Each new fastest lap is checked as a loop of itself as it comes: the fastest one that repeats is kept (a faster lap that
             // doesn't, carrying a buffered jump into the next, can't replace it), and once one repeats the search ends after
-            // SteadyQuietSeconds without a faster lap. The --auto loop after it makes the loop faster; a lap that repeats is enough here.
+            // SteadyQuietSeconds without a faster lap. It is the farm's whole-lap search, as the whole-route search is a record's: the
+            // --auto windows after it only trim the loop it found (Course 6 WJ_DS_DJ_BS: a 2.78 s loop where this search had found a
+            // 1.56 s lap within a minute), so it keeps going while it finds faster laps.
             var clock = Stopwatch.StartNew();
             var quiet = Stopwatch.StartNew();
             Thread[] workers = solver.Start(threads);
             List<InputTick> steady = null, seen = null;
+            long steadyLive = long.MaxValue;
+            bool fastestSteady = false;
+            var checkedLaps = new HashSet<string>();
+            int pooled = 0;
+            // The lap as a loop of itself, kept when it repeats faster than the steady lap so far; whether it was a new one.
+            bool Check(List<InputTick> f, string what)
+            {
+                List<InputTick> cut = CutAtFinish(run, route, f);
+                if (cut == null || !checkedLaps.Add(System.Text.Json.JsonSerializer.Serialize(cut.Select(t => t.ToJson())))) return false;
+                LoopCycle c = MeasureLoop(run, new LoopRoute { Lead = lead, LeadLaps = laps, Loop = cut, FirstLap = route.FirstLap, FirstTicks = route.FirstTicks });
+                bool faster = c.Steady && c.Live < steadyLive;
+                if (what != null || faster) Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: {what ?? "a finishing lap"} as a loop of itself: {c}");
+                if (!faster) return true;
+                // Its pauses at their shortest that still repeat (the pool's laps come as the search ran them, never through its own
+                // DropIdlePauses): a pause's frames are live time every lap.
+                long live0 = c.Live;
+                LoopRoute Of(List<InputTick> l) => new LoopRoute { Lead = lead, LeadLaps = laps, Loop = l, FirstLap = route.FirstLap, FirstTicks = route.FirstTicks };
+                cut = OfflineSolver.DropIdlePauses(cut, l => { LoopCycle d = MeasureLoop(run, Of(l)); if (!d.Steady || d.Live > c.Live) return false; c = d; return true; });
+                if (c.Live < live0) Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: its pauses shortened: {c}");
+                (steady, steadyLive) = (cut, c.Live);
+                return true;
+            }
             while (clock.Elapsed.TotalMinutes < minutes && !(steady != null && quiet.Elapsed.TotalSeconds >= SteadyQuietSeconds))
             {
                 Thread.Sleep(250);
                 List<InputTick> f;
                 long live;
                 lock (guard) (f, live) = (found, foundLive);
-                if (f == null || f == seen) continue;
-                seen = f;
-                quiet.Restart();
-                List<InputTick> cut = CutAtFinish(run, route, f);
-                if (cut == null) continue;
-                LoopCycle c = MeasureLoop(run, new LoopRoute { Lead = lead, LeadLaps = laps, Loop = cut, FirstLap = route.FirstLap, FirstTicks = route.FirstTicks });
-                Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: the {live / 1400.0:0.0000}s lap as a loop of itself: {c}");
-                if (c.Steady) steady = cut;
+                if (f != null && f != seen)
+                {
+                    seen = f;
+                    quiet.Restart();
+                    long before = steadyLive;
+                    Check(f, $"the {live / 1400.0:0.0000}s lap");
+                    fastestSteady = steadyLive < before;
+                }
+                // The pool's fastest laps for the rest of the beat.
+                var beat = Stopwatch.StartNew();
+                while (beat.ElapsedMilliseconds < 250)
+                {
+                    List<InputTick> next;
+                    lock (pool)
+                    {
+                        if (pool.Count == 0) break;
+                        next = pool[0].inputs;
+                        pool.RemoveAt(0);
+                    }
+                    long before = steadyLive;
+                    if (Check(next, null)) pooled++;
+                    if (steadyLive < before) quiet.Restart();
+                }
             }
             solver.Stop();
             foreach (Thread t in workers) t.Join(60000);
-            Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: {Interlocked.Read(ref solver.Runs)} runs, {Interlocked.Read(ref solver.Finishes)} finishes, {solver.GuideStatus()}");
-            return steady ?? (found == null ? null : CutAtFinish(run, route, found));
+            Console.WriteLine($"[{run.Clock.Elapsed:hh\\:mm\\:ss}] loop lap: {Interlocked.Read(ref solver.Runs)} runs, {Interlocked.Read(ref solver.Finishes)} finishes, {pooled} finishing laps checked, {solver.GuideStatus()}");
+            return (steady, found == null || fastestSteady ? null : CutAtFinish(run, route, found));
         }
 
+        /// <summary>
+        /// From the state <paramref name="create"/> starts in (a lead's finish): a quick restart, the stick held toward the course
+        /// start until the start's checkpoint is the respawn point, and on to the landing after it: those inputs (the landing's tick
+        /// the last), or null when 600 ticks don't get there. Built before <paramref name="create"/>'s simulation, the category start's
+        /// own tells where the start's checkpoint is (the last Simulation built on a thread owns its engine hooks).
+        /// </summary>
+        static List<InputTick> WayBack(CourseRun run, Func<Simulation> create)
+        {
+            Simulation start = LoopSim(run, 1);
+            Vector2 home = start.Player.respawnPoint;
+            float homeX = start.PlayerWorld.x;
+            Simulation sim = create();
+            sim.Run(new List<InputTick> { new InputTick(), new InputTick { reset = true }, new InputTick() }, null, null, 0);
+            float dir = Math.Sign(homeX - sim.PlayerWorld.x);
+            var walk = new List<InputTick> { new InputTick(), new InputTick { reset = true } };
+            walk.AddRange(Enumerable.Repeat(new InputTick { x = dir == 0f ? 1f : dir }, 600));
+            int touched = -1, landed = -1;
+            sim.Run(walk, null, null, 0, _ =>
+            {
+                if (landed >= 0) return;
+                int t = (int)sim.Engine.RunTicks;
+                if (touched < 0 && t > 0 && sim.Player.respawnPoint == home) touched = t;
+                if (touched >= 0 && sim.Player.onGround && sim.Player.airDashesLeft == sim.Player.maxAirDashes) landed = t;
+            });
+            return landed < 0 ? null : walk.GetRange(0, Math.Min(walk.Count, landed + 1));
+        }
+
+        /// <summary>Finishing laps waiting for the lap search's steady check.</summary>
+        const int PoolSize = 256;
+
         /// <summary>The lap search ends this long after its last faster lap once it has a lap that repeats.</summary>
-        const double SteadyQuietSeconds = 30;
+        const double SteadyQuietSeconds = 300;
 
         /// <summary>The course run after the route's lead, without goals: a course solve's from where the lead leaves the player.</summary>
         static Simulation AfterLead(CourseRun run, LoopRoute route)
         {
             Simulation sim = LoopSim(run, route.LeadLaps + 1);
             SimSnapshot at = sim.Advance(route.Lead);
+            // A lead whose last finish comes in a stretch of ticks that take no input after its last one (Course 7 WJ_DS_DJ_BS's
+            // record, 64 ticks on): Advance stops where the next input is asked, before them, and every lap searched from there
+            // "finished" on the lead's own finish. The state at that finish instead, its next input the lap's first.
+            if (sim.Progress < route.LeadLaps)
+                at = sim.AdvanceToGoal(route.Lead.Concat(Enumerable.Repeat(new InputTick(), 60)).ToList(), route.LeadLaps, out _) ?? at;
             sim.SetStart(at, route.Lead.Count);
             sim.UseGoals(null);
             sim.TargetCourse = run.Course;
@@ -265,12 +388,16 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>A lap played after the route's lead, cut at its finish (a finish in the idle ticks after its inputs takes those
-        /// ticks as inputs), or null when it doesn't finish.</summary>
+        /// ticks as inputs), or null when it doesn't finish. Played on from the lead, as <see cref="MeasureLoop"/> plays it, and cut
+        /// where that run's finish counts it: from a lead state inside a no-input stretch (<see cref="AfterLead"/>) the lap run's own
+        /// finish tick is one input off (Course 7 WJ_DS_DJ_BS: every lap "finished on input 660, its last is 661").</summary>
         static List<InputTick> CutAtFinish(CourseRun run, LoopRoute route, List<InputTick> lap)
         {
             List<InputTick> idled = lap.Concat(Enumerable.Repeat(new InputTick(), 60)).ToList();
-            RunResult r = Solve.OnThread(() => AfterLead(run, route).Run(idled, null, null, AnyTicks));
-            return r.Finished ? idled.GetRange(0, r.FinishTick + 1) : null;
+            RunResult r = Solve.OnThread(() => LoopSim(run, route.LeadLaps + 1).Run(route.Lead.Concat(idled).ToList(), null, null, AnyTicks));
+            if (r.Progress <= route.LeadLaps) return null;
+            int n = (int)(r.GoalInputTicks[route.LeadLaps] - route.Lead.Count);
+            return n > 0 && n <= idled.Count ? idled.GetRange(0, n) : null;
         }
 
         /// <summary>
@@ -282,7 +409,7 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         static List<InputTick> RepairLoopLap(CourseRun run, LoopRoute route, WaypointOptions options, string dir, double minutes, int threads)
         {
-            List<InputTick> lap = route.Loop ?? new[] { new InputTick { reset = true } }.Concat(route.FirstLap).ToList();
+            List<InputTick> lap = route.Loop ?? new[] { new InputTick(), new InputTick { reset = true } }.Concat(route.FirstLap).ToList();
             List<FullTasGoal> goals = Enumerable.Range(0, route.LeadLaps).Select(_ => FinishGoal(run.Course))
                 .Concat(CourseWaypoints.Build(run.Trace, route.FirstLap, options).Goals.Where(g => g.kind == FullTasGoal.At))
                 .Append(FinishGoal(run.Course)).ToList();
@@ -308,10 +435,9 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// The farm loop the search starts from: the candidate with the fastest steady cycle, settled (<see cref="SettleLoop"/>).
-        /// Without one, a loop lap is searched after the fastest lead, and while a found loop doesn't repeat exactly, after the
-        /// lead and that loop once more (a few times at most); a lap the search doesn't find is repaired (<see cref="RepairLoopLap"/>).
-        /// Null when no steady loop came of it.
+        /// The farm loop the search starts from: the fastest steady cycle, settled (<see cref="SettleLoop"/>), of the candidates
+        /// and the loop laps searched after the best's lead (or the fastest first lap), for <paramref name="lapMinutes"/>; a lap
+        /// the search doesn't find with no loop yet is repaired (<see cref="RepairLoopLap"/>). Null when no steady loop came of it.
         /// </summary>
         static (LoopRoute route, LoopCycle cycle, string how)? StartLoop(CourseRun run, List<(string how, List<InputTick> inputs)> candidates, double lapMinutes,
             int threads, bool search, WaypointOptions options, string dir)
@@ -342,25 +468,39 @@ namespace IGTAP.EngineSim.Cli
                     break;
                 }
             }
-            if (best != null || !search || lead == null) return best;
-            // Laps searched one after another from the first lead lap: after each, the loops ending with it (the newest lap, the
-            // newest two, ...) are checked, so laps whose carried state alternates still make a loop.
-            LoopRoute at = lead.Value.route;
+            if (!search || lead == null) return best;
+            // Laps searched one after another, from the best loop's lead (the last Improve's) or the fastest first lap: each search
+            // keeps its fastest lap that repeats as a loop of itself, and the next searches after its fastest lap at all when that one
+            // doesn't repeat. A quick restart carries the lap's history (CourseStart.cs), so the fastest lap from the lead's finish is
+            // tuned to the lead's; one searched after it is tuned to a lap's, and the loops ending with it (the newest lap, the newest
+            // two, ...) are checked, so laps whose carried state alternates still make a loop. It runs every Improve, as a record's
+            // whole-route search does: the --auto windows only trim the loop they start from.
+            LoopRoute start = best?.route ?? lead.Value.route, at = start;
+            string from = "loop lap search from " + (best?.how ?? lead.Value.how);
             var found = new List<List<InputTick>>();
-            for (int attempt = 0; attempt < 2 * MaxLoopLaps && best == null; attempt++)
+            var clock = Stopwatch.StartNew();
+            for (int attempt = 0; attempt < 2 * MaxLoopLaps; attempt++)
             {
-                List<InputTick> lap = SearchLoopLap(run, at, lapMinutes, threads) ?? RepairLoopLap(run, at, options, dir, lapMinutes, threads);
+                double left = lapMinutes - clock.Elapsed.TotalMinutes;
+                if (left < .25) break;
+                var (steady, fastest) = SearchLoopLap(run, at, attempt == 0 ? left / 2 : left, threads);
+                if (steady != null)
+                {
+                    var r = new LoopRoute { Lead = at.Lead, LeadLaps = at.LeadLaps, Loop = steady, FirstLap = at.FirstLap, FirstTicks = at.FirstTicks };
+                    Consider(r, MeasureLoop(run, r), from);
+                }
+                List<InputTick> lap = fastest ?? (best == null && steady == null ? RepairLoopLap(run, at, options, dir, left, threads) : null);
                 if (lap == null) break;
                 found.Add(lap);
-                for (int p = 1; p <= found.Count && p <= MaxLoopLaps && best == null; p++)
+                for (int p = 1; p <= found.Count && p <= MaxLoopLaps; p++)
                 {
-                    var lead2 = new List<InputTick>(lead.Value.route.Lead);
+                    var lead2 = new List<InputTick>(start.Lead);
                     foreach (List<InputTick> l in found.Take(found.Count - p)) lead2.AddRange(l);
-                    var r = new LoopRoute { Lead = lead2, LeadLaps = 1 + found.Count - p, Loop = found.Skip(found.Count - p).SelectMany(l => l).ToList(), LoopLaps = p,
-                        FirstLap = at.FirstLap, FirstTicks = at.FirstTicks };
+                    var r = new LoopRoute { Lead = lead2, LeadLaps = start.LeadLaps + found.Count - p, Loop = found.Skip(found.Count - p).SelectMany(l => l).ToList(), LoopLaps = p,
+                        FirstLap = start.FirstLap, FirstTicks = start.FirstTicks };
                     LoopCycle c = MeasureLoop(run, r);
                     Console.WriteLine($"loop of the last {p} laps searched, after {r.LeadLaps} lead laps: {c}");
-                    Consider(r, c, "loop lap search from " + lead.Value.how);
+                    Consider(r, c, from);
                 }
                 at = new LoopRoute { Lead = at.Lead.Concat(lap).ToList(), LeadLaps = at.LeadLaps + 1, Loop = lap, FirstLap = at.FirstLap, FirstTicks = at.FirstTicks };
             }
@@ -371,18 +511,20 @@ namespace IGTAP.EngineSim.Cli
 
         /// <summary>
         /// `solve --auto --farm` on a gated course (README ### Rules 30): the farm loop to start from (<see cref="StartLoop"/>: a
-        /// saved loop, else loop laps searched for a third of the minutes, 5 at most, each), its goals (a finish per lead lap,
+        /// saved loop, else loop laps searched for half the minutes each), its goals (a finish per lead lap,
         /// then per loop lap the first lap's waypoints it passes and its finish), timed from the lead's last finish
         /// (<see cref="TimerGoal"/>, <see cref="LoopTiming"/>), and the Full-TAS --auto loop over them.
         /// </summary>
         static int LoopAuto(CourseRun run, string[] args, List<(string how, List<InputTick> inputs)> candidates, string dir)
         {
             run.Loop = true;
+            // A farm lap's cut boxes hold on the course only (ForcedPath.OnCourseOnly), not on the way back to its start.
+            run.Rules.OnCourseOnly = true;
             double minutes = Solve.Option(args, "--minutes", 60.0);
             int threads = Solve.Option(args, "--threads", Math.Max(1, Environment.ProcessorCount - 4));
             WaypointOptions options = WaypointOptions.Parse(args, line => Console.WriteLine(line));
             options.Record = false;
-            var start = StartLoop(run, candidates, Math.Min(5.0, Math.Max(0.25, minutes / 3)), threads, run.WaypointsFile == null, options, dir);
+            var start = StartLoop(run, candidates, Math.Max(0.25, minutes / 2), threads, run.WaypointsFile == null, options, dir);
             if (start == null)
             {
                 if (run.WaypointsFile != null)

@@ -81,9 +81,11 @@ namespace IGTAPTasMod
             catch (InvalidOperationException) { return (run.goals ?? new List<string>()).ToArray(); }
         }
 
+        static bool TreeIndex(JToken t) { return t.Type == JTokenType.Integer && (int)t >= 0 && (int)t <= 27; }
+
         bool FullTasRunChanged(FullTasRunDef old, FullTasRunDef run)
         {
-            return old == null || old.start != run.start || old.savestate != run.savestate || old.RebaseAt != run.RebaseAt || old.tree != run.tree
+            return old == null || old.start != run.start || old.savestate != run.savestate || old.RebaseAt != run.RebaseAt || !JToken.DeepEquals(old.tree, run.tree)
                 || !FullTasLabels(old).SequenceEqual(FullTasLabels(run));
         }
 
@@ -120,8 +122,8 @@ namespace IGTAPTasMod
                 throw new InvalidOperationException("Full-TAS run " + run.name + ": no savestate " + run.savestate + ".");
             if (run.rebaseAt != null && (run.savestate == null || run.rebaseAt.Length != 2))
                 throw new InvalidOperationException("Full-TAS run " + run.name + ": rebaseAt is a world [x, y] and needs a savestate start.");
-            if (run.tree != null && (run.savestate == null || run.tree < 0 || run.tree > 27))
-                throw new InvalidOperationException("Full-TAS run " + run.name + ": tree is a level 0-27 and needs a savestate start.");
+            if (run.tree != null && (run.savestate == null || !(run.tree is JArray ? run.tree.All(TreeIndex) : TreeIndex(run.tree))))
+                throw new InvalidOperationException("Full-TAS run " + run.name + ": tree is a level 0-27 or an array of segments 0-27 and needs a savestate start.");
             if (run.buys != null && run.buys != "strict" && run.buys != "loose")
                 throw new InvalidOperationException("Full-TAS run " + run.name + ": buys is \"strict\" or \"loose\", not \"" + run.buys + "\".");
             return run.goals.Select(ResolveFullTasGoal).ToArray();
@@ -364,7 +366,7 @@ namespace IGTAPTasMod
                     _engineSimTickHook?.Invoke(player);
                     if (!_engine.IsRunning) return;
                     if (run.Vman && !VmanScript.isCurrentlyVman) { _engine.Abort("The Vman speedrun's time ran out"); return; }
-                    if (_engine.InputsExhausted) idleTicks++;
+                    if (_engine.InputsExhausted && !_engine.TickLocked) idleTicks++;
                     int tick = (int)_engine.RunTicks;
                     if (_audit != null) AuditTick(player, tick);
                     lastTick = tick;

@@ -154,5 +154,7 @@ namespace IGTAPTasMod
         public bool fastPlayback;
         /// <summary>The player drawn as its hurtbox (TasSkin.cs) instead of its sprite.</summary>
         public bool tasSkin = true;
+        /// <summary>The TAS skin as its outline only, over the game's sprite.</summary>
+        public bool tasSkinOutline;
     }
 }

@@ -1468,7 +1468,8 @@ namespace IGTAPTasMod
                         _engine.Clock++;
                         _engineSimTickHook?.Invoke(player);
                         if (!_engine.IsRunning) return;
-                        if (_engine.InputsExhausted) idleTicks++;
+                        // Ticks that take no input don't count (a finish in a stretch of them after the last input, as the engine's run).
+                        if (_engine.InputsExhausted && !_engine.TickLocked) idleTicks++;
                         int tick = (int)_engine.RunTicks;
                         if (_startState == null && tick == 0)
                         {
@@ -1685,6 +1686,8 @@ namespace IGTAPTasMod
         // While a farm loop plays (EvaluateLoop): each finish of the target course (the input count, physics tick and held frames
         // at it); the finish doesn't end the run then.
         List<(long input, long physics, long held)> _loopFinishes;
+        /// <summary>A farm route's playback (ReplaySelected): its finishes are laps' ends, not the run's.</summary>
+        bool _farmPlayback;
 
         /// <summary>A farm loop's replay (README ### Rules 30): the lead's last finish, then each loop's cycle.</summary>
         sealed class LoopResult

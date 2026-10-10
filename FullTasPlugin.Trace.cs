@@ -70,7 +70,7 @@ namespace IGTAPTasMod
                     w.WriteValue(run.rebaseAt[0]); w.WriteValue(run.rebaseAt[1]);
                     w.WriteEndArray();
                 }
-                if (run.tree != null) { w.WritePropertyName("tree"); w.WriteValue(run.tree.Value); }
+                if (run.tree != null) { w.WritePropertyName("tree"); run.tree.WriteTo(w); }
                 w.WritePropertyName("goals"); w.WriteStartArray();
                 foreach (FullTasGoal g in goals)
                 {
@@ -237,7 +237,7 @@ namespace IGTAPTasMod
                 return checkpoints == CheckpointRespawns && (int?)header["startSetup"] == FullTasStartSetup && (int?)header["format"] == FullTasTraceFormat
                     && (string)header["start"] == run.start && (string)header["savestate"] == run.savestate
                     && ((string)header["buys"] == "loose") == run.LooseBuys && (!weights || human.Same(run.Human))
-                    && RebaseOf(header) == run.RebaseAt && (int?)header["tree"] == run.tree && (string)header["build"] == Application.buildGUID
+                    && RebaseOf(header) == run.RebaseAt && JToken.DeepEquals(header["tree"], run.tree) && (string)header["build"] == Application.buildGUID
                     && labels.SequenceEqual(ResolveFullTasGoals(run).Select(g => g.label));
             }
             catch (Exception ex)

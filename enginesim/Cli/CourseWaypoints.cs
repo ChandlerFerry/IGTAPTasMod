@@ -191,6 +191,40 @@ namespace IGTAP.EngineSim.Cli
             return list;
         }
 
+        /// <summary>The longest out-and-back <see cref="Detours"/> looks for, in physics ticks.</summary>
+        const int DetourTicks = 150;
+        /// <summary>How far sideways an out-and-back has to go to be a detour.</summary>
+        const float DetourReach = 300f;
+
+        /// <summary>
+        /// The ticks inside the record's sideways out-and-backs: within <see cref="DetourTicks"/> it goes at least
+        /// <see cref="DetourReach"/> one way and comes back within a quarter of that, turning off any wall (a bounce between two
+        /// walls is a climb). A waypoint there would make every window keep the detour (Course 9 WJ_DS_DJ_BS 32.58: the checkpoint
+        /// at x 22101-23144 touched in a dash past the wall it comes back to at 21780, a landing waypoint where its fall drifts
+        /// left to 11593 and back), so none goes there. A respawn's jump ends the look.
+        /// </summary>
+        static bool[] Detours(Path p)
+        {
+            var inside = new bool[p.N];
+            for (int a = 0; a < p.N; a++)
+            {
+                float far = 0f;
+                int turn = a;
+                for (int b = a + 1; b < p.N && b - a <= DetourTicks; b++)
+                {
+                    if (Math.Abs(p.X[b] - p.X[b - 1]) + Math.Abs(p.Y[b] - p.Y[b - 1]) > 200f) break;
+                    float d = Math.Abs(p.X[b] - p.X[a]);
+                    if (d > far) { far = d; turn = b; }
+                    if (far < DetourReach || d > far / 4f) continue;
+                    bool wall = false;
+                    for (int t = Math.Max(0, turn - 2); t <= Math.Min(p.N - 1, turn + 2); t++) wall |= p.Wall[t];
+                    if (!wall) for (int t = a + 1; t < b; t++) inside[t] = true;
+                    break;
+                }
+            }
+            return inside;
+        }
+
         // ---- rects ----
 
         struct Rect
@@ -390,6 +424,7 @@ namespace IGTAP.EngineSim.Cli
             bool startGoal = o.Record && gate > 0 && gateCourse != 0;
 
             var chosen = new List<Waypoint>();
+            bool[] detour = Detours(p);
             // Kept apart from each other, from the start and the finish and, with a start goal, from the gate crossing (a goal
             // touched on the crossing's tick would leave the start goal current after the course has started).
             var marks = new List<int> { 0, n };
@@ -407,6 +442,7 @@ namespace IGTAP.EngineSim.Cli
                 foreach (var (tick, rect, name) in Checkpoints(trace, p))
                 {
                     if (!Clear(tick, 2)) { result.Notes.Add($"checkpoint {name} at tick {tick} is next to another goal: left out"); continue; }
+                    if (detour[tick]) { result.Notes.Add($"checkpoint {name} at tick {tick} is inside a detour: left out"); continue; }
                     // The trigger widened by the band across the motion there (a line past the checkpoint that misses its small
                     // trigger still counts), else the trigger alone.
                     Rect? band = Band(p, tick, o);
@@ -441,7 +477,7 @@ namespace IGTAP.EngineSim.Cli
                     Waypoint pick = null, sided = null;
                     foreach (var (score, tick, why) in picks.OrderByDescending(q => q.score).Take(80))
                     {
-                        if (!Clear(tick, MinTicks)) continue;
+                        if (!Clear(tick, MinTicks) || detour[tick]) continue;
                         Rect? r = Band(p, tick, o);
                         if (r == null) continue;
                         var w = new Waypoint { Goal = Goal(r.Value), Why = why, Tick = tick };

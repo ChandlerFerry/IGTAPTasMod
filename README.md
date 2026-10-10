@@ -178,8 +178,9 @@
    unlocks in the settled new game. It sets no checkpoint: a quick restart before a real checkpoint (or a course reset
    point) ends the run. With `rebaseAt` it also rebases the world around that point once the restored player rests, as
    FloatingOrigin would have with the player there, so the run's next rebase happens where the test needs it. It tests
-   a stretch; it is not a whole-game route. With `tree` it also sets The Tree at that level right after the restore, as
-   rule 21 sets a tree transition's (Area 1 overgrown and the path open from 23), and loads the zone at the player.
+   a stretch; it is not a whole-game route. With `tree` it also sets The Tree right after the restore, at a level as
+   rule 21 sets a tree transition's (Area 1 overgrown and the path open from 23), or with an array exactly those grown
+   segments (the save's `_grownSegments`; the boxes that grow one of them bought), and loads the zone at the player.
 7. Relaxes rule 33. The one exception to "no teleports" for a lab: a lab map (`labmaps/<id>.json`,
    [`enginesim/README.md`](enginesim/README.md#lab-maps)) is a custom level piece injected additively into empty map
    space (a `lab space` region, far from routes) to demonstrate one tech exactly, with its own start and finish box. It
@@ -214,7 +215,8 @@
     engine makes the same at the same frame (`Economy.StartPass`, the box's texts cut). The atom collider's `Start` (an
     NP recompute) is made the same way. A box whose `Start` would move a door (the Area 2 door box's bought out before it,
     the atom box's, which reads the machine's PlayerPrefs; upgradeBox.cs:260-267) ends the run (`WokenStarts.Unmodeled`);
-    its Steam and text parts are presentation, left to Unity. 1x is untouched. A course's `Start` draws too
+    the Area 2 door box bought out after its modelled `Start` has a real one that jumps the door, whose stop is put back
+    with the box's fields. Its Steam and text parts are presentation, left to Unity. 1x is untouched. A course's `Start` draws too
     (`InvokeRepeating("UpdateReward", Random.Range(0, 5), 5)`), but no run wakes a course: a zone load in a run (a zone
     activator's `ZoneLoader.IE_Load`, in its tick's third rendered frame) turns zones on and off, never the `Courses` root.
 13. Relaxes rule 39. The one PlayerPrefs write: the machine's `OpenA2Door` key, which outlives saves (only the pause menu's
@@ -314,7 +316,8 @@ as record** sends a finished session through the gate (`/api/enginesim/submit`),
   snapshot (the start) the session starts again. An edit at or before the held tick drops the snapshots from it and
   seeks back; one after it only re-feeds the engine (`MacroEngine.ResumeAt`). During a seek's turbo, dash freezes are
   modelled only (`TurboRunner.DropTimeStops`: no real `IE_TimeStop` left to freeze 1x after it), and the handoff puts the
-  player at the last frame's blend, where 1x's next FixedUpdate reads it. A savestate session holds first after input
+  player at the last frame's blend for 1x's next FixedUpdate only, the body left at the step's end, as a turbo tick does
+  (a transform write before it would be synced into the body). A savestate session holds first after input
   0, so its input 0 presses nothing (the buffer timers a press starts there couldn't be put back on a rewind).
 - **Editing.** A piano roll on TAStudio's and FCEUX TAS Editor's conventions: one row per input tick; the narrow left
   column goes there (double-click a number does too), click or drag the numbers to select. Click or drag stick and jump,

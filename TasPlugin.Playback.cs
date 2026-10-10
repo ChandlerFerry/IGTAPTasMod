@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.IO;
 using System.Reflection;
 using System.Text.RegularExpressions;
@@ -197,12 +198,27 @@ namespace IGTAPTasMod
             _fastUntilTick = Mathf.Max(0, fromTick);
             EnsureGameUnpaused();
             _pendingReplay = walkSlowdown > 0f ? HumanVersionOf(macro) ?? macro : macro;
+            // A farm route plays as its farm time is judged (EvaluateLoop): its lead, then its loop LoopRepeats times, through every
+            // finish. Its inputs alone end at the lead's finish, which ended the playback there: one lap.
+            _farmPlayback = false;
+            if (_pendingReplay.loopFrom > 0)
+            {
+                List<SolverTick> ticks = ToTicks(_pendingReplay.steps.Where(st => st.enabled).ToList());
+                if (_pendingReplay.loopFrom < ticks.Count)
+                {
+                    var played = ticks.Take(_pendingReplay.loopFrom).ToList();
+                    for (int k = 0; k < LoopRepeats; k++) played.AddRange(ticks.Skip(_pendingReplay.loopFrom).Select(t => t.Clone()));
+                    _pendingReplay = new MacroDefinition { id = _pendingReplay.id, name = _pendingReplay.name, savestateId = _pendingReplay.savestateId, steps = ToSteps(played) };
+                    _farmPlayback = true;
+                }
+            }
             _pendingReplayStartDelayTicks = Mathf.Max(0, startDelayTicks);
         }
 
         private void OnAttemptEnded(bool success, string reason)
         {
             _fastUntilTick = 0;
+            _farmPlayback = false;
             if (_fullTasPlay != null && _fullTasPlay.started && !_silentEvaluation)
             {
                 FinishFullTasPlayback(success, reason);

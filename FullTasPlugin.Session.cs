@@ -111,34 +111,44 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// A savestate start's tree level, right after the restore: Area 1 overgrown from 23, The Tree at the level and the zone
-        /// at the player loaded (its floor with it), as a tree transition's start sets them (Solver EnsureArea1State,
-        /// EnsureTree, EnsureZone); the player then settles and rests, every box the tree woke has run its Start, and the start
-        /// is taken. False when it failed the new game.
+        /// A savestate start's tree, right after the restore: at a level, Area 1 overgrown from 23 and The Tree at the level, as
+        /// a tree transition's start sets them (Solver EnsureArea1State, EnsureTree); with segments, exactly those grown and the
+        /// path shut. Then the zone at the player loaded (its floor with it, EnsureZone); the player then settles and rests,
+        /// every box the tree woke has run its Start, and the start is taken. False when it failed the new game.
         /// </summary>
         bool ApplyNewGameTree(Movement player)
         {
-            int level = _newGameTree.Value;
+            int[] segments = _newGameTree is JArray ? _newGameTree.Select(t => (int)t).ToArray() : null;
+            int level = segments == null ? (int)_newGameTree : -1;
+            string what = segments == null ? "the tree at level " + level : "the tree with segments " + string.Join(", ", segments);
             TreeController tree = TreeLevel.TheTree();
-            if (tree == null) { FailNewGame("No tree to set at level " + level + "."); return false; }
-            if (level >= 23) SetArea1State(Singleton<globalStats>.Instance, globalStats.area1states.Overgrown, "the tree at level " + level);
-            TreeLevel.Apply(tree, level);
+            if (tree == null) { FailNewGame("No tree for " + what + "."); return false; }
+            if (level >= 23) SetArea1State(Singleton<globalStats>.Instance, globalStats.area1states.Overgrown, what);
+            if (segments == null) TreeLevel.Apply(tree, level);
+            else TreeLevel.Apply(tree, segments);
             SetPath(level >= 23);
             ZoneLoader loader = FindAnyObjectByType<ZoneLoader>();
             int zone = ZoneAt(player.transform.position, loader);
             if (zone != 0 && (zone != loader.activeZone || !ZonesSettled())) LoadZoneNow.Invoke(loader, new object[] { zone });
-            _newGameNotes.Add("the tree at level " + level + (zone == 0 ? "" : ", zone " + zone + " loaded"));
+            _newGameNotes.Add(what + (zone == 0 ? "" : ", zone " + zone + " loaded"));
             return true;
+        }
+
+        /// <summary>A savestate start's savestate, its file reread: a hand edit (the unlocks it carries, its <c>openA2Door</c>)
+        /// applies without a relaunch. Null when there is none.</summary>
+        internal Savestate ReloadSavestate(string id)
+        {
+            int index = _savestates.FindIndex(s => s.id == id);
+            if (index < 0) return null;
+            string path = Path.Combine(_savestatesPath, SafeId(id) + ".json");
+            if (File.Exists(path)) _savestates[index] = JsonConvert.DeserializeObject<Savestate>(File.ReadAllText(path)) ?? _savestates[index];
+            return _savestates[index];
         }
 
         void ApplyNewGameSavestate(Movement player)
         {
-            // Reread the file: a hand edit (the unlocks a savestate start carries) applies without a relaunch.
-            int index = _savestates.FindIndex(s => s.id == _newGameSavestate);
-            if (index < 0) { FailNewGame("No savestate " + _newGameSavestate + "."); return; }
-            string path = Path.Combine(_savestatesPath, SafeId(_newGameSavestate) + ".json");
-            if (File.Exists(path)) _savestates[index] = JsonConvert.DeserializeObject<Savestate>(File.ReadAllText(path)) ?? _savestates[index];
-            Savestate state = _savestates[index];
+            Savestate state = ReloadSavestate(_newGameSavestate);
+            if (state == null) { FailNewGame("No savestate " + _newGameSavestate + "."); return; }
             if (CapabilitiesLocked && state.movementFields.Keys.Any(SavestateService.IsUnlockField))
             {
                 FailNewGame("Savestate " + state.name + " sets unlocks: " + CapabilitiesLockedError);
@@ -152,7 +162,7 @@ namespace IGTAPTasMod
             _newGameAirStart = state.movementFields.TryGetValue("onGround", out SnapshotValue ground)
                 && string.Equals(ground?.value, "false", StringComparison.OrdinalIgnoreCase) ? state : null;
             _newGameNotes.Add("restored savestate " + state.name + (_newGameAirStart != null ? " (in the air: held there until the start)" : ""));
-            if (_newGameTree.HasValue && !ApplyNewGameTree(player)) return;
+            if (_newGameTree != null && !ApplyNewGameTree(player)) return;
             _newGameSpawn = null;
             _newGamePhase = 2;
             _newGameFrame = Time.frameCount;
