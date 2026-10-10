@@ -59,11 +59,27 @@ namespace IGTAP.EngineSim.Cli.Runs
             var improver = new Improver(run, lib, search, facts, threads) { Log = Log };
             var pending = new BlockingCollection<Built>(new ConcurrentQueue<Built>(), 1);
             Built submitted = null;
-            double savedLive = File.Exists(run.RunFile) ? SavedLive(run.RunFile) : double.MaxValue;
+            // What the run file's route does on this engine, not what it recorded (a fidelity fix can have broken it).
+            (int savedReached, double savedLive) = (0, double.MaxValue);
+            if (File.Exists(run.RunFile) && from == Path.GetFileName(run.RunFile))
+                (savedReached, savedLive) = Solve.OnThread(() =>
+                {
+                    Simulation sim = run.Make();
+                    RunResult r = sim.Run(route, null, null, 1000000);
+                    return (r.Progress, r.Progress == plan.Count ? Math.Round(MacroEngine.LiveSeconds(r.GoalPhysicsTicks[^1], r.GoalHeldFrames[^1]), 4) : double.MaxValue);
+                });
+            Log($"the run file's route reaches {savedReached} of {plan.Count} goals on this engine" + (savedLive < double.MaxValue ? $" in {savedLive:0.0000} s" : ""));
             improver.Event += Emit;
             improver.NewBest += (b, how) =>
             {
-                RunFiles.WriteRunFile(run, b, startAt);
+                // Never replace the run's best with a worse route (a start that harvests less than the file's route reaches).
+                if (b.Complete ? b.Live < savedLive - 1e-4 || savedReached < b.Plan.Count : b.Reached > savedReached)
+                {
+                    string backup = RunFiles.FileOf(run, ".before-v2.json");
+                    if (File.Exists(run.RunFile) && !File.Exists(backup)) File.Copy(run.RunFile, backup);
+                    RunFiles.WriteRunFile(run, b, startAt);
+                    savedReached = b.Reached;
+                }
                 RunFiles.WriteWaits(run, b);
                 RunFiles.WriteFailure(run, b.Failure, b.Failure == null ? null : b.Plan.Ids[b.Failure.Goal]);
                 lib.Save();
@@ -89,12 +105,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             // Let a pending submission finish before the process ends.
             for (int i = 0; i < 600 && submit && pending.Count > 0; i++) Thread.Sleep(100);
             return 0;
-        }
-
-        static double SavedLive(string file)
-        {
-            using JsonDocument d = JsonDocument.Parse(File.ReadAllText(file));
-            return d.RootElement.TryGetProperty("live", out JsonElement l) && l.ValueKind == JsonValueKind.Number && l.GetDouble() > 0 ? l.GetDouble() : double.MaxValue;
         }
 
         static void WatchStdin()
@@ -131,7 +141,13 @@ namespace IGTAP.EngineSim.Cli.Runs
                         string reason = root.TryGetProperty("reason", out JsonElement why) && why.ValueKind == JsonValueKind.String ? why.GetString() : null;
                         Log($"gate: {(finished.GetBoolean() ? "finish " + time : "no finish")}{(saved ? ", saved" : ", not saved")}{(reason != null ? " - " + reason : "")}");
                         Emit(new { type = "gate", finished = finished.GetBoolean(), time, saved, reason });
-                        Confirm.Compare(b, root, Emit, Log);
+                        if (!Confirm.Compare(b, root, Emit, Log))
+                        {
+                            Confirm.Investigate(run, b, http, Emit, Log);
+                            Log("the engine and the game disagree: nothing more is built on this engine (see the run's .confirm.json)");
+                            Emit(new { type = "failure", kind = "disagree", text = "the game's replay parts from the engine's; fix the engine (check, the fidelity log) before solving on" });
+                            _stop = true;
+                        }
                         break;
                     }
                     catch (Exception ex) when (ex is HttpRequestException || ex is AggregateException || ex is TaskCanceledException)

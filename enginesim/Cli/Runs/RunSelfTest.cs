@@ -26,10 +26,15 @@ namespace IGTAP.EngineSim.Cli.Runs
                 PlanEdits();
                 MadeGoals();
                 Library();
+                Splits();
                 string trace = Solve.Option<string>(args, "--trace", null), best = Solve.Option<string>(args, "--best", null);
+                if (trace != null && best != null && args.Contains("--confirm-live")) ConfirmLive(trace, best);
+                if (trace != null && best != null && args.Contains("--harvest-vs-straight")) HarvestVsStraight(trace, best);
                 if (trace != null && best != null && !args.Contains("--no-search")) Search(trace, best);
                 if (trace != null && best != null && args.Contains("--build")) Rebuild(trace, best, Solve.Option(args, "--live", double.MaxValue));
                 if (trace != null && best != null && args.Contains("--improve-smoke")) ImproveSmoke(trace, best);
+                if (trace != null && best != null && Solve.Option(args, "--restore-at", -1) is int restoreAt && restoreAt >= 0) RestoreAt(trace, best, restoreAt);
+                if (trace != null && best != null && Solve.Option(args, "--chain-to", -1) is int chainTo && chainTo >= 0) ChainTo(trace, best, chainTo);
                 Console.WriteLine($"run-selftest: {_passed} checks passed");
                 return 0;
             }
@@ -164,9 +169,62 @@ namespace IGTAP.EngineSim.Cli.Runs
                 Built h = builder.Harvest(plan, inputs, "harvest");
                 return (h, builder.Build(plan, h), builder.Build(plan));
             });
-            Check(harvested.Complete && harvested.Live <= live + 1e-4, $"{ctx.Name}: the best harvested: {harvested.Reached} of {plan.Count} goals, {harvested.Live:0.0000} s (no slower than {live})");
+            Check(harvested.Complete && harvested.Live <= live + 1e-4, $"{ctx.Name}: the best harvested: {harvested.Reached} of {plan.Count} goals, {harvested.Live:0.0000} s (no slower than {live}); {harvested.HarvestEnd}");
             Check(built.Complete && built.Searches == 0 && built.Live == harvested.Live, $"{ctx.Name}: the plan built on the harvest: {built.Reached} goals, {built.Live:0.0000} s, {built.Searches} searches");
             Console.WriteLine($"  {ctx.Name}: a greedy rebuild from the library alone reaches {greedy.Reached} of {plan.Count} goals" + (greedy.Failure == null ? $", {greedy.Live:0.0000} s" : $" ({greedy.Failure.Text})"));
+            Directory.Delete(dir, true);
+        }
+
+        static void Splits()
+        {
+            var b = new Built { Plan = new RunPlan(new[] { "a00001", "b00002" }, new[] { "record:1", "buy:buyreward" }) };
+            b.StepEnd.AddRange(new[] { 10, 20 });
+            b.Physics.AddRange(new long[] { 100, 200 });
+            b.Held.AddRange(new long[] { 0, 6 });
+            b.InputAt.AddRange(new long[] { 10, 20 });
+            var events = new List<string>();
+            JsonElement Verdict(string json) => JsonDocument.Parse(json).RootElement;
+            Check(Confirm.Compare(b, Verdict("{\"splits\":[{\"ticks\":100,\"held\":0},{\"ticks\":200,\"held\":6}]}"), e => events.Add(JsonSerializer.Serialize(e)), _ => { }),
+                "the game's splits equal the engine's: confirmed");
+            Check(!Confirm.Compare(b, Verdict("{\"splits\":[{\"ticks\":100,\"held\":0},{\"ticks\":201,\"held\":6}]}"), e => events.Add(JsonSerializer.Serialize(e)), _ => { })
+                && events[^1].Contains("\"goal\":2"), "a split one tick off: refused, naming goal 2");
+            Check(!Confirm.Compare(b, Verdict("{\"splits\":[{\"ticks\":100,\"held\":0}]}"), e => events.Add(JsonSerializer.Serialize(e)), _ => { }),
+                "the game short of the engine's goals: refused");
+        }
+
+        static void ConfirmLive(string trace, string best)
+        {
+            RunContext ctx = RunContext.Open(trace);
+            List<InputTick> inputs = Inputs(best);
+            string dir = Path.Combine(Path.GetTempPath(), "igtap-run-confirm-" + Environment.ProcessId);
+            Directory.CreateDirectory(dir);
+            var plan = new RunPlan(ctx.HeaderIds, ctx.HeaderGoals.Select(g => g.label).ToArray());
+            Built built = Solve.OnThread(() => new Builder(ctx, SegmentLibrary.Load(Path.Combine(dir, "s.json"), Array.Empty<string>()), new SegmentSearch(ctx),
+                new SegmentFacts(Path.Combine(dir, "f.json")), false).Harvest(plan, inputs, "harvest"));
+            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+            Confirm.Investigate(ctx, built, http, e => Console.WriteLine("event " + JsonSerializer.Serialize(e)), m => Console.WriteLine(m));
+            string confirm = RunFiles.FileOf(ctx, ".confirm.json");
+            Check(File.Exists(confirm) && File.ReadAllText(confirm).Contains("[MATCH]"), $"{ctx.Name}: the game's trace of its best replays here: {(File.Exists(confirm) ? File.ReadAllText(confirm) : "no confirm file")}");
+            Directory.Delete(dir, true);
+        }
+
+        static void HarvestVsStraight(string trace, string best)
+        {
+            RunContext ctx = RunContext.Open(trace);
+            List<InputTick> inputs = Inputs(best);
+            var plan = new RunPlan(ctx.HeaderIds, ctx.HeaderGoals.Select(g => g.label).ToArray());
+            string dir = Path.Combine(Path.GetTempPath(), "igtap-run-hvs-" + Environment.ProcessId);
+            Directory.CreateDirectory(dir);
+            Console.WriteLine(Solve.OnThread(() =>
+            {
+                var builder = new Builder(ctx, SegmentLibrary.Load(Path.Combine(dir, "s.json"), Array.Empty<string>()), new SegmentSearch(ctx), new SegmentFacts(Path.Combine(dir, "f.json")), false);
+                Built h = builder.Harvest(plan, inputs, "harvest");
+                Simulation sim = ctx.Make();
+                RunResult r = sim.Run(inputs, null, null, 1000000);
+                var differ = Enumerable.Range(0, Math.Min(h.Reached, r.Progress)).Where(g => h.Physics[g] != r.GoalPhysicsTicks[g]).ToList();
+                return $"harvest reaches {h.Reached}, straight {r.Progress}; goals whose ticks differ: {differ.Count}"
+                    + string.Concat(differ.Take(12).Select(g => $"{Environment.NewLine}  goal {g + 1} {plan.Labels[g]}: harvest {h.Physics[g]} straight {r.GoalPhysicsTicks[g]}"));
+            }));
             Directory.Delete(dir, true);
         }
 
@@ -192,6 +250,54 @@ namespace IGTAP.EngineSim.Cli.Runs
             Check(got.Complete, $"{ctx.Name}: the improver builds goals 1-{end} without lap {lap + 1} ({full.Labels[lap]}): {got.Reached} of {without.Count} ({got.Failure?.Text})");
             Check(got.Live <= original + 1e-4, $"{ctx.Name}: improved to {got.Live:0.0000} s against the original {original:0.0000} s ({string.Join(", ", improver.Accepted)})");
             Directory.Delete(dir, true);
+        }
+
+        // A state captured at goal k and restored must play on exactly as the straight replay does.
+        static void RestoreAt(string trace, string best, int k)
+        {
+            RunContext ctx = RunContext.Open(trace);
+            List<InputTick> inputs = Inputs(best);
+            string report = Solve.OnThread(() =>
+            {
+                Simulation sim = ctx.Make();
+                RunResult straight = sim.Run(inputs, null, null, 1000000);
+                SimSnapshot at = sim.AdvanceToGoal(inputs, k, out int consumed);
+                sim.SetStart(at, consumed);
+                RunResult resumed = sim.Run(inputs.Skip(consumed).ToList(), null, null, 1000000);
+                var rows = Enumerable.Range(k, Math.Min(6, straight.Progress - k)).Select(g =>
+                    $"goal {g + 1} {ctx.HeaderGoals[g].label}: straight {straight.GoalPhysicsTicks[g]} resumed {(g < resumed.Progress ? resumed.GoalPhysicsTicks[g].ToString() : "-")}");
+                return $"straight reaches {straight.Progress}, resumed from goal {k} reaches {resumed.Progress} ({resumed.EndReason})" + Environment.NewLine + "  "
+                    + string.Join(Environment.NewLine + "  ", rows);
+            });
+            Console.WriteLine(report);
+        }
+
+        // Goal by goal from captured states (as the builder plays), against one straight replay: where do they part?
+        static void ChainTo(string trace, string best, int k)
+        {
+            RunContext ctx = RunContext.Open(trace);
+            List<InputTick> inputs = Inputs(best);
+            Console.WriteLine(Solve.OnThread(() =>
+            {
+                Simulation sim = ctx.Make();
+                RunResult straight = sim.Run(inputs, null, null, 1000000);
+                SimSnapshot at = sim.Start;
+                int used = 0;
+                for (int g = 0; g < k; g++)
+                {
+                    sim.SetStart(at, used);
+                    List<InputTick> rest = inputs.Skip(used).ToList();
+                    SimSnapshot next = sim.AdvanceToGoal(rest, g + 1, out int consumed);
+                    if (next == null) return $"chain: goal {g + 1} not reached from goal {g}'s state";
+                    long tick = next.Goal.PhysicsTicks[g];
+                    if (tick != straight.GoalPhysicsTicks[g]) return $"chain parts at goal {g + 1} {ctx.HeaderGoals[g].label}: straight {straight.GoalPhysicsTicks[g]}, chain {tick}";
+                    at = next;
+                    used += consumed;
+                }
+                sim.SetStart(at, used);
+                RunResult on = sim.Run(inputs.Skip(used).ToList(), null, null, 1000000);
+                return $"chain to goal {k} matches the straight replay; from there it reaches {on.Progress} of the straight replay's {straight.Progress} ({on.EndReason})";
+            }));
         }
     }
 }

@@ -31,6 +31,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         public List<Wait> Waits = new List<Wait>();
         public Failure Failure;
         public int Searches;
+        public string HarvestEnd;
         public int Reached => StepEnd.Count;
         public bool Complete => Plan != null && Reached == Plan.Count;
         public double Live => Reached == 0 ? 0 : Math.Round(MacroEngine.LiveSeconds(Physics[^1], Held[^1]), 4);
@@ -101,7 +102,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 built.Held.AddRange(reuse.Held.Take(keep));
                 built.Waits.AddRange(reuse.Waits.Where(w => w.Goal < keep));
             }
-            for (int j = keep; j < plan.Count && built.Failure == null; j++) Step(built, goals, j, null);
+            while (built.Reached < plan.Count && built.Failure == null) Step(built, goals, built.Reached, null);
             return built;
         }
 
@@ -124,14 +125,26 @@ namespace IGTAP.EngineSim.Cli.Runs
                 built.Held.AddRange(reuse.Held.Take(keep));
                 built.Waits.AddRange(reuse.Waits.Where(w => w.Goal < keep));
             }
-            for (int j = keep; j < plan.Count && built.Failure == null; j++)
+            while (built.Reached < plan.Count && built.Failure == null)
             {
-                int from = j == 0 ? 0 : built.StepEnd[j - 1];
-                if (from >= route.Count) break;
-                Step(built, goals, j, (route, from, source));
+                int j = built.Reached;
+                Step(built, goals, j, (route, j == 0 ? 0 : built.StepEnd[j - 1], source));
             }
-            if (built.Failure?.Kind == "harvest") built.Failure = null;
+            if (built.Failure?.Kind == "harvest") { built.HarvestEnd = built.Failure.Text; built.Failure = null; }
             return built;
+        }
+
+        // The build replays goal to goal from captured states; a straight replay from the run's start is what the game does, so a
+        // best's goal ticks are the straight replay's, and a route whose straight replay falls short of its build is refused.
+        public Built Verify(Built b)
+        {
+            FullTasGoal[] goals = _run.GoalsOf(b.Plan);
+            _sim.UseGoals(_base.For(goals));
+            _sim.SetStart(_origin, 0);
+            RunResult r = _sim.Run(b.Inputs, null, null, 1000000);
+            if (r.Progress < b.Reached) return null;
+            for (int g = 0; g < b.Reached; g++) (b.InputAt[g], b.Physics[g], b.Held[g]) = (r.GoalInputTicks[g], r.GoalPhysicsTicks[g], r.GoalHeldFrames[g]);
+            return b;
         }
 
         static bool SameInputs(List<InputTick> a, List<InputTick> b, int from, int to)
@@ -143,6 +156,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         SimSnapshot StartOf(Built built, FullTasGoal[] goals, int j)
         {
             SimSnapshot s = j == 0 ? _origin : built.States[j - 1];
+            if (s.Goal != null && s.Goal.Next == j) return s;
             int n = goals.Length;
             var progress = new FullTasTracker.State { Next = j, Bought = 0, Banked = s.Goal?.Banked ?? 0, InputTicks = new long[n], PhysicsTicks = new long[n], HeldFrames = new long[n] };
             for (int g = 0; g < n; g++)
@@ -195,14 +209,23 @@ namespace IGTAP.EngineSim.Cli.Runs
             return null;
         }
 
+        // A capture can hold more goals than the one the step aimed at (two boxes bought in one physics step), and an area goal
+        // a quick restart took back is reached again later: the tracker's own ticks are the goals' ticks.
         void Append(Built built, int j, List<InputTick> inputs, SimSnapshot at)
         {
             built.Inputs.AddRange(inputs);
-            built.StepEnd.Add(built.Inputs.Count);
-            built.States.Add(at);
-            built.InputAt.Add(at.Goal.InputTicks[j]);
-            built.Physics.Add(at.Goal.PhysicsTicks[j]);
-            built.Held.Add(at.Goal.HeldFrames[j]);
+            int n = Math.Min(Math.Max(at.Goal.Next, j + 1), built.Plan.Count);
+            for (int g = 0; g < built.Reached; g++)
+                if (g < at.Goal.PhysicsTicks.Length && at.Goal.PhysicsTicks[g] >= 0)
+                    (built.InputAt[g], built.Physics[g], built.Held[g]) = (at.Goal.InputTicks[g], at.Goal.PhysicsTicks[g], at.Goal.HeldFrames[g]);
+            for (int g = j; g < n; g++)
+            {
+                built.StepEnd.Add(built.Inputs.Count);
+                built.States.Add(at);
+                built.InputAt.Add(at.Goal.InputTicks[g]);
+                built.Physics.Add(at.Goal.PhysicsTicks[g]);
+                built.Held.Add(at.Goal.HeldFrames[g]);
+            }
         }
 
         void File(Built built, int j, Context c, List<InputTick> inputs, SimSnapshot at, string source)
@@ -223,10 +246,11 @@ namespace IGTAP.EngineSim.Cli.Runs
             string label = built.Plan.Labels[j];
             if (harvest is var (route, from, source))
             {
+                // A goal can come after the route's last input (a fall to the run's end): the idle ticks TryPlay adds reach it.
                 for (int window = 4096; ; window *= 4)
                 {
-                    int n = Math.Min(window, route.Count - from);
-                    var played = TryPlay(start, inputBase, route.GetRange(from, n), j);
+                    int n = Math.Max(0, Math.Min(window, route.Count - from));
+                    var played = TryPlay(start, inputBase, n == 0 ? new List<InputTick>() : route.GetRange(from, n), j);
                     if (played is var (inputs, at))
                     {
                         File(built, j, c, inputs, at, source);
@@ -234,7 +258,14 @@ namespace IGTAP.EngineSim.Cli.Runs
                         if (goals[j].kind == FullTasGoal.Buy || goals[j].kind == FullTasGoal.Reward) NoteWait(built, goals, j, start, c, inputs);
                         return;
                     }
-                    if (from + n >= route.Count) { built.Failure = new Failure { Kind = "harvest", Goal = j, Label = label, Text = "the route stops before " + label }; return; }
+                    if (from + n >= route.Count)
+                    {
+                        var list = (n == 0 ? new List<InputTick>() : route.GetRange(from, n)).Concat(Enumerable.Repeat(new InputTick(), Settle)).ToList();
+                        _sim.SetStart(start, inputBase);
+                        RunResult r = _sim.Run(list, null, null, 1000000);
+                        built.Failure = new Failure { Kind = "harvest", Goal = j, Label = label, Text = $"the route stops before goal {j + 1} {label}: it reaches {r.Progress} goals and ends: {r.EndReason}" };
+                        return;
+                    }
                 }
             }
             bool afterReset = built.Inputs.Count > 0 && built.Inputs[^1].reset;

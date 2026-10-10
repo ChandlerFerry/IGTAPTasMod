@@ -75,7 +75,11 @@ namespace IGTAP.EngineSim.Cli.Runs
                     if (!coord.Mine.Complete) coord.Mine = b.Build(plan, coord.Mine);
                     return coord.Mine;
                 }).Result;
-                Accept(start, "start", coord, workers);
+                if (!Accept(start, "start", coord, workers))
+                {
+                    Log("the start's straight replay falls short of its build: starting from its harvest");
+                    Accept(coord.Do(b => coord.Mine = b.Harvest(plan, inputs, "harvest")).Result, "start (harvest)", coord, workers);
+                }
                 while (!stop() && Pass(coord, workers, stop) != Outcome.Converged) { }
                 Event?.Invoke(new { type = "plan", converged = !stop(), reached = Best.Reached, of = Best.Plan.Count, live = Best.Live, waits = Best.Waits.Sum(w => w.Ticks) });
             }
@@ -85,8 +89,16 @@ namespace IGTAP.EngineSim.Cli.Runs
             }
         }
 
-        void Accept(Built b, string what, Worker coord, Worker[] workers)
+        // A candidate is kept only as its straight replay from the run's start plays it (Builder.Verify).
+        bool Accept(Built b, string what, Worker coord, Worker[] workers)
         {
+            int claimed = b.Reached;
+            double claimedLive = b.Live;
+            Built v = coord.Do(x => x.Verify(b)).Result;
+            if (v == null) { Log($"refused ({what}): its straight replay falls short of the {claimed} goals its build reached"); return false; }
+            if (Best != null && !v.Better(Best)) { Log($"refused ({what}): {claimedLive:0.0000} s built, {v.Live:0.0000} s replayed straight, not better"); return false; }
+            if (Math.Abs(v.Live - claimedLive) > 1e-6) Log($"note ({what}): built {claimedLive:0.0000} s, replayed straight {v.Live:0.0000} s");
+            b = v;
             Best = b;
             _triedMisses.Clear();
             Accepted.Add(what);
@@ -95,6 +107,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             RunPlan plan = b.Plan;
             List<InputTick> inputs = b.Inputs;
             Task.WaitAll(workers.Append(coord).Select(w => (Task)w.Do(x => w.Mine = x.Harvest(plan, inputs, "sync", w.Mine))).ToArray());
+            return true;
         }
 
         static string Describe(Built b) => b.Complete ? $"{b.Live:0.0000} s, {b.Waits.Sum(w => w.Ticks)} wait ticks"
@@ -119,7 +132,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                     if (got[k].Failure?.Kind == "miss" && Ahead(got[k]) is long gain && gain > 0) misses.Add((batch[k], gain));
                 }
                 Event?.Invoke(new { type = "status", moves = moves.Count, tried = Math.Min(moves.Count, i + batch.Length), best = Best.Live, reached = Best.Reached, misses = misses.Count });
-                if (win >= 0) { Accept(got[win], batch[win].What, coord, workers); return Outcome.Gained; }
+                if (win >= 0 && Accept(got[win], batch[win].What, coord, workers)) return Outcome.Gained;
             }
             var untried = misses.Where(m => !_triedMisses.Contains(Key(m.move.Plan))).OrderByDescending(m => m.gain).ToList();
             foreach (var (move, _) in untried.Take(MissesPerPass))
@@ -132,7 +145,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                     try { return b.Build(move.Plan, coord.Mine); }
                     finally { (b.MaxSearches, b.MaxBudget) = (int.MaxValue, Builder.Budgets[^1]); }
                 }).Result;
-                if (c.Better(Best)) { Accept(c, move.What + " (searched)", coord, workers); return Outcome.Gained; }
+                if (c.Better(Best) && Accept(c, move.What + " (searched)", coord, workers)) return Outcome.Gained;
             }
             return untried.Count > MissesPerPass ? Outcome.Searching : Outcome.Converged;
         }
