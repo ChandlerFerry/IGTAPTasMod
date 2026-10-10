@@ -16,6 +16,8 @@ namespace IGTAP.EngineSim.Cli.Runs
         public bool Dashing, Ground;
         public List<InputTick> Inputs;
         public long Ticks, Held;
+        // Simulation.MovementFingerprint of the start: HashCode is seeded per process, so it lives in memory only.
+        public int? Fp;
     }
 
     // Reuse is checked by replay from the actual state, never assumed: a candidate that doesn't replay exactly is just skipped.
@@ -60,7 +62,11 @@ namespace IGTAP.EngineSim.Cli.Runs
         {
             lock (_lock)
             {
-                if (!_keys.Add(Key(s))) return false;
+                if (!_keys.Add(Key(s)))
+                {
+                    if (s.Fp != null) foreach (Segment o in _all) if (o.Fp == null && Key(o) == Key(s)) o.Fp = s.Fp;
+                    return false;
+                }
                 s.Id ??= FullTasGoalIds.New(null);
                 s.Engine ??= BuildInfo.Commit;
                 _all.Add(s);
@@ -70,13 +76,13 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         public int Count { get { lock (_lock) return _all.Count; } }
 
-        public IReadOnlyList<Segment> Candidates(string to, string unlocks, float x, float y, int phase, int facing, int max = 8, float radius = 64f)
+        public IReadOnlyList<Segment> Candidates(string to, string unlocks, float x, float y, int phase, int facing, int max = 8, float radius = 64f, int? fp = null)
         {
             lock (_lock)
                 return _all.Where(s => s.To == to && s.Unlocks == unlocks)
                     .Select(s => (s, d: MathF.Sqrt((s.X - x) * (s.X - x) + (s.Y - y) * (s.Y - y))))
                     .Where(c => c.d <= radius)
-                    .OrderBy(c => c.d).ThenBy(c => c.s.Phase == phase ? 0 : 1).ThenBy(c => c.s.Facing == facing ? 0 : 1).ThenBy(c => c.s.Ticks)
+                    .OrderBy(c => fp != null && c.s.Fp == fp ? 0 : 1).ThenBy(c => c.d).ThenBy(c => c.s.Phase == phase ? 0 : 1).ThenBy(c => c.s.Facing == facing ? 0 : 1).ThenBy(c => c.s.Ticks)
                     .Take(max).Select(c => c.s).ToList();
         }
 

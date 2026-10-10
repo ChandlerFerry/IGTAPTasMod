@@ -29,6 +29,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 string trace = Solve.Option<string>(args, "--trace", null), best = Solve.Option<string>(args, "--best", null);
                 if (trace != null && best != null && !args.Contains("--no-search")) Search(trace, best);
                 if (trace != null && best != null && args.Contains("--build")) Rebuild(trace, best, Solve.Option(args, "--live", double.MaxValue));
+                if (trace != null && best != null && args.Contains("--improve-smoke")) ImproveSmoke(trace, best);
                 Console.WriteLine($"run-selftest: {_passed} checks passed");
                 return 0;
             }
@@ -166,6 +167,30 @@ namespace IGTAP.EngineSim.Cli.Runs
             Check(harvested.Complete && harvested.Live <= live + 1e-4, $"{ctx.Name}: the best harvested: {harvested.Reached} of {plan.Count} goals, {harvested.Live:0.0000} s (no slower than {live})");
             Check(built.Complete && built.Searches == 0 && built.Live == harvested.Live, $"{ctx.Name}: the plan built on the harvest: {built.Reached} goals, {built.Live:0.0000} s, {built.Searches} searches");
             Console.WriteLine($"  {ctx.Name}: a greedy rebuild from the library alone reaches {greedy.Reached} of {plan.Count} goals" + (greedy.Failure == null ? $", {greedy.Live:0.0000} s" : $" ({greedy.Failure.Text})"));
+            Directory.Delete(dir, true);
+        }
+
+        static void ImproveSmoke(string trace, string best)
+        {
+            RunContext ctx = RunContext.Open(trace);
+            List<InputTick> inputs = Inputs(best);
+            string dir = Path.Combine(Path.GetTempPath(), "igtap-run-improve-" + Environment.ProcessId);
+            Directory.CreateDirectory(dir);
+            var full = new RunPlan(ctx.HeaderIds, ctx.HeaderGoals.Select(g => g.label).ToArray());
+            SegmentLibrary lib = SegmentLibrary.Load(Path.Combine(dir, "lib.segments.json"), Array.Empty<string>());
+            var facts = new SegmentFacts(Path.Combine(dir, "lib.failures.json"));
+            Built harvested = Solve.OnThread(() => new Builder(ctx, lib, new SegmentSearch(ctx), facts, false).Harvest(full, inputs, "harvest"));
+            // A lap right before an economy buy, early in the run: without it the buy waits for its Cash.
+            int lap = Enumerable.Range(10, full.Count - 20).First(i => FullTasGoal.IsLap(full.Labels[i]) && full.Labels[i + 1].StartsWith("buy:", StringComparison.Ordinal) && RunGoals.Editable(full.Labels[i + 1]));
+            int end = lap + 6;
+            var shortPlan = new RunPlan(full.Ids.Take(end).ToArray(), full.Labels.Take(end).ToArray());
+            double original = Math.Round(MacroEngine.LiveSeconds(harvested.Physics[end - 1], harvested.Held[end - 1]), 4);
+            RunPlan without = shortPlan.RemoveAt(lap);
+            var improver = new Improver(ctx, lib, new SegmentSearch(ctx), facts, threads: 4) { MaxSearchesPerBuild = 0, Log = Console.WriteLine };
+            improver.Run(without, inputs.Take(harvested.StepEnd[lap - 1]).ToList(), () => false);
+            Built got = improver.Best;
+            Check(got.Complete, $"{ctx.Name}: the improver builds goals 1-{end} without lap {lap + 1} ({full.Labels[lap]}): {got.Reached} of {without.Count} ({got.Failure?.Text})");
+            Check(got.Live <= original + 1e-4, $"{ctx.Name}: improved to {got.Live:0.0000} s against the original {original:0.0000} s ({string.Join(", ", improver.Accepted)})");
             Directory.Delete(dir, true);
         }
     }

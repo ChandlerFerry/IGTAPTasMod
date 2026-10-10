@@ -38,9 +38,21 @@ namespace IGTAP.EngineSim.Cli.Runs
         public bool Better(Built o)
         {
             if (o == null) return true;
-            if (Reached != o.Reached) return Reached > o.Reached;
-            if (Reached == 0) return false;
-            return MacroEngine.LiveUnits(Physics[^1], Held[^1]) < MacroEngine.LiveUnits(o.Physics[^1], o.Held[^1]);
+            if (Complete != o.Complete) return Complete;
+            if (Complete) return MacroEngine.LiveUnits(Physics[^1], Held[^1]) < MacroEngine.LiveUnits(o.Physics[^1], o.Held[^1]);
+            (int n, long at) = Skeleton();
+            (int on, long oat) = o.Skeleton();
+            return n != on ? n > on : n > 0 && at < oat;
+        }
+
+        // Plans differ in their economy goals; the skeleton (unlocks, areas, rewards) is the same, so progress counts it alone.
+        (int reached, long tick) Skeleton()
+        {
+            int n = 0;
+            long at = long.MaxValue;
+            for (int g = 0; g < Reached; g++)
+                if (!RunGoals.Editable(Plan.Labels[g])) { n++; at = Physics[g]; }
+            return (n, at);
         }
     }
 
@@ -60,6 +72,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         readonly SimSnapshot _origin;
         public readonly List<(int goal, byte[] state, List<InputTick> prefix, string key)> Misses = new List<(int, byte[], List<InputTick>, string)>();
         public Action<string> Log = _ => { };
+        public int MaxSearches = int.MaxValue;
 
         public Builder(RunContext run, SegmentLibrary lib, SegmentSearch search, SegmentFacts facts, bool searchMisses)
         {
@@ -91,12 +104,26 @@ namespace IGTAP.EngineSim.Cli.Runs
             return built;
         }
 
-        public Built Harvest(RunPlan plan, List<InputTick> route, string source)
+        public Built Harvest(RunPlan plan, List<InputTick> route, string source, Built reuse = null)
         {
             FullTasGoal[] goals = _run.GoalsOf(plan);
             _sim.UseGoals(_base.For(goals));
             var built = new Built { Plan = plan, Owner = this };
-            for (int j = 0; j < plan.Count && built.Failure == null; j++)
+            int keep = 0;
+            if (reuse != null && reuse.Owner == this)
+                while (keep < reuse.Reached && keep < plan.Count && reuse.Plan.Labels[keep] == plan.Labels[keep] && reuse.StepEnd[keep] <= route.Count
+                    && SameInputs(reuse.Inputs, route, keep == 0 ? 0 : reuse.StepEnd[keep - 1], reuse.StepEnd[keep])) keep++;
+            if (keep > 0)
+            {
+                built.Inputs.AddRange(route.Take(reuse.StepEnd[keep - 1]));
+                built.StepEnd.AddRange(reuse.StepEnd.Take(keep));
+                built.States.AddRange(reuse.States.Take(keep));
+                built.InputAt.AddRange(reuse.InputAt.Take(keep));
+                built.Physics.AddRange(reuse.Physics.Take(keep));
+                built.Held.AddRange(reuse.Held.Take(keep));
+                built.Waits.AddRange(reuse.Waits.Where(w => w.Goal < keep));
+            }
+            for (int j = keep; j < plan.Count && built.Failure == null; j++)
             {
                 int from = j == 0 ? 0 : built.StepEnd[j - 1];
                 if (from >= route.Count) break;
@@ -104,6 +131,12 @@ namespace IGTAP.EngineSim.Cli.Runs
             }
             if (built.Failure?.Kind == "harvest") built.Failure = null;
             return built;
+        }
+
+        static bool SameInputs(List<InputTick> a, List<InputTick> b, int from, int to)
+        {
+            for (int i = from; i < to; i++) if (!a[i].Equals(b[i])) return false;
+            return true;
         }
 
         SimSnapshot StartOf(Built built, FullTasGoal[] goals, int j)
@@ -127,6 +160,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             public int Phase, Facing;
             public bool Ground;
             public string Unlocks;
+            public int Fp;
         }
 
         Context Read(SimSnapshot s)
@@ -134,7 +168,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             _sim.Restore(s);
             WorldPos p = _sim.PlayerWorld;
             return new Context { X = p.x, Y = p.y, Phase = (int)(_sim.Engine.PhysicsTicks % 5), Facing = _sim.Player.facingRight ? 1 : -1, Ground = _sim.Player.onGround,
-                Unlocks = PlayerCaps.Of(_sim).Id };
+                Unlocks = PlayerCaps.Of(_sim).Id, Fp = _sim.MovementFingerprint() };
         }
 
         (List<InputTick> inputs, SimSnapshot at)? TryPlay(SimSnapshot start, int inputBase, IReadOnlyList<InputTick> inputs, int j)
@@ -176,7 +210,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             _lib.Add(new Segment
             {
                 To = built.Plan.Labels[j], After = j == 0 ? null : built.Plan.Labels[j - 1], X = c.X, Y = c.Y, Phase = c.Phase, Facing = c.Facing, Ground = c.Ground,
-                Unlocks = c.Unlocks, Inputs = inputs, Ticks = at.Goal.PhysicsTicks[j] - before, Held = at.Goal.HeldFrames[j] - beforeHeld, Source = source,
+                Unlocks = c.Unlocks, Inputs = inputs, Ticks = at.Goal.PhysicsTicks[j] - before, Held = at.Goal.HeldFrames[j] - beforeHeld, Source = source, Fp = c.Fp,
             });
         }
 
@@ -192,33 +226,83 @@ namespace IGTAP.EngineSim.Cli.Runs
                 {
                     int n = Math.Min(window, route.Count - from);
                     var played = TryPlay(start, inputBase, route.GetRange(from, n), j);
-                    if (played is var (inputs, at)) { File(built, j, c, inputs, at, source); Append(built, j, inputs, at); return; }
+                    if (played is var (inputs, at))
+                    {
+                        File(built, j, c, inputs, at, source);
+                        Append(built, j, inputs, at);
+                        if (goals[j].kind == FullTasGoal.Buy || goals[j].kind == FullTasGoal.Reward) NoteWait(built, goals, j, start, c, inputs);
+                        return;
+                    }
                     if (from + n >= route.Count) { built.Failure = new Failure { Kind = "harvest", Goal = j, Label = label, Text = "the route stops before " + label }; return; }
                 }
             }
             bool afterReset = built.Inputs.Count > 0 && built.Inputs[^1].reset;
-            if (Best(start, inputBase, c, label, j, afterReset) is var (bestInputs, bestAt)) { Append(built, j, bestInputs, bestAt); return; }
             FullTasGoal goal = goals[j];
-            if ((goal.kind == FullTasGoal.Buy || goal.kind == FullTasGoal.Reward) && goal.boxes != null && _sim.Shop.Affordable(goal.boxes) != true)
+            bool buy = (goal.kind == FullTasGoal.Buy || goal.kind == FullTasGoal.Reward) && goal.boxes != null;
+            if (Best(start, inputBase, c, label, j, afterReset) is var (bestInputs, bestAt))
+            {
+                if (buy) (bestInputs, bestAt) = TrimIdle(start, inputBase, j, bestInputs, bestAt);
+                Append(built, j, bestInputs, bestAt);
+                if (buy) NoteWait(built, goals, j, start, c, bestInputs);
+                return;
+            }
+            _sim.Restore(start);
+            if (buy && _sim.Shop.Affordable(goal.boxes) != true)
             {
                 WaitStep(built, goals, j, start, inputBase, c, afterReset);
                 return;
             }
-            if (Searched(built, goals, j, start, inputBase, c, afterReset, built.Inputs) is var (found, foundAt)) Append(built, j, found, foundAt);
+            if (Searched(built, goals, j, start, inputBase, c, afterReset, built.Inputs) is var (found, foundAt))
+            {
+                Append(built, j, found, foundAt);
+                if (buy) NoteWait(built, goals, j, start, c, found);
+            }
         }
 
         (List<InputTick>, SimSnapshot)? Best(SimSnapshot start, int inputBase, Context c, string label, int j, bool afterReset)
         {
-            (List<InputTick> inputs, SimSnapshot at)? best = null;
-            foreach (Segment s in _lib.Candidates(label, c.Unlocks, c.X, c.Y, c.Phase, c.Facing))
+            // The first that replays, nearest start first: what was filed from this very state reproduces what followed it.
+            foreach (Segment s in _lib.Candidates(label, c.Unlocks, c.X, c.Y, c.Phase, c.Facing, fp: c.Fp))
             {
                 if (afterReset && s.Inputs.Count > 0 && s.Inputs[0].reset) continue;
-                if (TryPlay(start, inputBase, s.Inputs, j) is var (inputs, at)
-                    && (best == null || at.Goal.PhysicsTicks[j] < best.Value.at.Goal.PhysicsTicks[j]
-                        || at.Goal.PhysicsTicks[j] == best.Value.at.Goal.PhysicsTicks[j] && inputs.Count < best.Value.inputs.Count))
-                    best = (inputs, at);
+                if (TryPlay(start, inputBase, s.Inputs, j) is var (inputs, at)) return (inputs, at);
             }
-            return best;
+            return null;
+        }
+
+        const int MinWait = 8;
+
+        static bool Neutral(InputTick t) => t.x == 0 && t.y == 0 && !t.held && !t.press && !t.release && !t.dash && !t.reset && t.dashJump == 0 && t.pause == 0;
+
+        // The fewest leading idle inputs after which the rest still buys: the economy may pay sooner than when it was filed.
+        (List<InputTick>, SimSnapshot) TrimIdle(SimSnapshot start, int inputBase, int j, List<InputTick> inputs, SimSnapshot at)
+        {
+            int n = 0;
+            while (n < inputs.Count && Neutral(inputs[n])) n++;
+            if (n == 0 || n == inputs.Count) return (inputs, at);
+            List<InputTick> rest = inputs.GetRange(n, inputs.Count - n);
+            var idle = new InputTick();
+            (List<InputTick>, SimSnapshot)? With(int k) => TryPlay(start, inputBase, Enumerable.Repeat(idle, k).Concat(rest).ToList(), j);
+            int lo = 0, hi = n;
+            while (lo < hi) { int mid = (lo + hi) / 2; if (With(mid) != null) hi = mid; else lo = mid + 1; }
+            return lo < n && With(lo) is var (trimmed, trimmedAt) ? (trimmed, trimmedAt) : (inputs, at);
+        }
+
+        // A buy step's wait: its idle inputs before it moves off and while it stands in the box.
+        void NoteWait(Built built, FullTasGoal[] goals, int j, SimSnapshot start, Context c, List<InputTick> inputs)
+        {
+            int lead = 0, tail = 0;
+            while (lead < inputs.Count && Neutral(inputs[lead])) lead++;
+            while (tail < inputs.Count - lead && Neutral(inputs[inputs.Count - 1 - tail])) tail++;
+            if (lead + tail < MinWait) return;
+            _sim.Restore(start);
+            double[] need = _sim.Shop.Need(goals[j].boxes);
+            var currencies = (globalStats.Currencies[])Enum.GetValues(typeof(globalStats.Currencies));
+            int cur = need == null ? -1 : Enumerable.Range(0, Math.Min(need.Length, currencies.Length)).Where(k => need[k] > 0)
+                .OrderByDescending(k => need[k] - _sim.Shop.Holds(currencies[k])).DefaultIfEmpty(-1).First();
+            double shortBy = cur < 0 ? 0 : Math.Max(0, need[cur] - _sim.Shop.Holds(currencies[cur]));
+            built.Waits.Add(new Wait { Goal = j, Label = built.Plan.Labels[j], X = c.X, Y = c.Y, Ticks = lead + tail, Currency = cur < 0 ? null : currencies[cur].ToString(),
+                Short = shortBy, PerTick = shortBy / (lead + tail) });
         }
 
         string KeyOf(string label, Context c) => $"{label}|{c.Unlocks}|{(int)MathF.Floor(c.X / 16)},{(int)MathF.Floor(c.Y / 16)}|{c.Phase}";
@@ -236,7 +320,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             byte[] bytes = null;
             try { bytes = new SnapshotStore(_sim).Save(start); }
             catch (NotSupportedException) { }
-            if (!_searchMisses)
+            if (!_searchMisses || built.Searches >= MaxSearches)
             {
                 Misses.Add((j, bytes, prefix.ToList(), key));
                 built.Failure = new Failure { Kind = "miss", Goal = j, Label = label, Key = key, Text = $"goal {j + 1} {label}: no library segment from ({c.X:0}, {c.Y:0}); queued for a search" };
