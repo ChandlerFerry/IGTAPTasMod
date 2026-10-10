@@ -140,30 +140,50 @@ namespace IGTAP.EngineSim.Cli.Runs
                 List<InputTick> old = Solve.ReadInputs(d.RootElement);
                 (long[] input, long[] physics) = Rejoin.Recorded(d.RootElement, plan);
                 int recorded = input.TakeWhile(i => i >= 0).Count();
-                (int reaches, _) = Straight(run, plan, old);
+                int reaches = Straight(run, plan, old).Progress;
                 if (reaches >= recorded) continue;
                 Log($"rejoin: {Path.GetFileName(file)} recorded {recorded} goals and reaches {reaches} here: repairing it");
                 string pathFile = Solve.Option<string>(args, "--repair-path", null);
                 Rejoin.Path path = pathFile == null ? null : Rejoin.Path.Load(pathFile, physics);
                 if (path != null) Log($"rejoin: the old path from {Path.GetFileName(pathFile)}, {path.X.Length} ticks");
-                var rejoin = new Rejoin(run, plan, old, input, physics, path, search, threads)
-                    { Log = Log, Stop = () => _stop, Budget = TimeSpan.FromMinutes(Solve.Option(args, "--repair-minutes", 30.0)) };
-                List<InputTick> repaired = rejoin.Repair();
-                var (n, units) = Straight(run, plan, repaired);
-                var (sn, sunits) = start.Count == 0 ? (0, long.MaxValue) : Straight(run, plan, start);
-                Log($"rejoin: the repair reaches {n} goals straight, the start {sn}");
-                return n > sn || n == sn && n > 0 && units < sunits ? repaired : null;
+                TimeSpan budget = TimeSpan.FromMinutes(Solve.Option(args, "--repair-minutes", 30.0));
+                Rejoin Make(TimeSpan b) => new Rejoin(run, plan, old, input, physics, path, search, threads) { Log = Log, Stop = () => _stop, Budget = b };
+                List<InputTick> best = start;
+                RunResult top = start.Count == 0 ? null : Straight(run, plan, start);
+                bool Keep(List<InputTick> inputs, string what)
+                {
+                    RunResult r = Straight(run, plan, inputs);
+                    Log($"rejoin: {what} reaches {r.Progress} goals straight" + (r.Progress > 0 ? $", the last at {MacroEngine.LiveSeconds(r.GoalPhysicsTicks[r.Progress - 1], r.GoalHeldFrames[r.Progress - 1]):0.0000} s" : ""));
+                    if (top != null && !(r.Progress > top.Progress || r.Progress == top.Progress && Units(r) < Units(top))) return false;
+                    (best, top) = (inputs, r);
+                    return true;
+                }
+                Keep(Make(budget).Repair(), "the repair");
+                // The old route's way on from a goal where it was faster than the best's, spliced onto the best's way there and repaired:
+                // the goals it gains most first.
+                if (top != null && top.Progress == plan.Count)
+                    foreach (int k in Enumerable.Range(1, plan.Count - 1).Where(k => input[k - 1] >= 0 && physics[^1] >= 0)
+                        .OrderBy(k => physics[^1] - physics[k - 1] - (top.GoalPhysicsTicks[^1] - top.GoalPhysicsTicks[k - 1])).Take(4).ToList())
+                    {
+                        if (_stop) break;
+                        RunResult on = top;
+                        if (physics[^1] - physics[k - 1] >= on.GoalPhysicsTicks[^1] - on.GoalPhysicsTicks[k - 1]) break;
+                        Log($"rejoin: the old route from goal {k} ({physics[^1] - physics[k - 1]} ticks to the end against the best's {on.GoalPhysicsTicks[^1] - on.GoalPhysicsTicks[k - 1]}) spliced onto the best");
+                        Keep(Make(budget / 4).Repair(best.Take((int)on.GoalInputTicks[k - 1]).ToList(), (int)input[k - 1]), $"the old route from goal {k}");
+                    }
+                return ReferenceEquals(best, start) ? null : best;
             }
             return null;
         }
 
-        // A route's straight replay: goals reached and the last one's live time.
-        static (int progress, long units) Straight(RunContext run, RunPlan plan, List<InputTick> inputs) => Solve.OnThread(() =>
+        static long Units(RunResult r) => r.Progress == 0 ? long.MaxValue : MacroEngine.LiveUnits(r.GoalPhysicsTicks[r.Progress - 1], r.GoalHeldFrames[r.Progress - 1]);
+
+        // A route's straight replay.
+        static RunResult Straight(RunContext run, RunPlan plan, List<InputTick> inputs) => Solve.OnThread(() =>
         {
             Simulation sim = run.Make();
             sim.UseGoals(sim.Goals.For(run.GoalsOf(plan)));
-            RunResult r = sim.Run(inputs, null, null, 1000000);
-            return (r.Progress, r.Progress == 0 ? long.MaxValue : MacroEngine.LiveUnits(r.GoalPhysicsTicks[r.Progress - 1], r.GoalHeldFrames[r.Progress - 1]));
+            return sim.Run(inputs, null, null, 1000000);
         });
 
         static object RouteJson(Built b) => new

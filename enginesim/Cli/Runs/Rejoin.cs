@@ -277,25 +277,28 @@ namespace IGTAP.EngineSim.Cli.Runs
             return (input, physics);
         }
 
-        public List<InputTick> Repair()
+        // With a prefix: another route's way to a goal, then the old inputs from oldFrom (where the route reached that goal), repaired.
+        public List<InputTick> Repair(List<InputTick> prefix = null, int oldFrom = 0)
         {
             _clock.Start();
             using var lanes = new Lanes(_threads, () => { Simulation sim = _run.Make(); sim.UseGoals(sim.Goals.For(_goals)); return sim; }, _goals.Length);
-            var g = new Graft { Inputs = _old.ToList(), Map = Enumerable.Range(0, _old.Count).ToList(), How = "the route as it is" };
+            var g = prefix == null ? new Graft { Inputs = _old.ToList(), Map = Enumerable.Range(0, _old.Count).ToList(), How = "the route as it is" }
+                : new Graft { Inputs = prefix.Concat(_old.Skip(oldFrom)).ToList(), Map = Enumerable.Repeat(-1, prefix.Count).Concat(Enumerable.Range(oldFrom, _old.Count - oldFrom)).ToList(),
+                    How = $"another route's {prefix.Count} inputs, then the old inputs from {oldFrom}" };
             Diag d = lanes.One(l => Diagnose(l, g));
             Log($"rejoin: the route reaches {d.Progress} of {_goals.Length} goals here; breaks at input {d.Fail}: {d.Why}");
             (Graft best, Diag bestD) = (g, d);
             int repairs = 0, atGoal = d.Progress;
             var searched = new HashSet<(int, int)>();
             var patched = new HashSet<(int, ulong)>();
-            // A break whose local changes were all tried with the same inputs through its horizon isn't tried again.
+            // A break whose local changes (or path patch) were tried with the same inputs up to it isn't tried again.
             var tried = new HashSet<(int, ulong)>();
-            Graft Local(int fail) => tried.Add((fail, SnapshotIndex.Hash(g.Inputs, Math.Min(g.Inputs.Count, fail + Horizon)))) ? RepairLocally(lanes, g, d, fail) : null;
+            Graft Local(int fail) => tried.Add((fail, SnapshotIndex.Hash(g.Inputs, Math.Min(g.Inputs.Count, fail + 3)))) ? RepairLocally(lanes, g, d, fail) : null;
             while (!TimeUp && d.Progress < _goals.Length)
             {
                 Graft next = null;
                 if (repairs < MaxRepairsPerGoal) next = Local(d.Fail) ?? (d.Hard != d.Fail && !TimeUp ? Local(d.Hard) : null);
-                if (next == null && !TimeUp && _path != null && patched.Add((d.Fail, SnapshotIndex.Hash(g.Inputs, Math.Min(g.Inputs.Count, d.Fail + Horizon)))))
+                if (next == null && !TimeUp && _path != null && patched.Add((d.Fail, SnapshotIndex.Hash(g.Inputs, Math.Min(g.Inputs.Count, d.Fail + 3)))))
                     next = PathPatch(lanes, g, d);
                 if (next == null && !TimeUp && searched.Add((d.Progress, d.Hard))) next = SearchPatch(lanes, g, d);
                 if (next == null) break;
@@ -484,35 +487,42 @@ namespace IGTAP.EngineSim.Cli.Runs
         {
             int b = d.Fail, m = Math.Min(b, g.Map.Count - 1), s = Math.Max(0, b - PatchBack);
             while (m >= 0 && g.Map[m] < 0) m--;
-            if (m < 0 || !_path.FirstTick.TryGetValue(g.Map[m] + 1, out long t0)) return null;
+            // A break before the old inputs start (another route's prefix): the path from where they start.
+            if (m < 0) { m = b; while (m < g.Map.Count && g.Map[m] < 0) m++; }
+            if (m >= g.Map.Count || !_path.FirstTick.TryGetValue(g.Map[m] + 1, out long t0)) return null;
+            if (m > b) t0--;
             // The box goes in before the first goal the graft reaches after the patch's start (the run can leave the path before a goal
             // it still reaches).
             int p = 0;
             while (p < d.Progress && d.GoalInput[p] <= s) p++;
             long end = _path.X.Length - 1;
             if (p < _goals.Length && _oldPhysics[p] > 0) end = Math.Min(end, _oldPhysics[p] - 2);
-            long target = Math.Min(t0 + PathAhead, end);
-            if (target <= t0 || float.IsNaN(_path.X[target])) return null;
-            CapturePos c = lanes.One(l => l.Sim.ToCapture(new WorldPos(_path.X[target], _path.Y[target])));
-            var box = new FullTasGoal { label = $"at:{c.x:0.#},{c.y:0.#},{Box},{Box}", kind = FullTasGoal.At, x = c.x, y = c.y, w = Box, h = Box };
-            FullTasGoal[] goals = _goals.Take(p).Append(box).Concat(_goals.Skip(p)).ToArray();
-            string[] ids = _plan.Ids.Take(p).Append("rejoin").Concat(_plan.Ids.Skip(p)).ToArray();
-            int seedEnd = g.Map.IndexOf((int)_path.InputAt[target], Math.Min(s, g.Map.Count));
-            var seeds = seedEnd > s ? new List<List<InputTick>> { g.Inputs.GetRange(s, seedEnd - s) } : new List<List<InputTick>>();
-            Log($"rejoin: from input {s} back onto the old path at tick {target} ({box.label}; {Builder.Budgets[0] / 1_000_000}M ticks)");
-            // The prefix replayed on the search's own simulations: their tracker has the box as goal p.
-            List<List<InputTick>> finds = _search.Find(null, g.Inputs.Take(s).ToList(), goals, ids, p, seeds, Builder.Budgets[0], out string nearest);
-            GC.Collect();
-            if (_search.Stopped || finds.Count == 0) { Log($"rejoin: the old path at tick {target} not reached ({nearest})"); return null; }
-            List<Graft> tries = PathSplices(lanes, g, s, finds, t0, end);
-            if (tries.Count == 0) { Log($"rejoin: none of the {finds.Count} finds comes within {PathTolerance} of the old path"); return null; }
-            int limit = Math.Min(_goals.Length, p + 2), horizon = b - s + 2 * Horizon;
-            Score[] scores = lanes.Map(tries.Select(x => (Func<Lanes.Lane, Score>)(l => Play(l, x, s, p, limit, horizon))).ToList());
-            Score base0 = lanes.One(l => Play(l, g, s, p, limit, horizon));
-            int top = Enumerable.Range(0, tries.Count).OrderByDescending(k => scores[k]).First();
-            if (!Beats(scores[top], base0)) { Log($"rejoin: back onto the old path: {scores[top]}, not better than {base0} ({tries.Count} splices)"); return null; }
-            Log($"rejoin: {tries[top].How}: {scores[top]} (was {base0}; {tries.Count} splices)");
-            return tries[top];
+            foreach (long target in new[] { PathAhead, 3 * PathAhead }.Select(a => Math.Min(t0 + a, end)).Distinct())
+            {
+                if (TimeUp || target <= t0 || float.IsNaN(_path.X[target])) return null;
+                CapturePos c = lanes.One(l => l.Sim.ToCapture(new WorldPos(_path.X[target], _path.Y[target])));
+                var box = new FullTasGoal { label = $"at:{c.x:0.#},{c.y:0.#},{Box},{Box}", kind = FullTasGoal.At, x = c.x, y = c.y, w = Box, h = Box };
+                FullTasGoal[] goals = _goals.Take(p).Append(box).Concat(_goals.Skip(p)).ToArray();
+                string[] ids = _plan.Ids.Take(p).Append("rejoin").Concat(_plan.Ids.Skip(p)).ToArray();
+                int seedEnd = g.Map.IndexOf((int)_path.InputAt[target], Math.Min(s, g.Map.Count));
+                var seeds = seedEnd > s ? new List<List<InputTick>> { g.Inputs.GetRange(s, seedEnd - s) } : new List<List<InputTick>>();
+                Log($"rejoin: from input {s} back onto the old path at tick {target} ({box.label}; {Builder.Budgets[0] / 1_000_000}M ticks)");
+                // The prefix replayed on the search's own simulations: their tracker has the box as goal p.
+                List<List<InputTick>> finds = _search.Find(null, g.Inputs.Take(s).ToList(), goals, ids, p, seeds, Builder.Budgets[0], out string nearest);
+                GC.Collect();
+                if (_search.Stopped) return null;
+                if (finds.Count == 0) { Log($"rejoin: the old path at tick {target} not reached ({nearest})"); continue; }
+                List<Graft> tries = PathSplices(lanes, g, s, finds, t0, end);
+                if (tries.Count == 0) { Log($"rejoin: none of the {finds.Count} finds comes within {PathTolerance} of the old path"); continue; }
+                int limit = Math.Min(_goals.Length, p + 2), horizon = b - s + 2 * Horizon;
+                Score[] scores = lanes.Map(tries.Select(x => (Func<Lanes.Lane, Score>)(l => Play(l, x, s, p, limit, horizon))).ToList());
+                Score base0 = lanes.One(l => Play(l, g, s, p, limit, horizon));
+                int top = Enumerable.Range(0, tries.Count).OrderByDescending(k => scores[k]).First();
+                if (!Beats(scores[top], base0)) { Log($"rejoin: back onto the old path: {scores[top]}, not better than {base0} ({tries.Count} splices)"); continue; }
+                Log($"rejoin: {tries[top].How}: {scores[top]} (was {base0}; {tries.Count} splices)");
+                return tries[top];
+            }
+            return null;
         }
 
         // Each find (from input s) cut at up to Cuts places it comes within PathTolerance of the old path's ticks t0+1..end, and the old
