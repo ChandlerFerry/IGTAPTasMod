@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using IGTAPTasMod;
 
@@ -25,6 +26,8 @@ namespace IGTAP.EngineSim.Cli.Runs
                 PlanEdits();
                 MadeGoals();
                 Library();
+                string trace = Solve.Option<string>(args, "--trace", null), best = Solve.Option<string>(args, "--best", null);
+                if (trace != null && best != null) Search(trace, best);
                 Console.WriteLine($"run-selftest: {_passed} checks passed");
                 return 0;
             }
@@ -114,6 +117,34 @@ namespace IGTAP.EngineSim.Cli.Runs
             Check(facts.Failed("farm:6|WJ|100,100|0", 1000) && !facts.Failed("farm:6|WJ|100,100|0", 4000) && !facts.Failed("other", 1000), "a failure holds for its budget, not a bigger one");
             Check(new SegmentFacts(Path.Combine(dir, "lib.failures.json")).Failed("farm:6|WJ|100,100|0", 1000), "failures are kept on disk");
             Directory.Delete(dir, true);
+        }
+
+        static List<InputTick> Inputs(string file)
+        {
+            using JsonDocument d = JsonDocument.Parse(File.ReadAllText(file));
+            return Solve.ReadInputs(d.RootElement);
+        }
+
+        static void Search(string trace, string best)
+        {
+            RunContext ctx = RunContext.Open(trace);
+            List<InputTick> inputs = Inputs(best);
+            var (k, state, prefix) = Solve.OnThread(() =>
+            {
+                Simulation sim = ctx.Make();
+                RunResult r = sim.Run(inputs, null, null, 1000000);
+                int pick = Enumerable.Range(50, Math.Max(0, r.Progress - 51))
+                    .Where(g => !FullTasGoal.IsLap(ctx.HeaderGoals[g].label) && ctx.HeaderGoals[g].kind == FullTasGoal.Buy)
+                    .OrderBy(g => r.GoalPhysicsTicks[g] - r.GoalPhysicsTicks[g - 1]).First();
+                SimSnapshot at = sim.AdvanceToGoal(inputs, pick, out int consumed);
+                sim.Restore(at);
+                return (pick, new SnapshotStore(sim).Save(at), inputs.Take(consumed).ToList());
+            });
+            var search = new SegmentSearch(ctx);
+            List<List<InputTick>> a = search.Find(state, prefix, ctx.HeaderGoals, k, new List<List<InputTick>>(), 2_000_000, out string nearA);
+            List<List<InputTick>> b = search.Find(state, prefix, ctx.HeaderGoals, k, new List<List<InputTick>>(), 2_000_000, out _);
+            Check(a.Count > 0, $"a search finds goal {k + 1} {ctx.HeaderGoals[k].label} of {ctx.Name} from its state ({nearA})");
+            Check(a.Count == b.Count && a[0].SequenceEqual(b[0]), "the same search finds the same routes");
         }
     }
 }
