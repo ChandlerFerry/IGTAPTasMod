@@ -55,9 +55,9 @@ from its saved best; logs of the last runs in `C:\tmp\igtap-long\logs\` (VMAN: `
 ## Open
 
 1. ZipEscape%: the GreenPower economy for teleporters (owner's route call, above).
-2. VMAN: 41.38 s, 1718 ticks, under the old route's 41.67 live; 22 ticks from its 1696. Polish is one goal at a time:
-   the old route's multi-goal ways (goals 13-18's down-dash chain, Courses 1-2's Clone buys) need a window search
-   scored at a later goal, which v2 doesn't have yet.
+2. VMAN: 41.38 s, 1718 ticks, under the old route's 41.67 live; 22 ticks from its 1696. Polish now also searches windows
+   of 2, 3 and 5 goals scored at their last (the old route's multi-goal ways: goals 13-18's down-dash chain, Courses 1-2's
+   Clone buys); written without running the engine, not yet run: press Solve on VMAN and watch for "goals N-M polished".
 3. Engine-side residuals the 1x probes name (resting-contact y velocity ~1e-6, 50 traces; go5/rand-c4/seed-c3): the engine needs the
    start's contact impulses. T5 (bonus10 tick 0) is Box2D warm-start state Unity can't set.
 4. 1x references for ZipEscape%/TouchGrass-ANY% need a window with no gate submissions; stale bonus7 4.62 records need retiring

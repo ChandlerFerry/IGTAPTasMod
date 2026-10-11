@@ -884,8 +884,10 @@ The design is `docs/superpowers/specs/2026-10-09-fulltas-v2-design.md`; the code
   `record:8` (10 CloneDust a lap, Course 8 never in its plan): 844 of 850 in 10 minutes. With no move or
   miss left, a **movement polish** searches each goal's segment again from its real start, the best's own segment its first
   seed and always a candidate (20M ticks, the longest segments first; a pass that gains nothing goes again at 80M), then
-  rebuilds the later goals from the library alone, kept as any move is; a goal is searched once per inputs through its
-  segment (`Improver.Polish`). A segment that reaches its goal sooner also keeps the best's own inputs from that goal on,
+  windows of 2, 3 and 5 goals the same way, each scored where it reaches its last goal (its budget times its goals; the
+  find harvested goal by goal), so a way that reaches a goal later but carries more speed into the next ones can win (a
+  search for each goal alone never keeps it). The later goals are rebuilt from the library alone, kept as any move is; a
+  goal or window is searched once per inputs through it (`Improver.Polish`). A segment that reaches its goal sooner also keeps the best's own inputs from that goal on,
   repaired by rejoin (`Improver.TailRejoin`, 3 minutes). It runs until the polish gains nothing too, or "stop" on stdin.
   The library keeps a segment per start (the same inputs from another start are another segment): a polish rebuild finds
   the best's own later segments where the best plays them.

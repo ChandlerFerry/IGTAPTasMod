@@ -263,13 +263,18 @@ namespace IGTAP.EngineSim.Cli.Runs
             b.Physics.AddRange(new long[] { 10, 40, 50 });
             b.Held.AddRange(new long[] { 0, 0, 0 });
             var tried = new HashSet<(string, ulong)>();
-            Check(Improver.PolishOrder(b, tried).SequenceEqual(new[] { 1, 0, 2 }), "polish: the longest segment first, then in order");
+            IEnumerable<int> Goals() => Improver.PolishOrder(b, tried).Where(w => w.span == 1).Select(w => w.j);
+            Check(Improver.PolishOrder(b, tried).SequenceEqual(new[] { (1, 1), (0, 1), (2, 1), (0, 2), (1, 2), (0, 3) }),
+                "polish: each goal alone, the longest segment first, then windows of 2 and 3 goals, the longest first");
+            Check(Goals().SequenceEqual(new[] { 1, 0, 2 }), "polish: the longest segment first, then in order");
             tried.Add(Improver.PolishKey(b, 1));
-            Check(Improver.PolishOrder(b, tried).SequenceEqual(new[] { 0, 2 }), "polish: a goal tried on this best is skipped");
+            Check(Goals().SequenceEqual(new[] { 0, 2 }), "polish: a goal tried on this best is skipped");
             b.Inputs[25] = new InputTick { x = 1, held = true };
-            Check(Improver.PolishOrder(b, tried).SequenceEqual(new[] { 0, 2 }), "polish: a change after a tried goal's segment doesn't try it again");
+            Check(Goals().SequenceEqual(new[] { 0, 2 }), "polish: a change after a tried goal's segment doesn't try it again");
+            tried.Add(Improver.PolishKey(b, 0, 2));
+            Check(!Improver.PolishOrder(b, tried).Contains((0, 2)) && Improver.PolishOrder(b, tried).Contains((1, 2)), "polish: a window tried on this best is skipped, not the goal alone");
             b.Inputs[5] = new InputTick { x = 1, held = true };
-            Check(Improver.PolishOrder(b, tried).SequenceEqual(new[] { 1, 0, 2 }), "polish: a change before it does");
+            Check(Goals().SequenceEqual(new[] { 1, 0, 2 }) && Improver.PolishOrder(b, tried).Contains((0, 2)), "polish: a change before it does");
         }
 
         static void ScoreRanking()

@@ -59,16 +59,20 @@ namespace IGTAP.EngineSim.Cli.Runs
         }
 
         // The run definition's avoid boxes go with goal ids: a plan that adds, drops or moves goals has them at its own places.
-        internal OfflineSolver.ForcedPath Avoids(string[] ids, int goal) => Solve.FullTasPaths(_run.Name, ids, new HashSet<int> { goal });
+        // from: a window's first goal (Improver.Polish), the search scored where it reaches `goal` through the goals between.
+        internal OfflineSolver.ForcedPath Avoids(string[] ids, int goal, int from = -1) =>
+            Solve.FullTasPaths(_run.Name, ids, new HashSet<int>(Enumerable.Range(from < 0 ? goal : from, goal - (from < 0 ? goal : from) + 1)));
 
-        public List<List<InputTick>> Find(byte[] state, List<InputTick> prefix, FullTasGoal[] goals, string[] ids, int goal, List<List<InputTick>> seeds, long budgetTicks, out string nearest)
+        public List<List<InputTick>> Find(byte[] state, List<InputTick> prefix, FullTasGoal[] goals, string[] ids, int goal, List<List<InputTick>> seeds, long budgetTicks, out string nearest,
+            int from = -1)
         {
+            int first = from < 0 ? goal : from;
             (string caps, OfflineSolver.ForcedPath path) = Solve.OnThread(() =>
             {
                 Simulation sim = At(state, prefix, goals, goal);
                 sim.Restore(sim.Start);
-                string[] boxes = goals[goal].boxes ?? Array.Empty<string>();
-                OfflineSolver.ForcedPath p = Avoids(ids, goal);
+                string[] boxes = Enumerable.Range(first, goal - first + 1).SelectMany(g => goals[g].boxes ?? Array.Empty<string>()).ToArray();
+                OfflineSolver.ForcedPath p = Avoids(ids, goal, first);
                 // Stray buys end a strict run: the search is steered round the boxes it could buy, never cut off from a graze.
                 if (!_run.Loose) foreach (var (a, b, _) in sim.StrayTriggers(new HashSet<string>(boxes))) p.Discourage.Add(new OfflineSolver.Box(a, b));
                 return (sim.Shop.AfterBuys(PlayerCaps.Of(sim), boxes).Id, p);

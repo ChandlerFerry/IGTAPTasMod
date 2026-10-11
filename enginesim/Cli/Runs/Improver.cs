@@ -113,58 +113,74 @@ namespace IGTAP.EngineSim.Cli.Runs
             Event?.Invoke(new { type = "plan", converged = true, reached = Best.Reached, of = Best.Plan.Count, live = Best.Live, waits = Best.Waits.Sum(w => w.Ticks) });
         }
 
-        // (goal id, inputs hash through its segment): a goal's search depends only on its start and its own segment (the seed),
-        // so a gain later in the run doesn't search the goals before it again.
+        // (goal id and span, inputs hash through the window): a window's search depends only on its start and its own inputs (the
+        // seed), so a gain later in the run doesn't search the windows before it again.
         HashSet<(string, ulong)> _polished = new HashSet<(string, ulong)>();
         // The search budget a polish pass uses: Budgets[0], then Budgets[1] once a whole pass at it found nothing.
         int _polishLevel;
 
-        internal static (string, ulong) PolishKey(Built b, int j) => (b.Plan.Ids[j], SnapshotIndex.Hash(b.Inputs, b.StepEnd[j]));
+        // A goal alone, then windows of goals scored where they reach their last: a way that reaches a goal later can be faster on
+        // (speed carried into the next goals), which a search for each goal alone never keeps (VMAN's down-dash chain, goals 13-18).
+        // ponytail: fixed spans; a 5-goal window takes 5x a goal's budget. Add longer spans if a run's polish stalls on chains.
+        static readonly int[] Spans = { 1, 2, 3, 5 };
 
-        // Goal j's own segment in a build: the inputs from the goal before it to it.
-        static List<InputTick> Own(Built b, int j) => b == null || j >= b.Reached ? null : b.Inputs.GetRange(j == 0 ? 0 : b.StepEnd[j - 1], b.StepEnd[j] - (j == 0 ? 0 : b.StepEnd[j - 1]));
+        internal static (string, ulong) PolishKey(Built b, int j, int span = 1) => (span == 1 ? b.Plan.Ids[j] : b.Plan.Ids[j] + "+" + span, SnapshotIndex.Hash(b.Inputs, b.StepEnd[j + span - 1]));
 
-        // The goals not yet polished on this best, the longest segments first (their waits left out): the most time to win.
-        internal static List<int> PolishOrder(Built b, HashSet<(string, ulong)> tried) => Enumerable.Range(0, b.Reached)
-            .Where(j => !tried.Contains(PolishKey(b, j)))
-            .OrderByDescending(j => b.Physics[j] - (j == 0 ? 0 : b.Physics[j - 1]) - b.Waits.Where(w => w.Goal == j).Sum(w => w.Ticks)).ThenBy(j => j).ToList();
+        // Goals j to j+span-1's own inputs in a build: from the goal before them to the last.
+        static List<InputTick> Own(Built b, int j, int span = 1)
+        {
+            if (b == null || j + span > b.Reached) return null;
+            int from = j == 0 ? 0 : b.StepEnd[j - 1];
+            return b.Inputs.GetRange(from, b.StepEnd[j + span - 1] - from);
+        }
 
-        // Each goal's segment searched again from its real start (RunSegment's forced search) and the run rebuilt after it, kept when
-        // the whole run's straight replay is better. True on a gain. A build allowed no searches (MaxSearchesPerBuild 0) polishes nothing.
+        // The windows not yet polished on this best, each span in turn, the longest first within it (waits left out): the most time
+        // to win.
+        internal static List<(int j, int span)> PolishOrder(Built b, HashSet<(string, ulong)> tried) => Spans.SelectMany(span => Enumerable.Range(0, Math.Max(0, b.Reached - span + 1))
+            .Where(j => !tried.Contains(PolishKey(b, j, span)))
+            .OrderByDescending(j => b.Physics[j + span - 1] - (j == 0 ? 0 : b.Physics[j - 1]) - b.Waits.Where(w => w.Goal >= j && w.Goal < j + span).Sum(w => w.Ticks)).ThenBy(j => j)
+            .Select(j => (j, span))).ToList();
+
+        // Each window searched again from its real start (RunSegment's forced search, over its goals) and the run rebuilt after it,
+        // kept when the whole run's straight replay is better. True on a gain. A build allowed no searches (MaxSearchesPerBuild 0)
+        // polishes nothing.
         bool Polish(Worker coord, Worker[] workers, Func<bool> stop)
         {
-            List<int> goals = MaxSearchesPerBuild == 0 ? new List<int>() : PolishOrder(Best, _polished);
-            if (goals.Count == 0) return false;
-            Log($"polish: {goals.Count} goals' segments searched again, longest first");
-            Event?.Invoke(new { type = "note", level = "info", text = $"Movement polish: searching {goals.Count} goals' segments again, longest first" });
-            foreach (int j in goals)
+            List<(int j, int span)> windows = MaxSearchesPerBuild == 0 ? new List<(int, int)>() : PolishOrder(Best, _polished);
+            if (windows.Count == 0) return false;
+            Log($"polish: {windows.Count} goals and windows searched again, each goal alone first");
+            Event?.Invoke(new { type = "note", level = "info", text = $"Movement polish: searching {windows.Count} goals and windows of goals again" });
+            foreach (var (j, span) in windows)
             {
                 if (stop()) return false;
-                _polished.Add(PolishKey(Best, j));
+                _polished.Add(PolishKey(Best, j, span));
                 RunPlan plan = Best.Plan;
-                Event?.Invoke(new { type = "status", polish = j + 1, id = plan.Ids[j], best = Best.Live, reached = Best.Reached });
+                int last = j + span - 1;
+                string what = span == 1 ? $"goal {j + 1} {plan.Labels[j]}" : $"goals {j + 1}-{last + 1}";
+                long budget = Builder.Budgets[_polishLevel] * span;
+                Event?.Invoke(new { type = "status", polish = j + 1, span, id = plan.Ids[j], best = Best.Live, reached = Best.Reached });
                 Built c = coord.Do(b =>
                 {
-                    // ponytail: one search per goal (20M ticks, then 80M) and a rebuild from the library alone; the best's own way on is
-                    // TailRejoin's. Searching the later goals again (up to 25 x 20M, minutes a goal) never won a VMAN polish; give the
-                    // rebuild searches back (MaxSearches) if a run's later goals have nothing in the library to rebuild from.
-                    (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget, b.ForceSeed) = (j, Builder.Budgets[_polishLevel], 1, Builder.Budgets[_polishLevel], Own(coord.Mine, j));
+                    // ponytail: one search per window and a rebuild from the library alone; the best's own way on is TailRejoin's.
+                    // Searching the later goals again (up to 25 x 20M, minutes a goal) never won a VMAN polish; give the rebuild
+                    // searches back (MaxSearches) if a run's later goals have nothing in the library to rebuild from.
+                    (b.ForceSearchAt, b.ForceSpan, b.ForceBudget, b.MaxSearches, b.MaxBudget, b.ForceSeed) = (j, span, budget, 1, budget, Own(coord.Mine, j, span));
                     // A polish search is for a faster way, not the first: it goes on a quarter of its budget without a better find.
-                    _search.Stall = Math.Max(_search.Stall, Builder.Budgets[_polishLevel] / 4);
+                    _search.Stall = Math.Max(_search.Stall, budget / 4);
                     try { return b.Build(plan, coord.Mine, j); }
                     finally
                     {
-                        (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget, b.ForceSeed) = (-1, Builder.Budgets[1], int.MaxValue, Builder.Budgets[^1], null);
+                        (b.ForceSearchAt, b.ForceSpan, b.ForceBudget, b.MaxSearches, b.MaxBudget, b.ForceSeed) = (-1, 1, Builder.Budgets[1], int.MaxValue, Builder.Budgets[^1], null);
                         _search.Stall = SegmentSearch.DefaultStall;
                     }
                 }).Result;
                 // Each search's 16 solvers are garbage now: server GC would let them pile up toward its hard limit.
                 GC.Collect();
-                Log($"polish: goal {j + 1} {plan.Labels[j]}: {Describe(c)} against {Describe(Best)}" + (c.Reached > j ? $" (goal {j + 1} at tick {c.Physics[j]}, the best's at {Best.Physics[j]})" : ""));
-                if (!stop() && c.Better(Best) && Accept(c, $"goal {j + 1} {plan.Labels[j]} polished", coord, workers)) return true;
-                if (!stop() && TailRejoin(c, j, coord, workers, stop)) return true;
+                Log($"polish: {what}: {Describe(c)} against {Describe(Best)}" + (c.Reached > last ? $" (goal {last + 1} at tick {c.Physics[last]}, the best's at {Best.Physics[last]})" : ""));
+                if (!stop() && c.Better(Best) && Accept(c, $"{what} polished", coord, workers)) return true;
+                if (!stop() && TailRejoin(c, last, coord, workers, stop)) return true;
             }
-            Event?.Invoke(new { type = "note", level = "info", text = "Movement polish: no goal's segment searched again saves time" });
+            Event?.Invoke(new { type = "note", level = "info", text = "Movement polish: no goal or window searched again saves time" });
             if (_polishLevel > 0 || stop()) return false;
             (_polishLevel, _polished) = (1, new HashSet<(string, ulong)>());
             Log($"polish: nothing at {Builder.Budgets[0] / 1_000_000}M ticks a goal; again at {Builder.Budgets[1] / 1_000_000}M");

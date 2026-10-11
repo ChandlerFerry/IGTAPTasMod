@@ -104,6 +104,10 @@ namespace IGTAP.EngineSim.Cli.Runs
         public int ForceSearchAt = -1;
         public long ForceBudget = Budgets[1];
         public List<InputTick> ForceSeed;
+        // The forced search's window: it is scored where it reaches the ForceSpan-th goal from ForceSearchAt (Improver.Polish).
+        public int ForceSpan = 1;
+
+        int Last(Built built, int j) => j == ForceSearchAt ? Math.Min(j + ForceSpan, built.Plan.Count) - 1 : j;
 
         public Builder(RunContext run, SegmentLibrary lib, SegmentSearch search, SegmentFacts facts, bool searchMisses)
         {
@@ -315,8 +319,17 @@ namespace IGTAP.EngineSim.Cli.Runs
             }
             if (Searched(built, goals, j, start, inputBase, c, afterReset, built.Inputs) is var (found, foundAt))
             {
-                Append(built, j, found, foundAt);
-                if (buy) NoteWait(built, goals, j, start, c, found);
+                int last = Last(built, j);
+                if (last == j)
+                {
+                    Append(built, j, found, foundAt);
+                    if (buy) NoteWait(built, goals, j, start, c, found);
+                    return;
+                }
+                // A window's find is harvested goal by goal, so each of its goals has its own segment, cut and wait.
+                List<InputTick> window = built.Inputs.Concat(found).ToList();
+                while (built.Reached <= last && built.Failure == null)
+                    Step(built, goals, built.Reached, (window, built.Reached == 0 ? 0 : built.StepEnd[built.Reached - 1], "window"));
             }
         }
 
@@ -382,7 +395,9 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         (List<InputTick>, SimSnapshot)? Searched(Built built, FullTasGoal[] goals, int j, SimSnapshot start, int inputBase, Context c, bool afterReset, List<InputTick> prefix)
         {
-            string label = built.Plan.Labels[j], key = KeyOf(label, c);
+            int last = Last(built, j);
+            string label = built.Plan.Labels[j], key = KeyOf(last == j ? label : $"{label}..{built.Plan.Labels[last]}", c);
+            string what = last == j ? $"goal {j + 1} {label}" : $"goals {j + 1}-{last + 1} ({label} to {built.Plan.Labels[last]})";
             long budget = j == ForceSearchAt ? ForceBudget : Budgets.FirstOrDefault(b => b <= MaxBudget && !_facts.Failed(key, b));
             if (budget == 0)
             {
@@ -404,9 +419,9 @@ namespace IGTAP.EngineSim.Cli.Runs
             if (j == ForceSearchAt && ForceSeed != null) seeds.Insert(0, ForceSeed);
             for (; budget != 0; budget = Budgets.FirstOrDefault(b => b > budget && b <= MaxBudget && !_facts.Failed(key, b)))
             {
-                Log($"search: goal {j + 1} {label} from ({c.X:0}, {c.Y:0}) with {c.Unlocks}, {budget / 1_000_000}M ticks, {seeds.Count} seeds");
+                Log($"search: {what} from ({c.X:0}, {c.Y:0}) with {c.Unlocks}, {budget / 1_000_000}M ticks, {seeds.Count} seeds");
                 built.Searches++;
-                List<List<InputTick>> finds = _search.Find(bytes, prefix, goals, built.Plan.Ids, j, seeds, budget, out string nearest);
+                List<List<InputTick>> finds = _search.Find(bytes, prefix, goals, built.Plan.Ids, last, seeds, budget, out string nearest, j);
                 if (_search.Stopped)
                 {
                     built.Failure = new Failure { Kind = "stopped", Goal = j, Label = label, Text = "stopped during a search" };
@@ -418,18 +433,18 @@ namespace IGTAP.EngineSim.Cli.Runs
                 foreach (List<InputTick> f in finds)
                 {
                     if (afterReset && f.Count > 0 && f[0].reset) continue;
-                    if (TryPlay(start, inputBase, f, j) is var (inputs, at) && (best == null || Units(at, j) < Units(best.Value.at, j)))
+                    if (TryPlay(start, inputBase, f, last) is var (inputs, at) && (best == null || Units(at, last) < Units(best.Value.at, last)))
                         best = (inputs, at);
                 }
                 if (best is var (bi, ba))
                 {
-                    File(built, j, c, bi, ba, "search");
+                    if (last == j) File(built, j, c, bi, ba, "search");
                     _lib.Save();
-                    Log($"search: goal {j + 1} {label} found ({finds.Count} finds)");
+                    Log($"search: {what} found ({finds.Count} finds)");
                     return (bi, ba);
                 }
                 _facts.Record(key, budget, finds.Count == 0 ? nearest : $"{finds.Count} finds, none replays from the real start");
-                Log($"search: goal {j + 1} {label}: nothing within {budget / 1_000_000}M ticks ({nearest})");
+                Log($"search: {what}: nothing within {budget / 1_000_000}M ticks ({nearest})");
             }
             built.Failure = Unreachable(j, label, c, Budgets[^1]);
             return null;
