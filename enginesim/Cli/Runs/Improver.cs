@@ -114,7 +114,9 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         // (goal id, inputs hash through its segment): a goal's search depends only on its start and its own segment (the seed),
         // so a gain later in the run doesn't search the goals before it again.
-        readonly HashSet<(string, ulong)> _polished = new HashSet<(string, ulong)>();
+        HashSet<(string, ulong)> _polished = new HashSet<(string, ulong)>();
+        // The search budget a polish pass uses: Budgets[0], then Budgets[1] once a whole pass at it found nothing.
+        int _polishLevel;
 
         internal static (string, ulong) PolishKey(Built b, int j) => (b.Plan.Ids[j], SnapshotIndex.Hash(b.Inputs, b.StepEnd[j]));
 
@@ -128,6 +130,11 @@ namespace IGTAP.EngineSim.Cli.Runs
         bool Polish(Worker coord, Worker[] workers, Func<bool> stop)
         {
             List<int> goals = MaxSearchesPerBuild == 0 ? new List<int>() : PolishOrder(Best, _polished);
+            if (goals.Count == 0 && MaxSearchesPerBuild != 0 && _polishLevel == 0)
+            {
+                (_polishLevel, goals) = (1, PolishOrder(Best, _polished = new HashSet<(string, ulong)>()));
+                Log($"polish: nothing at {Builder.Budgets[0] / 1_000_000}M ticks a goal; again at {Builder.Budgets[1] / 1_000_000}M");
+            }
             if (goals.Count == 0) return false;
             Log($"polish: {goals.Count} goals' segments searched again, longest first");
             Event?.Invoke(new { type = "note", level = "info", text = $"Movement polish: searching {goals.Count} goals' segments again, longest first" });
@@ -142,7 +149,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                     // ponytail: a 20M-tick search per goal, and in the rebuild after it a 20M search for each later goal the change
                     // moved, up to --segment's 25 (a changed early goal moves every later state: VMAN's candidates stopped incomplete
                     // at 3); raise the budget (Budgets[1]) if a run's polish stalls with goals that took 80M+ to find.
-                    (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget) = (j, Builder.Budgets[0], Math.Min(plan.Count - j, SegmentSearches), Builder.Budgets[0]);
+                    (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget) = (j, Builder.Budgets[_polishLevel], Math.Min(plan.Count - j, SegmentSearches), Builder.Budgets[_polishLevel]);
                     try { return b.Build(plan, coord.Mine, j); }
                     finally { (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget) = (-1, Builder.Budgets[1], int.MaxValue, Builder.Budgets[^1]); }
                 }).Result;
