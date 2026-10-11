@@ -5,20 +5,21 @@ On **main** (not pushed). Design: `docs/superpowers/specs/2026-10-09-fulltas-v2-
 `docs/fulltas.md` "Solving (v2)". Main's uncommitted old-stack edits from before the merge are on branch
 `wip/old-stack-before-v2` (a stash commit).
 
-## Results
+## Results (2026-10-10 17:15, all judged by the gate on today's engine)
 
-- **TouchGrass-ANY%**: complete, saved by the gate as `fulltas/TouchGrass-ANY%_NONE 697.49` (was 699.12).
-- **ZipEscape%**: goal 831 (a second atom buy) was no bug: an atom buy resets every course, so nothing earns GreenPower
-  after it. `runs/ZipEscape%.json` now buys `buytree0` and `buytree6` before its one atom touch and drops the second (846
-  goals, 834 reached by hand), and has the avoids drawn for `buytree7` and `at:28710` back (the old stages' 845-goal list had
-  lost them). The improver alone, from the old 830-goal best, reached **840 of 849** (1554.86 s at `buy:buycd8`; private copy
-  `C:\tmp\igtap-plateau\run6state\`, not installed in the config). Next frontier: goal 841 `buy:buyclonecd8`, no CloneDust
-  income after the atom reset removed the clones that make it.
-- **VMAN**: its 2026-09-28 route dies at action 191 because it was found on the old six-frames-a-tick grid (fidelity log).
-  A private `solve-run` rebuilt it complete at 54.96 s (`C:\tmp\igtap-vman\solve3\`), not judged; the old 33.92 no longer plays.
-- **Course Improve** runs on v2 (`CourseAuto.Polish`/`Reach` over `Improver.RunSegment`, scored by `RunContext.Score`);
-  `enginesim/Cli/FullTas*.cs` (−13k lines) is gone but `FullTasGoalList.cs`. Acceptance: same bests as the old path in
-  about half the wall time; record Improve at half the memory.
+| Run | Before v2 (stale: invalidated by the fidelity fixes) | Now |
+|---|---|---|
+| TouchGrass-ANY% | 699.29 | **697.49** |
+| FalseEnding%-280 | 352.78 | 353.29 |
+| VMAN | 33.92 was ticks only: **41.67 live** (the old route on its own engine; it dies at action 191 today) | **43.94** (rejoin repair of the old route, then movement polish; 54.96 rebuilt from scratch this morning) |
+| Tree% | 725.62 for 456 goals | 763.73 for 461: the 5 goals added since are income-bound (buyfree6c waits ~15 s); at goal 456 it is 727.88, and the old prefix's 2.26 s lead doesn't survive the waits |
+| ZipEscape% | its old route reached 974 of 979, stopping before buytree13 | **847 of 851** (offline), past buytree13: further than any route before |
+| Zip% | 861 of 865 (an older goal list) | 809 of 1494, building on (about a goal a minute) |
+
+ZipEscape%'s next goal, `buy:buyteleporters` (Course 9's local `EnableTeleporters`), costs about 2E+07 GreenPower after the atom
+reset, against about 100-200 GreenPower per 1000 ticks from every producer in reach. No goal list of this run (the old 979 or
+today's) ever planned a GreenPower economy for it: the run definition needs one (Course 9's clones, or the teleporters before
+the atom reset). The income moves say so ("needs a GreenPower economy built before it") instead of climbing by slivers.
 
 ## Fixed 2026-10-10
 
