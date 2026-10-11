@@ -13,6 +13,7 @@ namespace IGTAP.EngineSim.Cli.Runs
     {
         public const int SearchWorkers = 16;
         const long StallTicks = 2_000_000;
+        public const long DefaultStall = StallTicks;
         const double GraftRate = .15;
 
         readonly RunContext _run;
@@ -21,6 +22,8 @@ namespace IGTAP.EngineSim.Cli.Runs
         public int Parallelism = SearchWorkers;
         // Each worker's explore archive and state cache, bytes.
         public long ArchiveBudget = 1L << 29, StateBudget = 1L << 30;
+        // Ticks without a better find after which a solver ends (all solvers together): a polish raises it to look for faster ways.
+        public long Stall = StallTicks;
         public bool Stopped { get; private set; }
         readonly Lazy<TechGrafts> _grafts;
         readonly Dictionary<string, List<TechPattern>> _graftsFor = new Dictionary<string, List<TechPattern>>();
@@ -79,7 +82,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             {
                 var mine = finds[i] = new List<List<InputTick>>();
                 var solver = solvers[i] = new OfflineSolver(() => At(state, prefix, goals, goal), caps, seeds, null, path, 16f, Grafts(caps), rng: 1 + i)
-                    { ArchiveBudget = ArchiveBudget, StateBudget = StateBudget, TickLimit = share, StallTicks = StallTicks / SearchWorkers };
+                    { ArchiveBudget = ArchiveBudget, StateBudget = StateBudget, TickLimit = share, StallTicks = Stall / SearchWorkers };
                 if (solver.Mined != null) solver.GraftRate = GraftRate;
                 solver.Improved += (time, runTicks, inputs, how) => { lock (mine) mine.Add(inputs); };
             }

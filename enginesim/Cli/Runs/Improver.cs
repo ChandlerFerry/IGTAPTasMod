@@ -145,8 +145,14 @@ namespace IGTAP.EngineSim.Cli.Runs
                     // moved, up to --segment's 25 (a changed early goal moves every later state: VMAN's candidates stopped incomplete
                     // at 3); raise the budget (Budgets[1]) if a run's polish stalls with goals that took 80M+ to find.
                     (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget) = (j, Builder.Budgets[_polishLevel], Math.Min(plan.Count - j, SegmentSearches), Builder.Budgets[_polishLevel]);
+                    // A polish search is for a faster way, not the first: it goes on a quarter of its budget without a better find.
+                    _search.Stall = Math.Max(_search.Stall, Builder.Budgets[_polishLevel] / 4);
                     try { return b.Build(plan, coord.Mine, j); }
-                    finally { (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget) = (-1, Builder.Budgets[1], int.MaxValue, Builder.Budgets[^1]); }
+                    finally
+                    {
+                        (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget) = (-1, Builder.Budgets[1], int.MaxValue, Builder.Budgets[^1]);
+                        _search.Stall = SegmentSearch.DefaultStall;
+                    }
                 }).Result;
                 // Each search's 16 solvers are garbage now: server GC would let them pile up toward its hard limit.
                 GC.Collect();
