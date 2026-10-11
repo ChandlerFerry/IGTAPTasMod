@@ -366,6 +366,7 @@ namespace IGTAPTasMod
             PumpFullTas();
             PumpFastForward();
             PumpProbe();
+            PumpOneX();
             PumpLabMap();
             PumpLabTrainer();
             TasUpdate();

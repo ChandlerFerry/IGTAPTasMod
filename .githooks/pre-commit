@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Engine check before a commit that touches what the engine compiles: the staged tree is built and replayed against
+# enginesim/check/baseline.json. An intended change commits its new baseline (check --accept) in the same commit.
+set -e
+git diff --cached --name-only | grep -qE '^(enginesim/|runs/|MacroEngine\.cs|MacroModels\.cs|FieldState\.cs|FullTas\.cs|Categories\.cs|CourseStart\.cs|WokenStarts\.cs)' || exit 0
+if [ -n "$IGTAP_SKIP_CHECK" ]; then echo "pre-commit: engine check skipped (IGTAP_SKIP_CHECK)"; exit 0; fi
+tree=$(git write-tree)
+top=$(git rev-parse --show-toplevel)
+scratch="${TMPDIR:-/tmp}/igtap-check-$(basename "$top")"
+# The commit's temporary index belongs to this worktree, not the scratch one.
+unset GIT_INDEX_FILE
+[ -d "$scratch" ] || git worktree add --detach "$scratch" HEAD >/dev/null 2>&1
+git -C "$scratch" update-ref --no-deref HEAD "$(git rev-parse HEAD)"
+git -C "$scratch" read-tree -u --reset "$tree"
+echo "pre-commit: building the staged tree and running the engine check"
+dotnet build "$scratch/enginesim/Cli/IGTAP.EngineSim.csproj" -c Release -o "$scratch/.check-bin" -v q -nologo 2>&1 | grep -E " error |Error\(s\)" || true
+"$scratch/.check-bin/IGTAP.EngineSim.exe" check --repo "$scratch" || { echo "pre-commit: the engine check failed. An intended change: run check --accept and commit enginesim/check/baseline.json with it."; exit 1; }

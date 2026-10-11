@@ -37,9 +37,19 @@
     <Reference Include="Assembly-CSharp" HintPath="$(RetargetedGame)" Private="true" />
   </ItemGroup>
 
-  <Target Name="RetargetGame" AfterTargets="ResolveProjectReferences" BeforeTargets="ResolveAssemblyReferences"
-          Inputs="$(GameManaged)\Assembly-CSharp.dll;..\cuts.txt;..\hooks.txt;..\static-allow.txt;..\Shim\bin\$(Configuration)\net10.0\IGTAP.UnityShim.dll;..\Prep\bin\$(Configuration)\net10.0\IGTAP.EngineSim.Prep.dll"
+  <!-- Prep's and the shim's own outputs, wherever -o or the configuration put them (a clean checkout has no bin\Release copies). -->
+  <Target Name="EngineTools">
+    <MSBuild Projects="..\Prep\IGTAP.EngineSim.Prep.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" PropertyName="PrepDll" />
+    </MSBuild>
+    <MSBuild Projects="..\Shim\IGTAP.UnityShim.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" PropertyName="ShimDll" />
+    </MSBuild>
+  </Target>
+
+  <Target Name="RetargetGame" AfterTargets="ResolveProjectReferences" BeforeTargets="ResolveAssemblyReferences" DependsOnTargets="EngineTools"
+          Inputs="$(GameManaged)\Assembly-CSharp.dll;..\cuts.txt;..\hooks.txt;..\static-allow.txt;$(ShimDll);$(PrepDll)"
           Outputs="$(RetargetedGame)">
-    <Exec Command="dotnet &quot;$(MSBuildThisFileDirectory)..\Prep\bin\$(Configuration)\net10.0\IGTAP.EngineSim.Prep.dll&quot; retarget &quot;$(GameManaged)&quot; &quot;$(MSBuildThisFileDirectory)..\obj\game&quot; &quot;$(MSBuildThisFileDirectory)..\cuts.txt&quot; &quot;$(MSBuildThisFileDirectory)..\hooks.txt&quot; &quot;$(MSBuildThisFileDirectory)..\Shim\bin\$(Configuration)\net10.0\IGTAP.UnityShim.dll&quot; &quot;$(MSBuildThisFileDirectory)..\static-allow.txt&quot;" />
+    <Exec Command="dotnet &quot;$(PrepDll)&quot; retarget &quot;$(GameManaged)&quot; &quot;$(MSBuildThisFileDirectory)..\obj\game&quot; &quot;$(MSBuildThisFileDirectory)..\cuts.txt&quot; &quot;$(MSBuildThisFileDirectory)..\hooks.txt&quot; &quot;$(ShimDll)&quot; &quot;$(MSBuildThisFileDirectory)..\static-allow.txt&quot;" />
   </Target>
 </Project>

@@ -621,7 +621,7 @@ namespace IGTAPTasMod
 
         void OverlayBeforeTick(Movement player)
         {
-            _positionBeforeTick = player.transform.position;
+            _positionBeforeTick = TurboRunner.BlendRead(player.transform);
             TechBeforeTick(player);
             if (_settings.showOverlay) SampleSpikes(player, FixedStep() - 1);
         }

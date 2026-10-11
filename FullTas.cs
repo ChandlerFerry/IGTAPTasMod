@@ -167,9 +167,10 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// The economy boxes: a course's repeatable income boxes (reward, clones, clone multiplier, global reward, fast, big and
-        /// max-size clone chances, green reward). `fulltas --auto`'s goals part may drop, add, regroup or reorder these buy goals and
-        /// the laps and gates (`record:N`, `farm:N`, `start:N`) around them; every other goal is the run's skeleton.
+        /// The economy boxes: every box whose effect is income only (a course's repeatable boxes, Area 2's atoms, clone dust and
+        /// atom levels, the free Cash boxes, the statue, buytree0's green chance). A plan may drop, add, regroup or reorder these buy
+        /// goals and the laps and gates (`record:N`, `farm:N`, `start:N`) around them; unlocks, tree growth and doors are the run's
+        /// skeleton.
         /// </summary>
         public static readonly HashSet<string> EconomyBoxes = new HashSet<string> {
             "buyreward", "buyclone", "buyreward2", "buyclone2", "buyclonemult2", "buyglobalreward2",
@@ -177,7 +178,10 @@ namespace IGTAPTasMod
             "buyreward4", "buyclone4", "buyclonemult4", "buybig4", "buyfast4", "buymaxsize4", "buyglobalreward4",
             "buyreward5", "buyclone5", "buyclonemult5", "buyglobalreward5", "buybig5", "buyfast5",
             "buyreward6", "buygreen6", "buyclone6", "buyreward7", "buyclone7", "buyclonemult7", "buygreen7",
-            "buyreward9", "buyclone9", "buygreen9", "buyclonemult9", "buyreward10", "buyclone10", "buyclonemult10", "buygreen10" };
+            "buyreward9", "buyclone9", "buygreen9", "buyclonemult9", "buyreward10", "buyclone10", "buyclonemult10", "buygreen10",
+            "buyatom", "buyclonecd8", "buyclonegp8", "buycd8", "buycddigits8", "buyatomlevel9", "buyatomlevel10", "buywatts10", "buynp10",
+            "buyfree3", "buyfree4a", "buyfree4b", "buyfree4c", "buyfree5", "buyfree6a", "buyfree6b", "buyfree6c", "buyfree6d", "buyfree6e",
+            "buyfree10a", "buyfree10b", "buyclonespeed", "buystatue", "buytree0" };
 
         /// <summary>A goal label the goals part may edit: a lap or a start gate, or a buy of economy boxes only.</summary>
         public static bool IsEconomy(string label)

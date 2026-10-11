@@ -231,6 +231,9 @@ namespace IGTAP.EngineSim
         /// <summary>The levels a running buy-max routine on the box still buys (0: none running).</summary>
         internal int BuyMaxLeft(upgradeBox box) { int left = 0; foreach (BuyMaxRoutine r in _buyMax) if (r.Box == box) left += r.Left; return left; }
 
+        /// <summary>The levels running buy-max routines still buy on any of these boxes (by id or path).</summary>
+        internal int BuyMaxLeft(string[] boxes) { int left = 0; foreach (BuyMaxRoutine r in _buyMax) if (Named(boxes, r.Box)) left += r.Left; return left; }
+
         internal void FixedStep()
         {
             _continuing = true;

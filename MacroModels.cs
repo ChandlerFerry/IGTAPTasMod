@@ -152,6 +152,8 @@ namespace IGTAPTasMod
         public string selectedRouteId = "";
         /// <summary>1x playback without the 280 fps cap on real frames; the game time per frame stays on the fixed grid.</summary>
         public bool fastPlayback;
+        /// <summary>The 1x job (ProbeRunner.cs): each run's current best played at 1x after a minute with no command or player input.</summary>
+        public bool idle1x;
         /// <summary>The player drawn as its hurtbox (TasSkin.cs) instead of its sprite.</summary>
         public bool tasSkin = true;
         /// <summary>The TAS skin as its outline only, over the game's sprite.</summary>

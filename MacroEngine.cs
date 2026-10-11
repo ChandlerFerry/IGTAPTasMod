@@ -290,37 +290,26 @@ namespace IGTAPTasMod
 
         /// <summary>Resume on a caller-owned, already-filtered step list: skips Expand's per-step Copy (its
         /// Guid.NewGuid id is never read by the engine). Exact where the list holds only enabled non-Bundle steps
-        /// already, so Expand's filter is a no-op and Copy's clone carries no state beyond the id.</summary>
+        /// already, so Expand's filter is a no-op and Copy's clone carries no state beyond the id.
+        /// Resumed at a step's start (<paramref name="elapsedTicks"/> 0), a press or quick restart the state already made for
+        /// that step (a wall touch in a dash lock presses the next step early, <see cref="WallTouch"/>) stays made instead of
+        /// happening twice: a state captured inside the dash (a Full-TAS goal reached there) plays on as the straight run does.</summary>
         public void ResumeOwned(object[] state, List<MacroStep> steps, int elapsedTicks)
         {
             FieldState.Restore(this, state);
+            bool atStep = elapsedTicks == 0 && _stepIndex >= 0 && _elapsedTicks == 0;
+            bool pressed = atStep && _pressedStep == _stepIndex, restarted = atStep && _quickRestartStep == _stepIndex;
             _steps = steps;
             _stepIndex = 0;
             _elapsedTicks = elapsedTicks;
             _wallJumpTriggered = false;
             _finishWaitTicks = 0;
-            _quickRestartStep = -1;
-            _pressedStep = -1;
-        }
-
-        /// <summary>
-        /// Resume on <paramref name="steps"/>, the inputs from the next input tick on, at a tick boundary (the TAS editor).
-        /// Unlike <see cref="ResumeOwned"/>, a press already made for that tick (a wall touch in a dash lock presses the next
-        /// step early, <see cref="WallTouch"/>) stays made instead of pressing twice.
-        /// </summary>
-        public void ResumeAt(object[] state, List<MacroStep> steps)
-        {
-            FieldState.Restore(this, state);
-            bool pressed = _stepIndex >= 0 && _pressedStep == _stepIndex && _elapsedTicks == 0;
-            bool restarted = _stepIndex >= 0 && _quickRestartStep == _stepIndex && _elapsedTicks == 0;
-            _steps = steps;
-            _stepIndex = 0;
-            _elapsedTicks = 0;
-            _wallJumpTriggered = false;
-            _finishWaitTicks = 0;
             _pressedStep = pressed ? 0 : -1;
             _quickRestartStep = restarted ? 0 : -1;
         }
+
+        /// <summary>Resume on <paramref name="steps"/>, the inputs from the next input tick on, at a tick boundary (the TAS editor).</summary>
+        public void ResumeAt(object[] state, List<MacroStep> steps) { ResumeOwned(state, steps, 0); }
 
         /// <summary>The next physics tick plays input tick 0 (the start's last stable tick is that tick).</summary>
         public bool StartsInputNextTick

@@ -112,63 +112,28 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// Improve (the default): `fulltas --auto` from the run's best, with the saved record as a --ref (the engine's run file can
-        /// trail it) and `--focus a-b` when goals are picked. `unsolved: true`: the old reach search (`--unsolved`, with the seed
-        /// routes) for the goals a best misses (--auto improves the goals it reaches). Either leaves the game 2 cores by default, as course Optimize does.
-        /// `class` (README ### Rules 54) solves for that class (`--class`), its own best the --ref.
+        /// Solve: `solve-run` builds what the run's best doesn't reach yet and improves the whole run until it converges or Stop
+        /// (docs/superpowers/specs/2026-10-09-fulltas-v2-design.md); `stretch` (a goal's id) searches that goal's way again
+        /// (`--segment`), `class` (README ### Rules 54) solves for that class. It leaves the game 2 cores by default.
         /// </summary>
         void LaunchFullTasSolve(FullTasRunDef run, string trace, JObject body)
         {
-            var args = new StringBuilder("fulltas ").Append(Quote(trace));
             int threads = Number(body, "threads", 0);
             if (threads <= 0) threads = Math.Max(1, Environment.ProcessorCount - 2);
-            args.Append(" --threads ").Append(threads);
             string cls = FullTasClassOf(Text(body, "class"));
-            if (cls != MajorClass) args.Append(" --class ").Append(cls);
-            bool unsolved = Truthy(body, "unsolved");
-            // Improve runs until Stop (a day's worth of minutes); the reach search keeps its hour.
-            float minutes = FloatNumber(body, "minutes", unsolved ? 60f : 24 * 60f);
-            args.Append(" --minutes ").Append(minutes.ToString(CultureInfo.InvariantCulture));
-            string what, of = run.name + (cls == MajorClass ? "" : " (" + cls + ")");
-            // "stretch": one stretch alone (its goal's id), judged at its goal (the engine's --stretch, FullTasStretch.cs).
-            string stretch = Text(body, "stretch");
-            if (stretch.Length > 0)
-            {
-                string label = run.goals[FullTasGoalAt(run, stretch)].goal;
-                if (FullTasGoal.IsLap(label)) throw new InvalidOperationException("stretch: " + label + " is a lap, improved as its course's route.");
-                args.Append(" --window-minutes 0.5 --stretch ").Append(stretch);
-                what = "Optimizing " + of + "'s stretch to " + label + " on " + threads + " threads";
-            }
-            else if (unsolved)
-            {
-                args.Append(" --unsolved");
-                int seeds = WriteFullTasSeeds(run, args);
-                what = "Reaching the missing goals of " + of + " on " + threads + " threads from " + seeds + " seed routes";
-            }
-            else
-            {
-                // "focus": [first, last] goal ids, the goals --auto works on (goals from 1 below, as the engine counts them).
-                int[] focus = body["focus"] is JArray range && range.Count == 2 ? new[] { FullTasGoalAt(run, (string)range[0]) + 1, FullTasGoalAt(run, (string)range[1]) + 1 } : null;
-                if (focus != null && focus[1] < focus[0]) throw new InvalidOperationException("focus: its last goal comes before its first.");
-                MacroDefinition record = FullTasClassBest(run.name, cls, out _);
-                // --auto improves the goals the offline best reaches (all of them, or those of a best that misses goals): picked
-                // goals must be among them.
-                int reached = FullTasOfflineBest(run.name + (cls == MajorClass ? "" : "." + cls), run.Labels)?.reached ?? 0;
-                if (focus != null && record == null && focus[1] > reached)
-                    throw new InvalidOperationException("focus: the offline best reaches goal " + (reached - 1) + " of " + (run.goals.Count - 1) + "; pick goals up to it, or Reach missing goals first.");
-                args.Append(" --auto --window-minutes 0.5");
-                if (focus != null) args.Append(" --focus ").Append(run.goals[focus[0] - 1].id).Append('-').Append(run.goals[focus[1] - 1].id);
-                if (record != null)
-                {
-                    string file = Path.Combine(EngineSimDir, "fulltas-" + run.name + (cls == MajorClass ? "" : "-" + cls) + "-record.json");
-                    File.WriteAllText(file, JsonConvert.SerializeObject(new { name = record.name, ticks = ToTicks(record.steps) }));
-                    args.Append(" --ref ").Append(Quote(file));
-                }
-                what = "Improving " + of + (focus == null ? "" : " goals " + (focus[0] - 1) + "-" + (focus[1] - 1))
-                    + (record == null && reached < run.goals.Count ? " (the best reaches " + reached + " of " + run.goals.Count + " goals)" : "") + " on " + threads + " threads";
-            }
+            var solve = new StringBuilder("solve-run ").Append(Quote(trace)).Append(" --threads ").Append(threads);
+            if (cls != MajorClass) solve.Append(" --class ").Append(cls);
+            string goalId = Text(body, "stretch");
+            if (goalId.Length > 0) solve.Append(" --segment ").Append(goalId);
+            StartFullTasProcess(run, solve.ToString(), goalId.Length > 0
+                ? "Searching " + run.name + "'s goal " + run.goals[FullTasGoalAt(run, goalId)].goal + " again on " + threads + " threads"
+                : "Solving " + run.name + (cls == MajorClass ? "" : " (" + cls + ")") + " on " + threads + " threads", "until Stop");
+        }
+
+        void StartFullTasProcess(FullTasRunDef run, string args, string what, string limit)
+        {
             while (_fullTasOutput.TryDequeue(out _)) { }
-            _fullTasProcess = StartEngineSim(args.ToString(), _fullTasOutput, stdin: true);
+            _fullTasProcess = StartEngineSim(args, _fullTasOutput, stdin: true);
             _fullTasKillAt = null;
             _fullTasSolveRun = run.name;
             _fullTasEvents.Clear();
@@ -179,82 +144,7 @@ namespace IGTAPTasMod
             _fullTasSolveError = null;
             _fullTasCommand = EngineSimExe + " " + args;
             _fullTasSolveStatus = what;
-            FullTasLog(what + " (" + minutes.ToString(CultureInfo.InvariantCulture) + " min at most)");
-        }
-
-        int WriteFullTasSeeds(FullTasRunDef run, StringBuilder args)
-        {
-            Directory.CreateDirectory(EngineSimDir);
-            string prefix = "fulltas-" + run.name + "-seed-";
-            var numbered = new Regex("^" + Regex.Escape(prefix) + @"\d+\.json$", RegexOptions.IgnoreCase);
-            foreach (string old in Directory.GetFiles(EngineSimDir, prefix + "*.json"))
-                if (numbered.IsMatch(Path.GetFileName(old))) File.Delete(old);
-            var labels = new HashSet<string>(ResolveFullTasGoals(run).Select(g => g.label));
-            var found = new List<(bool stale, float time, string key, string json)>();
-            foreach (MacroDefinition route in _library.macros)
-            {
-                Match m = route.name == null ? Match.Empty : FullTasSeedRoute.Match(route.name);
-                if (!m.Success || !route.steps.All(s => s.type == MacroStepType.RawInput)) continue;
-                string token = m.Groups[1].Value.ToLowerInvariant();
-                CourseDef target = null;
-                int course = 0;
-                var goals = new List<string>();
-                Match transition = FullTasSeedTransition.Match(token);
-                if (transition.Success)
-                {
-                    string to = transition.Groups[2].Value.ToLowerInvariant();
-                    if (to.StartsWith("bonus", StringComparison.Ordinal)) goals.Add("reward:" + to);
-                    else { goals.Add("start:" + to); course = int.Parse(to, CultureInfo.InvariantCulture); }
-                }
-                else
-                {
-                    target = _courses.Find(c => !c.IsTransition && string.Equals(c.Token, token, StringComparison.OrdinalIgnoreCase));
-                    if (target == null) continue;
-                    if (target.IsBonus) goals.Add("reward:" + token);
-                    else { goals.Add("record:" + target.id); goals.Add("farm:" + target.id); course = target.id; }
-                }
-                // Every goal stays whether or not the run's goals have it: the economy planner laps any course it can reach, and --auto's
-                // place lever splices any category route in where the run passes (Zip% passes bonus 11's way through the atom room).
-                bool stale = route.name.EndsWith(" stale", StringComparison.Ordinal);
-                string plain = stale ? route.name.Substring(0, route.name.Length - " stale".Length) : route.name;
-                Match category = MatchGatedRoute(plain);
-                string caps = string.IsNullOrEmpty(target?.minCapabilities) ? default(Caps).Id : target.minCapabilities;
-                float time = float.MaxValue;
-                if (category.Success)
-                {
-                    caps = CapsOf(category.Groups["label"].Value).Id;
-                    if (!float.TryParse(category.Groups["time"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out time)) time = float.MaxValue;
-                }
-                bool standing = target != null, restart = false;
-                List<SolverTick> ticks = ToTicks(route.steps);
-                string json = JsonConvert.SerializeObject(new { name = route.name, token, course, goals, capabilities = caps, standing, restart, ticks });
-                found.Add((stale, time, token + "|" + caps + "|" + standing + "|" + restart + "|" + JsonConvert.SerializeObject(ticks), json));
-                // A course route's laps from its quick restart (a farm route's lead restarts onto the course): a run's quick restart
-                // lands as the route's did, where the standing start (the category start, at its own origin) doesn't.
-                int reset = course > 0 ? ticks.FindIndex(t => t.reset) : -1;
-                if (reset > 0)
-                {
-                    List<SolverTick> laps = ticks.GetRange(reset, ticks.Count - reset);
-                    json = JsonConvert.SerializeObject(new { name = route.name + " from its quick restart", token, course, goals, capabilities = caps,
-                        standing = false, restart = true, ticks = laps });
-                    found.Add((stale, time, token + "|" + caps + "|False|True|" + JsonConvert.SerializeObject(laps), json));
-                }
-            }
-            WriteFullTasRunSeeds(run, labels, found);
-            var written = new HashSet<string>();
-            var files = new List<string>();
-            foreach (var seed in found.OrderBy(s => s.stale).ThenBy(s => s.time))
-            {
-                if (!written.Add(seed.key)) continue;
-                string file = Path.Combine(EngineSimDir, prefix + files.Count + ".json");
-                File.WriteAllText(file, seed.json);
-                files.Add(file);
-            }
-            // One path per line: a run's seeds (every goal of each seed run) can pass Windows' 32767-character command line.
-            string list = Path.Combine(EngineSimDir, "fulltas-" + run.name + "-seeds.txt");
-            File.WriteAllLines(list, files);
-            args.Append(" --seed-list ").Append(Quote(list));
-            return files.Count;
+            FullTasLog(what + " (" + limit + ")");
         }
 
         /// <summary>The offline best of every run in <c>run.seeds</c> (<c>enginesim/fulltas/&lt;seed&gt;.json</c>), once from each goal it reaches:

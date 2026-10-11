@@ -24,6 +24,10 @@ namespace IGTAP.EngineSim.Cli
                 switch (args.FirstOrDefault())
                 {
                     case "replay": return Replay(args.Skip(1).ToArray());
+                    case "check": return Runs.RunCheck.Run(args.Skip(1).ToArray());
+                    case "run-selftest": return Runs.RunSelfTest.Run(args.Skip(1).ToArray());
+                    case "align-1x": return Runs.OneX.Command(args.Skip(1).ToArray());
+                    case "solve-run": return Runs.RunSolve.Run(args.Skip(1).ToArray());
                     case "bench": return Bench(args.Skip(1).ToArray());
                     case "determinism": return Determinism.Run(args.Skip(1).ToArray());
                     case "enginebench": return EngineBench.Run(args.Skip(1).ToArray());
@@ -42,12 +46,9 @@ namespace IGTAP.EngineSim.Cli
                     case "timeloss": return TimeLoss.Run(args.Skip(1).ToArray());
                     case "map": return Map.Run(args.Skip(1).ToArray());
                     case "ultras": return Ultras.Run(args.Skip(1).ToArray());
-                    case "fulltas": return FullTas.Run(args.Skip(1).ToArray());
-                    case "macros": return FullTasAutoMacros.Command(args.Skip(1).ToArray());
-                    case "fulltas-plan": return EconomyPlan.Run(args.Skip(1).ToArray());
-                    case "plan-selftest": return EconomyPlanCheck.Run();
+                    // fulltas <trace>: solve-run; --check replays a route.
+                    case "fulltas": return args.Contains("--check") ? FullTasCheck(args.Skip(1).ToArray()) : Runs.RunSolve.Run(args.Skip(1).ToArray());
                     case "body-selftest": return BodyEnableCheck.Run();
-                    case "fulltas-buytable": return FullTas.BuyTable(args.Skip(1).ToArray());
                     case "plan-check": return PlanCheck(args.Skip(1).ToArray());
                     case "rays": return Rays(args[1], args[2]);
                     case "grid": return Grid();
@@ -56,7 +57,6 @@ namespace IGTAP.EngineSim.Cli
                     case "techgrafts": return TechGrafts.Command(args.Skip(1).ToArray());
                     case "routegrafts": return TechGrafts.RouteCommand(args.Skip(1).ToArray());
                     case "clip": return ClipLab.Run(args.Skip(1).ToArray());
-                    case "join-check": return FullTas.JoinCheck(args.Skip(1).ToArray());
                     case "lab": return Lab.Run(args.Skip(1).ToArray());
                     case "path":
                     {
@@ -140,8 +140,8 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         --tech-cache <file>: where the tech grafts' mining is cached\n"
                             + "                                         --plan [--plan-minutes M]: plan (and polish) first, its route a seed\n"
                             + "                                         --no-archive: no archive read or written (archive\\<course>_<caps>.json)\n"
-                            + "                                         --auto: the Full-TAS --auto loop on the course (CourseAuto), after the\n"
-                            + "                                         whole-route search above for --whole-minutes (half; --no-whole skips it)\n"
+                            + "                                         --auto: Improve (CourseAuto) after the whole-route search above for\n"
+                            + "                                         --whole-minutes (half; --no-whole skips it): the v2 polish, goal by goal\n"
                             + "  searchbench <suite.json> [--seeds N] [--minutes M] [--threads T] [--arms {name: [solve args]}] [--out file] [--keep]\n"
                             + "                                         solve per course, arm and seed (--rng 1..N) on temp trace copies;\n"
                             + "                                         median/min/max of the time to the first finish, to the target, and the best\n"
@@ -198,53 +198,14 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         against a reference's; search: the best small input change in it, by\n"
                             + "                                         ticks saved at the finish; floor: its ticks over the walkable distance\n"
                             + "                                         to the next anchor / the top path speed (slack); report: all three\n"
-                            + "  fulltas <trace.json> [--threads N] [--minutes total] [--window-minutes m] [--stall-minutes s] [--window W]\n"
-                            + "          [--piece-minutes p] [--seed <file>]... [--seed-list <file>] [--no-submit] [--fresh] [--unsolved] [--goal N]\n"
-                            + "          [--reset-study] [--lookahead N] [--rng N] [--log-json file] [--no-tech-grafts] [--graft-rate r]\n"
-                            + "          [--class major|nmg|human-major|human-nmg] [--tag T] [--tech-weight <tech>=<s>]\n"
-                            + "          | --check <route.json> [--goals FILE] [--chain-vs <old route.json>] | --waste-audit <route.json> [--expect a-b,..] [--clean kind:a-b,..]\n"
-                            + "          | --auto [--parallel K] [--probe-minutes p] [--repair-minutes r] [--repair-cpu-per-tick c] [--repair-slack T] [--ref <route.json>]...\n"
-                            + "                   [--parts LIST] [--library-runs R] [--focus a-b] [--tail-minutes t]\n"
-                            + "                   [--combine-repair-minutes m]\n"
-                            + "                                         Full-TAS search in rolling windows of W goals from a fulltas trace;\n"
-                            + "                                         polishes the goals the best reaches from goal 1 (--unsolved: reaches\n"
-                            + "                                         the goals it misses first); buys and laps are built from loop pieces\n"
-                            + "                                         (archive/fulltas-pieces.json; a missing piece is searched for up to\n"
-                            + "                                         p minutes, default 3); run state in <traces>/fulltas/<run>.json,\n"
-                            + "                                         (--class C, --tag T: fulltas/<run>.C[.T].json, ranked by the class, the\n"
-                            + "                                         human candidates in fulltas/candidates/<run>/; docs/fulltas.md \"Classes\"),\n"
-                            + "                                         bests to the gate (/api/fulltas/submit) when the game runs; --seed:\n"
-                            + "                                         saved course routes ({goals, standing, restart, ticks}) as window starts\n"
-                            + "                                         (--seed-list: a file of seed paths, one per line);\n"
-                            + "                                         --goal N: polish only the W goals ending at goal N (from goal N-W on),\n"
-                            + "                                         over and over\n"
-                            + "                                         --auto: the unattended loop (docs/fulltas.md \"Auto\"): per-goal lower\n"
-                            + "                                         bounds and slow stretches rank the goals, a bandit over (lever, goal)\n"
-                            + "                                         spends the CPU where ticks per CPU second are; --minutes 0 prints the table;\n"
-                            + "                                         --parts lib,tail,combine,sched,ctg,macros,stray (default) or none: the goal-state library\n"
-                            + "                                         with the wait fix, route-sync and tail windows, the pull scheduler, the\n"
-                            + "                                         cost-to-go, macro seeds, stray-buy re-timing, avoid and revive (docs/fulltas.md\n"
-                            + "                                         \"Parts\"); --focus a-b: the scheduler and levers pull windows starting in goals\n"
-                            + "                                         a..b only (combine still splices anywhere)\n"
-                            + "  macros [--tech-dir D] [--no-default] [--mine route.json]... [--measure route.json]... [--min-uses N] [--dump N]\n"
-                            + "         [--samples N] [--out file]    mines --auto's macro seeds from the saved and judged records (--mine: more\n"
-                            + "                                         routes) and measures how often one beats a held-out route's own next ticks\n"
-                            + "  fulltas <trace.json>                   (the trace alone) the economy stages, unattended: from the best's furthest\n"
-                            + "                                         goal, plan to its next buy, realize, install; again until the last goal or\n"
-                            + "                                         a stop; fulltas/<run>.report.json says why (docs/superpowers/specs/\n"
-                            + "                                         2026-10-08-fulltas-unattended-design.md)\n"
-                            + "  fulltas-plan <trace.json> --from <goal> --target <buy:box> --try STEPS\n"
-                            + "                                         realize's steps one at a time from goal <goal> (a diagnostic,\n"
-                            + "                                         writes nothing): lap:N, record:N, buy:box, all:box, atoms:N, wait@T, ...\n"
-                            + "  plan-selftest                          the planner on a toy economy against a brute force over every order\n"
+                            + "  fulltas <trace.json> [--threads N] [--class C] [--segment <goal id>] [--no-submit]\n"
+                            + "                                         solve-run (docs/fulltas.md \"Solving (v2)\"): the run built goal by goal\n"
+                            + "                                         from its best, then improved until it converges or \"stop\" on stdin\n"
+                            + "  fulltas <trace.json> --check <route.json> [--goals FILE] [--loose-buys] [--class C] [--ticks-out FILE [--watch [PARENT/]NAME]]\n"
+                            + "                                         a route replayed under the trace's goals (or FILE's): each goal's ticks,\n"
+                            + "                                         the purchases, how it ended; --ticks-out: every physics tick, clone spawn\n"
+                            + "                                         and RNG draw as JSON lines (align-1x, tools/economy-diff.py)\n"
                             + "  body-selftest                          b2Body.SetEnabled on a toy world: built disabled, enabled, disabled, restored\n"
-                            + "  fulltas-buytable <trace.json> --from <goal> [--until <goal>] [--out file] [--max-set N] [--entry-minutes m] [--techniques walk,jump,dash] [--targets ids]\n"
-                            + "                                         the measured time-to-buy table: per place the run stands at in the goal span\n"
-                            + "                                         (its start, the course's start/restart/finish spots, each box), the ticks to buy\n"
-                            + "                                         each box and each ordered 2-3-box set in one go per technique (walk,\n"
-                            + "                                         jump-through, dash-through), each engine-confirmed; cached in\n"
-                            + "                                         fulltas/<run>.buytable.json (the planner reads it);\n"
-                            + "                                         --targets reward:bonusN,lap:N measures those from every place instead\n"
                             + "  plan-check <trace.json> <route.json> --at N [--ticks T] [--buy | --finish | --flip on|off | --stray BOX]\n"
                             + "                                         the economy drive (Simulation.EconomyIdle/Buy/Finish) against the full\n"
                             + "                                         simulation: T (2000) idle ticks where the player rests after goal N of a\n"
@@ -273,9 +234,6 @@ namespace IGTAP.EngineSim.Cli
                             + "                                         the target's routes, archive coverage, colliders and forced-path\n"
                             + "                                         boxes as one JSON for the studio's Optimize map; a Full-TAS trace\n"
                             + "                                         takes --goals <labels.json> (the run's goals now, drawn over the trace's)\n"
-                            + "  join-check <trace.json> <best.json> <find.json> [--from N] [--count N]\n"
-                            + "                                         the --auto merge's joins of find onto best (JoinFinds), each\n"
-                            + "                                         replayed to the course's finish (no search)\n"
                             + "  ultras <fulltas-VMAN.json> --out <file> [--courses <courses.json>] [--spacing U] [--threads N]\n"
                             + "                                         floors a hyper lands on and the game's ultras two chained wavedashes\n"
                             + "                                         get from launch points along them, for the igtap-ultra-map viewer\n");
@@ -302,10 +260,126 @@ namespace IGTAP.EngineSim.Cli
             return (sim, trace, inputs);
         }
 
+        /// <summary>
+        /// fulltas &lt;trace&gt; --check &lt;route.json&gt; [--goals FILE] [--loose-buys] [--class C] [--ticks-out FILE [--watch [PARENT/]NAME]]:
+        /// a route (a run file's "inputs" or an offline best's "ticks") replayed from the trace's start under its goals (or FILE's
+        /// "goals"): each goal's physics and input tick, live time and held frames, the purchases (--loose-buys: a stray one doesn't end
+        /// the replay, as a trace capture plays on) and how it ended. Searches and writes nothing but --ticks-out: every physics tick
+        /// (physics and input count, world position, velocity, momentum, held frames, ground, air dashes and jumps left, Cash, the
+        /// economy, --watch's upgrade box) and each clone spawn and RNG draw as JSON lines, to line up with a 1x probe (align-1x,
+        /// tools/economy-diff.py).
+        /// </summary>
+        static int FullTasCheck(string[] args)
+        {
+            string file = Solve.Option<string>(args, "--check", null), ticksOut = Solve.Option<string>(args, "--ticks-out", null);
+            var run = Runs.RunContext.Open(args[0], Glitches.Parse(Solve.Option(args, "--class", "major")));
+            FullTasGoal[] goals = run.HeaderGoals;
+            string goalsFile = Solve.Option<string>(args, "--goals", null);
+            if (goalsFile != null)
+            {
+                using JsonDocument d = JsonDocument.Parse(File.ReadAllText(goalsFile));
+                goals = d.RootElement.GetProperty("goals").EnumerateArray().Select(g => Runs.RunGoals.Goal(FullTas.LabelOf(g), run.Known)).ToArray();
+            }
+            List<InputTick> inputs = Plan.ReadRoute(file);
+            Solve.OnThread(() =>
+            {
+                Simulation sim = run.Make();
+                sim.StrictBuys = !args.Contains("--loose-buys");
+                sim.UseGoals(sim.Goals.For(goals));
+                var bought = new List<string>();
+                sim.Purchased = path => bought.Add($"{path} (tick {sim.Engine.PhysicsTicks}, input {sim.Engine.RunTicks})");
+                using StreamWriter w = ticksOut == null ? null : new StreamWriter(ticksOut);
+                Action<int> row = null;
+                if (w != null)
+                {
+                    if (sim.Shop.Economy != null)
+                        sim.Shop.Economy.Spawned = (course, id, onScreen, divisor, i, j, pay) =>
+                        {
+                            UnityEngine.Random.State s = UnityEngine.Random.state;
+                            w.WriteLine(JsonSerializer.Serialize(new { kind = "clone", physics = sim.Engine.PhysicsTicks, input = sim.Engine.RunTicks, course, id, onScreen, divisor, i, j, pay,
+                                random = new[] { s.s0, s.s1, s.s2, s.s3 } }));
+                        };
+                    UnityEngine.Random.Drawn = caller => w.WriteLine(JsonSerializer.Serialize(new { kind = "rng", physics = sim.Engine.PhysicsTicks, input = sim.Engine.RunTicks, caller }));
+                    string watchName = Solve.Option(args, "--watch", (string)null);
+                    string[] watchPath = watchName?.Split('/');
+                    upgradeBox[] watched = watchName == null ? null : sim.World.All<upgradeBox>().Where(x => x.gameObject.name == watchPath[^1]
+                        && (watchPath.Length == 1 || x.transform.parent != null && x.transform.parent.gameObject.name == watchPath[0])).ToArray();
+                    row = _ =>
+                    {
+                        WorldPos p = sim.PlayerWorld;
+                        UnityEngine.Random.State rng = UnityEngine.Random.state;
+                        w.WriteLine(JsonSerializer.Serialize(new { physics = sim.Engine.PhysicsTicks, input = sim.Engine.RunTicks, goal = sim.Progress, x = p.x, y = p.y,
+                            vx = sim.Player.Velocity.x, vy = sim.Player.Velocity.y, mx = sim.Player.momentum.x, my = sim.Player.momentum.y,
+                            held = sim.Engine.HeldFrames, ground = sim.Player.onGround, wall = sim.Player.OnWall, respawn = new[] { sim.Player.respawnPoint.x, sim.Player.respawnPoint.y },
+                            dashes = sim.Player.airDashesLeft, jumps = sim.Player.airJumpsLeft, omni = sim.Player.omniDashUnlocked, maxJumps = sim.Player.maxAirJumps,
+                            cash = sim.Shop.CashNow, npBoost = Singleton<globalStats>.Instance?.EffectOfNpCompBoost ?? 1.0,
+                            rewards = sim.Courses.Select(c => new[] { c.courseNumber, c.reward, c.rewardTier, c.gameObject.activeInHierarchy ? 1 : 0, c.compBoostTimeLeft }),
+                            clones = sim.Shop.Economy?.CloneStates(), econ = EconomyRow(sim),
+                            random = new[] { rng.s0, rng.s1, rng.s2, rng.s3 },
+                            watch = watched?.Select(x => new[] { x.transform.position.x, x.transform.position.y, x.gameObject.activeInHierarchy ? 1 : 0 }) }));
+                    };
+                }
+                RunResult r;
+                try { r = sim.Run(inputs, null, null, 1000000, row); }
+                finally { UnityEngine.Random.Drawn = null; }
+                long last = 0;
+                for (int g = 0; g < goals.Length; g++)
+                {
+                    long t = g < r.Progress ? r.GoalPhysicsTicks[g] : -1;
+                    Console.WriteLine($"goal {g + 1,2} {goals[g].label,-42} " + (t < 0 ? "-" : $"{t,5} ({MacroEngine.LiveSeconds(t, r.GoalHeldFrames[g]),6:0.00} s live, {r.GoalHeldFrames[g],3} held, +{t - last,4}) input {r.GoalInputTicks[g]}"));
+                    if (t >= 0) last = t;
+                }
+                WorldPos at = sim.PlayerWorld;
+                Console.WriteLine($"{Path.GetFileName(file)}: {inputs.Count} inputs, {r.Progress} of {goals.Length} goals"
+                    + (r.Progress == goals.Length ? $", {MacroEngine.LiveSeconds(last, r.GoalHeldFrames[^1]):0.00} s live ({last} ticks, {r.GoalHeldFrames[^1]} held frames)" : "")
+                    + $"; ended after input {sim.Engine.RunTicks} at {at.x:0.0},{at.y:0.0}: {r.EndReason}");
+                Console.WriteLine($"purchases ({(sim.Goals.Loose ? "loose" : "strict")} buys): " + (bought.Count == 0 ? "none" : string.Join("; ", bought)));
+                if (ticksOut != null) Console.WriteLine($"ticks -> {ticksOut}");
+            });
+            return 0;
+        }
+
+        /// <summary>
+        /// The economy as a `--ticks-out` row (and `replay --ticks-out`) carries it, under the names the plugin's 1x probe rows and
+        /// trace ticks use (TasPlugin.EconomyNow), for tools/economy-diff.py: each currency held, the atom collider's atoms per tier
+        /// and waiting atoms, globalStats' NP per tick, its cap, the comp boost's NP factor and the clone dust multiplier, and the
+        /// upgrade trees' grown segments, how far each door box's door is from its box (the atom box's, the Area 2 door box's:
+        /// upgradeBox.doorToOpen, a PlatformMover; -1 without one) and the tree boxes on (treeBoxes, WokenStarts.Describe).
+        /// </summary>
+        internal static Dictionary<string, object> EconomyRow(Simulation sim)
+        {
+            globalStats stats = Singleton<globalStats>.Instance;
+            Func<globalStats.Currencies, double> held = c => sim.Shop.Holds(c);
+            return new Dictionary<string, object>
+            {
+                ["cash"] = held(globalStats.Currencies.Cash), ["gp"] = held(globalStats.Currencies.GreenPower),
+                ["np"] = held(globalStats.Currencies.AtomicPower), ["cd"] = held(globalStats.Currencies.CloneDust),
+                ["rp"] = held(globalStats.Currencies.RedPower), ["atoms"] = sim.Shop.Economy?.AtomCounts ?? Array.Empty<int>(),
+                ["waiting"] = sim.Shop.Economy?.WaitingAtoms ?? 0, ["npTick"] = stats?.NPrewardPerTick ?? 0.0, ["npCap"] = stats?.NPrewardCap ?? 0.0,
+                ["npBoost"] = stats?.EffectOfNpCompBoost ?? 1.0, ["cdMult"] = sim.Shop.Economy?.CdMult ?? 1.0,
+                ["gridCalls"] = sim.Shop.Economy?.GridCalls ?? 0, ["segments"] = sim.World.All<TreeController>().Sum(t => t.GrownSegments.Count),
+                ["doorAtom"] = Door(sim, globalStats.globalUpgradeSet.spawnNewAtom), ["doorArea2"] = Door(sim, globalStats.globalUpgradeSet.area2DoorOpen),
+                ["treeBoxes"] = sim.World.All<upgradeBox>().Where(b => b.gameObject.activeInHierarchy && BoxTree.GetValue(b) is TreeController t && (object)t != null)
+                    .Select(WokenStarts.Describe).OrderBy(d => d, StringComparer.Ordinal).Aggregate("", WokenStarts.Join),
+            };
+        }
+
+        static readonly FieldInfo BoxTree = typeof(upgradeBox).GetField("upgradeTree", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+        static readonly FieldInfo DoorToOpen = typeof(upgradeBox).GetField("doorToOpen", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+
+        /// <summary>The distance from the global box of this kind that has a door to its door (rounded to 0.01 u); -1: none.</summary>
+        static double Door(Simulation sim, globalStats.globalUpgradeSet kind)
+        {
+            foreach (upgradeBox b in sim.World.All<upgradeBox>())
+                if (b.upgrade == localUpgrades.localUpgradeSet.GLOBAL && b.globalUpgrade == kind && DoorToOpen.GetValue(b) is PlatformMover door && (object)door != null)
+                    return Math.Round(Vector2.Distance(door.transform.position, b.transform.position), 2);
+            return -1;
+        }
+
         static int Replay(string[] args)
         {
             bool verbose = args.Contains("--verbose");
-            // --ticks-out FILE: the offline economy per physics tick (FullTas.EconomyRow), as `fulltas --check --ticks-out` writes
+            // --ticks-out FILE: the offline economy per physics tick (EconomyRow), as `fulltas --check --ticks-out` writes
             // it, for tools/economy-diff.py against a 1x probe of the same inputs.
             string ticksOut = Solve.Option(args, "--ticks-out", (string)null);
             using StreamWriter econOut = ticksOut == null ? null : new StreamWriter(ticksOut);
@@ -324,9 +398,11 @@ namespace IGTAP.EngineSim.Cli
                 string cashLine = null, randomLine = null, bigCashLine = null;
                 RunResult run = sim.Run(inputs, extraTicks: 1000000, onStep: step =>
                 {
-                    Dictionary<string, object> econ = econOut == null && (step >= ticks.Length || !ticks[step].TryGetProperty("econ", out _)) ? null : FullTas.EconomyRow(sim);
+                    Dictionary<string, object> econ = econOut == null && (step >= ticks.Length || !ticks[step].TryGetProperty("econ", out _)) ? null : EconomyRow(sim);
                     econOut?.WriteLine(JsonSerializer.Serialize(new { physics = sim.Engine.PhysicsTicks, input = sim.Engine.RunTicks, econ }));
                     if (step >= ticks.Length || firstDiff >= 0 && !verbose) return;
+                    // The tick a death or finish ends the run stops partway here and runs whole in turbo; 1x logs no row for it.
+                    if (!sim.Engine.IsRunning) return;
                     var here = new List<string>();
                     JsonElement t = ticks[step];
                     Compare(here, "position", Json(sim.Player.transform.position), t.GetProperty("position"));
@@ -587,8 +663,6 @@ namespace IGTAP.EngineSim.Cli
         /// </summary>
         static int PlanCheck(string[] args)
         {
-            if (args.Contains("--moves")) return FullTas.MovesCheck(args.Where(a => a != "--moves").ToArray());
-            if (args.Contains("--tree-drop")) return EconomyPlanCheck.TreeDrop(args.First(a => a != "--tree-drop"));
             string tracePath = args[0];
             List<InputTick> route = Plan.ReadRoute(args[1]);
             int at = Solve.Option(args, "--at", -1), idle = Solve.Option(args, "--ticks", 2000);
@@ -820,7 +894,7 @@ namespace IGTAP.EngineSim.Cli
                 routines = q.Routines.Where(r => !(r.Target is Movement)).Select(r => r.Target.name + " " + r.Wait + (r.Wait == Scheduler.Wait.Seconds ? " in " + (r.Due - q.Tick) : "")).ToArray(),
             });
             f["courses"] = J(sim.Courses.Select(c => new object[] { c.courseNumber, c.reward, c.gpReward, c.rpReward, c.CdReward, c.compBoostTimeLeft, c.compBoostBonus, c.rewardTier }).ToArray());
-            Dictionary<string, object> row = FullTas.EconomyRow(sim);
+            Dictionary<string, object> row = EconomyRow(sim);
             row.Remove("gridCalls");   // a diagnostic count, not in snapshots
             f["globalStats"] = J(row);
             f["boxes"] = J(sim.World.All<upgradeBox>().Select(b => new object[] { b.TimesUsed, b.upgradeCost, b.isActive, (float)BoxCooldown.GetValue(b) }).ToArray());

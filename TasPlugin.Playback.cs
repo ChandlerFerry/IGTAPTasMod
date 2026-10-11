@@ -93,8 +93,10 @@ namespace IGTAPTasMod
             // Only the wall clock is paced here: every frame's game time is the fixed step below (captureDeltaTime). Not by
             // Unity's cap: off a run and on its first tick the grid's frames aren't 1/fps of game time (six make a 0.02 s
             // tick). Playback waits for the fixed clock's own time (WaitForFixedClock): a walk for slowdown times it, fast
-            // playback (settings fastPlayback) not at all. A probe that isn't walked keeps Unity's cap: its fps is the experiment.
-            bool probeCap = _probe != null && !_walkScaled;
+            // playback (settings fastPlayback, or a probe's own fast) not at all. A probe at another frame rate that isn't walked
+            // keeps Unity's cap: its fps is the experiment.
+            bool probeFast = _probe != null && _pacedFps == MacroEngine.PlaybackFrameRate && (_probe.fast || _settings.fastPlayback);
+            bool probeCap = _probe != null && !_walkScaled && !probeFast;
             int targetFrameRate = probeCap ? _pacedFps : -1;
             if (Application.targetFrameRate != targetFrameRate) Application.targetFrameRate = targetFrameRate;
             // This frame ran on the step set last frame; the wall-clock readers (PatchWallClock) see it and its running total.
@@ -110,7 +112,7 @@ namespace IGTAPTasMod
             _pacedTime = gameTime;
             bool skipping = _fastUntilTick > 0 && (_pendingReplay != null || _engine.RunTicks < _fastUntilTick);
             long ticks = _engine.GridTicks;
-            if (!probeCap) WaitForFixedClock(_walkScaled ? _walkSlowdown : _settings.fastPlayback || skipping ? 0f : 1f,
+            if (!probeCap) WaitForFixedClock(_walkScaled ? _walkSlowdown : _settings.fastPlayback || probeFast || skipping ? 0f : 1f,
                 held || ticks >= 2 ? _clockFrame : EvenFrameStep(_pacedFps));
             _clockNext = FixedClockStep(_pacedGrid, ticks);
             Time.captureDeltaTime = _clockNext;

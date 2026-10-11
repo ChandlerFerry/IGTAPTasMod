@@ -10,6 +10,8 @@ using HarmonyLib;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
+using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.Controls;
 
 namespace IGTAPTasMod
 {
@@ -33,6 +35,10 @@ namespace IGTAPTasMod
             public int fps;
             /// <summary>Play with the omnidirectional dash on top of the route's unlocks (Vman techs), as a tech demo can.</summary>
             public bool omniDash;
+            /// <summary>Tick rows only, with what the 1x aligner compares (enginesim <c>align-1x</c>): no frame, clone, draw, zone or atom rows.</summary>
+            public bool lean;
+            /// <summary>Played with Fast playback whatever the setting (<see cref="PacePlayback"/>; only at the playback's frame rate).</summary>
+            public bool fast;
             /// <summary>A tech demo's probe (<c>tech</c>): its start, inputs and lab map (a lab demo's start is placed as its playback's is).</summary>
             public TechDef tech;
             /// <summary>
@@ -86,7 +92,9 @@ namespace IGTAPTasMod
                         captureAt = body["captureAt"] == null ? -1 : (long)body["captureAt"], logFrom = Number(body, "logFrom", 0),
                         pauseAt = body["pauseAt"] == null ? -1 : (long)body["pauseAt"], pauseOffset = Number(body, "pauseOffset", 0),
                         pauseFrames = Number(body, "pauseFrames", 0),
-                        fps = Number(body, "fps", 0), omniDash = Truthy(body, "omniDash") };
+                        fps = Number(body, "fps", 0), omniDash = Truthy(body, "omniDash"), lean = Truthy(body, "lean"), fast = Truthy(body, "fast") };
+                    // The first row can come before this probe's first globalStats.FixedUpdate: not the last probe's Cash.
+                    _cashPre = globalStats.currencyLookup[globalStats.Currencies.Cash];
                     var macro = new MacroDefinition { id = ProbeRouteId, name = route + " probe " + name, savestateId = savestateId, steps = ToSteps(ticks) };
                     Match fullTas = FullTasRouteName.Match(macro.name);
                     if (fullTas.Success && savestateId.Length == 0)
@@ -103,6 +111,15 @@ namespace IGTAPTasMod
                 }
                 case "/api/probe/status":
                     return new { ok = true, running = _probe != null, name = _probe?.name, lastFile = _lastProbeFile };
+                case "/api/probe/1x":
+                    if (!OneXIdle()) throw new InvalidOperationException("The game is busy: stop playback, recording, the solver, the probe or the lab first.");
+                    return StartOneX(body["name"] == null ? null : FindFullTasRun(Text(body, "name"))) ?? throw new InvalidOperationException("Every run's current best has its 1x log already.");
+                case "/api/probe/1x/idle":
+                    _settings.idle1x = Truthy(body, "on");
+                    SaveSettings();
+                    return new { ok = true, on = _settings.idle1x };
+                case "/api/probe/1x/status":
+                    return new { ok = true, idle = _settings.idle1x, running = _oneX?.run, idleFor = Time.realtimeSinceStartup - _lastCommandAt, last = _oneXLast, dir = OneXDir };
             }
             throw new InvalidOperationException("Unknown probe command: " + path);
         }
@@ -121,6 +138,16 @@ namespace IGTAPTasMod
             Vector2 v = (Vector2)ProbeVelocity.GetValue(movement), m = (Vector2)ProbeMomentum.GetValue(movement), d = (Vector2)ProbeDashDirection.GetValue(movement);
             Vector2 body = _playerBody != null ? _playerBody.linearVelocity : Vector2.zero;
             Vector2 bodyAt = _playerBody != null ? _playerBody.position - origin : Vector2.zero;
+            if (_probe.lean)
+            {
+                _probe.rows.Add(new
+                {
+                    kind, frame = Time.frameCount, physics = _engine.PhysicsTicks, input = _engine.RunTicks, held = _engine.HeldFrames,
+                    x = p.x - origin.x, y = p.y - origin.y, bodyX = bodyAt.x, bodyY = bodyAt.y, vx = v.x, vy = v.y, mx = m.x, my = m.y,
+                    originX = origin.x, originY = origin.y, cash = globalStats.currencyLookup[globalStats.Currencies.Cash], cashPre = _cashPre,
+                });
+                return;
+            }
             var fields = new Dictionary<string, object>();
             foreach (FieldInfo f in _probe.fields)
             {
@@ -155,7 +182,7 @@ namespace IGTAPTasMod
                 camX = camAt.x - origin.x, camY = camAt.y - origin.y, camSize = cam != null ? cam.orthographicSize : 0f,
                 cash = globalStats.currencyLookup[globalStats.Currencies.Cash],
                 random = CourseStart.Words(UnityEngine.Random.state),
-                physics = _engine.PhysicsTicks, input = _engine.RunTicks,
+                physics = _engine.PhysicsTicks, input = _engine.RunTicks, held = _engine.HeldFrames,
                 x = p.x - origin.x, y = p.y - origin.y, vx = v.x, vy = v.y, mx = m.x, my = m.y, bvx = body.x, bvy = body.y,
                 bodyX = bodyAt.x, bodyY = bodyAt.y, interpolation = _playerBody != null ? _playerBody.interpolation.ToString() : null,
                 ground = movement.onGround, wall = movement.OnWall, mode = ProbeCutscene.GetValue(movement).ToString(),
@@ -173,10 +200,14 @@ namespace IGTAPTasMod
         /// <summary>The economy at this tick's globalStats.FixedUpdate, before its NP payout: what the last tick's rendered frames
         /// left, the point turbo's and the engine's rows are taken at (after the tick's frames).</summary>
         static Dictionary<string, object> _econPre;
+        /// <summary>Cash at the same point, a lean probe's <c>cashPre</c>.</summary>
+        static double _cashPre;
 
         private static void BeforeProbeStatsFixedUpdate()
         {
-            if (Instance != null && Instance.ProbeLogsClones) _econPre = EconomyNow();
+            if (Instance == null || !Instance.ProbeLogging) return;
+            _cashPre = globalStats.currencyLookup[globalStats.Currencies.Cash];
+            _econPre = Instance._probe.lean ? null : EconomyNow();
         }
         /// <summary>Every callAddNewAtom Unity or turbo has run in this session (<see cref="BeforeProbeAtomCall"/>): rows compare its
         /// steps, not its value.</summary>
@@ -249,8 +280,9 @@ namespace IGTAPTasMod
         static int[] _spawnRandom;
         static float _spawnDivisor;
 
-        bool ProbeLogsClones { get { return _probe != null && _probe.started && _engine.IsRunning && _engine.ActiveMacro != null && _engine.ActiveMacro.id == ProbeRouteId && !TurboRunner.Active
+        bool ProbeLogging { get { return _probe != null && _probe.started && _engine.IsRunning && _engine.ActiveMacro != null && _engine.ActiveMacro.id == ProbeRouteId && !TurboRunner.Active
             && _engine.PhysicsTicks >= _probe.logFrom; } }
+        bool ProbeLogsClones { get { return ProbeLogging && !_probe.lean; } }
 
         private static void BeforeProbeCloneUpdate(clonesScript __instance)
         {
@@ -488,7 +520,7 @@ namespace IGTAPTasMod
         private static void AfterMovementUpdate(Movement __instance)
         {
             if (Instance == null) return;
-            if (Instance.ProbeActive(__instance)) Instance.ProbeRow(__instance, "frame");
+            if (Instance.ProbeActive(__instance) && !Instance._probe.lean) Instance.ProbeRow(__instance, "frame");
             if (Instance._pauseLeft > 0 && (__instance.pauseMenu == null || !__instance.pauseMenu.menuOpen)) Instance._pauseLeft = 0;
             if (Instance._pauseLeft > 0 && ++Instance._pausedFrames >= Instance._pauseLeft)
             {
@@ -510,8 +542,8 @@ namespace IGTAPTasMod
                 _probe = null;
                 return;
             }
-            Directory.CreateDirectory(ProbesDir);
-            string file = Path.Combine(ProbesDir, _probe.name + ".json");
+            string file = _probe.file ?? Path.Combine(ProbesDir, _probe.name + ".json");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
             WriteJsonAtomic(file, new
             {
                 _probe.name, _probe.route, tech = _probe.tech?.id, _probe.savestateId, capturedSavestateId = _probe.capturedSavestateId,
@@ -521,6 +553,110 @@ namespace IGTAPTasMod
             Logger.LogInfo("Probe " + _probe.name + ": " + _probe.rows.Count + " rows -> " + file);
             _lastProbeFile = file;
             _probe = null;
+        }
+
+        // The 1x job (docs/fulltas.md "1x confirmation"): a run's current best played at 1x with Fast playback as a lean probe, when
+        // the game is idle (settings idle1x) or asked (POST /api/probe/1x), logged to 1x\<run>-<inputs hash>.json. A complete run's
+        // first log is also its 1x reference, 1x\<run>.json, which the engine's check aligns with its own rows (align-1x). Any
+        // command (a non-GET request) or the player's input stops it and drops its log.
+        sealed class OneXJob { public string run, file, reference; public ProbeRun probe; }
+        OneXJob _oneX;
+        string _oneXLast;
+        float _lastCommandAt, _oneXScanAt;
+        const float OneXIdleSeconds = 60f;
+        string OneXDir { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "1x"); } }
+
+        bool OneXIdle()
+        {
+            return !PlaybackActive && _pendingReplay == null && !_recorder.IsRecording && !_solverRunning && _probe == null && _fullTasPending == null
+                && _newGamePhase == 0 && _bootstrapRequest == null && !_silentEvaluation && !TurboRunner.Active && !LabInjected
+                && (_fullTasQueue == null || _fullTasQueue.index >= _fullTasQueue.files.Count);
+        }
+
+        /// <summary>A non-GET request (HandleWebRequest): the game isn't idle, and a running 1x job gives way before it's handled.</summary>
+        void OneXCommand(string path)
+        {
+            _lastCommandAt = Time.realtimeSinceStartup;
+            if (_oneX != null && !path.StartsWith("/api/probe/1x", StringComparison.Ordinal)) StopOneX("a command came (" + path + ")");
+        }
+
+        void StopOneX(string why)
+        {
+            if (_probe == _oneX.probe)
+            {
+                _probe = null;
+                StopPlayback("1x job stopped");
+            }
+            _oneXLast = "Stopped " + _oneX.run + "'s 1x play: " + why;
+            Logger.LogInfo(_oneXLast);
+            _oneX = null;
+        }
+
+        static bool PlayerInput()
+        {
+            if (Keyboard.current != null && Keyboard.current.anyKey.isPressed) return true;
+            if (Gamepad.current == null) return false;
+            foreach (InputControl c in Gamepad.current.allControls)
+                if (c is ButtonControl b && b.isPressed) return true;
+            return false;
+        }
+
+        /// <summary>Plugin Update, before the hotkeys: the job's end (its log written by PumpProbe), its stop on the player's input, and
+        /// the idle start.</summary>
+        void PumpOneX()
+        {
+            float now = Time.realtimeSinceStartup;
+            bool input = PlayerInput();
+            if (input) _lastCommandAt = now;
+            OneXJob job = _oneX;
+            if (job != null)
+            {
+                if (input) StopOneX("the player is back");
+                else if (_probe != job.probe)
+                {
+                    _oneX = null;
+                    bool reference = job.probe.started && File.Exists(job.file) && job.reference != null && !File.Exists(job.reference);
+                    if (reference) File.Copy(job.file, job.reference);
+                    _oneXLast = job.probe.started && File.Exists(job.file) ? "Played " + job.run + " at 1x: " + job.file + (reference ? ", its 1x reference now" : "")
+                        : job.run + "'s 1x play did not start";
+                    Logger.LogInfo(_oneXLast);
+                }
+                return;
+            }
+            if (!_settings.idle1x || now - _lastCommandAt < OneXIdleSeconds || now < _oneXScanAt || !OneXIdle()) return;
+            _oneXScanAt = now + OneXIdleSeconds;
+            try { StartOneX(null); }
+            catch (Exception ex)
+            {
+                _oneXLast = "1x job: " + ex.Message;
+                Logger.LogWarning(_oneXLast);
+            }
+        }
+
+        /// <summary>The 1x play of <paramref name="only"/>'s current best, else of the first run's (complete runs first, test runs
+        /// left out) that has no 1x log yet; null when there's none.</summary>
+        object StartOneX(FullTasRunDef only)
+        {
+            List<FullTasRunDef> runs = only != null ? new List<FullTasRunDef> { only } : _fullTasRuns.Where(r => r.Section != "test").OrderBy(r => r.Section == "complete" ? 0 : 1).ToList();
+            foreach (FullTasRunDef run in runs)
+            {
+                MacroDefinition best = FullTasPlayableRoute(run);
+                if (best == null) continue;
+                string ticks = JsonConvert.SerializeObject(ToTicks(best.steps));
+                string hash;
+                using (var sha = System.Security.Cryptography.SHA256.Create())
+                    hash = BitConverter.ToString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(ticks))).Replace("-", "").Substring(0, 10).ToLowerInvariant();
+                string file = Path.Combine(OneXDir, run.name + "-" + hash + ".json");
+                if (only == null && File.Exists(file)) continue;
+                HandleProbe("/api/probe/run", new JObject { ["name"] = run.name + " 1x", ["route"] = "fulltas/" + run.name + "_NONE", ["ticks"] = JArray.Parse(ticks),
+                    ["lean"] = true, ["fast"] = true });
+                _probe.file = file;
+                _oneX = new OneXJob { run = run.name, file = file, probe = _probe, reference = run.Section == "complete" ? Path.Combine(OneXDir, run.name + ".json") : null };
+                _oneXLast = "Playing " + run.name + "'s current best at 1x (" + best.name + ")";
+                Logger.LogInfo(_oneXLast);
+                return new { ok = true, run = run.name, route = best.name, file };
+            }
+            return null;
         }
     }
 }

@@ -154,6 +154,72 @@ namespace IGTAPTasMod
             foreach (Type drawer in StartWatched)
                 harmony.Patch(AccessTools.Method(drawer, "Start"), prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeDrawingStart))),
                     postfix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(AfterDrawingStart))));
+            PatchBlendReads(harmony);
+        }
+
+        // README ### Rules, exception 14: the game's reads of the player's position during a modelled frame. Every method of the
+        // scripts a turbo frame runs that read it (Movement's, its coroutines' included; courseScript.FixedUpdate's path;
+        // TeleporterScript's teleport) reads Transform.position through BlendRead, as do the plugin's hooks in those calls (a run's
+        // start pin, the TAS editor's trace, the overlay).
+        static readonly Type[] BlendReaders = { typeof(Movement), typeof(courseScript), typeof(TeleporterScript) };
+
+        static void PatchBlendReads(Harmony harmony)
+        {
+            MethodInfo getPosition = AccessTools.PropertyGetter(typeof(Transform), nameof(Transform.position));
+            var transpiler = new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(ReadBlend)));
+            const BindingFlags declared = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+            int patched = 0;
+            foreach (Type reader in BlendReaders)
+                foreach (Type type in new[] { reader }.Concat(reader.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic)))
+                    foreach (MethodInfo method in type.GetMethods(declared))
+                    {
+                        if (method.IsAbstract || method.ContainsGenericParameters || method.GetMethodBody() == null) continue;
+                        if (!PatchProcessor.ReadMethodBody(method).Any(op => Equals(op.Value, getPosition))) continue;
+                        harmony.Patch(method, transpiler: transpiler);
+                        patched++;
+                    }
+            if (patched == 0) TasPlugin.Log?.LogWarning("Turbo: no player position reads found to patch; turbo frames read the body's pose.");
+        }
+
+        static IEnumerable<CodeInstruction> ReadBlend(IEnumerable<CodeInstruction> instructions)
+        {
+            MethodInfo getPosition = AccessTools.PropertyGetter(typeof(Transform), nameof(Transform.position));
+            MethodInfo read = AccessTools.Method(typeof(TurboRunner), nameof(BlendRead));
+            foreach (CodeInstruction instruction in instructions)
+                yield return instruction.Calls(getPosition) ? new CodeInstruction(System.Reflection.Emit.OpCodes.Call, read).MoveLabelsFrom(instruction).MoveBlocksFrom(instruction) : instruction;
+        }
+
+        // The modelled frame's blend (MacroEngine.FrameGrid): while turbo runs a frame's game code, the player's transform
+        // reads there, as 1x's interpolation has it, until the game writes it. The transform itself stays on the body: a write
+        // would be synced into the Rigidbody2D, and any body write recomputes Box2D's sweep centre from the position, a float
+        // step off the one 1x carries from step to step.
+        static Transform _blendOf, _readBack;
+        static Vector3 _blendBase, _blendAt;
+
+        public static Vector3 BlendRead(Transform t)
+        {
+            Vector3 p = t.position;
+            return ReferenceEquals(t, _blendOf) && Same(p, _blendBase) ? _blendAt : p;
+        }
+
+        static void ShowBlend(Transform player, Vector2 blend)
+        {
+            _blendOf = null;
+            _blendBase = player.position;
+            _blendAt = ReadBack(player, blend);
+            _blendOf = player;
+        }
+
+        static void EndBlend() { _blendOf = null; }
+
+        /// <summary>What the player's transform would read back with <paramref name="at"/> written (through its parent, as a write
+        /// rounds), from a bare transform beside it: nothing of the player is written.</summary>
+        static Vector3 ReadBack(Transform player, Vector2 at)
+        {
+            if (_readBack == null) _readBack = new GameObject("TurboReadBack") { hideFlags = HideFlags.HideInHierarchy }.transform;
+            if (_readBack.parent != player.parent) _readBack.SetParent(player.parent, false);
+            _readBack.position = new Vector3(at.x, at.y, player.position.z);
+            return _readBack.position;
         }
 
         // README ### Rules, exception 12: the Start draws of what a run wakes. Unity runs a woken behaviour's Start before its
@@ -219,7 +285,9 @@ namespace IGTAPTasMod
         static void CollectStartWaiting()
         {
             StartWaiting.Clear();
-            foreach (Behaviour b in NeverStarted()) if (!b.isActiveAndEnabled) StartWaiting.Add(b);
+            // On ones too: one woken just before the run (a category start's refill orbs, their LightFlicker) starts in the run's
+            // first frame at 1x, as the engine's first Start pass draws it (Economy's neverStarted).
+            StartWaiting.AddRange(NeverStarted());
         }
 
         /// <summary>A modelled frame's Start pass, before its Updates: each waiting behaviour now on draws what its Start draws
@@ -411,40 +479,34 @@ namespace IGTAPTasMod
         /// </summary>
         internal static bool DropTimeStops;
 
-        /// <summary>The last frame's blend and the body's pose a run left for 1x's next FixedUpdate (<see cref="ShowLastFrame"/>).</summary>
-        static (Vector2 blend, Vector2 body)? _handoff;
-        static Vector3 _handoffLag;
+        /// <summary>The last frame's blend a run left for 1x's next FixedUpdate (<see cref="ShowLastFrame"/>).</summary>
+        static Vector2? _handoff;
 
         /// <summary>
         /// After a run that 1x goes on from: 1x's next FixedUpdate reads the player at the last rendered frame's blend, as a
         /// run's own ticks do. Not placed now: Unity syncs a script's transform write into the body at the next frame, which
         /// moved the body back by the blend's lag for good (ZipEscape% from tick 73000, vx -460: 1.25 u behind the engine
-        /// from the first 1x tick on). The run leaves the transform on the body; the blend is placed around that FixedUpdate
+        /// from the first 1x tick on). The run leaves the transform on the body; that FixedUpdate reads the blend (BlendRead)
         /// (<see cref="BeforeHandoffTick"/>, <see cref="AfterHandoffTick"/>).
         /// </summary>
         internal static void ShowLastFrame(Movement movement)
         {
-            _handoff = (Vector2.Lerp(_stepFrom, _stepTo, MacroEngine.FrameGrid.Playback.Frames(TasPlugin.GridTicks).LastAlpha), _stepTo);
+            _handoff = Vector2.Lerp(_stepFrom, _stepTo, MacroEngine.FrameGrid.Playback.Frames(TasPlugin.GridTicks).LastAlpha);
         }
 
-        /// <summary>1x's first FixedUpdate after a handoff, before anything of it: the player at the blend, as Run places it.</summary>
+        /// <summary>1x's first FixedUpdate after a handoff, before anything of it: the player reads at the blend, as in Run.</summary>
         internal static void BeforeHandoffTick(Movement movement)
         {
             if (Active || _handoff == null) return;
-            _handoffLag = Place(movement.transform, _handoff.Value.blend);
+            ShowBlend(movement.transform, _handoff.Value);
         }
 
-        /// <summary>After that tick's FixedUpdates: no write, so the transform back on the body and the step leaves the body
-        /// where it is (Run's own check).</summary>
+        /// <summary>After that tick's Movement.FixedUpdate: the blend's reads end.</summary>
         internal static void AfterHandoffTick(Movement movement)
         {
             if (Active || _handoff == null) return;
-            Vector2 body = _handoff.Value.body;
             _handoff = null;
-            if (movement.transform.position != _handoffLag) return;
-            Place(movement.transform, body);
-            Physics2D.SyncTransforms();
-            KeepBody(movement.GetComponent<Rigidbody2D>(), body);
+            EndBlend();
         }
 
         static bool BeforeStartCoroutine(MonoBehaviour __instance, IEnumerator routine, ref Coroutine __result)
@@ -1381,11 +1443,18 @@ namespace IGTAPTasMod
         /// A rendered frame's start, as Unity's Physics2DEarlyUpdate syncs it before the frame's FixedUpdate and Update: what
         /// scripts moved since (a tree box falling onto its spot, IE_Grow at each frame's end) is where its transform is for the
         /// frame's queries (the engine's PhysicsWorld.FrameStart). Turbo runs its frames inside one Unity frame, so it syncs
-        /// them itself; the player's transform holds turbo's blend, never the body's pose, so it is put on the body first.
+        /// them itself. A write to the player not on its body yet (the tick's last frame's, which _stepTo takes to the step's
+        /// sync, as at 1x) is put back on the body first.
         /// </summary>
         static void FrameStart(Transform player, Rigidbody2D body)
         {
+            EndBlend();
             Vector2 at = body.position;
+            if (Same(player.position, ReadBack(player, at)))
+            {
+                Physics2D.SyncTransforms();
+                return;
+            }
             Place(player, at);
             Physics2D.SyncTransforms();
             KeepBody(body, at);
@@ -1399,8 +1468,13 @@ namespace IGTAPTasMod
         /// </summary>
         static void KeepBody(Rigidbody2D body, Vector2 at)
         {
-            if (body.position != at) body.position = at;
+            if (!Same(body.position, at)) body.position = at;
         }
+
+        /// <summary>Exactly equal: Unity's Vector ==/!= call anything within 1e-5 equal, which kept a read-back rounding under it in the
+        /// body (Course 1's start: 9e-6) and missed writes as small.</summary>
+        static bool Same(Vector2 a, Vector2 b) { return a.x == b.x && a.y == b.y; }
+        static bool Same(Vector3 a, Vector3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
 
         /// <summary>Puts the player's transform at a position (its z kept) and returns what it reads back, to tell a game write from it.</summary>
         static Vector3 Place(Transform t, Vector2 at)
@@ -1478,7 +1552,8 @@ namespace IGTAPTasMod
                     Resume(Wait.Seconds);
                     if (stats != null && stats.isActiveAndEnabled) _statsFixedUpdate(stats);
                     // FixedUpdate reads the last rendered frame's interpolation blend; its writes move the body from there.
-                    Vector3 lag = Place(player, Vector2.Lerp(_stepFrom, _stepTo, frames.Frames(TasPlugin.GridTicks).LastAlpha));
+                    ShowBlend(player, Vector2.Lerp(_stepFrom, _stepTo, frames.Frames(TasPlugin.GridTicks).LastAlpha));
+                    Vector3 lag = _blendBase;
                     _freezeFor = -1f;
                     _pauseFrames = _pauseAfter = 0;
                     _fixedUpdate(movement);
@@ -1495,13 +1570,11 @@ namespace IGTAPTasMod
                     // A used refill orb counts its cooldown down and grows back at its end (JiggleDropScript.FixedUpdate).
                     foreach (JiggleDropScript orb in orbs)
                         if (orb != null && orb.isActiveAndEnabled && OrbCooldown(orb) > 0f) _orbFixedUpdate(orb);
-                    // No write: the blend was never the body's, so the sync before the step leaves the body where it is (a frame's
-                    // write still pending, _stepTo off the body, moves it as at 1x).
-                    Vector2 still = body.position;
-                    bool wrote = player.position != lag;
-                    if (!wrote) Place(player, _stepTo);
+                    // No write: the body stays where it is (a frame's write still pending, _stepTo off the body, moves it as at 1x).
+                    EndBlend();
+                    bool wrote = !Same(player.position, lag);
+                    if (!wrote && !Same(_stepTo, body.position)) Place(player, _stepTo);
                     Physics2D.SyncTransforms();
-                    if (!wrote && _stepTo == still) KeepBody(body, still);
                     _stepFrom = body.position;
                     Physics2D.Simulate(dt);
                     // A physics callback's write (a sideways spring's push, Movement.hitSpring) moves the body there at once and
@@ -1548,9 +1621,10 @@ namespace IGTAPTasMod
                             }
                             // Every frame's Start pass, before its Updates, as the engine's (README ### Rules, exception 12).
                             if (StartWaiting.Count > 0) StartPass();
-                            Vector3 at = Place(player, Vector2.Lerp(_stepFrom, _stepTo, alphas[k]));
+                            ShowBlend(player, Vector2.Lerp(_stepFrom, _stepTo, alphas[k]));
+                            Vector3 at = _blendBase;
                             _update(movement);
-                            if (player.position != at)
+                            if (!Same(player.position, at))
                             {
                                 // The tick's last frame: the write reaches the body at the next step's sync, as at 1x, so the
                                 // next FixedUpdate's squish check (Collider2D.Distance) still sees the body where it was.
@@ -1584,7 +1658,7 @@ namespace IGTAPTasMod
                                     if (teleporter != null) CallInvoked(teleporter, PollCall);
                                 }
                                 // A teleport's write, as an Update's.
-                                if (player.position != before)
+                                if (!Same(player.position, before))
                                 {
                                     if (k < alphas.Length - 1 || repeat > 0) Physics2D.SyncTransforms();
                                     _stepFrom = _stepTo = player.position;
@@ -1601,7 +1675,7 @@ namespace IGTAPTasMod
                             Resume(Wait.EndOfFrame, frameDt);
                         }
                     }
-                    Place(player, _stepTo);
+                    EndBlend();
                     OriginFrame();
                     afterTick?.Invoke();
                 }
@@ -1610,6 +1684,7 @@ namespace IGTAPTasMod
             finally
             {
                 Active = false;
+                EndBlend();
                 if (numbers != null) numbers.ActuallySpawnText = spawnNumbers;
                 Physics2D.simulationMode = savedMode;
                 foreach (var (due, target, method) in Pending.ToArray())

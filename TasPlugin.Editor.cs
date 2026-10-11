@@ -342,11 +342,11 @@ namespace IGTAPTasMod
             TasSession s = _tas;
             if (s == null) return;
             s.physics++;
-            s.stepFrom = player.transform.position;
+            s.stepFrom = TurboRunner.BlendRead(player.transform);
             // The input read (BeforePlayerInput) is skipped on dash and spring ticks: they stay on the input before them.
             int input = (int)_engine.RunTicks - 1;
             if (s.starting || s.recording || input < s.BaseInput || !_engine.IsRunning) return;
-            Vector2 at = (Vector2)player.transform.position - CurrentOrigin();
+            Vector2 at = (Vector2)TurboRunner.BlendRead(player.transform) - CurrentOrigin();
             Rigidbody2D body = player.GetComponent<Rigidbody2D>();
             Vector2 v = body != null ? body.linearVelocity : Vector2.zero;
             while (s.trace.Count <= input) s.trace.Add(null);

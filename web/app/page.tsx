@@ -61,7 +61,7 @@ type FullTasRun = { name: string; start?: string | null; savestate?: string | nu
   & Partial<Omit<FullTasClassRun, "name">>;
 type FullTasState = { runs: FullTasRun[]; solve: FullTasSolveState; lastResult?: FullTasOutcome | null; goalsOverlay?: string; queue?: FullTasQueue | null; difficulty?: FullTasDifficultyJob | null };
 type StudioState = {
-  connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean; checkpointRespawns?: boolean; fastPlayback?: boolean; tasSkin?: boolean; tasSkinOutline?: boolean;
+  connected: boolean; version: string; engineStatus: string; running: boolean; humanPlayback?: boolean; recording: boolean; paused: boolean; capabilitiesLocked: boolean; overlayShown: boolean; breakerLightsForced?: boolean; checkpointRespawns?: boolean; fastPlayback?: boolean; idle1x?: boolean; tasSkin?: boolean; tasSkinOutline?: boolean;
   saveUnlocks?: Caps | null;
   selectedRouteId: string; routes: Route[]; categories: Category[]; courses?: Course[]; recordings: Recording[]; savestates: Savestate[]; solver: SolverState;
   fullTas?: FullTasState;
@@ -163,8 +163,11 @@ export default function Studio() {
         <div><p className="eyebrow">SELECTED ROUTE</p><h1>{route?.name ?? "No route"}</h1><p className="statusLine"><span className={state.running ? "pulse" : "dot"} />{state.humanPlayback && <span className="humanBadge" title="Human offline best: same time, fewer perfect inputs. Never saved.">HUMANIZED</span>}{state.engineStatus}</p>{inert?.text && inert.routeId === route?.id && <p className="statusLine">{inert.text}</p>}</div>
         <div className="transport">
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/run")}>▶ Run route</button>
-          <label className={`fastPlayback ${state.fastPlayback ? "on" : ""}`} title="On: 1x playback doesn't wait for real time and runs as fast as the game renders. Game time per frame stays fixed, so it plays the same. Walks and probes stay paced.">
+          <label className={`fastPlayback ${state.fastPlayback ? "on" : ""}`} title="On: 1x playback doesn't wait for real time and runs as fast as the game renders. Game time per frame stays fixed, so it plays the same. Walks and probes at another frame rate stay paced.">
             <input type="checkbox" checked={!!state.fastPlayback} disabled={!state.connected} onChange={e => command("/settings/fast-playback", { on: e.target.checked })} />Fast
+          </label>
+          <label className={`fastPlayback ${state.idle1x ? "on" : ""}`} title="On: after a minute with no command or input, each Full-TAS run's current best plays at 1x (Fast) and is logged per tick to the config's 1x folder; a complete run's first log is its 1x reference for the engine's check. Any command or input stops it.">
+            <input type="checkbox" checked={!!state.idle1x} disabled={!state.connected} onChange={e => command("/probe/1x/idle", { on: e.target.checked })} />1x when idle
           </label>
           <button className="secondary" disabled={!route || state.running} onClick={() => command("/routes/walk", { slowdown: 10 })} title={"Replays the route 10× slower, human version when it's as fast."}>⏵ Walk route</button>
           <button className="secondary" disabled={!route || inert?.text === null} onClick={findInert} title={"Replays the route offline without each input in turn; the overlay then leaves out the inputs that change nothing in the game. Run it before recording."}>{inert?.text === null ? "Finding inert inputs…" : "Hide inert inputs"}</button>
@@ -1330,16 +1333,15 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
         <div className="fullTasSolve">
           {reached > 0 && <div className={`ftFocus ${picked ? "on" : ""}`}>
             {picked
-              ? <><span>Improve selected: <b>{goalSpan(picked)}</b> ({picked[1] - picked[0] + 1} goal{picked[1] > picked[0] ? "s" : ""}, {pickedSeconds?.toFixed(2)} s in the record)</span>
+              ? <><span>Selected: <b>{goalSpan(picked)}</b> ({picked[1] - picked[0] + 1} goal{picked[1] > picked[0] ? "s" : ""}, {pickedSeconds?.toFixed(2)} s in the record){picked[0] !== picked[1] ? ". Pick one goal to search its way again." : ""}</span>
                 <button className="secondary" onClick={() => setPicked(null)}>Clear selection</button></>
-              : <span>{complete ? "Improve searches the whole run. Think a stretch is slow? Click its goals or segment bar below (shift-click extends)." : "Click reached goals or a segment bar below (shift-click extends) to improve just them."}</span>}
+              : <span>Solve builds what the best doesn't reach yet, then improves the whole run. Think one goal's way is slow? Click it below and search it again.</span>}
           </div>}
           <div className="ftImprove">
-            {complete || !run || picked
-              ? <button className="primary" disabled={busy || !(complete || picked)} title={picked ? `Searches only windows starting in ${goalSpan(picked)}; known faster pieces still join anywhere.` : "Searches the whole run from its record until Stop."}
-                onClick={() => onCommand("/fulltas/solve", picked ? { name, focus: [ids[picked[0] - 1], ids[picked[1] - 1]] } : { name })}>{picked ? `Improve ${goalSpan(picked)}` : "Improve"}</button>
-              : <button className="primary" disabled={busy || !run.goals.length} title="The best misses goals: searches for them in order first. Improve works once every goal is reached."
-                onClick={() => onCommand("/fulltas/solve", { name, unsolved: true })}>Reach missing goals</button>}
+            <button className="primary" disabled={busy || !run?.goals.length} title="Builds whatever the best doesn't reach yet, then improves the whole run until it converges or Stop."
+              onClick={() => onCommand("/fulltas/solve", { name })}>Solve</button>
+            {picked && picked[0] === picked[1] && <button className="secondary" disabled={busy} title={`Searches the way to ${goalSpan(picked)} again from where the run starts it, longer; kept when the whole run gets faster.`}
+              onClick={() => onCommand("/fulltas/solve", { name, stretch: ids[picked[0] - 1] })}>Search {goalSpan(picked)} again</button>}
             <button className="danger" disabled={!busy} onClick={() => onCommand("/fulltas/stop")}>Stop</button>
           </div>
           <div className="buttonRow">

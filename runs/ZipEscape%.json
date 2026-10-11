@@ -3478,83 +3478,99 @@
       "goal": "buy:buytree4"
     },
     {
-      "id": "iuayfb",
+      "id": "ougeph",
+      "goal": "buy:buygreen6"
+    },
+    {
+      "id": "dl1ti6",
+      "goal": "buy:buygreen6"
+    },
+    {
+      "id": "nftmuf",
+      "goal": "buy:buyreward6"
+    },
+    {
+      "id": "k5v79l",
       "goal": "buy:buytree3"
     },
     {
-      "id": "meehk9",
+      "id": "md2w0m",
       "goal": "buy:buytree0"
     },
     {
-      "id": "atfdyh",
+      "id": "gyzss7",
       "goal": "buy:buytree0"
     },
     {
-      "id": "kuf0l5",
+      "id": "old87e",
       "goal": "buy:buytree0"
     },
     {
-      "id": "okfyp9",
+      "id": "dgt1gu",
       "goal": "buy:buytree0"
     },
     {
-      "id": "h0ls2j",
+      "id": "pw3vqo",
       "goal": "buy:buytree0"
     },
     {
-      "id": "x1mpy6",
+      "id": "mj5f2s",
       "goal": "buy:buytree0"
     },
     {
-      "id": "lrkk1t",
+      "id": "z3qfwt",
       "goal": "buy:buytree0"
     },
     {
-      "id": "qyau01",
+      "id": "f26e67",
       "goal": "buy:buytree1"
     },
     {
-      "id": "ynw7av",
+      "id": "eosycm",
       "goal": "buy:buytree1"
     },
     {
-      "id": "mwco3i",
+      "id": "qaydub",
       "goal": "buy:buytree1"
     },
     {
-      "id": "amknf4",
+      "id": "ku6r70",
       "goal": "buy:buytree1"
     },
     {
-      "id": "lftfos",
+      "id": "i2rpx3",
       "goal": "buy:buytree1"
     },
     {
-      "id": "wah3w1",
+      "id": "zmzdly",
       "goal": "buy:buytree1"
     },
     {
-      "id": "tvq5v9",
+      "id": "fl46u5",
       "goal": "buy:buytree6"
     },
     {
-      "id": "p79npx",
+      "id": "moac9c",
       "goal": "buy:buytree1"
     },
     {
-      "id": "m5otrk",
+      "id": "k3l3ip",
       "goal": "buy:buytree1"
     },
     {
-      "id": "d77t7b",
+      "id": "f2g75p",
+      "goal": "buy:buytree0"
+    },
+    {
+      "id": "onpkfq",
+      "goal": "buy:buytree6"
+    },
+    {
+      "id": "vf9nr9",
       "goal": "buy:buyatom"
     },
     {
-      "id": "fky1nb",
-      "goal": "buy:buyatom"
-    },
-    {
-      "id": "m265z9",
+      "id": "h7v4x9",
       "goal": "buy:buytree7",
       "avoid": [
         {
@@ -3595,35 +3611,35 @@
       ]
     },
     {
-      "id": "ycei2k",
+      "id": "i6tjlo",
       "goal": "buy:buycd8"
     },
     {
-      "id": "dpk0ja",
+      "id": "mtgngk",
       "goal": "buy:buyclonecd8"
     },
     {
-      "id": "i7750j",
+      "id": "pdyivo",
       "goal": "buy:buyclonecd8"
     },
     {
-      "id": "jkb18m",
+      "id": "k0bq8y",
       "goal": "buy:buyclonecd8"
     },
     {
-      "id": "t5be5z",
+      "id": "le32n2",
       "goal": "buy:buyclonecd8"
     },
     {
-      "id": "p51n97",
+      "id": "qza73c",
       "goal": "buy:buytree12"
     },
     {
-      "id": "qs32cf",
+      "id": "ynbbnw",
       "goal": "buy:buycddigits8"
     },
     {
-      "id": "w7vfdd",
+      "id": "hprgxi",
       "goal": "at:28710,5876,240,400",
       "avoid": [
         {
@@ -3694,23 +3710,23 @@
       ]
     },
     {
-      "id": "i38ywm",
+      "id": "naydb0",
       "goal": "buy:buytree13"
     },
     {
-      "id": "r8jrnv",
+      "id": "lsmtsd",
       "goal": "buy:buyteleporters"
     },
     {
-      "id": "l9lok0",
+      "id": "yibnp3",
       "goal": "at:16639,11761,240,400"
     },
     {
-      "id": "eulwo8",
+      "id": "gzaqtx",
       "goal": "buy:buytree14"
     },
     {
-      "id": "ar7gki",
+      "id": "ek09t6",
       "goal": "buy:buytree16"
     }
   ]

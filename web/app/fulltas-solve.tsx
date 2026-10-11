@@ -211,10 +211,30 @@ function feed(events: FullTasEvent[], goals: string[], ids: string[]): Item[] {
     switch (e.type) {
       case "session": {
         const best = e.best as RouteJson;
-        push({ key: `s${e.at}`, at: e.at, tone: "info", title: `Search started at ${best.progress === goals.length ? `record ${s2(best.time)}` : `${best.progress}/${goals.length} goals`}`,
-          detail: `${num(e.threads)} threads · ${num(e.minutes)} min · ${num(e.window)}-goal windows · ${str(e.from)}` });
+        push({ key: `s${e.at}`, at: e.at, tone: "info", title: `Solve started at ${best.progress === goals.length ? `record ${s2(best.time)}` : `${best.progress}/${goals.length} goals`}`,
+          detail: `${num(e.threads)} threads · from ${str(e.from)} · ${num(e.segments)} library segments · engine ${str(e.engine)}` });
         break;
       }
+      case "waits": {
+        const waits = (e.waits as { goal: number; label: string; ticks: number }[]) ?? [];
+        if (waits.length) push({ key: `w${e.at}`, at: e.at, tone: "info", title: `Waits: ${waits.reduce((s, w) => s + w.ticks, 0)} ticks in ${waits.length} buys`,
+          detail: waits.slice(0, 5).map(w => `goal ${w.goal - 1} ${goalName(w.label)} ${(w.ticks * 0.02).toFixed(2)} s`).join(" · ") });
+        break;
+      }
+      case "failure":
+        push({ key: `x${e.at}`, at: e.at, tone: e.kind === "disagree" ? "error" : "warn", title: str(e.text) ?? `Stopped at goal ${num(e.goal)}` });
+        break;
+      case "confirm":
+        push(e.ok === true
+          ? { key: `c${e.at}`, at: e.at, tone: "best", title: `The game's replay matches the engine on all ${num(e.goals)} goals` }
+          : e.ok === false
+            ? { key: `c${e.at}`, at: e.at, tone: "error", title: e.goal != null ? `The game and the engine part at goal ${num(e.goal)! - 1}: engine tick ${(e.engine as number[])?.[0]}, game ${(e.game as number[])?.[0]}` : `Where they part: ${str(e.summary)}`,
+              detail: Array.isArray(e.diffs) ? (e.diffs as string[]).join(" · ") : undefined }
+            : { key: `c${e.at}`, at: e.at, tone: "info", title: str(e.text) ?? "The game returned no splits" });
+        break;
+      case "plan":
+        if (e.converged) push({ key: `v${e.at}`, at: e.at, tone: "info", title: "No more gains found from here: converged", detail: `${num(e.reached)}/${num(e.of)} goals · ${num(e.waits)} wait ticks` });
+        break;
       case "autoStart": {
         const best = e.best as RouteJson, focus = idSpan(e.focus, ids);
         const whole = !focus || (focus[0] <= 1 && focus[1] >= goals.length);
@@ -449,15 +469,14 @@ export function FullTasSolvePanel({ solve, goals: runGoals, route, run, lastResu
         <time>{ago(now - item.at)}</time>
       </li>)}
     </ol>}
-    {!items.length && !solve.running && <p className="ftEmpty">Nothing searched yet: press Improve.</p>}
+    {!items.length && !solve.running && <p className="ftEmpty">Nothing solved yet: press Solve.</p>}
 
     <details className="howTo"><summary>How it works</summary><ol>
-      <li><b>Improve</b> searches the whole run from its record and picks the stretches itself.</li>
-      <li>Pick goals first (click a goal or a segment bar, shift-click to extend) to search only there.</li>
-      <li>Every faster run is replayed in the game in turbo and saved when it holds up.</li>
-      <li>It runs until Stop and leaves 4 cores to the game.</li>
-      <li>Cyan goals in the bar are the ones this Improve made faster.</li>
-      <li>A run that misses goals gets <b>Reach missing goals</b> instead.</li>
+      <li><b>Solve</b> builds the goals the best doesn't reach yet, then improves the whole run: it fills the longest waits with laps or buys, drops and moves economy goals, and keeps a change only when the run replayed from the start gets faster.</li>
+      <li>Every way between two goals is checked by replaying it from the run's real state; ways it can't find are searched, and what can't be found says where an avoid box or a waypoint would help.</li>
+      <li>Every faster complete run is replayed in the game in turbo; its goal ticks are compared with the engine's, and a disagreement stops the solve with the first tick and field that part.</li>
+      <li>Pick one goal to search its way again, longer.</li>
+      <li>It runs until it converges or Stop, and leaves 2 cores to the game.</li>
     </ol></details>
 
     <details className="ftRaw">

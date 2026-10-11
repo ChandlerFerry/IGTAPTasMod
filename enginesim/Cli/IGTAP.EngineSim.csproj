@@ -26,4 +26,12 @@
     <None Include="..\..\techs.json" Link="techs.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\labmaps\*.json" Link="labmaps\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <Target Name="StampCommit" BeforeTargets="BeforeBuild">
+    <Exec Command="git describe --always --dirty" ConsoleToMSBuild="true" IgnoreExitCode="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="EngineCommit" />
+    </Exec>
+    <ItemGroup>
+      <AssemblyMetadata Include="EngineCommit" Value="$(EngineCommit)" />
+    </ItemGroup>
+  </Target>
 </Project>
