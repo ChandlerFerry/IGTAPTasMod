@@ -130,11 +130,6 @@ namespace IGTAP.EngineSim.Cli.Runs
         bool Polish(Worker coord, Worker[] workers, Func<bool> stop)
         {
             List<int> goals = MaxSearchesPerBuild == 0 ? new List<int>() : PolishOrder(Best, _polished);
-            if (goals.Count == 0 && MaxSearchesPerBuild != 0 && _polishLevel == 0)
-            {
-                (_polishLevel, goals) = (1, PolishOrder(Best, _polished = new HashSet<(string, ulong)>()));
-                Log($"polish: nothing at {Builder.Budgets[0] / 1_000_000}M ticks a goal; again at {Builder.Budgets[1] / 1_000_000}M");
-            }
             if (goals.Count == 0) return false;
             Log($"polish: {goals.Count} goals' segments searched again, longest first");
             Event?.Invoke(new { type = "note", level = "info", text = $"Movement polish: searching {goals.Count} goals' segments again, longest first" });
@@ -159,7 +154,10 @@ namespace IGTAP.EngineSim.Cli.Runs
                 if (!stop() && c.Better(Best) && Accept(c, $"goal {j + 1} {plan.Labels[j]} polished", coord, workers)) return true;
             }
             Event?.Invoke(new { type = "note", level = "info", text = "Movement polish: no goal's segment searched again saves time" });
-            return false;
+            if (_polishLevel > 0 || stop()) return false;
+            (_polishLevel, _polished) = (1, new HashSet<(string, ulong)>());
+            Log($"polish: nothing at {Builder.Budgets[0] / 1_000_000}M ticks a goal; again at {Builder.Budgets[1] / 1_000_000}M");
+            return true;
         }
 
         // A candidate is kept only as its straight replay from the run's start plays it (Builder.Verify).
