@@ -103,6 +103,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         public long MaxBudget = Budgets[^1];
         public int ForceSearchAt = -1;
         public long ForceBudget = Budgets[1];
+        public List<InputTick> ForceSeed;
 
         public Builder(RunContext run, SegmentLibrary lib, SegmentSearch search, SegmentFacts facts, bool searchMisses)
         {
@@ -321,14 +322,20 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         (List<InputTick>, SimSnapshot)? Best(SimSnapshot start, int inputBase, Context c, string label, int j, bool afterReset)
         {
-            // The first that replays, nearest start first: what was filed from this very state reproduces what followed it.
+            // What was filed from this very state reproduces what followed it. Otherwise the fastest of the nearest that replay: one
+            // filed from a nearby state can reach the goal by a detour.
+            (List<InputTick> inputs, SimSnapshot at)? best = null;
             foreach (Segment s in _lib.Candidates(label, c.Unlocks, c.X, c.Y, c.Phase, c.Facing, fp: c.Fp))
             {
                 if (afterReset && s.Inputs.Count > 0 && s.Inputs[0].reset || !Allowed(s.Inputs)) continue;
-                if (TryPlay(start, inputBase, s.Inputs, j) is var (inputs, at)) return (inputs, at);
+                if (!(TryPlay(start, inputBase, s.Inputs, j) is var (inputs, at))) continue;
+                if (s.Fp == c.Fp && s.X == c.X && s.Y == c.Y) return (inputs, at);
+                if (best == null || Units(at, j) < Units(best.Value.at, j)) best = (inputs, at);
             }
-            return null;
+            return best;
         }
+
+        static long Units(SimSnapshot at, int j) => MacroEngine.LiveUnits(at.Goal.PhysicsTicks[j], at.Goal.HeldFrames[j]);
 
         const int MinWait = 8;
 
@@ -392,6 +399,9 @@ namespace IGTAP.EngineSim.Cli.Runs
             try { bytes = new SnapshotStore(_sim).Save(start); }
             catch (NotSupportedException) { }
             List<List<InputTick>> seeds = _lib.Candidates(label, c.Unlocks, c.X, c.Y, c.Phase, c.Facing, 8, float.MaxValue).Select(s => s.Inputs).Where(Allowed).ToList();
+            // A polish searches from the best's own way here first: the library's nearest could all be slower (VMAN's goal 11: 984
+            // ticks found against the best's 963).
+            if (j == ForceSearchAt && ForceSeed != null) seeds.Insert(0, ForceSeed);
             for (; budget != 0; budget = Budgets.FirstOrDefault(b => b > budget && b <= MaxBudget && !_facts.Failed(key, b)))
             {
                 Log($"search: goal {j + 1} {label} from ({c.X:0}, {c.Y:0}) with {c.Unlocks}, {budget / 1_000_000}M ticks, {seeds.Count} seeds");
@@ -403,10 +413,12 @@ namespace IGTAP.EngineSim.Cli.Runs
                     return null;
                 }
                 (List<InputTick> inputs, SimSnapshot at)? best = null;
+                // The best's own way is always a candidate: a polish never comes back slower than what it polishes.
+                if (j == ForceSearchAt && ForceSeed != null) finds.Insert(0, ForceSeed);
                 foreach (List<InputTick> f in finds)
                 {
                     if (afterReset && f.Count > 0 && f[0].reset) continue;
-                    if (TryPlay(start, inputBase, f, j) is var (inputs, at) && (best == null || at.Goal.PhysicsTicks[j] < best.Value.at.Goal.PhysicsTicks[j]))
+                    if (TryPlay(start, inputBase, f, j) is var (inputs, at) && (best == null || Units(at, j) < Units(best.Value.at, j)))
                         best = (inputs, at);
                 }
                 if (best is var (bi, ba))

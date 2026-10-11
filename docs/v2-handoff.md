@@ -7,6 +7,9 @@ One commit on **main** over 6b52557 (tag `pre-v2`; not pushed): `git revert` it 
 Since 17:40: the movement polish keeps the best's own way on after a faster segment (`Improver.TailRejoin`); before it,
 every polish rebuild was slower and Solve stopped "converged" at 43.94. VMAN 43.94 -> 42.94 in 7 minutes on 8 threads,
 saved by the gate. The solver now logs and shows a submission the game refuses (it retried 30 times in silence).
+Then: the segment library keeps a segment per start (it refused the best's own later segments from their new starts, so
+every polish rebuild fell back to slower ones), the best's own segment seeds every polish search, and a polish rebuilds
+from the library alone (its 25 later-goal searches took minutes and never won): VMAN 42.94 -> 41.38 in 19 minutes.
 
 ## Scoreboard (judged by the gate on today's engine)
 
@@ -14,7 +17,7 @@ saved by the gate. The solver now logs and shows a submission the game refuses (
 |---|---|---|
 | TouchGrass-ANY% | 699.29 | **697.49** |
 | FalseEnding%-280 | 352.78 | 353.29 |
-| VMAN | 33.92 was ticks only: **41.67 live** (and it dies at action 191 today) | **42.94** (54.96 this morning) |
+| VMAN | 33.92 was ticks only: **41.67 live** (and it dies at action 191 today) | **41.38** (1718 ticks; 54.96 this morning) |
 | Tree% | 725.62 for 456 goals | 763.73 for 461 (5 goals added since, income-bound; at goal 456: 727.88) |
 | ZipEscape% | old route stopped before goal 975 of 979 | **847 of 851** offline, past buytree13 (further than ever); not complete |
 | Zip% | 861 of 865 (older goal list) | 809+ of 1494, building (~1 goal/min) |
@@ -52,7 +55,9 @@ from its saved best; logs of the last runs in `C:\tmp\igtap-long\logs\` (VMAN: `
 ## Open
 
 1. ZipEscape%: the GreenPower economy for teleporters (owner's route call, above).
-2. VMAN: 1.3 s to the old route's 41.67; most of the loss is goals 2-5 (Course 1 to Course 2). Solve goes on from 42.94.
+2. VMAN: 41.38 s, 1718 ticks, under the old route's 41.67 live; 22 ticks from its 1696. Polish is one goal at a time:
+   the old route's multi-goal ways (goals 13-18's down-dash chain, Courses 1-2's Clone buys) need a window search
+   scored at a later goal, which v2 doesn't have yet.
 3. Engine-side residuals the 1x probes name (resting-contact y velocity ~1e-6, 50 traces; go5/rand-c4/seed-c3): the engine needs the
    start's contact impulses. T5 (bonus10 tick 0) is Box2D warm-start state Unity can't set.
 4. 1x references for ZipEscape%/TouchGrass-ANY% need a window with no gate submissions; stale bonus7 4.62 records need retiring

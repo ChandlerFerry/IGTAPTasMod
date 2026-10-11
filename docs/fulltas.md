@@ -882,12 +882,13 @@ The design is `docs/superpowers/specs/2026-10-09-fulltas-v2-design.md`; the code
   whose step cut its income (an atom reset); these few are built, and their misses searched (up to 80M ticks a goal), before
   the thousands of generic moves. ZipEscape%'s goal 841 `buy:buyclonecd8` (2 CloneDust short after the atom reset) finds
   `record:8` (10 CloneDust a lap, Course 8 never in its plan): 844 of 850 in 10 minutes. With no move or
-  miss left, a **movement polish** searches each goal's segment again from its real start (20M ticks, the longest segments
-  first; the rebuild after it may search up to 25 later goals; a pass that gains nothing goes again at 80M), kept as any move
-  is; a goal is searched once per inputs through its segment (`Improver.Polish`). A segment that reaches its goal sooner
-  also keeps the best's own inputs from that goal on, repaired by rejoin (`Improver.TailRejoin`, 3 minutes): the library
-  refill alone lost the way on every time (VMAN: 44.0-54.4 s against 43.94). It runs until the polish gains nothing too,
-  or "stop" on stdin.
+  miss left, a **movement polish** searches each goal's segment again from its real start, the best's own segment its first
+  seed and always a candidate (20M ticks, the longest segments first; a pass that gains nothing goes again at 80M), then
+  rebuilds the later goals from the library alone, kept as any move is; a goal is searched once per inputs through its
+  segment (`Improver.Polish`). A segment that reaches its goal sooner also keeps the best's own inputs from that goal on,
+  repaired by rejoin (`Improver.TailRejoin`, 3 minutes). It runs until the polish gains nothing too, or "stop" on stdin.
+  The library keeps a segment per start (the same inputs from another start are another segment): a polish rebuild finds
+  the best's own later segments where the best plays them.
 - **Every faster complete run** goes to the gate with its goals; the gate's per-goal splits are compared with the engine's,
   and a disagreement captures the game's trace, replays it here and names the first tick and field that differ
   (`fulltas/<run>.confirm.json`); nothing more is built on that engine.

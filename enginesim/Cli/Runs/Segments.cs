@@ -25,7 +25,8 @@ namespace IGTAP.EngineSim.Cli.Runs
     {
         readonly string _file;
         readonly List<Segment> _all = new List<Segment>();
-        readonly HashSet<string> _keys = new HashSet<string>();
+        readonly Dictionary<string, Segment> _byKey = new Dictionary<string, Segment>();
+        readonly Dictionary<string, List<Segment>> _byTo = new Dictionary<string, List<Segment>>();
         readonly object _lock = new object();
 
         SegmentLibrary(string file) { _file = file; }
@@ -56,17 +57,23 @@ namespace IGTAP.EngineSim.Cli.Runs
             }
         }
 
-        static string Key(Segment s) => s.To + "|" + s.Unlocks + "|" + Solve.EncodeTicks(s.Inputs);
+        // The start is part of a segment: the same inputs filed from another state (a run whose earlier goals changed) are another
+        // segment, found from there.
+        static string Key(Segment s) => FormattableString.Invariant($"{s.To}|{s.Unlocks}|{s.X:R},{s.Y:R},{s.Phase},{s.Facing}|") + Solve.EncodeTicks(s.Inputs);
 
         public bool Add(Segment s)
         {
             lock (_lock)
             {
-                if (!_keys.Add(Key(s)))
+                string key = Key(s);
+                if (_byKey.TryGetValue(key, out Segment o))
                 {
-                    if (s.Fp != null) foreach (Segment o in _all) if (o.Fp == null && Key(o) == Key(s)) o.Fp = s.Fp;
+                    o.Fp ??= s.Fp;
                     return false;
                 }
+                _byKey[key] = s;
+                if (!_byTo.TryGetValue(s.To ?? "", out List<Segment> same)) _byTo[s.To ?? ""] = same = new List<Segment>();
+                same.Add(s);
                 s.Id ??= FullTasGoalIds.New(null);
                 s.Engine ??= BuildInfo.Commit;
                 _all.Add(s);
@@ -79,7 +86,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         public IReadOnlyList<Segment> Candidates(string to, string unlocks, float x, float y, int phase, int facing, int max = 8, float radius = 64f, int? fp = null)
         {
             lock (_lock)
-                return _all.Where(s => s.To == to && s.Unlocks == unlocks)
+                return (_byTo.TryGetValue(to ?? "", out List<Segment> same) ? same : new List<Segment>()).Where(s => s.Unlocks == unlocks)
                     .Select(s => (s, d: MathF.Sqrt((s.X - x) * (s.X - x) + (s.Y - y) * (s.Y - y))))
                     .Where(c => c.d <= radius)
                     .OrderBy(c => fp != null && c.s.Fp == fp ? 0 : 1).ThenBy(c => c.d).ThenBy(c => c.s.Phase == phase ? 0 : 1).ThenBy(c => c.s.Facing == facing ? 0 : 1).ThenBy(c => c.s.Ticks)

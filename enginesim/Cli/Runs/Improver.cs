@@ -103,9 +103,9 @@ namespace IGTAP.EngineSim.Cli.Runs
             if (goal >= start.Reached) { Log($"segment: the best doesn't reach goal {goal + 1} yet"); return; }
             Built c = coord.Do(b =>
             {
-                (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget) = (goal, SegmentBudget, SegmentSearches, RebuildBudget);
+                (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget, b.ForceSeed) = (goal, SegmentBudget, SegmentSearches, RebuildBudget, Own(coord.Mine, goal));
                 try { return b.Build(plan, coord.Mine, goal); }
-                finally { (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget) = (-1, Builder.Budgets[1], int.MaxValue, Builder.Budgets[^1]); }
+                finally { (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget, b.ForceSeed) = (-1, Builder.Budgets[1], int.MaxValue, Builder.Budgets[^1], null); }
             }).Result;
             Log($"segment: goal {goal + 1} {plan.Labels[goal]} searched again: {Describe(c)} against {Describe(Best)}");
             if (!stop() && c.Better(Best)) Accept(c, $"goal {goal + 1} {plan.Labels[goal]} searched again", coord, Array.Empty<Worker>());
@@ -120,6 +120,9 @@ namespace IGTAP.EngineSim.Cli.Runs
         int _polishLevel;
 
         internal static (string, ulong) PolishKey(Built b, int j) => (b.Plan.Ids[j], SnapshotIndex.Hash(b.Inputs, b.StepEnd[j]));
+
+        // Goal j's own segment in a build: the inputs from the goal before it to it.
+        static List<InputTick> Own(Built b, int j) => b == null || j >= b.Reached ? null : b.Inputs.GetRange(j == 0 ? 0 : b.StepEnd[j - 1], b.StepEnd[j] - (j == 0 ? 0 : b.StepEnd[j - 1]));
 
         // The goals not yet polished on this best, the longest segments first (their waits left out): the most time to win.
         internal static List<int> PolishOrder(Built b, HashSet<(string, ulong)> tried) => Enumerable.Range(0, b.Reached)
@@ -142,16 +145,16 @@ namespace IGTAP.EngineSim.Cli.Runs
                 Event?.Invoke(new { type = "status", polish = j + 1, id = plan.Ids[j], best = Best.Live, reached = Best.Reached });
                 Built c = coord.Do(b =>
                 {
-                    // ponytail: a 20M-tick search per goal, and in the rebuild after it a 20M search for each later goal the change
-                    // moved, up to --segment's 25 (a changed early goal moves every later state: VMAN's candidates stopped incomplete
-                    // at 3); raise the budget (Budgets[1]) if a run's polish stalls with goals that took 80M+ to find.
-                    (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget) = (j, Builder.Budgets[_polishLevel], Math.Min(plan.Count - j, SegmentSearches), Builder.Budgets[_polishLevel]);
+                    // ponytail: one search per goal (20M ticks, then 80M) and a rebuild from the library alone; the best's own way on is
+                    // TailRejoin's. Searching the later goals again (up to 25 x 20M, minutes a goal) never won a VMAN polish; give the
+                    // rebuild searches back (MaxSearches) if a run's later goals have nothing in the library to rebuild from.
+                    (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget, b.ForceSeed) = (j, Builder.Budgets[_polishLevel], 1, Builder.Budgets[_polishLevel], Own(coord.Mine, j));
                     // A polish search is for a faster way, not the first: it goes on a quarter of its budget without a better find.
                     _search.Stall = Math.Max(_search.Stall, Builder.Budgets[_polishLevel] / 4);
                     try { return b.Build(plan, coord.Mine, j); }
                     finally
                     {
-                        (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget) = (-1, Builder.Budgets[1], int.MaxValue, Builder.Budgets[^1]);
+                        (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget, b.ForceSeed) = (-1, Builder.Budgets[1], int.MaxValue, Builder.Budgets[^1], null);
                         _search.Stall = SegmentSearch.DefaultStall;
                     }
                 }).Result;

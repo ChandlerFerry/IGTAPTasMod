@@ -46,6 +46,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 if (trace != null && best != null && !args.Contains("--no-search")) Search(trace, best);
                 if (trace != null && best != null && args.Contains("--build")) Rebuild(trace, best, Solve.Option(args, "--live", double.MaxValue));
                 if (trace != null && best != null && args.Contains("--improve-smoke")) ImproveSmoke(trace, best);
+                if (trace != null && best != null && Solve.Option(args, "--own-at", -1) is int ownAt && ownAt >= 0) OwnAt(trace, best, ownAt);
                 if (trace != null && best != null && args.Contains("--rejoin")) RejoinBroken(trace, best);
                 if (trace != null && best != null && Solve.Option(args, "--restore-at", -1) is int restoreAt && restoreAt >= 0) RestoreAt(trace, best, restoreAt);
                 if (trace != null && best != null && Solve.Option(args, "--chain-to", -1) is int chainTo && chainTo >= 0) ChainTo(trace, best, chainTo);
@@ -122,7 +123,10 @@ namespace IGTAP.EngineSim.Cli.Runs
             var reset = new InputTick { reset = true };
             SegmentLibrary lib = SegmentLibrary.Load(file, Array.Empty<string>());
             Segment s1 = Seg("farm:6", "WJ", 100, 100, 0, reset, run, jump, dash);
-            Check(lib.Add(s1) && !lib.Add(Seg("farm:6", "WJ", 140, 90, 2, reset, run, jump, dash)) && lib.Count == 1, "the same inputs to the same goal with the same unlocks are one segment");
+            Check(lib.Add(s1) && !lib.Add(Seg("farm:6", "WJ", 100, 100, 0, reset, run, jump, dash)) && lib.Count == 1, "the same inputs from the same start to the same goal with the same unlocks are one segment");
+            SegmentLibrary moved = SegmentLibrary.Load(Path.Combine(dir, "moved.segments.json"), Array.Empty<string>());
+            Check(moved.Add(Seg("farm:6", "WJ", 100, 100, 0, reset, run, jump, dash)) && moved.Add(Seg("farm:6", "WJ", 140, 90, 2, reset, run, jump, dash))
+                && moved.Candidates("farm:6", "WJ", 140, 90, 2, 1)[0].X == 140, "the same inputs from another start are another segment, found from there");
             Check(lib.Candidates("farm:6", "WJ", 120, 100, 0, 1).Count == 1, "a segment starting 20 u away is a candidate");
             Check(lib.Candidates("farm:6", "WJ", 200, 100, 0, 1).Count == 0, "one 100 u away isn't");
             Check(lib.Candidates("farm:6", "WJ_DS", 100, 100, 0, 1).Count == 0 && lib.Candidates("farm:7", "WJ", 100, 100, 0, 1).Count == 0, "another goal or other unlocks aren't");
@@ -347,6 +351,28 @@ namespace IGTAP.EngineSim.Cli.Runs
             Console.WriteLine($"  {ctx.Name}: the harvest reaches {h} of {plan.Count} goals, the rebuild after goal {from} {b}");
             Check(hDiffer == null, $"{ctx.Name}: the harvest ({h} goals) replays straight: {hDiffer}");
             Check(bDiffer == null, $"{ctx.Name}: the rebuild after goal {from} ({b} goals) replays straight: {bDiffer}");
+        }
+
+        // A polish's forced search at a goal, seeded with the best's own way there: the own way reaches the goal on the harvest's tick.
+        static void OwnAt(string trace, string best, int goal)
+        {
+            RunContext ctx = RunContext.Open(trace);
+            List<InputTick> inputs = Inputs(best);
+            var plan = new RunPlan(ctx.HeaderIds, ctx.HeaderGoals.Select(g => g.label).ToArray());
+            string dir = Path.Combine(Path.GetTempPath(), "igtap-run-own-" + Environment.ProcessId);
+            Directory.CreateDirectory(dir);
+            var (harvestTick, builtTick) = Solve.OnThread(() =>
+            {
+                var builder = new Builder(ctx, SegmentLibrary.Load(Path.Combine(dir, "s.json"), Array.Empty<string>()), new SegmentSearch(ctx) { Parallelism = 4 },
+                    new SegmentFacts(Path.Combine(dir, "f.json")), true);
+                Built h = builder.Harvest(plan, inputs, "harvest");
+                int from = goal == 0 ? 0 : h.StepEnd[goal - 1];
+                (builder.ForceSearchAt, builder.ForceBudget, builder.MaxSearches, builder.ForceSeed) = (goal, 160_000, 1, h.Inputs.GetRange(from, h.StepEnd[goal] - from));
+                Built c = builder.Build(plan, h, goal);
+                return (h.Physics[goal], c.Reached > goal ? c.Physics[goal] : -1);
+            });
+            Directory.Delete(dir, true);
+            Check(builtTick >= 0 && builtTick <= harvestTick, $"{ctx.Name}: goal {goal + 1} polished from its own way: {builtTick} against the harvest's {harvestTick}");
         }
 
         static void ImproveSmoke(string trace, string best)
