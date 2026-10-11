@@ -1,8 +1,9 @@
-# Full-TAS v2: handoff (2026-10-10, 17:40)
+# Full-TAS v2: handoff (2026-10-10)
 
-One commit on **main** over 6b52557 (tag `pre-v2`; not pushed): `git revert` it to go back. Its 59 commits one by one: tag
-`v2-2026-10-10`. Design: `docs/superpowers/specs/2026-10-09-fulltas-v2-design.md`. How it works: `docs/fulltas.md`
-"Solving (v2)". Main's pre-merge uncommitted old-stack edits: branch `wip/old-stack-before-v2`.
+On **main** and origin over 6b52557 (tag `pre-v2`): v2 as one commit (1239a2d; its 59 commits one by one at tag
+`v2-2026-10-10`), then the polish fixes (5cb9a2e) and window polish (3c65290). Revert those three to go back. Design:
+`docs/superpowers/specs/2026-10-09-fulltas-v2-design.md`. How it works: `docs/fulltas.md` "Solving (v2)". Main's
+pre-merge uncommitted old-stack edits (to files v2 deleted): branch `wip/old-stack-before-v2`, also `stash@{0}`.
 
 Since 17:40: the movement polish keeps the best's own way on after a faster segment (`Improver.TailRejoin`); before it,
 every polish rebuild was slower and Solve stopped "converged" at 43.94. VMAN 43.94 -> 42.94 in 7 minutes on 8 threads,
@@ -57,9 +58,10 @@ from its saved best; logs of the last runs in `C:\tmp\igtap-long\logs\` (VMAN: `
 1. ZipEscape%: the GreenPower economy for teleporters (owner's route call, above).
 2. VMAN: 41.38 s, 1718 ticks, under the old route's 41.67 live; 22 ticks from its 1696. Polish now also searches windows
    of 2, 3 and 5 goals scored at their last (the old route's multi-goal ways: goals 13-18's down-dash chain, Courses 1-2's
-   Clone buys); written without running the engine, not yet run: press Solve on VMAN and watch for "goals N-M polished".
+   Clone buys); checked by run-selftest (`--own-at 12 --span 5` on VMAN), not yet in a solve: press Solve on VMAN and watch
+   for "goals N-M polished".
 3. Engine-side residuals the 1x probes name (resting-contact y velocity ~1e-6, 50 traces; go5/rand-c4/seed-c3): the engine needs the
    start's contact impulses. T5 (bonus10 tick 0) is Box2D warm-start state Unity can't set.
 4. 1x references for ZipEscape%/TouchGrass-ANY% need a window with no gate submissions; stale bonus7 4.62 records need retiring
    and re-solving (they don't finish at 1x).
-5. Push to origin.
+5. The other runs (Tree%, FalseEnding%-280, TouchGrass-ANY%, Zip%) haven't been solved since the polish fixes.

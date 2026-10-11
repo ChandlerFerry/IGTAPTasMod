@@ -68,7 +68,9 @@ Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/so
   the live player, `{"currencies": {"Cash": 1e22}}` sets `globalStats.currencyLookup`. Abilities are refused while
   "Don't touch my unlocks" is on, and the game autosaves these edits.
 - `POST /api/oracle/bootstrap` loads the scene without the menu. The game autosaves, so a relaunch can change the save.
-- Rebuilding the plugin: `python tools/enginesim-redeploy.py`.
+- Rebuilding the plugin: `python tools/enginesim-redeploy.py`, from this checkout only. The plugin reads `runs/` from the
+  folder it was built in (`IgtapRepo`, IGTAPTasMod.csproj): one deployed from a worktree loses its runs when the worktree is
+  removed, and every Full-TAS submit then fails `No Full-TAS run named ...`.
 - Engine changes: one agent edits `enginesim/` (and the root sources it compiles) at a time. Every engine change goes
   through `IGTAP.EngineSim check`, which replays the complete Full-TAS runs and the trace corpus against
   `enginesim/check/baseline.json` (about 25 s). The pre-commit hook runs it (`python tools/setup-hooks.py` turns the

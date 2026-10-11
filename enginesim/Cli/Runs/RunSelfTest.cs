@@ -46,7 +46,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 if (trace != null && best != null && !args.Contains("--no-search")) Search(trace, best);
                 if (trace != null && best != null && args.Contains("--build")) Rebuild(trace, best, Solve.Option(args, "--live", double.MaxValue));
                 if (trace != null && best != null && args.Contains("--improve-smoke")) ImproveSmoke(trace, best);
-                if (trace != null && best != null && Solve.Option(args, "--own-at", -1) is int ownAt && ownAt >= 0) OwnAt(trace, best, ownAt);
+                if (trace != null && best != null && Solve.Option(args, "--own-at", -1) is int ownAt && ownAt >= 0) OwnAt(trace, best, ownAt, Solve.Option(args, "--span", 1));
                 if (trace != null && best != null && args.Contains("--rejoin")) RejoinBroken(trace, best);
                 if (trace != null && best != null && Solve.Option(args, "--restore-at", -1) is int restoreAt && restoreAt >= 0) RestoreAt(trace, best, restoreAt);
                 if (trace != null && best != null && Solve.Option(args, "--chain-to", -1) is int chainTo && chainTo >= 0) ChainTo(trace, best, chainTo);
@@ -358,26 +358,29 @@ namespace IGTAP.EngineSim.Cli.Runs
             Check(bDiffer == null, $"{ctx.Name}: the rebuild after goal {from} ({b} goals) replays straight: {bDiffer}");
         }
 
-        // A polish's forced search at a goal, seeded with the best's own way there: the own way reaches the goal on the harvest's tick.
-        static void OwnAt(string trace, string best, int goal)
+        // A polish's forced search at a goal (or a window of `span` goals from it), seeded with the best's own way there: the build
+        // reaches the window's goals, each with its own segment, its last no later than the harvest.
+        static void OwnAt(string trace, string best, int goal, int span)
         {
             RunContext ctx = RunContext.Open(trace);
             List<InputTick> inputs = Inputs(best);
             var plan = new RunPlan(ctx.HeaderIds, ctx.HeaderGoals.Select(g => g.label).ToArray());
             string dir = Path.Combine(Path.GetTempPath(), "igtap-run-own-" + Environment.ProcessId);
             Directory.CreateDirectory(dir);
-            var (harvestTick, builtTick) = Solve.OnThread(() =>
+            int last = goal + span - 1;
+            var (harvestTick, builtTick, cuts) = Solve.OnThread(() =>
             {
                 var builder = new Builder(ctx, SegmentLibrary.Load(Path.Combine(dir, "s.json"), Array.Empty<string>()), new SegmentSearch(ctx) { Parallelism = 4 },
                     new SegmentFacts(Path.Combine(dir, "f.json")), true);
                 Built h = builder.Harvest(plan, inputs, "harvest");
                 int from = goal == 0 ? 0 : h.StepEnd[goal - 1];
-                (builder.ForceSearchAt, builder.ForceBudget, builder.MaxSearches, builder.ForceSeed) = (goal, 160_000, 1, h.Inputs.GetRange(from, h.StepEnd[goal] - from));
+                (builder.ForceSearchAt, builder.ForceSpan, builder.ForceBudget, builder.MaxSearches, builder.ForceSeed) = (goal, span, 160_000L * span, 1, h.Inputs.GetRange(from, h.StepEnd[last] - from));
                 Built c = builder.Build(plan, h, goal);
-                return (h.Physics[goal], c.Reached > goal ? c.Physics[goal] : -1);
+                bool cut = c.Reached > last && Enumerable.Range(goal, span).All(g => c.StepEnd[g] > (g == 0 ? 0 : c.StepEnd[g - 1]));
+                return (h.Physics[last], c.Reached > last ? c.Physics[last] : -1, cut);
             });
             Directory.Delete(dir, true);
-            Check(builtTick >= 0 && builtTick <= harvestTick, $"{ctx.Name}: goal {goal + 1} polished from its own way: {builtTick} against the harvest's {harvestTick}");
+            Check(builtTick >= 0 && builtTick <= harvestTick && cuts, $"{ctx.Name}: goals {goal + 1}-{last + 1} polished from their own way: goal {last + 1} at {builtTick} against the harvest's {harvestTick}, each goal its own segment: {cuts}");
         }
 
         static void ImproveSmoke(string trace, string best)
