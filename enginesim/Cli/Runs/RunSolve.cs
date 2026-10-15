@@ -118,7 +118,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             {
                 int goal = Array.IndexOf(plan.Ids, segment);
                 if (goal < 0) { Console.Error.WriteLine($"solve-run: {run.Name} has no goal with id {segment}"); return 2; }
-                improver.RunSegment(plan, route, goal, () => _stop);
+                improver.RunSegment(plan, route, goal, () => _stop, untilStop: true);
             }
             else improver.Run(plan, route, () => _stop);
             lib.Save();

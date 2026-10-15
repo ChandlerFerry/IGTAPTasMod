@@ -189,7 +189,16 @@ namespace IGTAP.EngineSim.Cli
                 }
                 if (!plain.Contains("--stall-minutes"))
                     plain.AddRange(new[] { "--stall-minutes", Math.Min(5.0, Solve.Option(args, "--minutes", 60.0) / 2).ToString(CultureInfo.InvariantCulture) });
-                return Solve.Run(plain.ToArray());
+                int code = Solve.Run(plain.ToArray(), out List<InputTick> first);
+                // Its finish is improved on in the minutes left: a record off the forced path (8_WJ_DS_DJ_BS 0.70 after an avoid box)
+                // is never replaced by an on-path route of the same time (README ### Rules 52), so every Improve would stop here.
+                CourseResult firstResult = first == null ? null : PlayCourse(run, first);
+                if (firstResult == null || !firstResult.Finished || firstResult.OffPath) return code;
+                Console.WriteLine($"--auto: improving the first finish (record {firstResult.Time:0.00}s, run {firstResult.RunTicks * .02:0.00}s from the start)");
+                finishing.Add(("first finish", first, firstResult));
+                // The next Improve starts from it (the last --auto best) instead of searching for it again.
+                Directory.CreateDirectory(Path.GetDirectoryName(runFile));
+                Solve.WriteShared(runFile, JsonSerializer.Serialize(new { inputs = first.Select(t => t.ToJson()) }));
             }
             double total = Solve.Option(args, "--minutes", 60.0);
             // The whole-route search first, as a target with no route of its own gets it on every Improve (Solver.cs CourseSolveArgs):

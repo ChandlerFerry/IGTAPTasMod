@@ -93,24 +93,39 @@ namespace IGTAP.EngineSim.Cli.Runs
             }
         }
 
-        // One goal's step searched again from its real start with a long budget (the studio's stretch), kept when the whole run
-        // gets faster.
-        public void RunSegment(RunPlan plan, List<InputTick> inputs, int goal, Func<bool> stop)
+        // One goal's step searched again from its real start with a long budget, kept when the whole run gets faster. untilStop (the
+        // studio's stretch): round after round until Stop, each round that gains nothing 4x the last's budget and going on a quarter of
+        // it without a better find (the search is deterministic: the same budget finds the same again); a gain starts over at
+        // SegmentBudget.
+        public void RunSegment(RunPlan plan, List<InputTick> inputs, int goal, Func<bool> stop, bool untilStop = false)
         {
             using var coord = new Worker(() => new Builder(_run, _lib, _search, _facts, searchMisses: true) { Log = Log });
             Built start = coord.Do(b => coord.Mine = b.Harvest(plan, inputs, "harvest")).Result;
             if (!Accept(start, "start", coord, Array.Empty<Worker>())) return;
             if (goal >= start.Reached) { Log($"segment: the best doesn't reach goal {goal + 1} yet"); return; }
-            Built c = coord.Do(b =>
+            // ponytail: 4x a round, no cap; a round past a few billion ticks takes hours, Stop ends it.
+            for (long budget = SegmentBudget; !stop();)
             {
-                (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget, b.ForceSeed) = (goal, SegmentBudget, SegmentSearches, RebuildBudget, Own(coord.Mine, goal));
-                try { return b.Build(plan, coord.Mine, goal); }
-                finally { (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget, b.ForceSeed) = (-1, Builder.Budgets[1], int.MaxValue, Builder.Budgets[^1], null); }
-            }).Result;
-            Log($"segment: goal {goal + 1} {plan.Labels[goal]} searched again: {Describe(c)} against {Describe(Best)}");
-            if (!stop() && c.Better(Best)) Accept(c, $"goal {goal + 1} {plan.Labels[goal]} searched again", coord, Array.Empty<Worker>());
-            else if (!stop()) TailRejoin(c, goal, coord, Array.Empty<Worker>(), stop);
-            Event?.Invoke(new { type = "plan", converged = true, reached = Best.Reached, of = Best.Plan.Count, live = Best.Live, waits = Best.Waits.Sum(w => w.Ticks) });
+                Built c = coord.Do(b =>
+                {
+                    (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget, b.ForceSeed) = (goal, budget, SegmentSearches, RebuildBudget, Own(coord.Mine, goal));
+                    if (untilStop) _search.Stall = Math.Max(SegmentSearch.DefaultStall, budget / 4);
+                    try { return b.Build(Best.Plan, coord.Mine, goal); }
+                    finally
+                    {
+                        (b.ForceSearchAt, b.ForceBudget, b.MaxSearches, b.MaxBudget, b.ForceSeed) = (-1, Builder.Budgets[1], int.MaxValue, Builder.Budgets[^1], null);
+                        _search.Stall = SegmentSearch.DefaultStall;
+                    }
+                }).Result;
+                GC.Collect();
+                Log($"segment: goal {goal + 1} {plan.Labels[goal]} searched again at {budget / 1_000_000}M ticks: {Describe(c)} against {Describe(Best)}");
+                bool gained = !stop() && (c.Better(Best) ? Accept(c, $"goal {goal + 1} {plan.Labels[goal]} searched again", coord, Array.Empty<Worker>())
+                    : TailRejoin(c, goal, coord, Array.Empty<Worker>(), stop));
+                if (!untilStop) break;
+                budget = gained ? SegmentBudget : budget * 4;
+                if (!stop()) Log($"segment: {(gained ? "a gain" : "nothing faster")}; searching again at {budget / 1_000_000}M ticks");
+            }
+            Event?.Invoke(new { type = "plan", converged = !untilStop, reached = Best.Reached, of = Best.Plan.Count, live = Best.Live, waits = Best.Waits.Sum(w => w.Ticks) });
         }
 
         // (goal id and span, inputs hash through the window): a window's search depends only on its start and its own inputs (the
