@@ -31,7 +31,7 @@ replay stops.
 
 ## Run definitions
 
-One file per run in the repo's [`runs/`](../runs), named for the run (`runs/<run>.json`, its `"name"` the file's: a file
+One file per run in the repo's [`data/runs/`](../data/runs), named for the run (`data/runs/<run>.json`, its `"name"` the file's: a file
 whose name differs is skipped with a warning). The plugin reads the source tree it was built from (`IgtapRepo`), so the
 runs are versioned with the code; the studio's goal edits and adopted records write the run's file there, and an edit on
 disk (or `fulltas-plan --install`'s, [below](#install-and-stages)) is picked up within a second, never mid-run:
@@ -274,7 +274,7 @@ drawn (`POST /api/fulltas/avoid {box: [x0, y0, x1, y1], runs: [...], goal?, afte
 id, of one run): it goes into that goal's `avoid` or `avoidAfter`, else each run's run-wide `avoid`, joining the block
 with the same `from`. The map draws a one-way box's open sides dashed green and fades the boxes that don't cut at the
 bar's goal; its list puts those that do first. **Remove** under the map (`remove: true`) takes a box out of every block of
-the run. The engine rereads `runs/<run>.json` whenever it changes, and a solve rereads the boxes before every window, so a
+the run. The engine rereads `data/runs/<run>.json` whenever it changes, and a solve rereads the boxes before every window, so a
 box drawn mid-solve applies from the next window on. `enginesim\Cli\forced-paths.json` holds the courses' rules only. Course search maps draw
 their rules the same way (**Draw avoid**, `POST /api/enginesim/avoid {course, capabilities, box, name?, on?, remove?}`;
 a named box becomes a pickable optional block of the rule covering the map's category).
@@ -458,7 +458,7 @@ laps: an ordering planned for slower laps asks for a clone before the clones hav
 that box. Its Course 2 and Course 3 goals (after `reward:bonus1` through `buy:buyds`, and Course 3's through `buy:buydj`) were planned
 by `tools/plan_fulltas.py`, a Python model of the economy deleted with the other old planners on 2026-10-04 (git history
 has it and its notes: the pre-2026-09-30 clone model it replayed `buy:buyds` with at 3539 ticks against the best's 3533,
-the Course 3 plan with `buystatue` 5288 ticks after the gate and `buydj` 10555). The goals in `runs/<run>.json` stay as they
+the Course 3 plan with `buystatue` 5288 ticks after the gate and `buydj` 10555). The goals in `data/runs/<run>.json` stay as they
 were planned. To plan them again, use the economy planner on the run's best ([Economy planner](#economy-planner)):
 it plans from the engine's own economy, not a copy of it.
 
@@ -532,7 +532,7 @@ ticks alone is renamed to its live time on its next trace (`RememberBestSplits`)
 An idle is a buy goal's wait for its Cash made visible:
 from the first tick the player is at the box (within its trigger's x-range plus the player's half width, at most 160 units
 below it) to the first tick the run holds what the goal's boxes cost, when that is 8 ticks or more. It is not a goal: it
-belongs to the buy it waits for, so the goal list, its numbers, `runs/<run>.json` and the gate are unchanged. The engine
+belongs to the buy it waits for, so the goal list, its numbers, `data/runs/<run>.json` and the gate are unchanged. The engine
 measures them (`enginesim\Cli\FullTasIdles.cs`, one replay) and writes them in the run file as `idles`, `{ goal, arrive:
 [physics, held], afford: [physics, held] }`, each time it writes the run file (`fulltas <trace> --idles` prints the best's and
 writes them without a search). The studio shows an unnumbered `idle · waiting for <goal>` row before its buy in the goals
@@ -573,7 +573,7 @@ window responsive instead of marking it "Not Responding". It doesn't yield frame
 `Movement.Update`'s step-up, coroutines, Invokes, the offline-best pump and HTTP handlers in the middle of the run, and
 the judge's state would no longer be the route's alone.
 
-A goals edit (the studio's **Save goals** or `runs/<run>.json` edited on disk) or a changed `start` renames every saved
+A goals edit (the studio's **Save goals** or `data/runs/<run>.json` edited on disk) or a changed `start` renames every saved
 route of that run solved for other goals to `<name> stale`: it's out of the record and never played or captured. The
 offline best counts only its unchanged leading goals it reaches, and **Play** and **Capture start** use its inputs only
 up to the last of them (past it they head for the old goals, or miss the next one). The solver drops a saved best's
@@ -626,7 +626,7 @@ inputs past the last unchanged goal the same way.
   (`courses.json`'s frame plus the current origin), independent of the main overlay. While that run plays, reached
   goals are green and the next one yellow. The run's avoid boxes (its definition's) are drawn in
   red, and a box added or removed on the map shows up within a second.
-- **Show map** draws the run's `at:` goals as they are in `runs/<run>.json` now (the plugin passes them to `map` as
+- **Show map** draws the run's `at:` goals as they are in `data/runs/<run>.json` now (the plugin passes them to `map` as
   `--goals`; the trace's own goals are the ones it was captured with). **Move goals** there: drag a green goal box, or
   type its new centre, then **Save goal** (`POST /api/fulltas/move-goal {name, index, label, x, y}`: `index` 0-based,
   `label` the goal as the map drew it, refused if the goal list changed since). The goal keeps its size and any
@@ -677,7 +677,7 @@ Every run keeps four bests, one per class (`enginesim\Runtime\Glitches.cs`, `eng
 | `human-nmg` | glitchless and nmg techs | goals, then fewer major spans, then score; a route with a major span is never saved |
 
 Score = live seconds + 2 × spike-grace ticks + 5 × frame-perfect inputs + 20 × back-to-back pairs of the whole route's
-[difficulty](#difficulty); the run's `"human"` weights in `runs/<run>.json` (the trace header's `fulltas.human`) replace the
+[difficulty](#difficulty); the run's `"human"` weights in `data/runs/<run>.json` (the trace header's `fulltas.human`) replace the
 defaults. A major or nmg span adds nothing of its own (before 2026-10-01: 60 s and 20 s): a glitch is as hard as the
 inputs that make it, which the difficulty counts. A span is one occurrence of a tech, however long it lasts; a
 spike-grace tick is a step whose hurtbox touches a spike the run lives through (spike grace stays glitchless). A route
@@ -1437,7 +1437,7 @@ baseline). The default is set by the measurements below, and has every part exce
    offline best and the gate submission carry the list (`goals`) and the lists it came from (`goalsFrom`, oldest first);
    a later `--auto` on the same trace resumes on them when that route is the faster one. The game judges such a route
    under its own goals, only when one of its `goalsFrom` lists is the run's
-   list in `runs/<run>.json` as it is now and the edit keeps those goals (`EditRefused` again); when it saves it as the
+   list in `data/runs/<run>.json` as it is now and the edit keeps those goals (`EditRefused` again); when it saves it as the
    record, the list becomes the run's (the run's file is kept first as the config folder's `runs-backup/<run>.<yyyyMMdd-HHmmss>.json`, and the old
    list's routes retire as after a goals edit in the studio). The studio feed shows the adopted edit as the record's
    title; `fulltas/<run>.auto.jsonl` has every edit tried (`goalEdit`) and every adopted list (`goals`). Off with
@@ -1446,9 +1446,9 @@ baseline). The default is set by the measurements below, and has every part exce
    **A planned list that drops or moves a reward goal (skipping bonus 1, say) is refused by the game.** The game's
    `FullTasGoal.EditRefused` (`FullTas.cs`, the gate) refuses any list whose area, reward or unlock goals differ from
    the run's, cash reward goals included, so such a route is never judged and never becomes the record on its own. Put
-   it into `runs/<run>.json` by hand, as `--insert-goal` lists always were: (1) take the adopted list (`goals` in the run
+   it into `data/runs/<run>.json` by hand, as `--insert-goal` lists always were: (1) take the adopted list (`goals` in the run
    file `fulltas/<run>.json` the pull wrote, or the `goals` event in `fulltas/<run>.auto.jsonl`); (2) edit the run's
-   goals to it (the studio's Full-TAS tab, **Save goals**, or `runs/<run>.json` edited with the game closed; either marks
+   goals to it (the studio's Full-TAS tab, **Save goals**, or `data/runs/<run>.json` edited with the game closed; either marks
    the run's saved routes stale); (3) put the route in `fulltas/<run>.json` and submit it (`/api/fulltas/submit`);
    (4) **Capture start** again, so the next `--auto` traces from the new list. A list that keeps every reward goal in
    place needs none of this: the game adopts it through `goalsFrom` (above).
@@ -1871,7 +1871,7 @@ them together from pieces instead:
 Stretches can be planned and built in parallel: the loop pieces (`archive/fulltas-pieces.json`) are written under a lock
 (`fulltas-pieces.json.lock`) and merged with what other processes filed since, and shared files get a per-process temp
 name (two plans crashed on one `.tmp`). The builder and `fulltas-plan` play the goals of the trace's header, not
-`runs/<run>.json`: to plan or build a stretch on top of a planned route, capture the start again with its goals first,
+`data/runs/<run>.json`: to plan or build a stretch on top of a planned route, capture the start again with its goals first,
 or let `fulltas-plan --install` put them in the header ([Install and stages](#install-and-stages)).
 
 `--harvest FILE` (the solve and `fulltas-plan`) plays a saved route (a `fulltas/<run>.json`: its goals and inputs, goals

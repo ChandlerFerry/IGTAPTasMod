@@ -405,7 +405,7 @@ namespace IGTAP.EngineSim
         /// <summary>
         /// A purchase that isn't the next goal's box ends the run (the Full-TAS loop builder's pieces: a walk that also buys another
         /// box spends Cash and levels the plan counted on, and can cap a box a later goal buys). Not on a loose-buys run
-        /// (runs/&lt;run&gt;.json "buys": "loose", <see cref="FullTasTracker.LooseBuys"/>): there any purchase stands.
+        /// (data/runs/&lt;run&gt;.json "buys": "loose", <see cref="FullTasTracker.LooseBuys"/>): there any purchase stands.
         /// </summary>
         internal bool StrictBuys;
         /// <summary>A course run's goals timed in physics ticks, as its record (`solve --auto`, FullTas.TickTiming): the frames it

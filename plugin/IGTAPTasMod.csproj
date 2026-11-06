@@ -4,6 +4,7 @@
     <LangVersion>7.3</LangVersion>
     <AssemblyName>IGTAPTasMod</AssemblyName>
     <RootNamespace>IGTAPTasMod</RootNamespace>
+    <RepoRoot>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..'))</RepoRoot>
     <GameRoot>$(IgtapGame)</GameRoot>
     <ManagedDir>$(GameRoot)\IGTAPfullGame_Data\Managed</ManagedDir>
     <BepInExDir>$(GameRoot)\BepInEx\core</BepInExDir>
@@ -13,11 +14,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Sources the offline engine compiles too (enginesim\Runtime\IGTAP.EngineSim.Runtime.csproj). -->
+    <Compile Include="$(RepoRoot)\shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
+  </ItemGroup>
 
-    <None Remove="enginesim\**" />
-    <Compile Remove="enginesim\**\*.cs" />
-    <None Remove="_scratch\**" />
-    <Compile Remove="_scratch\**" />
+  <ItemGroup>
     <Reference Include="BepInEx" HintPath="$(BepInExDir)\BepInEx.dll" Private="false" />
     <Reference Include="0Harmony" HintPath="$(BepInExDir)\0Harmony.dll" Private="false" />
     <Reference Include="Assembly-CSharp" HintPath="$(ManagedDir)\Assembly-CSharp.dll" Private="false" />
@@ -34,20 +35,19 @@
   </ItemGroup>
 
   <ItemGroup>
-
-    <AssemblyMetadata Include="EngineSimExe" Value="$(MSBuildProjectDirectory)\enginesim\Cli\bin\Release\net10.0\IGTAP.EngineSim.exe" />
-    <AssemblyMetadata Include="IgtapRepo" Value="$(MSBuildProjectDirectory)" />
+    <!-- The plugin finds the offline engine and the repo's data\runs\ through these. -->
+    <AssemblyMetadata Include="EngineSimExe" Value="$(RepoRoot)\enginesim\Cli\bin\Release\net10.0\IGTAP.EngineSim.exe" />
+    <AssemblyMetadata Include="IgtapRepo" Value="$(RepoRoot)" />
   </ItemGroup>
 
   <ItemGroup>
-
-    <EmbeddedResource Include="techs.json" LogicalName="IGTAPTasMod.techs.json" />
-    <EmbeddedResource Include="labmaps\*.json" LogicalName="IGTAPTasMod.labmaps.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="$(RepoRoot)\data\techs.json" LogicalName="IGTAPTasMod.techs.json" />
+    <EmbeddedResource Include="$(RepoRoot)\data\labmaps\*.json" LogicalName="IGTAPTasMod.labmaps.%(Filename)%(Extension)" />
   </ItemGroup>
 
   <Target Name="BuildWebStudio" BeforeTargets="Build" Condition="'$(SkipDeploy)' != 'true'">
-    <Exec Command="npm install --no-audit --no-fund" WorkingDirectory="$(MSBuildProjectDirectory)\web" Condition="!Exists('$(MSBuildProjectDirectory)\web\node_modules\next\package.json')" />
-    <Exec Command="npm run build" WorkingDirectory="$(MSBuildProjectDirectory)\web" />
+    <Exec Command="npm install --no-audit --no-fund" WorkingDirectory="$(RepoRoot)\web" Condition="!Exists('$(RepoRoot)\web\node_modules\next\package.json')" />
+    <Exec Command="npm run build" WorkingDirectory="$(RepoRoot)\web" />
   </Target>
 
   <Target Name="DeployToGame" AfterTargets="Build" Condition="'$(SkipDeploy)' != 'true'">
@@ -59,7 +59,7 @@
           SkipUnchangedFiles="false"
           OverwriteReadOnlyFiles="true" />
     <ItemGroup>
-      <WebStudioFiles Include="$(MSBuildProjectDirectory)\web\out\**\*" />
+      <WebStudioFiles Include="$(RepoRoot)\web\out\**\*" />
     </ItemGroup>
     <Copy SourceFiles="@(WebStudioFiles)"
           DestinationFolder="$(PluginDir)\IGTAPTasWeb\%(RecursiveDir)"

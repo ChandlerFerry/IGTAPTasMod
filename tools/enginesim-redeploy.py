@@ -9,12 +9,12 @@ from pathlib import Path
 from gamepaths import API, GAME, call
 
 ROOT = Path(__file__).resolve().parent.parent
-DLL = ROOT / "bin" / "Release" / "netstandard2.1" / "IGTAPTasMod.dll"
+DLL = ROOT / "plugin" / "bin" / "Release" / "netstandard2.1" / "IGTAPTasMod.dll"
 WEB = ROOT / "web" / "out"
 TARGET = GAME / "BepInEx" / "plugins" / "IGTAPTasMod.dll"
 TARGET_WEB = GAME / "BepInEx" / "plugins" / "IGTAPTasWeb"
 def main():
-    subprocess.run(["dotnet", "build", str(ROOT / "IGTAPTasMod.csproj"), "-c", "Release", "-p:SkipDeploy=true",
+    subprocess.run(["dotnet", "build", str(ROOT / "plugin" / "IGTAPTasMod.csproj"), "-c", "Release", "-p:SkipDeploy=true",
                     "-nologo", "-v:q"], check=True)
     subprocess.run("npm run build", cwd=ROOT / "web", shell=True, check=True)
     exe = str(GAME / "IGTAPfullGame.exe").replace("'", "''")

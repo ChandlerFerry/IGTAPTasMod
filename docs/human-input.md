@@ -372,7 +372,7 @@ bonus), and a **ground bounce** a straight-down dash into the ground then a jump
   Vman start that is the platform above and left of Course 4 (floor y 11625), from the platform the top of the map
   (the floor at y 26057 above Course 4's spike tunnel).
 
-  The Tech tab's Float Ultra is its lab (`labmaps/float-ultra.json`): a floor at world y 17000 that crosses the
+  The Tech tab's Float Ultra is its lab (`data/labmaps/float-ultra.json`): a floor at world y 17000 that crosses the
   sphere's edge, a 1200 u gap and a landing platform, where the demo walks, hops and chains two hypers across the edge
   (the lab's notes have the numbers). Turbo and the offline engine rebase as 1x does (`enginesim/README.md`), so the
   demo's turbo trace replays offline with the float ultra at the same tick (`tools/tech-check.py`). While it plays,
@@ -503,7 +503,7 @@ catalog (the config folder's `techs.json`) keeps its own edits; a plugin build a
 list has that the live one lacks, once each (`techs.seeded.json` remembers them, so a deletion in the tab sticks), and
 removes, once, a tech the built-in list offered before and has since dropped (a tech the built-in list never had is
 yours and stays). The lab fields (`labmap`, `labDemo`) and the offline miner's (`start`, `graftKey`, `graft`) are the
-repo's: the built-in ones fill a live tech's gaps on every load. The plugin's embedded `labmaps/` are the source of truth
+repo's: the built-in ones fill a live tech's gaps on every load. The plugin's embedded `data/labmaps/` are the source of truth
 too: a config copy of a lab or demo that differs is replaced with the plugin's the first time a session reads it.
 
 A tech is its lab demos, or it isn't a real tech yet. Its labs are its own `labmap` (playing its `labDemo`, else the
@@ -512,7 +512,7 @@ tech with a lab: its description and notes, then each lab with its preview (the 
 notes, **▶ Play** and **⏵ Walk** (the demo at 1x, or with game time slowed 10×: `POST /api/techs/play {id, lab, demo?,
 walk?}`), and **Load lab** / **Unload** to play it by hand. A tech with no lab is named in one collapsed line at the
 bottom, "Not reproduced yet": a `"graft": "todo"` one is known real with no lab yet, any other is marked "(no lab)".
-A reproduction found offline becomes a tech's demo as a lab (`lab solve`, `labmaps/<id>.demo.json`), not a route. The
+A reproduction found offline becomes a tech's demo as a lab (`lab solve`, `data/labmaps/<id>.demo.json`), not a route. The
 playback detector's tech overlay still works for any route; the tab's verdict on a card compares the last lab demo
 played with the tech's detector.
 

@@ -23,7 +23,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             if (args.FirstOrDefault() == "--one-run") return OneRun(args[1], args[2]);
             if (args.FirstOrDefault() == "--one-1x") return OneReference(args[1], args[2]);
             string repo = Solve.Option<string>(args, "--repo", null) ?? TechGrafts.SourceRoot();
-            if (repo == null || !Directory.Exists(Path.Combine(repo, "runs"))) { Console.Error.WriteLine("check: no source tree with runs\\ (--repo DIR)"); return 2; }
+            if (repo == null || !Directory.Exists(Path.Combine(repo, "data", "runs"))) { Console.Error.WriteLine("check: no source tree with data\\runs\\ (--repo DIR)"); return 2; }
             string traces = Solve.Option<string>(args, "--traces", null) ?? TechGrafts.ResolveTechDir(".");
             bool accept = args.Contains("--accept"), full = args.Contains("--full"), runsOnly = args.Contains("--runs-only");
             // A complete run's 1x reference (docs/fulltas.md "1x confirmation"): the plugin's config 1x\<run>.json, beside enginesim\.
@@ -109,7 +109,7 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         static IEnumerable<string> CompleteRuns(string repo)
         {
-            foreach (string file in Directory.EnumerateFiles(Path.Combine(repo, "runs"), "*.json").OrderBy(f => f, StringComparer.Ordinal))
+            foreach (string file in Directory.EnumerateFiles(Path.Combine(repo, "data", "runs"), "*.json").OrderBy(f => f, StringComparer.Ordinal))
             {
                 using JsonDocument d = JsonDocument.Parse(File.ReadAllText(file));
                 if (d.RootElement.TryGetProperty("section", out JsonElement s) && s.ValueKind == JsonValueKind.String && s.GetString() == "complete")

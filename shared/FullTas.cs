@@ -248,7 +248,7 @@ namespace IGTAPTasMod
     }
 
     /// <summary>
-    /// A run's goal ids (runs/&lt;run&gt;.json "goals"[].id): what a file, a flag, the HTTP API or an event names a goal by, never its
+    /// A run's goal ids (data/runs/&lt;run&gt;.json "goals"[].id): what a file, a flag, the HTTP API or an event names a goal by, never its
     /// place in the list, which a goals edit moves. A goal keeps its id across edits; a goal an edit makes gets a new one.
     /// </summary>
     internal static class FullTasGoalIds
@@ -344,7 +344,7 @@ namespace IGTAPTasMod
         public int Limit;
         // The next goal's boxes bought, a bit each; a record: goal's (it has no boxes) 1 once its gate is crossed (Armed).
         int _bought;
-        // Loose buys (runs/<run>.json "buys": "loose"; null when strict): every box a buy or reward goal names, the last goal that
+        // Loose buys (data/runs/<run>.json "buys": "loose"; null when strict): every box a buy or reward goal names, the last goal that
         // names it, and the boxes bought before their goal came up (bit per box), which count toward it once it's current.
         string[] _named;
         int[] _lastNaming;

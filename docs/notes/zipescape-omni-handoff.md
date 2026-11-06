@@ -15,7 +15,7 @@ Zip%, but escaping the tunnel by teleporter instead of the refill orbs. The user
   comes before it. Area 2 pads register a visit without the box. Afterwards `buytree16` (the zip movers, (25843, 6091))
   is reached by teleporting to pad 3 once it's paid for.
 
-**Goals** (`runs/ZipEscape%.json`, 842 since the replan below; the user's draft is in
+**Goals** (`data/runs/ZipEscape%.json`, 842 since the replan below; the user's draft is in
 `C:\tmp\igtap\zip\ZipEscape-before.json`): Zip%'s first 807, Zip%'s unlocks after them (29: `buytree0`-`4`, `6`, `7`, `12`,
 `buyatom` twice, `buycd8`, `buyclonecd8` four times, `buycddigits8`), then `at:28710,5876,240,400` (pad 3), `buy:buytree13`,
 `buy:buyteleporters`, `at:16639,11761,240,400` (pad 102), `buy:buytree14`, `buy:buytree16`. The run file and the trace

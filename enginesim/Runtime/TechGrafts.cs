@@ -990,35 +990,35 @@ namespace IGTAP.EngineSim
             return byId.Values.OrderBy(t => t.id, StringComparer.Ordinal).ToList();
         }
 
-        /// <summary>The repo's techs.json (the plugin's embedded seed): the source tree's (<see cref="SourceRoot"/>), else the copy
+        /// <summary>The repo's data\techs.json (the plugin's embedded seed): the source tree's (<see cref="SourceRoot"/>), else the copy
         /// the build put beside the binary.</summary>
         static string SeedTechs()
         {
             string root = SourceRoot();
-            if (root != null && File.Exists(Path.Combine(root, "techs.json"))) return Path.Combine(root, "techs.json");
+            if (root != null && File.Exists(Path.Combine(root, "data", "techs.json"))) return Path.Combine(root, "data", "techs.json");
             string copy = Path.Combine(AppContext.BaseDirectory, "techs.json");
             return File.Exists(copy) ? copy : null;
         }
 
-        /// <summary>The source tree the engine was built from (the folder holding techs.json, labmaps\ and enginesim\): walked up
+        /// <summary>The source tree the engine was built from (the folder holding data\techs.json, data\labmaps\ and enginesim\): walked up
         /// from the running binary, else the one the build recorded (IgtapRepo, IGTAP.EngineSim.Runtime.csproj) for a solver
         /// copied out of the tree; null when neither exists (the build's copies beside the binary are used).</summary>
         public static string SourceRoot()
         {
-            static bool IsRoot(string dir) => File.Exists(Path.Combine(dir, "techs.json")) && Directory.Exists(Path.Combine(dir, "enginesim", "Runtime"));
+            static bool IsRoot(string dir) => File.Exists(Path.Combine(dir, "data", "techs.json")) && Directory.Exists(Path.Combine(dir, "enginesim", "Runtime"));
             for (DirectoryInfo dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null; dir = dir.Parent)
                 if (IsRoot(dir.FullName)) return dir.FullName;
             string built = typeof(TechGrafts).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "IgtapRepo")?.Value;
             return !string.IsNullOrEmpty(built) && Directory.Exists(built) && IsRoot(built) ? Path.GetFullPath(built) : null;
         }
 
-        /// <summary>Where lab maps resolve, first wins: the source tree's labmaps\ (the source of truth: a lab edited there wins over
+        /// <summary>Where lab maps resolve, first wins: the source tree's data\labmaps\ (the source of truth: a lab edited there wins over
         /// a stale copy), then the config folder's (the studio's live copies: they fill in only the labs the repo lacks), then the
         /// build's copies.</summary>
         static IEnumerable<string> LabDirs(string config)
         {
             string root = SourceRoot();
-            if (root != null) yield return Path.Combine(root, "labmaps");
+            if (root != null) yield return Path.Combine(root, "data", "labmaps");
             if (config != null) yield return Path.Combine(config, "labmaps");
             yield return Path.Combine(AppContext.BaseDirectory, "labmaps");
         }

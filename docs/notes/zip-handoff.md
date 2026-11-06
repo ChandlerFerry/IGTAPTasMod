@@ -72,7 +72,7 @@ The 2026-10-07 notes below this section are history (still useful for the planne
 
 ## State
 
-- **Installed best** (`fulltas/Zip%.json` in the config folder, `runs/Zip%.json`: 991 goals): goals 1-513 as before, then the
+- **Installed best** (`fulltas/Zip%.json` in the config folder, `data/runs/Zip%.json`: 991 goals): goals 1-513 as before, then the
   stages from goal 513 built by this session: `buytree5` on tick 50,130 (goal 826), `buytree6` on tick 52,115 (goal 831), then
   Course 6/7 investment and tree-box levels to about tick 58,000-60,000 (goal ~987). Next goal: `buy:buytree7` (goal 988),
   then `buytree12`, `buytree13`, `buytree16`.
@@ -87,7 +87,7 @@ The 2026-10-07 notes below this section are history (still useful for the planne
 ```
 
 The trace alone, no flags: run from the repo (an install
-writes `runs/Zip%.json`). Each stage plans to the next buy, realizes, installs, and goes on until the last goal or a stop;
+writes `data/runs/Zip%.json`). Each stage plans to the next buy, realizes, installs, and goes on until the last goal or a stop;
 `fulltas\Zip%.report.json` (beside the trace) says per stage what was planned and built, the failed moves it learned, and why it
 stopped. The flags below (`--only`, `--stages`, `--rounds`, ...) are gone; `fulltas-plan` keeps only `--try`.
 
@@ -128,7 +128,7 @@ toolchain. Be skeptical and concrete; no praise. READ-ONLY: do not edit files, b
 CPU-heavy, or call the game's HTTP API. Reading, grep and git log/show/diff are fine.
 
 Repo: C:\Users\deafwave\Downloads\IGTAP\IGTAPTasMod. Read RULES.md (non-negotiable), AGENTS.md and
-docs/zip-handoff.md first. Ground truth for game mechanics: the decompiled game in obj/fulldecomp-steam/*.cs. The offline
+docs/notes/zip-handoff.md first. Ground truth for game mechanics: the decompiled game in obj/fulldecomp-steam/*.cs. The offline
 engine: enginesim/ (Runtime/ = game logic re-hosted, Cli/ = planners and searches).
 
 Goal: the Zip% Full-TAS run reaches buy:buytree16 (the zip movers) in as few game ticks as possible. Pipeline:
@@ -138,7 +138,7 @@ Realize/PlayStep/Waited; FullTasPlan.cs Lap/SavedLap/RecordLap/SeedLaps; FullTas
 builds the plan into inputs in the full simulation and replans when the build drifts.
 
 Review `git log --oneline <FROM>..HEAD` with each diff, and any uncommitted diff under enginesim/ (other agents' uncommitted
-work in other files: ignore unless it breaks this). Read docs/zip-handoff.md's "Measured" and "Open issues" and challenge
+work in other files: ignore unless it breaks this). Read docs/notes/zip-handoff.md's "Measured" and "Open issues" and challenge
 them.
 
 Hunt for, in order:
@@ -180,7 +180,7 @@ Last review: covered `bdc4278..70d99f0`. Findings fixed in `70d99f0`; the rest a
 2. **`CloneRates` (the beam estimate's GP rate) uses the on-screen spawn rate** (Count/PathLength) and no ceiling; off screen
    a course spawns once a second and pays ceil(x)/divisor. The estimate mis-ranks Courses 7-9's clones.
 3. **Course 9 / `buyatomlevel9`** (the earlier study: every zip-mover plan buys it; a GLOBAL box, kept through atom touches):
-   either set `"buys": "loose"` in `runs/Zip%.json` (the user's call) or plan `buy:buytree0` as the goal right before the
+   either set `"buys": "loose"` in `data/runs/Zip%.json` (the user's call) or plan `buy:buytree0` as the goal right before the
    Course 9 path when NP allows (it's the best NP buy anyway); at buytree0's cap (20 levels, ~1e24 NP) the stray is gone.
 4. **Atom touches wipe Course 6's local upgrades** (upgradeBox.cs:688-695); since goal 513 the goals hold ~70 buygreen6, ~64
    buyclone6, ~77 buyreward6 for 4 touches. Nothing in `Estimate` charges a touch for that, so `buytree10` (exempt Course 6,
@@ -256,9 +256,9 @@ The new stretch, traced (`fulltas --check --ticks-out`, mid-air refills matched 
   `buy:buytree0` on tick 36328.
 - **Everything after 513 is throwaway.** The installed best (`fulltas/Zip%.json` in the config folder) reaches goal 703
   (`buy:buytree1`, tick 51369). It was built with 5.9 s Course 6 laps (see "Laps") and a weak plan, so don't keep it.
-  `runs/Zip%.json` has 709 goals: 703 built ones, then `buytree5, 6, 7, 12, 13, 16`.
+  `data/runs/Zip%.json` has 709 goals: 703 built ones, then `buytree5, 6, 7, 12, 13, 16`.
 - **To restart from 513:** set the goals to the first 513 plus `buy:buytree5, buy:buytree6, buy:buytree7, buy:buytree12,
-  buy:buytree13, buy:buytree16`, in both `runs/Zip%.json` and the trace header (`fulltas-Zip%.json`'s `"fulltas": {"goals"}`).
+  buy:buytree13, buy:buytree16`, in both `data/runs/Zip%.json` and the trace header (`fulltas-Zip%.json`'s `"fulltas": {"goals"}`).
   Each header entry looks like
   `{"label":"buy:buytree5","kind":"buy","course":0,"boxes":["zone 2/TreeArea/The Tree/TreePart5/GlobalNPincreaseBox#0"]}`.
   Box paths and sibling indexes are in `FullTas.cs`'s `Boxes` table. The best route itself can stay: it replays to 513
@@ -432,7 +432,7 @@ The new stretch, traced (`fulltas --check --ticks-out`, mid-air refills matched 
   - Stages install only at a stage's end; `--rounds 4` keeps that under about 30 minutes.
   - `--replace` installs a replan however short. It now requires getting past `--from`; a failed one once replaced the goal
     list with `513 + buytree16`.
-  - `install` writes `runs/<run>.json` and the trace header together.
+  - `install` writes `data/runs/<run>.json` and the trace header together.
 - **Killing processes from bash:**
   - `powershell ... Where-Object { $_.CommandLine -like '*run.sh*' } | Stop-Process` also matches the bash running that
     command and kills your own shell.

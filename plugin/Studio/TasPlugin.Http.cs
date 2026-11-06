@@ -392,7 +392,7 @@ namespace IGTAPTasMod
         /// <summary>
         /// What the static part reads that changes without a command or a plugin write: the files the offline solver and the
         /// lab tools write (Full-TAS bests, closest attempts, human candidates and their difficulty, faster ways, traces, lab
-        /// maps and demos, forced-paths.json), runs/ edited by hand, the lists' sizes, playback, recording and solving
+        /// maps and demos, forced-paths.json), data/runs/ edited by hand, the lists' sizes, playback, recording and solving
         /// starting or ending, the scene, and the bonus reward boxes' purchases (the courses' hints). The files come as
         /// <paramref name="files"/>, the last <see cref="StartWebStateFileScan"/>'s hash.
         /// </summary>

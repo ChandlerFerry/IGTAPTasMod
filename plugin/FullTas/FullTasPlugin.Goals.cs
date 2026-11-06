@@ -42,7 +42,7 @@ namespace IGTAPTasMod
                         throw new InvalidDataException("its \"name\" is \"" + run?.name + "\", not its file's");
                     runs.Add(run);
                 }
-                catch (Exception ex) { Logger.LogWarning("runs\\" + Path.GetFileName(file) + " rejected: " + ex.Message); }
+                catch (Exception ex) { Logger.LogWarning("data\\runs\\" + Path.GetFileName(file) + " rejected: " + ex.Message); }
             }
             _fullTasRuns = runs;
             _fullTasAvoids.Clear();
@@ -51,7 +51,7 @@ namespace IGTAPTasMod
                     && FullTasRunChanged(previous.Find(r => string.Equals(r.name, run.name, StringComparison.OrdinalIgnoreCase)), run));
         }
 
-        /// <summary>A run's definition to its file (runs\&lt;run&gt;.json; LF line ends, as the repo keeps its JSON).</summary>
+        /// <summary>A run's definition to its file (data\runs\&lt;run&gt;.json; LF line ends, as the repo keeps its JSON).</summary>
         void SaveFullTasRun(FullTasRunDef run)
         {
             BumpWebState();
@@ -110,7 +110,7 @@ namespace IGTAPTasMod
         FullTasRunDef FindFullTasRun(string name)
         {
             return _fullTasRuns.Find(r => string.Equals(r.name, name, StringComparison.OrdinalIgnoreCase))
-                ?? throw new InvalidOperationException("No Full-TAS run named \"" + name + "\" in runs\\.");
+                ?? throw new InvalidOperationException("No Full-TAS run named \"" + name + "\" in data\\runs\\.");
         }
 
         FullTasGoal[] ResolveFullTasGoals(FullTasRunDef run)
@@ -118,7 +118,7 @@ namespace IGTAPTasMod
             if (!RunName.IsMatch(run.name ?? "")) throw new InvalidOperationException("Full-TAS run names are letters, digits, \"%\" and \"-\" only (\"" + run.name + "\").");
             if (run.goals == null || run.goals.Count == 0) throw new InvalidOperationException("Full-TAS run " + run.name + " has no goals.");
             string invalid = FullTasGoalIds.Invalid(run.Ids, run.goals.Count);
-            if (invalid != null) throw new InvalidOperationException("Full-TAS run " + run.name + ": " + invalid + " (runs/<run>.json \"goals\": [{\"id\", \"goal\"}]; tools/migrate-goal-ids.py gives a run its ids).");
+            if (invalid != null) throw new InvalidOperationException("Full-TAS run " + run.name + ": " + invalid + " (data/runs/<run>.json \"goals\": [{\"id\", \"goal\"}]; tools/migrate-goal-ids.py gives a run its ids).");
             if (run.start != null && run.start != VmanStart)
                 throw new InvalidOperationException("Full-TAS run " + run.name + ": start is \"" + VmanStart + "\" (a Vman speedrun's world) or unset (a new game), not \"" + run.start + "\".");
             if (run.savestate != null && _savestates.Find(s => s.id == run.savestate) == null)
@@ -530,7 +530,7 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// A record of other goals was saved: they become the run's in runs\&lt;run&gt;.json (kept first as the config folder's
+        /// A record of other goals was saved: they become the run's in data\runs\&lt;run&gt;.json (kept first as the config folder's
         /// runs-backup\&lt;run&gt;.&lt;yyyyMMdd-HHmmss&gt;.json), which retires the routes of the old goals as a goals edit does; the
         /// next Improve captures the start again with them.
         /// </summary>

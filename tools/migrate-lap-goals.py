@@ -1,6 +1,6 @@
 """One-time migration of Full-TAS goal lists to lap goals: each `start:N` right before `finish:N` becomes `record:N` (one goal,
 reached at the finish), each other `finish:N` becomes `farm:N`; a lone `start:N` stays. Everything indexed by goal is moved to
-the new numbering: the run files (runs/), the traces' header goals (spliced, the rest byte for byte), the offline bests and their
+the new numbering: the run files (data/runs/), the traces' header goals (spliced, the rest byte for byte), the offline bests and their
 copies (goals, goal ticks, idles, goalsFrom), the --auto references, the stretch bests (renamed to their new number), the
 studio's splits, the piece library's finish pieces (`farm:N`), the buy tables' from/until and forced-paths.json's goal-numbered
 avoid blocks. Close the game and stop every solve first.
@@ -70,7 +70,7 @@ maps = {}  # run name -> (old labels, new labels, where)
 
 
 def runs():
-    for path in sorted(glob.glob(os.path.join(REPO, "runs", "*.json"))):
+    for path in sorted(glob.glob(os.path.join(REPO, "data", "runs", "*.json"))):
         text = open(path, encoding="utf-8").read()
         run = json.loads(text)
         if not old_style(run["goals"]):

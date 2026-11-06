@@ -2,20 +2,31 @@
 
 ## Layout
 
+```
+plugin/        the BepInEx plugin (IGTAPTasMod.csproj), in the game
+shared/        sources compiled into both the plugin and enginesim
+enginesim/     the game's own code running offline, for search
+web/           the Next.js studio, served by the plugin
+data/          runs/ (Full-TAS run definitions), labmaps/ (lab maps and demos), techs.json (the tech catalog)
+tools/         Python scripts against the running game and the engine
+docs/          reference docs; docs/notes/ holds dated handoffs and reports
+```
+
 | Piece | What it does |
 |---|---|
-| `TasPlugin.cs`, `TasPlugin.*.cs` | BepInEx plugin, split by responsibility: `TasPlugin.cs` (state, lifecycle, shared helpers), `TasPlugin.Patches.cs` (all Harmony hooks), `TasPlugin.Playback.cs` (pacing & fixed clock), `TasPlugin.Session.cs` (new-game setup, unlocks, bootstrap), `TasPlugin.Savestates.cs`, `TasPlugin.Recording.cs`, `TasPlugin.Persistence.cs`, `TasPlugin.Http.cs` (HTTP API on `http://127.0.0.1:17426/`). Fields stay in `TasPlugin.cs`/`FullTasPlugin.cs` to keep the field-initializer order the compiler emits. |
-| `MacroEngine.cs` | Injects route inputs at the 50 Hz physics boundary. Shared with `enginesim`. |
-| `TurboRunner.cs` | Deterministic faster-than-real-time replay inside the game. |
-| `Solver.cs` | Optimize tab (course **Improve**: `solve --auto` per record or farm target, its waypoints and `--focus`) and `SaveSolverRoute`, the only way a category route gets saved. |
-| `EngineSimBridge.cs` | Trace, submit and raycast endpoints for the offline engine; read-only ghost-compare and humanize-slack endpoints for the studio. |
+| `plugin/Core/` | The plugin itself, split by responsibility: `TasPlugin.cs` (state, lifecycle, shared helpers), `TasPlugin.Patches.cs` (all Harmony hooks), `TasPlugin.Session.cs` (new-game setup, unlocks, bootstrap), `TasPlugin.Persistence.cs`, `TasPerf.cs` (`GET /api/perf`), and the game-state helpers `PlayerActions.cs`, `BreakerLights.cs`, `TreeLevel.cs`. Most plugin files are parts of one `partial class TasPlugin`, and the compiler runs its field initializers file by file in build order, so a static initializer never reads a field another file initializes. |
+| `plugin/Playback/` | `TasPlugin.Playback.cs` (pacing & fixed clock), `TurboRunner.cs` (deterministic faster-than-real-time replay inside the game), `ProbeRunner.cs` (1x probes: exact inputs at normal speed from a category start or savestate, logged every tick and rendered frame, `enginesim/README.md#probe`), recording (`TasPlugin.Recording.cs`, `RecordingSystem.cs`) and savestates (`TasPlugin.Savestates.cs`, `Savestates.cs`). |
+| `plugin/Solver/` | `Solver.cs`: Optimize tab (course **Improve**: `solve --auto` per record or farm target, its waypoints and `--focus`) and `SaveSolverRoute`, the only way a category route gets saved. `EngineSimBridge.cs`: trace, submit and raycast endpoints for the offline engine; read-only ghost-compare and humanize-slack endpoints for the studio. |
+| `plugin/FullTas/` | Full-TAS: gate, trace, playback, solve. `FullTasPlugin.cs` holds the model & state; `FullTasPlugin.Goals.cs`, `FullTasPlugin.Trace.cs`, `FullTasPlugin.Playback.cs`, `FullTasPlugin.Solve.cs`, `FullTasPlugin.Session.cs`, `FullTasPlugin.Http.cs` and the rest. The goals themselves are `shared/FullTas.cs`. |
+| `plugin/Editor/` | The TAS editor (studio **TAS** tab, `/api/tas/*`): `TasPlugin.Editor.cs`, `TasPlugin.Share.cs`, `TasPlugin.Techs.cs` (Techs here), `TasMarkup.cs`: frame advance, rewind and tick editing on the live game, re-recording, suggestions, sharing, and routes as text ([`docs/tas-markup.md`](tas-markup.md)). |
+| `plugin/Techs/` | The studio's Tech tab: `TechCatalog.cs` (every named tech, glitchless, NMG, major) and its labs: `LabMapService.cs` (injecting a lab map), `LabGhost.cs`, `LabTrainer.cs`, `LabTrainerFloat.cs`. |
+| `plugin/Overlay/` | The in-game overlay: `TasOverlay*.cs`, `TasSkin.cs`. |
+| `plugin/Studio/` | `TasPlugin.Http.cs` (the HTTP API on `http://127.0.0.1:17426/`) and `WebStudioServer.cs` (the server and its WebSocket). |
+| `shared/` | `MacroEngine.cs` (injects route inputs at the 50 Hz physics boundary), `MacroModels.cs`, `FullTas.cs` (Full-TAS goals), `Categories.cs`, `CourseStart.cs`, `WokenStarts.cs`, `FieldState.cs`: compiled into the plugin and into `enginesim/Runtime`, so a change here is an engine change (the pre-commit check runs). |
 | `enginesim/` | The game's own code running offline for search. See [`enginesim/README.md`](../enginesim/README.md). |
 | `enginesim/Cli/Runs/` | Full-TAS v2: `fulltas <trace>` / `solve-run` (segment library, builder, improver, confirmation) and `check` (complete runs and traces against `enginesim/check/baseline.json`; the pre-commit hook). [`docs/fulltas.md`](fulltas.md#solving-v2-fulltas-trace-is-solve-run). |
-| `FullTas.cs`, `FullTasPlugin.cs`, `FullTasPlugin.*.cs` | Full-TAS: goals (shared with `enginesim`), gate, trace, playback, solve. `FullTasPlugin.cs` holds the model & state; `FullTasPlugin.Goals.cs`, `FullTasPlugin.Trace.cs`, `FullTasPlugin.Playback.cs`, `FullTasPlugin.Solve.cs`, `FullTasPlugin.Session.cs`, `FullTasPlugin.Http.cs` the rest. |
-| `runs/` | The Full-TAS run definitions, one `<run>.json` each (goals, start, buy rule, section; [`docs/fulltas.md`](fulltas.md#run-definitions)). The plugin reads and writes them here; `fulltas-plan --install` and `--stages` update them as a route gets further ([`docs/fulltas.md`](fulltas.md#install-and-stages)). |
-| `TechCatalog.cs`, `techs.json` | The studio's Tech tab: every named tech (glitchless, NMG, major) and its labs (`labmaps/`), each with a demo to play or walk and the lab to load by hand. `techs.json` seeds the config folder's `techs.json`, which the tab edits. |
-| `ProbeRunner.cs` | 1x probes: exact inputs at normal speed from a category start or savestate, logged every tick and rendered frame (`enginesim/README.md#probe`). |
-| `TasPlugin.Editor.cs`, `TasPlugin.Share.cs`, `TasMarkup.cs` | The TAS editor (studio **TAS** tab, `/api/tas/*`): frame advance, rewind and tick editing on the live game, re-recording, suggestions, sharing, and routes as text ([`docs/tas-markup.md`](tas-markup.md)). |
+| `data/runs/` | The Full-TAS run definitions, one `<run>.json` each (goals, start, buy rule, section; [`docs/fulltas.md`](fulltas.md#run-definitions)). The plugin reads and writes them here; `fulltas-plan --install` and `--stages` update them as a route gets further ([`docs/fulltas.md`](fulltas.md#install-and-stages)). |
+| `data/techs.json`, `data/labmaps/` | The Tech tab's built-in techs and labs, embedded in the plugin and copied beside the engine. `techs.json` seeds the config folder's `techs.json`, which the tab edits. |
 | `web/` | Next.js studio, served by the plugin. |
 | `tools/` | Capture, redeploy, `validate.py`, `audit-traces.py`, `enginesim-rays.py` (Unity vs offline raycasts), `upgrade-boxes.py` (every one-off box; adds free ones to `courses.json` as bonuses), `probe.py` (a 1x probe and its per-frame log), `economy-diff.py` (two legs' economy, field by field as value sequences; `--ticks` on the same ticks), `tech-check.py` (every tech demo, turbo against the offline engine), `tas-check.py` (the TAS editor's seek, rewind, text and share against 1x). |
 

@@ -223,7 +223,7 @@ ticks time a course: [`docs/course-timer.md`](../docs/course-timer.md).
 
 The graft library is the Tech tab's demos (techs.json), mined into graft patterns
 (`Runtime\TechGrafts.cs`). Each demo replays offline from its start (its category's start trace, its own savestate, a
-captured `tech-<id>.json` trace, or a lab map's solved `labmaps\<id>.demo.json` over the trace it was solved in), the
+captured `tech-<id>.json` trace, or a lab map's solved `data\labmaps\<id>.demo.json` over the trace it was solved in), the
 contacts along it are detected with the same detection as above (the shared
 `ContactLog`), and the input window around its contacts (10 ticks before to 30 after: stick values, presses/holds/releases,
 dash, dash jump, dash turn (`turnX`/`turnY`) and pause) becomes a pattern tagged by contact type and the unlocks it needs (its
@@ -237,8 +237,8 @@ mirrored for the other side. A window with no button in it is travel and is drop
 A tech with a lab demo that resolves (its `labmap`/`labDemo`, the repo's, or a lab map whose `tech` names it) is mined from
 its lab demos alone; its captured `tech-<id>.json` trace or demo macro (recorded from a course start, with the travel and
 noise around the tech) is mined only when it has none. Besides its studio default, a tech mines its lab's `graftDemos`
-(techs.json: `["from-floor"]` mines `labmaps\<labmap>.from-floor.demo.json`; never the comparison ghosts, which fail on
-purpose), and every lab variant demo (`labmaps\<lab>.<name>.demo.json`) that carries a graft spec, for the tech the demo
+(techs.json: `["from-floor"]` mines `data\labmaps\<labmap>.from-floor.demo.json`; never the comparison ghosts, which fail on
+purpose), and every lab variant demo (`data\labmaps\<lab>.<name>.demo.json`) that carries a graft spec, for the tech the demo
 file names (`"tech"`) or else its lab's. A tech marked `"graft": "todo"` (not demonstrable yet: no lab) mines nothing, and
 the listing says `todo` instead of counting it missing. A window with a quick restart is mined too, flagged: only a run
 that may restart (a Full-TAS window with resets allowed; the game's `RestartRefused` still
@@ -309,12 +309,12 @@ Whatever trace is solved, the demo traces, savestates and the cache resolve from
 (`tools/gamepaths.py`'s TRACES: the game's config folder's `enginesim`, when it exists), so a copied trace mines or reads the
 same patterns as the real folder; `--tech-dir <dir>` overrides it. The catalog is the plugin's merge (`TechCatalog.MergeSeedTechs`)
 done on every load, so a tech or demo added to the repo mines before the game has run: the config folder's `techs.json`
-keeps its own entries, and the repo's `techs.json` adds the techs it lacks (not one the Tech tab deleted: listed in
+keeps its own entries, and the repo's `data/techs.json` adds the techs it lacks (not one the Tech tab deleted: listed in
 `techs.seeded.json`). The repo is the source of truth for the demo wiring: a repo entry's `labmap`/`labDemo` and `graftKey`
 replace a live entry's (a live `labmap` that differs is mined too), and the live ones fill in only where the repo has none.
 The repo is the source tree the engine was built from (walked up from the binary, else the path the build recorded:
 `IgtapRepo` in `IGTAP.EngineSim.Runtime.csproj`, for a solver copied out of the tree; else the copies beside the binary).
-Lab maps resolve from the repo's `labmaps\` first, then the config folder's (the studio's copies fill in only the labs the
+Lab maps resolve from the repo's `data\labmaps\` first, then the config folder's (the studio's copies fill in only the labs the
 repo lacks: a copy there goes stale when the repo's lab is edited), then the build's; a lab map whose `tech` names a tech is
 mined for it with its default demo. The mining is cached in
 `<traces>\tech-grafts.cache.json`, keyed by what the miner reads (each tech's demo fields, where its demo resolved, its demo
@@ -1084,7 +1084,7 @@ toward the wall (`docs/human-input.md`, Inwall wallbounce).
 
 ## Lab maps
 
-`labmaps/<id>.json` is a lab map: a custom level piece injected additively into a world's empty space to demonstrate one tech
+`data/labmaps/<id>.json` is a lab map: a custom level piece injected additively into a world's empty space to demonstrate one tech
 exactly — a coyote jump off a plain ledge where no course has a clean one. Shapes (box, polygon, edge) sit relative to an
 anchor in the world frame, with a Unity layer and tag (`Ground` refills jumps and dashes on touch, `Moss` refills nothing,
 `"spike": true` adds the game's `spikeScript`, `"spring": {upForce, strength, movementLock}` on a trigger adds the game's
@@ -1093,7 +1093,7 @@ and its `transform.up`, a spring's launch: 180 points it down), then the player'
 Movement fields), a finish box, `category` (the unlocks its demo runs with) and `tech`/`techNote` (the tech it
 demonstrates). The game (`LabMapService`) and the engine (`LabMap.Inject`) build the same float rotation, and a world
 captured with the lab in it exports the spring like a scene one (`Map.cs` reads its launch from the object's rotation).
-The repo's `labmaps/` seeds the config folder's like techs.json.
+The repo's `data/labmaps/` seeds the config folder's like techs.json.
 
 - `lab space <trace | trace.world.json> [w h] [--route <trace>]... [--list N] [--lab <labmap.json>] [--index N]` lists the
   empty rectangles at least `w x h` in the world frame: no collider, trigger or zone geometry at all (the world export, off
@@ -1140,7 +1140,7 @@ The repo's `labmaps/` seeds the config folder's like techs.json.
   cache), which proves the bound is the true minimum (or finds a shorter demo). One world
   and `Simulation` per worker thread (the game's statics are per thread; `--threads` dedicated threads, so as many worlds);
   a node's first extension replays its input path from the lab start and captures the node's state, and its other inputs
-  resume from that state on the same thread. The demo goes to `labmaps/<id>.demo.json` (`inputs`: trace `inputs` ticks; `solvedIn`: the trace whose
+  resume from that state on the same thread. The demo goes to `data/labmaps/<id>.demo.json` (`inputs`: trace `inputs` ticks; `solvedIn`: the trace whose
   world it was solved in; `search`: states, extensions, the bound, the key mode, the prune counts and the tech the demo
   performs), verified by one replay to the same tick and by the tech's own Movement state on the jump tick (a coyote jump's
   `onGround` held with `coyoteFrames` counting, the dash boost's 730 up + 410 up momentum within `dashBoostMax` of a dash, a
@@ -1184,7 +1184,7 @@ The repo's `labmaps/` seeds the config folder's like techs.json.
   and unlocks; **Unload** puts back what loading the lab or starting the demo changed), a turbo trace restores the lab,
   and a scene change restores it too. While a lab map is injected the game never autosaves and
   `SaveSolverRoute` refuses: a lab is lab-only, never a route and never on a route's path (`RULES.md`).
-  One lab map can carry several demos: `labmaps/<id>.<name>.demo.json` is another demo on the same map, with its own `start`
+  One lab map can carry several demos: `data/labmaps/<id>.<name>.demo.json` is another demo on the same map, with its own `start`
   (the lab start's format) when it begins elsewhere; a tech picks it with `labDemo: <name>` next to `labmap: <id>`, and
   `lab replay`, the tech miner and the studio's demo install all start it there. A demo's inputs must run through its finish:
   a playback ends with its inputs (`lab replay` pads them). `pauselift-wall` carries the cling pauselift
@@ -1203,7 +1203,7 @@ The repo's `labmaps/` seeds the config folder's like techs.json.
   sprites: layer Default, order 10001; the lab draws just under it). While the player has the pause menu open the TAS
   overlay drops its world-anchored drawings (spikes, checkpoints, hitbox, graze, the ghosts' key and badges); a
   playback's own pause keeps them. The studio's Tech tab shows each tech's labs on its card (its `labmap` and every lab
-  file naming it; `labmaps/*.json`, the plugin's embedded ones written over a config copy that differs, the config
+  file naming it; `data/labmaps/*.json`, the plugin's embedded ones written over a config copy that differs, the config
   folder's own kept) with **▶ Play** / **⏵ Walk** its demo and **Load lab** / **Back to start** / **Unload**. Every lab sits at anchor
   (-1333, -10585). In hand play a lab whose demo has a `path` draws it as a faint line and replays it with a see-through
   copy of the player's own animated sprite (the ghost, `LabGhost.cs`: the player's Sprite child with its Animator, every
@@ -1230,7 +1230,7 @@ The repo's `labmaps/` seeds the config folder's like techs.json.
   (`Velocity.y` 520 -> 1005, the hyper's momentum still carrying) clear the face into the box over the top on tick 20;
   `no-boost` (the same hyper, no second press) dies on the spikes, and `super` (the fastest run without it found) arrives on
   tick 26. Only a hyper reaches the box's edge by tick 20 (the other openings are the `techNote`'s sweeps), and after the
-  hyper the search proves it: `lab solve --forbid-boosted-double-jump --from labmaps/boosted-double-jump.demo.json
+  hyper the search proves it: `lab solve --forbid-boosted-double-jump --from data/labmaps/boosted-double-jump.demo.json
   --from-inputs 2 --max-ticks 20 --exact` finds no demo, complete to tick 20 in 3 s. The opening's dash ends in the hyper;
   its 420 next inputs give 308 distinct states on tick 9 (112 exact duplicates), and the free-flight bound cuts all 308: a
   double jump under 200 can't come before tick 20, so the collider's top reaches 190.7 at most, under the box's 210.
@@ -1390,7 +1390,7 @@ section.
   `FalseEnding-Any%` had gone from 390.38 s to the judged 379.40 s.
 - `coverage <trace> <route-human.json>` (`Cli\Coverage.cs`): each input of a human version mapped onto the contact whose
   `Planner.Primitives` window reaches it and the kind that makes it, a mined window with it, and whether the planner's decisions make
-  its value. Tables: [`docs/planner-coverage.md`](../docs/planner-coverage.md). Course 4 `WJ_DS_DJ` 11.24 (the old
+  its value. Tables: [`docs/notes/planner-coverage.md`](../docs/notes/planner-coverage.md). Course 4 `WJ_DS_DJ` 11.24 (the old
   orange-active start): 15 of 95 inputs by a primitive kind, 33 by a mined window, 35 either; 86 in the planner's grid.
   13.28 (today's start): 32 / 77 / 81 of 108; 91 in the grid. The gaps are mid-air inputs far from any contact (dashes
   with a jump frame and a lock or turn stick, double jumps, jump cuts, stick changes): the mid-air edges above are the

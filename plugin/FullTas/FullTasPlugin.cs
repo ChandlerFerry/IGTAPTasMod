@@ -307,10 +307,11 @@ namespace IGTAPTasMod
         static readonly HashSet<string> FullTasBreakerTokens = new HashSet<string> { "buyprestige5" };
         const int MaxBuyGoalBoxes = 8;
 
-        /// <summary>The Full-TAS run definitions, one file per run (runs\&lt;run&gt;.json, the run's name its file's): the source
-        /// tree's the plugin was built from (IgtapRepo, IGTAPTasMod.csproj), kept with the code.</summary>
-        static readonly string FullTasRunsDir = Path.Combine(typeof(TasPlugin).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false)
-            .Cast<System.Reflection.AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "IgtapRepo")?.Value ?? Path.Combine(Paths.ConfigPath, "IGTAPTasMod"), "runs");
+        /// <summary>The Full-TAS run definitions, one file per run (data\runs\&lt;run&gt;.json, the run's name its file's): the source
+        /// tree's the plugin was built from (IgtapRepo, plugin\IGTAPTasMod.csproj), kept with the code.</summary>
+        static readonly string FullTasRunsDir = typeof(TasPlugin).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false)
+            .Cast<System.Reflection.AssemblyMetadataAttribute>().FirstOrDefault(a => a.Key == "IgtapRepo")?.Value is string repo
+            ? Path.Combine(repo, "data", "runs") : Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "runs");
         static string FullTasRunFile(string run) { return Path.Combine(FullTasRunsDir, run + ".json"); }
         string FullTasSplitsPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas-splits.json"); } }
         string FullTasClassesPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas-classes.json"); } }

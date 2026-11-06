@@ -66,11 +66,11 @@ namespace IGTAP.EngineSim.Cli.Runs
         public static string RunDef(RunContext run)
         {
             string root = TechGrafts.SourceRoot();
-            string def = root == null ? null : Path.Combine(root, "runs", run.Name + ".json");
+            string def = root == null ? null : Path.Combine(root, "data", "runs", run.Name + ".json");
             return def != null && File.Exists(def) ? def : null;
         }
 
-        // The plugin compares runs/<run>.json's goals with the trace header's, so both change together; a goal keeps its avoids by id.
+        // The plugin compares data/runs/<run>.json's goals with the trace header's, so both change together; a goal keeps its avoids by id.
         public static bool InstallGoals(RunContext run, RunPlan plan)
         {
             if (run.HeaderIds.SequenceEqual(plan.Ids) && run.HeaderGoals.Select(g => g.label).SequenceEqual(plan.Labels)) return false;

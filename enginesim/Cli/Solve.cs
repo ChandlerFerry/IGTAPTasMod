@@ -289,7 +289,7 @@ namespace IGTAP.EngineSim.Cli
             return read.Item2;
         }
 
-        /// <summary>A run definition's avoid block (runs/&lt;run&gt;.json "avoid"[], a goal's "avoid"[] and "avoidAfter"[]): its boxes
+        /// <summary>A run definition's avoid block (data/runs/&lt;run&gt;.json "avoid"[], a goal's "avoid"[] and "avoidAfter"[]): its boxes
         /// (world corners), the sides a move must cross into one to be cut ("from": "bottom", "left+top", ...; unset: any), and for
         /// a run-wide block the goals (ids) while heading for which it is off.</summary>
         internal sealed record AvoidBlock(float[][] Boxes, string From, string[] OffFor);
@@ -298,11 +298,11 @@ namespace IGTAP.EngineSim.Cli
         static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Tuple<DateTime, RunAvoids>> _runAvoids =
             new System.Collections.Concurrent.ConcurrentDictionary<string, Tuple<DateTime, RunAvoids>>();
 
-        /// <summary>The run definition's avoids (the source tree's runs/&lt;run&gt;.json), read again whenever the studio has changed it.</summary>
+        /// <summary>The run definition's avoids (the source tree's data/runs/&lt;run&gt;.json), read again whenever the studio has changed it.</summary>
         internal static RunAvoids RunDefinitionAvoids(string run)
         {
             string root = TechGrafts.SourceRoot();
-            string file = root == null ? null : Path.Combine(root, "runs", run + ".json");
+            string file = root == null ? null : Path.Combine(root, "data", "runs", run + ".json");
             if (file == null || !File.Exists(file)) return null;
             DateTime written = File.GetLastWriteTimeUtc(file);
             if (_runAvoids.TryGetValue(run, out var read) && read.Item1 == written) return read.Item2;
@@ -312,7 +312,7 @@ namespace IGTAP.EngineSim.Cli
         }
 
         /// <summary>
-        /// The run's avoid boxes (its definition's, runs/&lt;run&gt;.json) for a window heading for the goals at places
+        /// The run's avoid boxes (its definition's, data/runs/&lt;run&gt;.json) for a window heading for the goals at places
         /// <paramref name="heading"/> of a run whose goals are <paramref name="ids"/> (null ids: the definition's own list; null heading:
         /// every block on, as the map draws them). The run-wide blocks cut always, except one whose "offFor" names a goal headed for.
         /// A goal's "avoid" blocks cut only while the run heads for it (from the goal before it until it is reached), its

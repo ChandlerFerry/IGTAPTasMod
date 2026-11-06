@@ -208,7 +208,7 @@ namespace IGTAPTasMod
         }
 
         /// <summary>The trace was captured for the run as it is now (start, goals, game build, ...); with <paramref name="weights"/>
-        /// also for its human weights, which only a solve's scores read (the gate takes runs/&lt;run&gt;.json's), so an edit of them
+        /// also for its human weights, which only a solve's scores read (the gate takes data/runs/&lt;run&gt;.json's), so an edit of them
         /// recaptures before a solve.</summary>
         bool FullTasTraceCurrent(FullTasRunDef run, string trace, bool weights = true)
         {

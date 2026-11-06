@@ -2,7 +2,7 @@
 # Engine check before a commit that touches what the engine compiles: the staged tree is built and replayed against
 # enginesim/check/baseline.json. An intended change commits its new baseline (check --accept) in the same commit.
 set -e
-git diff --cached --name-only | grep -qE '^(enginesim/|runs/|MacroEngine\.cs|MacroModels\.cs|FieldState\.cs|FullTas\.cs|Categories\.cs|CourseStart\.cs|WokenStarts\.cs)' || exit 0
+git diff --cached --name-only | grep -qE '^(enginesim/|shared/|data/runs/)' || exit 0
 if [ -n "$IGTAP_SKIP_CHECK" ]; then echo "pre-commit: engine check skipped (IGTAP_SKIP_CHECK)"; exit 0; fi
 tree=$(git write-tree)
 top=$(git rev-parse --show-toplevel)

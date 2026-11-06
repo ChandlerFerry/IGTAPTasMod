@@ -7,7 +7,7 @@ Current targets: `bonus1` (`WJ`), Course 4 (`WJ_DS` and `WJ_DS_DJ`), Course 5 (`
 Vman speedrun's start, split by area goals: [`docs/fulltas.md`](docs/fulltas.md#vman-speedrun-runs)), and the
 `FalseEnding%-280` Full-TAS run (notes and open ideas from its predecessor, the deleted `FalseEnding-Any%`, in
 [`docs/fulltas.md`](docs/fulltas.md#falseending-any-and-falseending2-any-2026-09-28); solving: `fulltas <trace>`
-(`solve-run`, [`docs/fulltas.md`](docs/fulltas.md#solving-v2-fulltas-trace-is-solve-run), handoff `docs/v2-handoff.md`)), and the `Zip%` Full-TAS run (`Tree%` on to the zip
+(`solve-run`, [`docs/fulltas.md`](docs/fulltas.md#solving-v2-fulltas-trace-is-solve-run), handoff `docs/notes/v2-handoff.md`)), and the `Zip%` Full-TAS run (`Tree%` on to the zip
 movers, [`docs/fulltas.md`](docs/fulltas.md#touchgrass-any-tree-and-zip-2026-10-03)). How to search:
 [`enginesim/README.md`](enginesim/README.md#use).
 
@@ -15,7 +15,7 @@ movers, [`docs/fulltas.md`](docs/fulltas.md#touchgrass-any-tree-and-zip-2026-10-
 
 - Category route (the runs record, game timer): `<course>_<CAT> <time>`, `CAT` a registered category: the tokens
   `WJ`, `DS`/`DSn`, `DJ`/`DJn`, `BS`, `ORB`, `ZIP`, `OM` in that order, `NONE` when empty (the registry is
-  [`Categories.cs`](Categories.cs)). The ladder (`NONE`–`WJ_DS_DJ_BS`) runs per the target's `courses.json` range:
+  [`Categories.cs`](shared/Categories.cs)). The ladder (`NONE`–`WJ_DS_DJ_BS`) runs per the target's `courses.json` range:
   Courses 1–5 and the Area 1 transitions stop at `WJ_DS_DJ`, Courses 6–10 start at `WJ_DS_DJ_BS`. Courses 11–15 are
   Courses 1–5 overgrown (the game's Course 1–5 gates, Area 1 overgrown) and run only `WJ_DS_DJ_BS` of the ladder.
   Outside the ladder every course (1–15), bonus and transition runs `WJ_DS_BS_ZIP_OM`, `WJ_DS2_BS_ZIP_OM` and
@@ -42,7 +42,7 @@ movers, [`docs/fulltas.md`](docs/fulltas.md#touchgrass-any-tree-and-zip-2026-10-
   (finish to finish, by a quick restart or the drop through the end gate) in live time, seconds to 4 places (RULES.md 30);
   the route is its lead and its loop (`loopFrom`, `loopLaps`). A bonus or transition is timed in ticks from
   its start already, so its record is its farm.
-- Full-TAS route: `fulltas/<run>_NONE <time>` (runs are defined in `runs/<run>.json`, [`docs/fulltas.md`](docs/fulltas.md)); `time`
+- Full-TAS route: `fulltas/<run>_NONE <time>` (runs are defined in `data/runs/<run>.json`, [`docs/fulltas.md`](docs/fulltas.md)); `time`
   is live time, physics ticks plus dash freezes and pauses (RULES.md 31), and its splits carry both the
   ticks and the held frames (`fulltas-splits.json`). A record saved when the time was ticks alone is re-timed on its
   next trace (`RememberBestSplits`). That is the run's `major` class; its other classes (RULES.md 54) are
@@ -68,10 +68,10 @@ Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/so
   the live player, `{"currencies": {"Cash": 1e22}}` sets `globalStats.currencyLookup`. Abilities are refused while
   "Don't touch my unlocks" is on, and the game autosaves these edits.
 - `POST /api/oracle/bootstrap` loads the scene without the menu. The game autosaves, so a relaunch can change the save.
-- Rebuilding the plugin: `python tools/enginesim-redeploy.py`, from this checkout only. The plugin reads `runs/` from the
-  folder it was built in (`IgtapRepo`, IGTAPTasMod.csproj): one deployed from a worktree loses its runs when the worktree is
+- Rebuilding the plugin: `python tools/enginesim-redeploy.py`, from this checkout only. The plugin reads `data/runs/` from the
+  folder it was built in (`IgtapRepo`, plugin/IGTAPTasMod.csproj): one deployed from a worktree loses its runs when the worktree is
   removed, and every Full-TAS submit then fails `No Full-TAS run named ...`.
-- Engine changes: one agent edits `enginesim/` (and the root sources it compiles) at a time. Every engine change goes
+- Engine changes: one agent edits `enginesim/` (and `shared/`, which it compiles too) at a time. Every engine change goes
   through `IGTAP.EngineSim check`, which replays the complete Full-TAS runs and the trace corpus against
   `enginesim/check/baseline.json` (about 25 s). The pre-commit hook runs it (`python tools/setup-hooks.py` turns the
   hooks on). An intended change commits its new baseline (`check --accept`) in the same commit, so every changed result is

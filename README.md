@@ -18,7 +18,7 @@ Every route has to be playable by a human on a real controller. What counts: [`R
 ## Build and run
 
 ```powershell
-dotnet build .\IGTAPTasMod.csproj -c Release     # web studio + plugin, copied into the game
+dotnet build .\plugin\IGTAPTasMod.csproj -c Release     # web studio + plugin, copied into the game
 ```
 
 The game is the Steam install (`IGTAP_GAME` overrides the path). Close it before building, since the plugin DLL is

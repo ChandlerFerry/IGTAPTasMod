@@ -15,18 +15,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-
-    <Compile Include="..\..\MacroEngine.cs" Link="Shared\MacroEngine.cs" />
-    <Compile Include="..\..\MacroModels.cs" Link="Shared\MacroModels.cs" />
-    <Compile Include="..\..\FieldState.cs" Link="Shared\FieldState.cs" />
-    <Compile Include="..\..\FullTas.cs" Link="Shared\FullTas.cs" />
-    <Compile Include="..\..\Categories.cs" Link="Shared\Categories.cs" />
-    <Compile Include="..\..\CourseStart.cs" Link="Shared\CourseStart.cs" />
-    <Compile Include="..\..\WokenStarts.cs" Link="Shared\WokenStarts.cs" />
+    <!-- Sources the plugin compiles too (plugin\IGTAPTasMod.csproj). -->
+    <Compile Include="..\..\shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The source tree, for a solver copied out of it: the tech miner reads the repo's techs.json and labmaps\ there (TechGrafts.SourceRoot). -->
+    <!-- The source tree, for a solver copied out of it: the tech miner reads the repo's data\techs.json and data\labmaps\ there (TechGrafts.SourceRoot). -->
     <AssemblyMetadata Include="IgtapRepo" Value="$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..'))" />
   </ItemGroup>
 

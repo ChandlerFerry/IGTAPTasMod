@@ -31,7 +31,7 @@ What makes a route count. The gate (`Solver.cs` `SaveSolverRoute`) enforces them
     (`dashUnlocked`/`maxAirDashes`), `DJ`/`DJn` n air jumps (`doubleJumpUnlocked`/`maxAirJumps`), `BS` block swap on
     dash (`blockSwapUnlocked`), `ORB` every refill orb (`globalUpgradeDict` `unlockJiggleDrops` 1, `moreRefreshOrbs`
     2), `ZIP` the zip movers (`zipMoversUnlocked` 1), `OM` the omnidirectional dash (`omniDashUnlocked`, the OmniDash
-    box's toggle); `NONE` when empty. The registry is [`Categories.cs`](Categories.cs).
+    box's toggle); `NONE` when empty. The registry is [`Categories.cs`](shared/Categories.cs).
 12. Every unlock not in the label is off.
 13. Without `BS` the coloured blocks start unswapped (blue active, as a new game has them; the save's state is
     put back after); with `BS` the game's own respawn sets them.
@@ -45,7 +45,7 @@ What makes a route count. The gate (`Solver.cs` `SaveSolverRoute`) enforces them
     it's unset: Courses 1–5 and the Area 1 transitions stop at `WJ_DS_DJ`.
 19. Outside the ladder, every course, bonus and transition runs `WJ_DS_BS_ZIP_OM`, `WJ_DS2_BS_ZIP_OM` and
     `WJ_DS_DJ_BS_ORB_ZIP_OM`. `WJ_DS_DJ_BS_ORB` and `WJ_DS_DJ_BS_ZIP_OM` run only where refill orbs are in reach,
-    `WJ_DS_DJ_BS_ZIP` only where zip movers are (the targets are listed in [`Categories.cs`](Categories.cs); the tree transitions count as bonus11, whose start they share):
+    `WJ_DS_DJ_BS_ZIP` only where zip movers are (the targets are listed in [`Categories.cs`](shared/Categories.cs); the tree transitions count as bonus11, whose start they share):
     anywhere else they play exactly as `WJ_DS_DJ_BS`, and `WJ_DS_DJ_BS_ZIP_OM` as `WJ_DS_DJ_BS_ORB_ZIP_OM`. The ends of Bonuses 4 and 12
     need the zip movers: they run only the categories with `ZIP`, none of their ladder. Bonuses 17–21
     and 23 run no category, and neither does `unlockJumpDash` (the jump and dash refresh orbs bonus17 ends at, The Tree
@@ -115,7 +115,7 @@ What makes a route count. The gate (`Solver.cs` `SaveSolverRoute`) enforces them
 36. Off a course both go to that checkpoint.
 37. Area goals (`at:`) are not checkpoints.
 38. Purchases count only when the game itself buys the box. A Full-TAS run buys only its next goal's box unless its
-    `runs/<run>.json` sets `"buys": "loose"` (`VMAN`): then other purchases stand, and a box a later `buy:` goal names,
+    `data/runs/<run>.json` sets `"buys": "loose"` (`VMAN`): then other purchases stand, and a box a later `buy:` goal names,
     bought early, counts for that goal ([`docs/fulltas.md`](docs/fulltas.md#loose-buys)).
 39. Never replace game logic; patches only read, input, skip saves (and playback's wall-clock reads, exception 2).
 40. Never change Unity's clock or fixed timestep.
@@ -139,7 +139,7 @@ What makes a route count. The gate (`Solver.cs` `SaveSolverRoute`) enforces them
 53. Trace every new best and name its trick.
 54. A Full-TAS run keeps four bests, its classes: `major` (any tech) and `nmg` (no major tech) by live time, `human-major`
     and `human-nmg` the same two by score. Score: live time plus 2 s a spike-grace tick, 5 s a frame-perfect input and
-    20 s a back-to-back pair of the whole route's difficulty (per run, `runs/<run>.json` `"human": {"grace", "framePerfect",
+    20 s a back-to-back pair of the whole route's difficulty (per run, `data/runs/<run>.json` `"human": {"grace", "framePerfect",
     "backToBack"}`). A major or nmg span adds nothing of its own: what makes a glitch hard is the inputs in it. The
     difficulty is the engine's count over humanize's version of the route (`difficulty`): each input (a stick change, a
     jump press or release, a dash, a jump on a dash frame) moved alone a tick at a time; frame-perfect: it works on one
@@ -184,7 +184,7 @@ What makes a route count. The gate (`Solver.cs` `SaveSolverRoute`) enforces them
    a stretch; it is not a whole-game route. With `tree` it also sets The Tree right after the restore, at a level as
    rule 21 sets a tree transition's (Area 1 overgrown and the path open from 23), or with an array exactly those grown
    segments (the save's `_grownSegments`; the boxes that grow one of them bought), and loads the zone at the player.
-7. Relaxes rule 33. The one exception to "no teleports" for a lab: a lab map (`labmaps/<id>.json`,
+7. Relaxes rule 33. The one exception to "no teleports" for a lab: a lab map (`data/labmaps/<id>.json`,
    [`enginesim/README.md`](enginesim/README.md#lab-maps)) is a custom level piece injected additively into empty map
    space (a `lab space` region, far from routes) to demonstrate one tech exactly, with its own start and finish box. It
    is lab-only: never a route, never on a route's path, and never saved — `SaveSolverRoute` refuses while one is

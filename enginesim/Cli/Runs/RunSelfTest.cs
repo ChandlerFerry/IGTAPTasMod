@@ -296,7 +296,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         {
             string root = TechGrafts.SourceRoot();
             if (root == null) return;
-            foreach (string file in Directory.GetFiles(Path.Combine(root, "runs"), "*.json").OrderBy(f => f, StringComparer.Ordinal))
+            foreach (string file in Directory.GetFiles(Path.Combine(root, "data", "runs"), "*.json").OrderBy(f => f, StringComparer.Ordinal))
             {
                 string name = Path.GetFileNameWithoutExtension(file);
                 Solve.RunAvoids def = Solve.RunDefinitionAvoids(name);

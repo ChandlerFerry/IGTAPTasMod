@@ -1,7 +1,7 @@
 """One-time migration to goal ids (docs/fulltas.md, "Goal ids"): every Full-TAS goal gets an id, and nothing outside a goal list
 names a goal by its place in it any more. Close the game and stop every solve first.
 
-- runs/<run>.json: "goals" become [{"id", "goal"}]; the Full-TAS rules of enginesim/Cli/forced-paths.json move into their runs
+- data/runs/<run>.json: "goals" become [{"id", "goal"}]; the Full-TAS rules of enginesim/Cli/forced-paths.json move into their runs
   (a rule's "avoid" and its plain blocks the run's "avoid", "offFor" by ids; "forGoal" and "for" the goal's "avoid"; "after" the
   goal's "avoidAfter") and leave forced-paths.json to the courses.
 - Traces (fulltas-<name>.json): each header goal gets its run's id (a goal the run lacks, or a trace of no run: a new id).
@@ -100,7 +100,7 @@ def ref(key, labels):
 
 # 1. Run definitions, with forced-paths.json's Full-TAS rules moved into them.
 run_files = {}
-for path in sorted(glob.glob(os.path.join(REPO, "runs", "*.json"))):
+for path in sorted(glob.glob(os.path.join(REPO, "data", "runs", "*.json"))):
     run, text = read(path)
     goals = run["goals"]
     if goals and isinstance(goals[0], dict):

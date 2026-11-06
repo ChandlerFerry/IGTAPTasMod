@@ -310,7 +310,7 @@ namespace IGTAPTasMod
         string FullTasSolvingGroup { get { return _fullTasProcess == null ? null : "fulltas-" + _fullTasSolveRun; } }
 
         /// <summary>
-        /// A box drawn on a Full-TAS run's map, into the run definitions (runs/&lt;run&gt;.json; the engine's FullTasPaths reads them):
+        /// A box drawn on a Full-TAS run's map, into the run definitions (data/runs/&lt;run&gt;.json; the engine's FullTasPaths reads them):
         /// with <paramref name="goal"/> (a goal's id) that goal's "avoid", cut only while the run heads for it; with
         /// <paramref name="after"/> its "avoidAfter", cut once the run has reached it; else each run's run-wide "avoid".
         /// <paramref name="from"/> ("left+bottom", ...) makes it one-way: it cuts only a move into it across those sides. A box joins

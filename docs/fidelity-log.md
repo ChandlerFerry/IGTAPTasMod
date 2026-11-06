@@ -400,7 +400,7 @@ ordered as the sections they came from.
   `BeforeTick` on the first tick from the start. Offline then matches the turbo trace tick for tick (−10504.92 on tick
   11); the demo holds the cling one tick longer to dash on the landing tick. The other five lab demos are unchanged
   (their first tick has no vertical stick).
-- **Where:** `Simulation.Run`, `TechGrafts.DemoStart.ApplyLabStart`, `Cli/Lab.cs` `Place`, `labmaps/stored-superbounce.demo.json`.
+- **Where:** `Simulation.Run`, `TechGrafts.DemoStart.ApplyLabStart`, `Cli/Lab.cs` `Place`, `data/labmaps/stored-superbounce.demo.json`.
 
 ## Trigger touch lapsed at the step's start
 
