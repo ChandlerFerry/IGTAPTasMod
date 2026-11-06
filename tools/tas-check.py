@@ -1,4 +1,4 @@
-"""Check the TAS editor in the running game (TasPlugin.Editor.cs, docs/superpowers/specs/2026-09-29-manual-tas-design.md).
+"""Check the TAS editor in the running game (TasPlugin.Editor.cs, docs/internals.md "TAS editor").
 
   tas-check.py <route name or id> [--ticks 40,120]
 

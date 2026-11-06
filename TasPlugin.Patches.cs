@@ -79,7 +79,7 @@ namespace IGTAPTasMod
         // Presentation that turbo and the offline engine don't play draws UnityEngine.Random at 1x: the run animation's footstep
         // event (PlayerAnimationEventProxy.RelayFootstep, on rendered frames; its sound draws twice) and a floating number
         // (spawnNewFloatingNumber, six draws; turbo spawns none). In a Full-TAS run they play but give the RNG back, so the fixed
-        // seed's draws (clone rolls) are the same at 1x as judged (README exception 11). Movement's own PlayFootstep calls (a
+        // seed's draws (clone rolls) are the same at 1x as judged (RULES.md exception 11). Movement's own PlayFootstep calls (a
         // landing, in the physics step) draw as before, in all three.
         // Harmony keys __state by the patch's class, and ObjectBobber.OnEnable also takes the probe's RNG patch (TasPlugin's).
         static class PresentationDraw

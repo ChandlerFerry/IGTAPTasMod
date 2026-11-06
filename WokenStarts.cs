@@ -7,7 +7,7 @@ namespace IGTAPTasMod
     /// The <c>Start</c> of an <c>upgradeBox</c> a run wakes for the first time (a tree segment's box, a zone load turning a zone on
     /// in a new game): Unity runs it before the box's first Update, but a turbo run is one Unity frame, so its real Start comes
     /// after the run, and the offline engine has no Unity. Both run the game's own Start (<see cref="Start"/>) at the modelled
-    /// frame 1x runs it in (README ### Rules, exception 12: TurboRunner.StartPass, which puts the box's fields back around Unity's
+    /// frame 1x runs it in (RULES.md, exception 12: TurboRunner.StartPass, which puts the box's fields back around Unity's
     /// later real Start; the engine's Economy.StartPass, where updateCostTextDisplay and setBoxText, text only, are cut). Shared
     /// source: the plugin and enginesim/Runtime (linked) compile it against their own game assembly.
     /// </summary>

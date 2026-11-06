@@ -151,7 +151,7 @@ ordered as the sections they came from.
   decides the tick it ends its path). And the run animation's footstep event (`PlayerAnimationEventProxy.RelayFootstep`
   → `Movement.PlayFootstep` → `Audio.PlayAudio`, two draws) and floating numbers fire only at 1x.
 - **Fix:** `FrameGrid.Step(0)` is the measured 0.00214285006 at the playback rate; an animation footstep or floating
-  number in a Full-TAS run gives `UnityEngine.Random`'s state back (README exception 11); Movement's own `PlayFootstep`
+  number in a Full-TAS run gives `UnityEngine.Random`'s state back (RULES.md exception 11); Movement's own `PlayFootstep`
   calls in the physics step draw as before. Clone state (timers, pointers, counts) then matches 1x on every tick of the
   356.64 s inputs (16,675 ticks). A dash freeze logs the tick's physics count twice in both (turbo's trace and a probe):
   compare by the engine's physics count, not the trace's `tick`.
@@ -167,7 +167,7 @@ ordered as the sections they came from.
   within 5 s; turbo (Unity's invoke clock stands still in a turbo run) and the engine never ran it. The phase differs
   from session to session, so even 1x wasn't reproducible for a route whose Cash depends on it.
 - **Fix:** a Full-TAS run turns the timer off at 1x and updates every active course's reward every 250 physics ticks
-  from its start (`MacroEngine.RefreshRewards`: `TasPlugin.RefreshFullTasRewards`, `Economy.RefreshReward`); README
+  from its start (`MacroEngine.RefreshRewards`: `TasPlugin.RefreshFullTasRewards`, `Economy.RefreshReward`); RULES.md
   exception 10. The 356.64 s inputs now die at action 5257 in turbo and offline alike, Cash and RNG identical on every
   tick (`div-fe-356.64`).
 - **Where:** `MacroEngine.CountPhysicsTick`, `FullTasPlugin.Playback.cs`, `Simulation`, `Economy.RefreshReward`.
@@ -186,7 +186,7 @@ ordered as the sections they came from.
   40 offline. Found with the probe's new `clone` and `rng` rows (every `SpawnClone`, and every call of a game method
   that draws, with its frame) against `fulltas --check --ticks-out`'s spawn and draw rows.
 - **Fix:** `ObjectBobber.OnEnable` is presentation (a text's bob phase): in a Full-TAS run its draw is given back at 1x and
-  in turbo like a footstep's (`TasPlugin.PresentationDraw`, README exception 11). The engine never made the
+  in turbo like a footstep's (`TasPlugin.PresentationDraw`, RULES.md exception 11). The engine never made the
   texts' draws (it models a box's touch, not its multibuy timer) and now skips the statue text's too in a Full-TAS run
   (`Economy.Activate`), so the statue text's draw goes in all three.
 - **Where:** `TasPlugin.Awake` (presentation drawers), `Economy.Activate`, `ProbeRunner` (`clone`, `rng` rows),
@@ -1037,7 +1037,7 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
 - **Cause:** Unity runs a woken behaviour's `Start` before its first `Update`: `RandomAnimSpeedComponent.Start` on a
   segment's lights in the buy's own frame, `LightFlicker.Start` on its box the frame after `IE_Grow` turns it on. A turbo
   run is one Unity frame, so Unity ran those `Start`s after the run. The engine ran none.
-- **Fix:** README ### Rules, exception 12. At each modelled frame's start, turbo (`TurboRunner.StartPass`) and the engine
+- **Fix:** RULES.md, exception 12. At each modelled frame's start, turbo (`TurboRunner.StartPass`) and the engine
   (`Economy.StartPass`, woken through `Simulation`'s Activated hook) make the draws of each `LightFlicker`,
   `RandomAnimSpeedComponent` and `JiggleDropScript` the run woke whose `Start` hasn't run (off at the export, or at the
   run's start). Turbo then puts `UnityEngine.Random`'s state back around Unity's real `Start` (a Harmony prefix and
@@ -1047,7 +1047,7 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
 - **Residual risk:** turbo takes "not started" from Unity's real `Start` calls it has seen and the run's start. An object
   started once, switched off before the export and woken again counts as never started in the engine (no draw at 1x).
 - **Where:** `TurboRunner` (`StartPass`, `BeforeDrawingStart`, `AfterDrawingStart`), `Economy` (`Woken`, `StartPass`),
-  `Simulation` (Activated hook, `InterpolatedFrames`), README ### Rules exception 12.
+  `Simulation` (Activated hook, `InterpolatedFrames`), RULES.md exception 12.
 
 ## Atom grid a tick late, and the atom start
 
@@ -1071,7 +1071,7 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
   - The atom box's door branch is modelled. The trace start says whether PlayerPrefs hold `OpenA2Door`
     (`economy.openA2Door`), and the engine runs the door's `ForceNextPhase` instead of ending the run. Only
     `AtomUpgrades/AtomUpgrade` has a door (its bottom trigger at world (21292, -266)), and a Course 6-15 start has
-    already opened it (README ### Rules 21), so on a machine without the key that buy shuts it: the game's first-buy
+    already opened it (RULES.md 21), so on a machine without the key that buy shuts it: the game's first-buy
     branch (upgradeBox.cs:644-646) applied to the stand-in's state, which a real game never has (a load opens the door
     only with the key or the box bought, upgradeBox.cs:264).
     `t7-atoms-nokey` (turbo, the key not yet on this machine) and the engine agree on every tick. That turbo run wrote
@@ -1160,7 +1160,7 @@ rendered frames (`Movement.playSFX` landings, clone spawns); `--ticks-out` write
   (`WokenStarts.Unmodeled`). The probe also showed what both legs' Start pass had wrong: Unity runs the `Start` of what a
   frame's end woke first thing in the next frame, before that frame's `FixedUpdate` when it has one, and both ran it after
   the tick's `FixedUpdate`s and physics step.
-- **Fix:** README ### Rules, exception 12. Turbo's `StartPass` runs the game's own `Start` of a woken box
+- **Fix:** RULES.md, exception 12. Turbo's `StartPass` runs the game's own `Start` of a woken box
   (`WokenStarts.Start`) and puts the box's fields and the RNG back around Unity's later real `Start`
   (`BeforeDrawingStart`, `AfterDrawingStart`); the engine's `Economy.StartPass` runs it with the box and its tree touched
   and `upgradeBox.updateCostTextDisplay` and `setBoxText` cut (`cuts.txt`; a `PlayerPrefs` stub that throws,
@@ -1273,7 +1273,7 @@ before the next query (`Place`, `FrameStart`, `KeepBody`). Every `Rigidbody2D.po
 1.155)), dropping the precision `c` carries from step to step; 1x and the engine never write the body there. Offline,
 recomputing `c` from `p` every tick reproduced turbo exactly.
 
-Turbo now writes neither (README exception 14): the game code its frames run (every `Movement` method and coroutine,
+Turbo now writes neither (RULES.md exception 14): the game code its frames run (every `Movement` method and coroutine,
 `courseScript`'s, `TeleporterScript`'s; a Harmony transpiler) and the plugin's hooks in them (a run's start pin, the TAS
 editor's trace, the overlay) read `Transform.position` through `TurboRunner.BlendRead`: the blend, as a write would read
 back through the player's parent (a bare transform beside the player rounds it), until the game writes the transform; the

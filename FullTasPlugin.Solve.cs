@@ -113,8 +113,8 @@ namespace IGTAPTasMod
 
         /// <summary>
         /// Solve: `solve-run` builds what the run's best doesn't reach yet and improves the whole run until it converges or Stop
-        /// (docs/superpowers/specs/2026-10-09-fulltas-v2-design.md); `stretch` (a goal's id) searches that goal's way again
-        /// (`--segment`), `class` (README ### Rules 54) solves for that class. It leaves the game 2 cores by default.
+        /// (docs/fulltas.md "Solving (v2)"); `stretch` (a goal's id) searches that goal's way again
+        /// (`--segment`), `class` (RULES.md 54) solves for that class. It leaves the game 2 cores by default.
         /// </summary>
         void LaunchFullTasSolve(FullTasRunDef run, string trace, JObject body)
         {

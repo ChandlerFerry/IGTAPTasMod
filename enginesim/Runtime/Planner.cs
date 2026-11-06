@@ -19,7 +19,7 @@ namespace IGTAP.EngineSim
     /// <see cref="Options.Width"/> nodes: most goals or forced-path boxes passed, then the <see cref="DistanceField"/>
     /// distance to the target, then speed. A coarse key (position cell, velocity and momentum buckets, contact, counts left,
     /// facing, the jump button, the timer, progress) only merges: per key a few Pareto labels (earliest, faster) survive,
-    /// and every expansion starts from the node's exact snapshot. Only inputs a controller makes are played (README "### Rules").
+    /// and every expansion starts from the node's exact snapshot. Only inputs a controller makes are played (RULES.md).
     /// After a finish, nodes that can't beat it at the fastest speed seen are cut; the search then runs again at twice the
     /// width while time is left (anytime).
     /// </summary>

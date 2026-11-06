@@ -83,7 +83,7 @@ namespace IGTAPTasMod
             MoverPositions = typeof(PlatformMover).GetField("Positions", Fields);
 
         /// <summary>
-        /// Courses 6-15 and bonus 11 run as if the atom room's door were open (README ### Rules 21): the free first atom (the
+        /// Courses 6-15 and bonus 11 run as if the atom room's door were open (RULES.md 21): the free first atom (the
         /// <c>AtomUpgrade</c> box, <c>spawnNewAtom</c>) bought, without its purchase or its atom prestige. Course 9's end is
         /// reachable only through that door. <paramref name="course"/> is courses.json's id: 11-15 are Courses 1-5 overgrown,
         /// 111 bonus 11 (secret 14, its start the checkpoint by the door).

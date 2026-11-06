@@ -13,7 +13,7 @@ using UnityEngine.Rendering;
 namespace IGTAPTasMod
 {
     /// <summary>
-    /// The TAS editor's Techs here (docs/superpowers/specs/2026-09-30-techs-here-design.md): once a course or category
+    /// The TAS editor's Techs here (enginesim/README.md "Techs"): once a course or category
     /// session has held an input tick for a second, <c>enginesim techs</c> lists the techs whose key window works from there,
     /// each direction with its inputs and path. Hovering one in the studio draws its paths in game (the held tick is seeked
     /// again so its last tick renders them); trying one puts its inputs in at the held tick and plays them.

@@ -38,7 +38,7 @@ Audio::PlayAudioAtPoint
 CurrencyDisplayController::swapToMiniDisplay
 CurrencyDisplayController::swapToFullDisplay
 SteamManager::get_Initialized
-# A woken upgrade box's Start (Economy.StartPass, README ### Rules, exception 12): its cost and name texts. setBoxText's one
+# A woken upgrade box's Start (Economy.StartPass, RULES.md, exception 12): its cost and name texts. setBoxText's one
 # object, the buy-max "buy N" text, is turned on only once updateMultibuyText (an InvokeRepeating the engine doesn't run) has
 # counted more than one level: off otherwise, and its bobber draws are exception 11's.
 upgradeBox::updateCostTextDisplay

@@ -30,7 +30,7 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
 - `POST /api/enginesim/submit {course, capabilities; ticks | routeId; loopFrom?, loopLaps?}` — turbo replay of an
   offline candidate; saved as the category's record route (`<course>_<CAPS> <time>`) when it finishes faster than the
   current best, or as fast in fewer physics ticks from the run start (`runTicks`; the saved route is replayed for its
-  own). With `loopFrom` (or a saved farm route's `routeId`) it is a farm loop instead (README `### Rules` 30): the lead
+  own). With `loopFrom` (or a saved farm route's `routeId`) it is a farm loop instead (RULES.md 30): the lead
   and its loop played four times through every finish (`EvaluateLoop`), saved as the farm route (`<course>_<CAPS> farm
   <lap>`) when it repeats exactly and its lap beats the farm route's (`farmSaved`, `loop`). Runs are judged from the
   category's cached start state, but a run that would
@@ -61,7 +61,7 @@ Ground truth comes from the plugin (`EngineSimBridge.cs`):
   `POST /api/fulltas/submit`. `fulltas <trace> --check <route.json> [--goals FILE]` only replays a route (a run file's
   `inputs` or an offline best's `ticks`; under the goal list FILE's `goals` holds, a `fulltas-plan --out` or a route
   file, instead of the trace's) and prints each goal's physics and input tick, its live time and held frames (dash freezes,
-  pauses; a Full-TAS run's time is live time, README `### Rules` 31), and how it ended. `fulltas <trace> --class
+  pauses; a Full-TAS run's time is live time, RULES.md 31), and how it ended. `fulltas <trace> --class
   nmg|human-major|human-nmg [--tag T]` solves one of the run's other bests, ranked by what it uses (its own run file
   `fulltas/<run>.<class>[.<T>].json` and human candidates: [docs/fulltas.md](../docs/fulltas.md#classes)).
 
@@ -73,7 +73,7 @@ course route from its category start, `start-c<C>-<CAT>.json`, else the Optimize
 
 ## Use
 
-All searching happens here, never in the game (the root `README.md` rules: *Search offline in `enginesim`, never in
+All searching happens here, never in the game (the `RULES.md`: *Search offline in `enginesim`, never in
 the game*). The game is needed once per course/category to capture a start trace and world, and afterwards only to
 judge new bests.
 
@@ -561,16 +561,16 @@ turning off a wall; `CourseWaypoints.Detours`): every search would have to keep 
 - **Human class** (`--class human-major|human-nmg`, record timing on a gated course only): `ease` ([Techs](#techs),
   `Difficulty.Ease`), which searches on the class's score itself from every seed and writes its lowest as
   `offline-best\<course>_<caps>-<class>-<score>.json` (`course`, `capabilities`, `class`, `score` on the game timer, `time`,
-  `runTicks`, `ticks`), which the plugin judges for the class's record (README `### Rules` 54). With `--waypoints-out`
+  `runTicks`, `ticks`), which the plugin judges for the class's record (RULES.md 54). With `--waypoints-out`
   the waypoints of the fastest route the class plays to the finish (digital stick, two jump buttons; the candidates also
   with their part tilts snapped, `Digital`).
 - **Timing.** Record (the default on a gated course): the game timer (`CourseScore`: `PlayCourse`'s time in ticks, ties
   by the ticks from the run's start; another course's finish or one off the forced path never counts). A search ranks its
   finds by their arrival at its goal, which only the goals after the start gate turn into timer ticks, so a record's span
   starts after the gate. `--farm` on a gated course: the farm loop (below). A bonus or transition is timed from its start
-  either way, in physics ticks as its record is (README `### Rules` 31): no held frames count (its searches rank their
+  either way, in physics ticks as its record is (RULES.md 31): no held frames count (its searches rank their
   finds so too, `Simulation.TickTimed`).
-- **Farm loop** (`Cli\CourseLoop.cs`, README `### Rules` 30). The farm is the course's steady-state loop: a lead (the
+- **Farm loop** (`Cli\CourseLoop.cs`, RULES.md 30). The farm is the course's steady-state loop: a lead (the
   course start through its last lead finish) and the loop (the laps after it through the last one's finish), timed from
   the lead's last finish in live time (held frames count). The goals: a `farm:<course>` per lead lap, then per loop lap
   the first lap's waypoints it passes in order and its finish, under a goal tracker so a finish doesn't end the run
@@ -1183,7 +1183,7 @@ The repo's `labmaps/` seeds the config folder's like techs.json.
   walked left on the Course 1 floor). A 1x playback (Play or Walk) then leaves the player in the lab's hand play at its start (its floor, ghosts
   and unlocks; **Unload** puts back what loading the lab or starting the demo changed), a turbo trace restores the lab,
   and a scene change restores it too. While a lab map is injected the game never autosaves and
-  `SaveSolverRoute` refuses: a lab is lab-only, never a route and never on a route's path (root `README.md` `### Rules`).
+  `SaveSolverRoute` refuses: a lab is lab-only, never a route and never on a route's path (`RULES.md`).
   One lab map can carry several demos: `labmaps/<id>.<name>.demo.json` is another demo on the same map, with its own `start`
   (the lab start's format) when it begins elsewhere; a tech picks it with `labDemo: <name>` next to `labmap: <id>`, and
   `lab replay`, the tech miner and the studio's demo install all start it there. A demo's inputs must run through its finish:
@@ -1609,7 +1609,7 @@ best's 49) clears the corner by 0.032 u and the gate by 0.028.
 
 ## Techs
 
-The TAS editor's **Techs here** (docs/superpowers/specs/2026-09-30-techs-here-design.md): `techs <start-trace> <route.json>
+The TAS editor's **Techs here** (docs/internals.md "TAS editor"): `techs <start-trace> <route.json>
 --at N --caps <id>` lists the techs that happen from input tick N. Suggestions, not judged or timed.
 
 ```powershell
@@ -1804,7 +1804,7 @@ A scene diff of the two builds changes no gameplay field. Everything else below 
   started in and `StickFor` returns it for those reads only (`BeforeTick` of the next tick disarms it). Unset, the window
   reads the dash tick's own stick. Without the omnidash `Update` drops the vertical; with it the stick is not snapped as a
   pressed dash's is, so sideways 0.3-0.4 and a full vertical aim it 17-22° off vertical (the Freeze aim). It is legal
-  (README `### Rules`); the Inwall wallbounce tech demo uses `turnX`. The solver tries it as the omnidash kind `steep`
+  (RULES.md); the Inwall wallbounce tech demo uses `turnX`. The solver tries it as the omnidash kind `steep`
   ((±0.35, ±1) on a dash pressed at rest).
 - Zip movers (`PlatformMover`, locked or not): a jump or wall jump while touching one calls `MakeIntangible` (through
   `Movement.MovingPlatformMomentumInherit`), which moves it to the Default layer and back to Ground after
@@ -1849,7 +1849,7 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   tree as any tree box does (below).
   In a category run (not Full-TAS) a purchase that changes the category's unlocks (the Wall jump box without WJ, any
   dash or double-jump box) ends the run (`Category unlocks changed`): the game's gate rejects such a route (the root
-  `README.md` rules: *Unlocks match the category exactly, on every tick*),
+  `RULES.md`: *Unlocks match the category exactly, on every tick*),
   and whether turbo can buy the box depends on the live save (1to2 NONE:
   [`docs/fidelity-log.md`](../docs/fidelity-log.md), *Wall jump box the live save had bought*).
 - Course resets (`Economy.LocalPrestige`: localUpgrades.OnPrestige with the course's and clones' onPrestige and every
@@ -1946,7 +1946,7 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   and the player stands on the grown Moss ground at the same height (`docs/fidelity-log.md`, *Area 2 economy checked
   against 1x*). The `Start` draws of what a segment wakes (`RandomAnimSpeedComponent`, 2 a trunk light, 3 when broken, in
   the buy's frame; the box's `LightFlicker`, 1, the frame after `IE_Grow` turns it on; a refill orb's `JiggleDropScript`, 1)
-  are made at that frame's Start pass (README ### Rules, exception 12): the engine's `Economy.StartPass`, turbo's
+  are made at that frame's Start pass (RULES.md, exception 12): the engine's `Economy.StartPass`, turbo's
   `TurboRunner.StartPass`, which puts the RNG back around Unity's later real `Start`. The draws per growth event (14, 4, 17
   and 8 on The Tree's first three segments) match 1x's.
 - Zone loads (`zoneChanger.OnTriggerEnter2D` → `ZoneLoader.LoadZone` → `IE_Load`): the activator's trigger starts the
@@ -1971,7 +1971,7 @@ too (below). Other scripts' coroutines still run to their first yield only. At 1
   1x against turbo, 629 turbo against the engine), and the engine's `probe` frame rows show the load and the first grid call
   in frame k = 2. A recreated body's place at the head of Box2D's body list (Unity remakes a re-activated object's body)
   changes nothing there: the engine with the woken bodies moved to the head wrote byte-identical `--ticks-out`.
-- A woken behaviour's `Start` (README ### Rules, exception 12): Unity runs it before the behaviour's first `Update`, in
+- A woken behaviour's `Start` (RULES.md, exception 12): Unity runs it before the behaviour's first `Update`, in
   the rendered frame after the one that woke it, and first thing in that frame: a box `IE_Grow` turns on at the end of a
   tick's last frame starts before the next tick's `FixedUpdate` (a 1x probe's `boxStart` rows: `GlobalNPincreaseBox` on
   in tick 961's frame k = 5, its `Start` in frame k = 6, logged before tick 962's tick row, `inFixedStep` false); one woken

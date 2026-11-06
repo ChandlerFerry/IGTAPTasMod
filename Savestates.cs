@@ -104,7 +104,7 @@ namespace IGTAPTasMod
         internal const string AtomDoorKey = "OpenA2Door";
 
         /// <summary>
-        /// The machine's PlayerPrefs "OpenA2Door" (README ### Rules, exception 13): the atom box's Start opens the atom room's
+        /// The machine's PlayerPrefs "OpenA2Door" (RULES.md, exception 13): the atom box's Start opens the atom room's
         /// door when it is set (upgradeBox.cs:264), its first buy opens the door only when it isn't (:644) and every buy sets it
         /// (:648). It outlives saves (only the pause menu's delete save clears it, pauseMenuScript.cs:360), so the TAS holds it
         /// as part of the state: a new game starts without it, a turbo snapshot and a savestate put theirs back.

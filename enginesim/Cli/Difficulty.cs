@@ -134,7 +134,7 @@ namespace IGTAP.EngineSim.Cli
             public int BackToBack => Pairs.Count(p => p.Forced);
         }
 
-        /// <summary>A whole route's counts (README ### Rules 54): the inputs a player times, the frame-perfect ones and the
+        /// <summary>A whole route's counts (RULES.md 54): the inputs a player times, the frame-perfect ones and the
         /// back-to-back pairs.</summary>
         internal readonly struct Tally
         {

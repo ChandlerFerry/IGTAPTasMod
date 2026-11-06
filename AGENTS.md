@@ -1,6 +1,6 @@
 # IGTAP TAS: agent notes
 
-The route rules are the `### Rules` section of [`README.md`](README.md). Read them first. They are non-negotiable, and
+The route rules are [`RULES.md`](RULES.md). Read them first. They are non-negotiable, and
 a route that breaks any of them doesn't count, however fast it is.
 
 Current targets: `bonus1` (`WJ`), Course 4 (`WJ_DS` and `WJ_DS_DJ`), Course 5 (`WJ_DS_DJ`), the `VMAN` Full-TAS run (a
@@ -21,8 +21,8 @@ movers, [`docs/fulltas.md`](docs/fulltas.md#touchgrass-any-tree-and-zip-2026-10-
   Outside the ladder every course (1–15), bonus and transition runs `WJ_DS_BS_ZIP_OM`, `WJ_DS2_BS_ZIP_OM` and
   `WJ_DS_DJ_BS_ORB_ZIP_OM` (the old omnidash top category of the ladder, every refill orb and the zip movers included;
   renamed, no alias); `WJ_DS_DJ_BS_ORB` and `WJ_DS_DJ_BS_ZIP_OM` run only on the targets with refill orbs in reach and
-  `WJ_DS_DJ_BS_ZIP` only on those with zip movers (`Categories.cs` lists them; README `### Rules` 19); bonus4 and bonus12 need the zip
-  movers, so they run only the `ZIP` categories. The tree transitions `tree<L>to<C>` (README `### Rules` 21) run
+  `WJ_DS_DJ_BS_ZIP` only on those with zip movers (`Categories.cs` lists them; RULES.md 19); bonus4 and bonus12 need the zip
+  movers, so they run only the `ZIP` categories. The tree transitions `tree<L>to<C>` (RULES.md 21) run
   `WJ_DS_DJ_BS` and every outside-ladder category. Bonuses 17–21
   and 23 (unlock boxes, the Start a VMAN speedrun boxes among them) run no category, and neither does `unlockJumpDash`
   (the jump and dash refresh orbs box at The Tree level 10, courses.json `tree`).
@@ -33,19 +33,19 @@ movers, [`docs/fulltas.md`](docs/fulltas.md#touchgrass-any-tree-and-zip-2026-10-
   of the category record; a Full-TAS run reaching the course in another state gets both directions to pick from (its
   seeds, and `LoadCourseRoutes`' fastest of each direction by the offline bests' `directions`).
 - Human record (courses only, not bonuses or transitions): `<course>_<CAT> human-major <score>` and
-  `<course>_<CAT> human-nmg <score>`, the category's best of a human class (README `### Rules` 54: digital stick, two
+  `<course>_<CAT> human-nmg <score>`, the category's best of a human class (RULES.md 54: digital stick, two
   jump buttons; human-nmg no major span) by its score, the game timer plus the default weights' seconds for spike grace,
   frame-perfect inputs and back-to-back pairs. Improve with `class` (`solve --auto --class`) writes
   `offline-best\<course>_<caps>-<class>-<score>.json`; the gate judges it as a record, scores it with `techs-used` on the
   course trace and saves it under a strictly lower score.
 - Farm route (courses only; farm this course): `<course>_<CAT> farm <lap>`, a lap of the course's steady-state loop
-  (finish to finish, by a quick restart or the drop through the end gate) in live time, seconds to 4 places (README `###
-  Rules` 30); the route is its lead and its loop (`loopFrom`, `loopLaps`). A bonus or transition is timed in ticks from
+  (finish to finish, by a quick restart or the drop through the end gate) in live time, seconds to 4 places (RULES.md 30);
+  the route is its lead and its loop (`loopFrom`, `loopLaps`). A bonus or transition is timed in ticks from
   its start already, so its record is its farm.
 - Full-TAS route: `fulltas/<run>_NONE <time>` (runs are defined in `runs/<run>.json`, [`docs/fulltas.md`](docs/fulltas.md)); `time`
-  is live time, physics ticks plus dash freezes and pauses (README `### Rules` 31), and its splits carry both the
+  is live time, physics ticks plus dash freezes and pauses (RULES.md 31), and its splits carry both the
   ticks and the held frames (`fulltas-splits.json`). A record saved when the time was ticks alone is re-timed on its
-  next trace (`RememberBestSplits`). That is the run's `major` class; its other classes (README `### Rules` 54) are
+  next trace (`RememberBestSplits`). That is the run's `major` class; its other classes (RULES.md 54) are
   `fulltas/<run>_NONE nmg <time>`, `fulltas/<run>_NONE human-major <time>` and `fulltas/<run>_NONE human-nmg <time>`,
   one best each, a human one ranked by its score (`fulltas-classes.json`).
 - All are saved only by `SaveSolverRoute`, which replays them from their start: a category route from the course start,
@@ -82,7 +82,7 @@ Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/so
   Release -o <dir>`), since the shared exe is locked while it runs.
 - The player body's interpolation stays on, as the game ships it: `Movement.FixedUpdate` reads the last frame's blend
   and its position writes pull the body back by the lag, and the step-up runs ungated in every frame. 1x playback runs
-  on a fixed 280 fps clock, a frame every 1/280 s across ticks as at the game's 280 cap (README `### Rules` 8); turbo
+  on a fixed 280 fps clock, a frame every 1/280 s across ticks as at the game's 280 cap (RULES.md 8); turbo
   and the offline engine model the same frames (`MacroEngine.FrameGrid`), so all three play alike. The overlay shows
   `INTERPOLATION ON (280 FPS CLOCK)`. Routes found before this (interpolation off, 56u step cap) have to be solved again,
   and routes judged before 2026-09-30's continuous grid (six frames a tick, 300 a second) judged again.
@@ -96,7 +96,7 @@ Don't loop over `/api/enginesim/submit` as an evaluator, and don't call `/api/so
   through the player's moved parent every frame, and the engine did after an in-run rebase. Routes judged before it can
   play differently at 1x (`ZipEscape%`'s 1158-goal offline best stops at goal 970 at 1x and offline): judge them again.
   Since 2026-10-10 turbo doesn't write the player's transform or body at all where the game doesn't: its frames' game code
-  reads the blend through `TurboRunner.BlendRead` (README exception 14), so the body keeps the sweep centre 1x carries.
+  reads the blend through `TurboRunner.BlendRead` (RULES.md exception 14), so the body keeps the sweep centre 1x carries.
 - The game is build 25706930 (Steam, 2026-10-04): an on-screen clone spawn resets a timer at two intervals or more,
   so a full pool's banked timer no longer refills a freed slot on the next frame, and every clone bought recomputes
   the interval ([`docs/fulltas.md`](docs/fulltas.md#clones-on-build-25706930)). Full-TAS routes judged before it pay

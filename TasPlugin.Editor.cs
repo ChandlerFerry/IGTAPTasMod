@@ -14,7 +14,7 @@ using UnityEngine.LowLevel;
 namespace IGTAPTasMod
 {
     /// <summary>
-    /// The TAS editor (docs/superpowers/specs/2026-09-29-manual-tas-design.md): a raw-input route edited tick by tick on the
+    /// The TAS editor (docs/internals.md "TAS editor"): a raw-input route edited tick by tick on the
     /// live game. The session plays as a normal 1x playback that holds between physics ticks: at a hold point (a frame whose
     /// FixedUpdate is due, before it runs) the main thread waits, answering the studio, until it is told to go on. The fixed
     /// clock already set that frame's game time, so the game only sees 1x's frames, later. Seeks restore a greenzone

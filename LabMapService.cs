@@ -15,7 +15,7 @@ namespace IGTAPTasMod
 {
     /// <summary>
     /// Injected lab maps (labmaps/&lt;id&gt;.json): a custom, temporary piece of level built additively in empty space to
-    /// demonstrate one tech exactly (root README "### Rules": lab only, never a route, restored afterwards).
+    /// demonstrate one tech exactly (RULES.md: lab only, never a route, restored afterwards).
     /// <c>POST /api/labmap/inject {id}</c> builds one root of colliders at its anchor (world frame through
     /// FloatingOrigin.currentOrigin), <c>POST /api/labmap/restore</c> destroys it and puts back anything the lab session
     /// touched (the player included). A tech's lab demo (the Tech tab's Play, <see cref="PlayTechLab"/>) injects, plays from

@@ -159,7 +159,7 @@ namespace IGTAP.EngineSim.Cli
             foreach (string seed in Solve.Args(args, "--seed")) candidates.Add((Path.GetFileName(seed), global::IGTAP.EngineSim.Cli.Plan.ReadRoute(seed)));
             string runFile = Path.Combine(dir, "fulltas", runKey + ".json");
             if (!args.Contains("--fresh") && File.Exists(runFile)) candidates.Add((AutoRunDir + Path.GetFileName(runFile), global::IGTAP.EngineSim.Cli.Plan.ReadRoute(runFile)));
-            // A gated course's farm is its steady-state loop, finish to finish (README ### Rules 30).
+            // A gated course's farm is its steady-state loop, finish to finish (RULES.md 30).
             if (run.Timing == "farm" && gated) return LoopAuto(run, args, candidates, dir);
             // A human class holds digital sticks: each candidate also as its part tilts snap to them.
             if (run.Human != null) candidates.AddRange(candidates.ToList().Select(c => (c.how + " (digital)", Digital(c.inputs))));
@@ -191,7 +191,7 @@ namespace IGTAP.EngineSim.Cli
                     plain.AddRange(new[] { "--stall-minutes", Math.Min(5.0, Solve.Option(args, "--minutes", 60.0) / 2).ToString(CultureInfo.InvariantCulture) });
                 int code = Solve.Run(plain.ToArray(), out List<InputTick> first);
                 // Its finish is improved on in the minutes left: a record off the forced path (8_WJ_DS_DJ_BS 0.70 after an avoid box)
-                // is never replaced by an on-path route of the same time (README ### Rules 52), so every Improve would stop here.
+                // is never replaced by an on-path route of the same time (RULES.md 52), so every Improve would stop here.
                 CourseResult firstResult = first == null ? null : PlayCourse(run, first);
                 if (firstResult == null || !firstResult.Finished || firstResult.OffPath) return code;
                 Console.WriteLine($"--auto: improving the first finish (record {firstResult.Time:0.00}s, run {firstResult.RunTicks * .02:0.00}s from the start)");
@@ -292,7 +292,7 @@ namespace IGTAP.EngineSim.Cli
             Log("polish: " + (search.Stop() ? "the minutes are up" : "converged: no goal of the span gains"));
         }
 
-        /// <summary>A course route's score (RunContext.Score): a record's game timer in ticks (README ### Rules 27-29), ties by its
+        /// <summary>A course route's score (RunContext.Score): a record's game timer in ticks (RULES.md 27-29), ties by its
         /// ticks from the run's start; a bonus's or transition's ticks from its start (31); long.MaxValue without the course's finish
         /// on its forced path.</summary>
         static long CourseScore(CourseRun run, List<InputTick> inputs)

@@ -182,7 +182,7 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// The player body's interpolation stays on, as the game ships it (README "### Rules"): playback, turbo and the offline
+        /// The player body's interpolation stays on, as the game ships it (RULES.md): playback, turbo and the offline
         /// engine all model it (MacroEngine.FrameGrid).
         /// </summary>
         private void KeepInterpolation(Movement movement)

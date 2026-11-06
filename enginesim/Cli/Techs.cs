@@ -13,7 +13,7 @@ using UnityEngine;
 namespace IGTAP.EngineSim.Cli
 {
     /// <summary>
-    /// "What can I do here?" (the TAS editor's Techs here, docs/superpowers/specs/2026-09-30-techs-here-design.md): the
+    /// "What can I do here?" (the TAS editor's Techs here, enginesim/README.md "Techs"): the
     /// techs whose key window works from a route's input tick N. The contacts along a few continuations from N (the route's
     /// own, the stick left, at rest or right, jump held or not) place each tech's key window (<see cref="TechGrafts.Compose"/>),
     /// in each direction it can take; one works when its key contact happens where its demo had it. Suggestions, not judged.

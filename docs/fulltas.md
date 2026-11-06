@@ -2,7 +2,7 @@
 
 The whole game from a fresh new game as one continuous input stream. A run is a list of goals, game events that must
 happen in order; its time is live time from the new game's first settled tick to the last goal: the physics ticks at
-0.02 s plus the frames the run stands still in, each dash freeze's and pause's, at 1/280 s (README `### Rules` 31;
+0.02 s plus the frames the run stands still in, each dash freeze's and pause's, at 1/280 s (RULES.md 31;
 `MacroEngine.LiveSeconds`). Every time is reported with its game frames (the ticks) beside it. Goals split
 the run for display and for the offline search; nothing restarts, teleports or re-times between them. A quick restart
 (`Movement.respawn(true)`, the game's QuickReset) is an input the route chooses (`reset` on a tick), so a route can
@@ -88,7 +88,7 @@ An event that isn't the next goal changes nothing (buying another box, finishing
 buys (below). Unlocks come only from the game's purchases; the plugin writes none.
 
 A run's `"human": {"grace": 2, "framePerfect": 5, "backToBack": 20}` (those when unset) are its human classes' score
-weights (README `### Rules` 54, [Routes](#routes)): the seconds a spike-grace tick, a frame-perfect input and a
+weights (RULES.md 54, [Routes](#routes)): the seconds a spike-grace tick, a frame-perfect input and a
 back-to-back pair of the whole route's [difficulty](#difficulty) add to the live time (the last two 0: unpriced). A goals edit keeps
 them, and changing them retires no route: the gate scores with them, and a solve's trace carries them (`fulltas.human`),
 so an edit captures the start again before the next solve.
@@ -370,7 +370,7 @@ for that tick (a "ghost" wall that ended the dash in the spikes), and dies there
 (`PhysicsWorld.SyncMovedWorld`).
 
 `"tree": L` on a savestate run sets The Tree at level L right after the restore, as a tree transition's start does
-(README `### Rules` 21: from 23 Area 1 overgrown and the Zone 2→1 path open; no unlock written). `"tree": [s, ...]` sets
+(RULES.md 21: from 23 Area 1 overgrown and the Zone 2→1 path open; no unlock written). `"tree": [s, ...]` sets
 exactly those segments grown instead, as a save's `_grownSegments` loads them (no auto-growth added), the plant and the
 boxes that grow one of them bought, every other box unbought, Area 1 and the path as the new game has them
 (`TreeLevel.Apply(tree, int[])`). Either way it loads the zone of the gate or checkpoint nearest the player, so a zone 2 savestate has its floor (without it the player falls through zone 1's
@@ -529,7 +529,7 @@ ticks alone is renamed to its live time on its next trace (`RememberBestSplits`)
 
 ### Idles
 
-An idle is a buy goal's wait for its Cash made visible ([design](superpowers/specs/2026-10-06-fulltas-idles-design.md)):
+An idle is a buy goal's wait for its Cash made visible:
 from the first tick the player is at the box (within its trigger's x-range plus the player's half width, at most 160 units
 below it) to the first tick the run holds what the goal's boxes cost, when that is 8 ticks or more. It is not a goal: it
 belongs to the buy it waits for, so the goal list, its numbers, `runs/<run>.json` and the gate are unchanged. The engine
@@ -542,7 +542,7 @@ ranks the route that stands idle more ahead (`Ahead`, idle-input ticks in each b
 faster stretch whose time comes back as a longer wait are kept. A best kept on such a tie isn't submitted to the gate, which
 saves only strictly faster times.
 
-Each run keeps a best per class (README `### Rules` 54, [Classes](#classes)): the record above is `major`;
+Each run keeps a best per class (RULES.md 54, [Classes](#classes)): the record above is `major`;
 `fulltas/<run>_NONE nmg <time>`, `fulltas/<run>_NONE human-major <time>` and `fulltas/<run>_NONE human-nmg <time>` are
 the others, one each (a new one replaces the old). `/api/fulltas/submit` takes `class` (unset: major) and judges the route
 as above; then, for every class, the gate runs the engine's `techs-used <trace> <route> --json` on it from the run's
@@ -838,7 +838,7 @@ human classes' score adds 5 s a frame-perfect input and 20 s a back-to-back pair
 
 ## Solving (v2): `fulltas <trace>` is `solve-run`
 
-The design is `docs/superpowers/specs/2026-10-09-fulltas-v2-design.md`; the code is `enginesim/Cli/Runs/`.
+The code is `enginesim/Cli/Runs/`.
 
 ```powershell
 & $exe fulltas $traces\fulltas-<run>.json --threads 28      # the same as: solve-run <trace> --threads 28
@@ -1015,7 +1015,7 @@ best. The other route's own replay gives its path: the player's world position, 
    tick and back, so a single tick doesn't count).
 3. A local repair in the 24 (then 60) inputs before the failure: every single change (1–3 ticks held, 1–2 dropped, a
    press, release or dash a tick earlier or later, the stick one or two steps along the controller's values: 0,
-   ±0.3–0.8 in 0.05 steps, ±1; README Rules 2), then pairs of changes from the best six. Each is played from the state at
+   ±0.3–0.8 in 0.05 steps, ±1; RULES.md 2), then pairs of changes from the best six. Each is played from the state at
    the window's start on lanes of their own (a simulation per thread) up to two goals on or 250 inputs past the failure.
    It has to reach more goals, the last one sooner, or follow the path more ticks; staying alive longer off the path
    isn't a repair. The kept change is replayed from the run's start before the next round. Every goal where a graft got
@@ -1545,7 +1545,7 @@ baseline). The default is set by the measurements below, and has every part exce
    RNG, and every later clone roll depends on it. What draws it (`--rng-study`, 357.35 s, pre-2026-09-30 build: 6,026
    draws): the clones' spawn rolls (`Economy.RollCount`, 2 a roll, one more per success; 3,150), the player's sounds
    (`Hooks.PlaySfx`/`PlayAudio`: a jump 2, a landing's footstep 2, 5 after 0.8 s in the air, a dash 2 and its end 1, a
-   wall slide 2, a quick restart 1), a buy 3. Walking draws nothing (the run animation's footstep is presentation, README
+   wall slide 2, a quick restart 1), a buy 3. Walking draws nothing (the run animation's footstep is presentation, RULES.md
    exception 11). The RNG's state after n draws is the same whenever they come, so a hop only makes another class where
    a clone roll falls between its jump and landing and the next hop; and a hop under a box bonks its underside, about 20
    ticks up and down whatever the hold. On the current build an on-screen course with clones rolls in every rendered
@@ -1935,7 +1935,7 @@ found no way in their searches. No plan reaches the zip movers. Three things sto
   (0.1 NP) comes 40 ticks after it. The plant's growth wakes `GreenCloneChanceBox` (`buytree0`), whose first `Start`
   sets its base cap (exported `Cap` 20, `baseCap` 0). The engine and turbo ended the run there ("Unmodeled:
   GreenCloneChanceBox's Start, the first since a run woke it, would change its cap"), and every way to `buytree16` goes
-  through `buytree0`. Both now run the game's own `upgradeBox.Start` in the frame 1x does (README ### Rules, exception
+  through `buytree0`. Both now run the game's own `upgradeBox.Start` in the frame 1x does (RULES.md, exception
   12; [`enginesim/README.md`](../enginesim/README.md), *A woken behaviour's `Start`*; checked against 1x, fidelity log
   *Woken upgrade boxes' Start*). The beams from `finish:6`
   (`--only lap:6,record:6,buy:buygreen6,buy:buyclone6,buy:buyatomlevel9,buy:buyatomlevel10,buy:buynp10,buy:buyatom`
@@ -2067,14 +2067,14 @@ course completion pays its `completionReward` once (`Shop`), and a Vman clock th
 a tree planted, its moss ground stood on, its first box bought three times): every economy field equal, on the same ticks
 in turbo and the engine (`--ticks`) and one probe count later on every change at 1x (where the probe logs its rows).
 Then the atoms (Course 6's atom box: landings, crafting, first-merge NP x1000, NP income) on every value and tick, Course
-10's NP and atom level boxes in turbo and the engine, and a growth's `Start` draws (README ### Rules, exception 12). The comp
+10's NP and atom level boxes in turbo and the engine, and a growth's `Start` draws (RULES.md, exception 12). The comp
 boost and Area 2 clones aren't checked: [`fidelity-log.md`](fidelity-log.md), *Area 2 economy checked against 1x* and
 *Atom grid a tick late, and the atom start*. An atom box buy writes PlayerPrefs `OpenA2Door` on the machine (the game's own
 write, upgradeBox.cs:648), which the atom box's first buy reads: a trace start records it (`enginesim/README.md`). On a
-machine without the key, a Course 6-15 start's stand-in open door (README ### Rules 21) is shut by that first buy, a
+machine without the key, a Course 6-15 start's stand-in open door (RULES.md 21) is shut by that first buy, a
 state a real game never reaches (its load opens the door only with the key or the box bought, upgradeBox.cs:264). A
 Full-TAS new game loads without the key (a savestate start: with the savestate's), and a turbo restore puts its
-snapshot's back (README ### Rules, exception 13): before, a machine that had ever bought an atom (any judge's or probe's
+snapshot's back (RULES.md, exception 13): before, a machine that had ever bought an atom (any judge's or probe's
 buy) loaded every new game with the atom room's door open, and routes traced or judged so may use a door a fresh install
 keeps shut (2026-10-05: `TrueEnding%` at 1x walked through it at (21513, -303)). Trace and judge them again.
 

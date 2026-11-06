@@ -481,7 +481,7 @@ namespace IGTAPTasMod
             long tick = _engine.PhysicsTicks, held = _engine.HeldFrames;
             string goal = idle.label ?? "the next buy";
             double left = System.Math.Max(0.0, MacroEngine.LiveSeconds(idle.afford[0], idle.afford[1]) - MacroEngine.LiveSeconds(tick, held));
-            // Rebuilt only when the tenths change: a new string every frame is IMGUI garbage (README "Studio").
+            // Rebuilt only when the tenths change: a new string every frame is IMGUI garbage (docs/internals.md "Studio").
             int tenths = (int)System.Math.Ceiling(left * 10);
             if (_idleBanner == null || _idleBannerGoal != idle.id || _idleBannerTenths != tenths)
             {

@@ -157,7 +157,7 @@ namespace IGTAPTasMod
             PatchBlendReads(harmony);
         }
 
-        // README ### Rules, exception 14: the game's reads of the player's position during a modelled frame. Every method of the
+        // RULES.md, exception 14: the game's reads of the player's position during a modelled frame. Every method of the
         // scripts a turbo frame runs that read it (Movement's, its coroutines' included; courseScript.FixedUpdate's path;
         // TeleporterScript's teleport) reads Transform.position through BlendRead, as do the plugin's hooks in those calls (a run's
         // start pin, the TAS editor's trace, the overlay).
@@ -222,7 +222,7 @@ namespace IGTAPTasMod
             return _readBack.position;
         }
 
-        // README ### Rules, exception 12: the Start draws of what a run wakes. Unity runs a woken behaviour's Start before its
+        // RULES.md, exception 12: the Start draws of what a run wakes. Unity runs a woken behaviour's Start before its
         // first Update, in the rendered frame after the wake (the same frame when woken in the physics step, the next when
         // woken at a frame's end), but a run is one Unity frame: its Start would draw after the run, at another point of the
         // RNG's sequence than 1x's. Turbo draws them at the modelled frame (StartPass) and puts UnityEngine.Random's state
@@ -253,7 +253,7 @@ namespace IGTAPTasMod
         static readonly AccessTools.FieldRef<PlatformMover, int> MoverStop = AccessTools.FieldRefAccess<PlatformMover, int>("indexInPositions");
 
         /// <summary>Unity's real Start of a behaviour a run modelled: the RNG and an upgrade box's fields (cap, base cap, costs) as the
-        /// modelled Start left them, put back after it (README ### Rules, exception 12), so it doesn't apply twice. Its door's stop
+        /// modelled Start left them, put back after it (RULES.md, exception 12), so it doesn't apply twice. Its door's stop
         /// too: the Area 2 door box modelled while still for sale and bought later in the run has a real Start that jumps the
         /// door it opened (upgradeBox.cs:260-263, PlatformMover.JumpToNextState: ZipEscape% from tick 73000, the door mid-opening
         /// back at its first stop and still, the player landing on it).</summary>
@@ -1540,7 +1540,7 @@ namespace IGTAPTasMod
                     _frame++;
                     FrameStart(player, body);
                     // The tick's frame starts with the Start of what the last frame's end woke (IE_Grow's box), before its
-                    // FixedUpdates, as Unity runs it (README ### Rules, exception 12); what the step wakes starts at the frame's pass.
+                    // FixedUpdates, as Unity runs it (RULES.md, exception 12); what the step wakes starts at the frame's pass.
                     if (StartWaiting.Count > 0) StartPass();
                     for (int i = 0; i < Pending.Count; i++)
                     {
@@ -1619,7 +1619,7 @@ namespace IGTAPTasMod
                                 _frame++;
                                 FrameStart(player, body);
                             }
-                            // Every frame's Start pass, before its Updates, as the engine's (README ### Rules, exception 12).
+                            // Every frame's Start pass, before its Updates, as the engine's (RULES.md, exception 12).
                             if (StartWaiting.Count > 0) StartPass();
                             ShowBlend(player, Vector2.Lerp(_stepFrom, _stepTo, alphas[k]));
                             Vector3 at = _blendBase;

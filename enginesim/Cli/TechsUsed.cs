@@ -46,7 +46,7 @@ namespace IGTAP.EngineSim.Cli
             bool finished = progress == goalCount;
             float live = !fullTas ? run.Time
                 : progress == 0 ? 0f : MacroEngine.LiveSeconds(run.GoalPhysicsTicks[progress - 1], run.GoalHeldFrames[progress - 1]);
-            // Nothing after a Full-TAS route's last goal is part of it (README ### Rules 32).
+            // Nothing after a Full-TAS route's last goal is part of it (RULES.md 32).
             if (fullTas && finished) report = report.Within(-1, run.GoalPhysicsTicks[progress - 1]);
             // A finished route's difficulty, measured as `difficulty` measures it with its defaults (deterministic).
             Difficulty.Tally? tally = null;

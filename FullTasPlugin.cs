@@ -31,7 +31,7 @@ namespace IGTAPTasMod
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public float[] rebaseAt;
             [JsonIgnore] public Vector2? RebaseAt { get { return rebaseAt == null || rebaseAt.Length < 2 ? (Vector2?)null : new Vector2(rebaseAt[0], rebaseAt[1]); } }
             /// <summary>
-            /// A savestate start's tree (<see cref="TreeLevel"/>): a level (README ### Rules 21), set as a tree transition's start
+            /// A savestate start's tree (<see cref="TreeLevel"/>): a level (RULES.md 21), set as a tree transition's start
             /// sets it, or an array of grown segments (a save's <c>_grownSegments</c>): exactly those grown, the boxes that grow
             /// one of them bought. After the restore the zone at the player is loaded. Test runs only
             /// (docs/fulltas.md#savestate-starts).
@@ -44,7 +44,7 @@ namespace IGTAPTasMod
             /// it's current (docs/fulltas.md "Loose buys"). Unset or "strict": only the next goal's box may be bought.
             /// </summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string buys;
-            /// <summary>The human classes' score weights (README ### Rules 54): seconds a spike-grace tick, a frame-perfect input
+            /// <summary>The human classes' score weights (RULES.md 54): seconds a spike-grace tick, a frame-perfect input
             /// and a forced back-to-back pair add to the live time. Unset: 2, 5 and 20.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public FullTasHumanWeights human;
             /// <summary>The studio's run list section: "complete", "wip" or "test". Unset: "test" with a savestate, else "wip".</summary>
@@ -110,8 +110,8 @@ namespace IGTAPTasMod
 
         // What a Full-TAS trace file holds per tick. Bump it whenever the export changes: an older trace is recaptured before a
         // solve (FullTasTraceCurrent) even when its goals and start still match (2: MacroEngine._steps left out of every snapshot,
-        // which made a 437-goal trace 3.8 GB, past what the offline engine can read; 3: a Full-TAS time is live time, README
-        // ### Rules 31, so the trace's result and the record it re-times on capture (RememberBestSplits) count held frames).
+        // which made a 437-goal trace 3.8 GB, past what the offline engine can read; 3: a Full-TAS time is live time, RULES.md 31,
+        // so the trace's result and the record it re-times on capture (RememberBestSplits) count held frames).
         const int FullTasTraceFormat = 3;
 
         /// <summary>A goal's arrival: its physics tick (game frames) and the frames the run had stood still in by then (dash
@@ -139,7 +139,7 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// The Full-TAS classes (README ### Rules 54): `major` today's runs, by live time; `nmg` without any major tech span, by
+        /// The Full-TAS classes (RULES.md 54): `major` today's runs, by live time; `nmg` without any major tech span, by
         /// live time; `human-major` and `human-nmg` the same two by score. Each keeps its own best.
         /// </summary>
         const string MajorClass = "major";
@@ -301,7 +301,7 @@ namespace IGTAPTasMod
 
         static readonly Regex FullTasToken = new Regex(@"^(start|record|farm|buy|reward|at):(.+)$");
         static readonly Regex FullTasRouteName = new Regex(@"^fulltas/([A-Za-z0-9%-]+)_NONE ", RegexOptions.IgnoreCase);
-        /// <summary>A saved Full-TAS route of any class (README "Route names"): `fulltas/&lt;run&gt;_NONE [&lt;class&gt; ]&lt;time&gt;`, no class for major.</summary>
+        /// <summary>A saved Full-TAS route of any class (AGENTS.md "Route names"): `fulltas/&lt;run&gt;_NONE [&lt;class&gt; ]&lt;time&gt;`, no class for major.</summary>
         static readonly Regex FullTasClassRoute = new Regex(@"^fulltas/(?<run>[A-Za-z0-9%-]+)_NONE (?:(?<class>nmg|human-major|human-nmg) )?(?<time>[\d.]+)$", RegexOptions.IgnoreCase);
         static readonly Regex OfflineFullTasBestFile = new Regex(@"^fulltas-([A-Za-z0-9%-]+)-([\d.]+)\.json$");
         static readonly HashSet<string> FullTasBreakerTokens = new HashSet<string> { "buyprestige5" };
@@ -316,7 +316,7 @@ namespace IGTAPTasMod
         string FullTasClassesPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "fulltas-classes.json"); } }
         string FullTasCandidatesDir(string run) { return Path.Combine(EngineSimDir, "fulltas", "candidates", run); }
         string FullTasTracePath(string run) { return Path.Combine(EngineSimDir, "fulltas-" + run + ".json"); }
-        /// <summary>A Full-TAS run's route category (README "Route names"): its own unlocks, so the fixed NONE.</summary>
+        /// <summary>A Full-TAS run's route category (AGENTS.md "Route names"): its own unlocks, so the fixed NONE.</summary>
         static string FullTasCategory(string run) { return "fulltas/" + run + "_" + default(Caps).Label; }
         /// <summary>A Full-TAS run's route name for a class: the category, then the class unless it's major.</summary>
         static string FullTasClassCategory(string run, string cls) { return FullTasCategory(run) + (cls == MajorClass ? "" : " " + cls); }

@@ -1,8 +1,8 @@
 # Full-TAS v2: handoff (2026-10-10)
 
 On **main** and origin over 6b52557 (tag `pre-v2`): v2 as one commit (1239a2d; its 59 commits one by one at tag
-`v2-2026-10-10`), then the polish fixes (5cb9a2e) and window polish (3c65290). Revert those three to go back. Design:
-`docs/superpowers/specs/2026-10-09-fulltas-v2-design.md`. How it works: `docs/fulltas.md` "Solving (v2)". Main's
+`v2-2026-10-10`), then the polish fixes (5cb9a2e) and window polish (3c65290). Revert those three to go back.
+How it works: `docs/fulltas.md` "Solving (v2)". Main's
 pre-merge uncommitted old-stack edits (to files v2 deleted): branch `wip/old-stack-before-v2`, also `stash@{0}`.
 
 Since 17:40: the movement polish keeps the best's own way on after a faster segment (`Improver.TailRejoin`); before it,
@@ -42,7 +42,7 @@ Solver (enginesim/Cli/Runs):
 - Course Improve runs on v2; the old `FullTas` stack is deleted (-13k lines); same bests in about half the time.
 
 Fidelity / tooling:
-- Turbo matches 1x: exact pose compares, first-frame Starts, and frames read the player at the blend (README exception 14):
+- Turbo matches 1x: exact pose compares, first-frame Starts, and frames read the player at the blend (RULES.md exception 14):
   417 of 480 corpus traces identical to the engine (was 149). Corpus recaptured, 81 dead traces retired (backups in `C:\tmp\igtap-corpus-backup*`).
 - `replay` skips the ending tick; `check` baseline clean (488 compared, 0 differ); pre-commit hook stamps the right commit.
 - 1x confirmation (Task 16): Fast probes, idle 1x job, `align-1x` (FalseEnding%-280 aligns on all 16973 ticks), 1x refs in `check`.

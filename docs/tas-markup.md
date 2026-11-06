@@ -35,4 +35,4 @@ Ticks are input ticks (dash and spring ticks take none, `docs/human-input.md`). 
 | `Q` | quick restart |
 
 A press, release, dash, lock, pause or restart acts on the run's first tick only. Stick values outside what a controller
-gives are snapped to it when the text is applied (README `### Rules` 2).
+gives are snapped to it when the text is applied (RULES.md 2).

@@ -2,8 +2,7 @@
 
 Read this, then the third session's measurements below it.
 
-- **Run it:** `IGTAP.EngineSim fulltas <trace>` with the trace alone, from the repo. No flags and nothing to decide
-  (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md, plan docs/superpowers/plans/2026-10-08-fulltas-unattended.md).
+- **Run it:** `IGTAP.EngineSim fulltas <trace>` with the trace alone, from the repo. No flags and nothing to decide.
   - Stage after stage it plans to the next buy, realizes it, and installs whenever the build gets further.
   - It ends at the run's last goal, at a goal that belongs to the reach solve, or after two stages in a row with no progress.
   - Report: `fulltas\<run>.report.json` beside the trace. Per stage it gives the plan ticks per round, the build, the
@@ -87,7 +86,7 @@ The 2026-10-07 notes below this section are history (still useful for the planne
 & <engine>\IGTAP.EngineSim.exe fulltas $traces\fulltas-Zip%.json
 ```
 
-The trace alone, no flags (docs/superpowers/specs/2026-10-08-fulltas-unattended-design.md): run from the repo (an install
+The trace alone, no flags: run from the repo (an install
 writes `runs/Zip%.json`). Each stage plans to the next buy, realizes, installs, and goes on until the last goal or a stop;
 `fulltas\Zip%.report.json` (beside the trace) says per stage what was planned and built, the failed moves it learned, and why it
 stopped. The flags below (`--only`, `--stages`, `--rounds`, ...) are gone; `fulltas-plan` keeps only `--try`.
@@ -128,7 +127,7 @@ You are an adversarial reviewer. Find mistakes, wrong assumptions and missed opp
 toolchain. Be skeptical and concrete; no praise. READ-ONLY: do not edit files, build, run IGTAP.EngineSim.exe or anything
 CPU-heavy, or call the game's HTTP API. Reading, grep and git log/show/diff are fine.
 
-Repo: C:\Users\deafwave\Downloads\IGTAP\IGTAPTasMod. Read README.md "### Rules" (non-negotiable), AGENTS.md and
+Repo: C:\Users\deafwave\Downloads\IGTAP\IGTAPTasMod. Read RULES.md (non-negotiable), AGENTS.md and
 docs/zip-handoff.md first. Ground truth for game mechanics: the decompiled game in obj/fulldecomp-steam/*.cs. The offline
 engine: enginesim/ (Runtime/ = game logic re-hosted, Cli/ = planners and searches).
 
@@ -148,7 +147,7 @@ Hunt for, in order:
 (b) economic levers the planner can't see or undervalues: buytree0 levels, green/clone boxes, buytree10/11 (courses exempt
     from atom resets), atom-level and NP boxes, comp boost; anything --only, Offered/Gates/Never, the pre-check or the beam
     width keeps from ever being chosen;
-(c) README rule violations (strict buys rule 38, stray buys, no state writes, offline = game);
+(c) RULES.md violations (strict buys rule 38, stray buys, no state writes, offline = game);
 (d) compute that does nothing: searches that can't succeed, retries without a change, quadratic replays, unbounded waits;
 (e) plain code bugs in the diffs, and regressions for the runs that share this code (Tree%, TouchGrass-ANY%,
     FalseEnding%-280).
@@ -208,7 +207,7 @@ buygreen9, buycd9, buyclonemult9, buyatomlevel9`): with Course 9 closed every ro
 Open, before the buytree12 stage:
 - **Per-state tree gating.** `c58ca5a` reads the level once, at table load, from the best's last goal (not the plan's start
   goal; wrong for `--from` earlier than the best, `--replace`, and the goals pull's replans, which other runs share), never
-  updates it as the plan buys tree boxes, and counts distinct boxes rather than README rule 21's level (the plant and the first
+  updates it as the plan buys tree boxes, and counts distinct boxes rather than RULES.md rule 21's level (the plant and the first
   L boxes in segment order). Decide per state in `Options` (where `Gates` is checked) from the sim's grown segments
   (`TreeLevel.Segments`). Also gate `LoadSeeds`' transition chains (`FullTas.cs` ~1566), which chain every `tree<L>to<C>`.
 - **Course 6's transition:** `tree1to6`..`tree27to6` were dropped because Course 6's start is reachable from Course 0;
@@ -485,7 +484,7 @@ Regression check after the orb fix (`6ccbdf5`), each installed best replayed wit
 Tree% 763.73 s, TouchGrass-ANY% 699.12 s and FalseEnding%-280 353.29 s reach every goal in the same ticks on both. VMAN's
 installed route dies at action 191 (goal 2 of 23) on both, so that break predates the change.
 
-Plan check (2026-10-09, `docs/superpowers/plans/2026-10-08-fulltas-unattended.md`): tasks 1-6 are `c1a0a83`, `6c42009`,
+Plan check (2026-10-09, the unattended Full-TAS plan): tasks 1-6 are `c1a0a83`, `6c42009`,
 `a6e5e4e`, `8b9fa7b`, `2133a0d`, `0a45893` (review fixes `b2622d3`), task 7's acceptance `66564b7`. Task 7 step 2, re-run
 on the redeployed plugin: `tools/validate.py` 178 OK, 2 FAIL (bonus7's two OM routes, failing the same way on Oct 3 and 4);
 `tools/tech-check.py` every demo in `techs.json` MATCH, 4 TRACE FAILED as on Oct 4 (demos set in a category their course

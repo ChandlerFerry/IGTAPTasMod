@@ -11,7 +11,7 @@ using MacroEngine = IGTAPTasMod.MacroEngine;
 
 namespace IGTAP.EngineSim.Cli
 {
-    // A course's farm as a steady-state loop (README ### Rules 30): the laps that repeat finish to finish, by a quick restart
+    // A course's farm as a steady-state loop (RULES.md 30): the laps that repeat finish to finish, by a quick restart
     // after the finish or by dropping through the end gate into the next lap, timed in live time (ticks and held frames). A
     // farm route is a lead (from the course start through its last lead finish) and the loop (the laps after it, through the
     // last one's finish: one, or more when what a lap carries into the next (a buffered jump, a coyote count) alternates). Its
@@ -501,7 +501,7 @@ namespace IGTAP.EngineSim.Cli
         static FullTasGoal FinishGoal(int course) { return new FullTasGoal { kind = FullTasGoal.Farm, course = course, label = "farm:" + course }; }
 
         /// <summary>
-        /// `solve --auto --farm` on a gated course (README ### Rules 30): the farm loop to start from (<see cref="StartLoop"/>: a
+        /// `solve --auto --farm` on a gated course (RULES.md 30): the farm loop to start from (<see cref="StartLoop"/>: a
         /// saved loop, else loop laps searched for half the minutes each), its goals (a finish per lead lap,
         /// then per loop lap the first lap's waypoints it passes and its finish), and the polish over the loop's goals, scored by
         /// its steady lap in live time (<see cref="LoopOf"/>).

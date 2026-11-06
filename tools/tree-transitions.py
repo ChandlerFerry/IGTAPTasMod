@@ -1,4 +1,4 @@
-"""The tree transitions (docs/superpowers/specs/2026-10-05-tree-transitions-design.md): from the checkpoint by the atom
+"""The tree transitions (RULES.md 21): from the checkpoint by the atom
 room (bonus11's start) to Courses 6-10's start checkpoints (the course's reset point, a 32 u arrival box on it as a
 transition to a bonus has), The Tree at each level that changes the world. Drops 6to10. Course 6 keeps only level 0
 (tree0to6): its start is accessible on Course 0, so tree1to6..tree27to6 are dropped (2026-10-05). Course 7 keeps only

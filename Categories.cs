@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 namespace IGTAPTasMod
 {
     /// <summary>
-    /// A category's unlocks (README ### Rules 10-12). Its label lists them in a fixed order, each at most once:
+    /// A category's unlocks (RULES.md 10-12). Its label lists them in a fixed order, each at most once:
     /// <c>WJ</c> wall jump, <c>DS</c>/<c>DS2</c>.. air dashes, <c>DJ</c>/<c>DJ2</c>.. air jumps, <c>BS</c> block swap on dash,
     /// <c>ORB</c> every refill orb, <c>ZIP</c> the zip movers, <c>OM</c> the omnidirectional dash; <c>NONE</c> when empty.
     /// One label per unlock set and back (<c>WJ_DS2_BS_ZIP_OM</c>); the id is the label lowercased without underscores
@@ -128,7 +128,7 @@ namespace IGTAPTasMod
         public CategoryDef(string label, CategoryScope scope) { Caps = Caps.Parse(label); Scope = scope; Targets = new string[0]; }
         public CategoryDef(string label, params string[] targets) { Caps = Caps.Parse(label); Scope = CategoryScope.Targets; Targets = targets; }
 
-        /// <summary>It is run on the target with this courses.json token and ladder range (README ### Rules 17-19, 26).</summary>
+        /// <summary>It is run on the target with this courses.json token and ladder range (RULES.md 17-19, 26).</summary>
         public bool RunsOn(string token, int minStep, int maxStep)
         {
             if (Scope == CategoryScope.All) return true;
@@ -154,7 +154,7 @@ namespace IGTAPTasMod
         /// <summary>The unlocks in the order the game sells them: courses.json's minCapabilities/maxCapabilities are steps of it.</summary>
         public static readonly string[] Ladder = { "none", "wj", "wjds", "wjdsdj", "wjdsdjbs" };
 
-        /// <summary>Targets with refill orbs in reach, and with zip movers (README ### Rules 19): the game's own grouping (an orb
+        /// <summary>Targets with refill orbs in reach, and with zip movers (RULES.md 19): the game's own grouping (an orb
         /// or mover under <c>Courses/course N</c>, <c>OvergrowthStuff/cN</c>) or the target's searched runs and routes (enginesim
         /// <c>map</c>) coming within 150 u of one; a target never searched keeps one only if a straight-line visit at 3000 u/s
         /// fits inside its ladder record. Courses 11-15 count their base course's maps, with the overgrown objects. The tree

@@ -3,7 +3,7 @@
 What starts, runs and stops a course's timer, which box the gates see, and the position writes that move the player
 between physics ticks. Read from the decompiled game (`courseScript`, `startGate`, `endGate`, `Movement`, build
 25640326) and measured in the offline engine, which runs that code (`IGTAP.EngineSim probe`, whose tick rows carry
-`courseTime`). Rules on what a route may do are README `### Rules`; this is how the game behaves.
+`courseTime`). Rules on what a route may do are RULES.md; this is how the game behaves.
 
 ## The timer
 

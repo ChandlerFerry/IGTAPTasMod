@@ -41,7 +41,7 @@ namespace IGTAPTasMod
             [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)] public int fastForward;
             /// <summary>
             /// The tech's own lab map (labmaps/&lt;id&gt;.json): its demo injects the lab, starts at its lab start and restores at
-            /// the end. Lab-only: never a route, never on a route's path (root README "### Rules"). A lab file naming the tech
+            /// the end. Lab-only: never a route, never on a route's path (RULES.md). A lab file naming the tech
             /// ("tech") is one of its labs too (<see cref="TechLabs"/>).
             /// </summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string labmap;

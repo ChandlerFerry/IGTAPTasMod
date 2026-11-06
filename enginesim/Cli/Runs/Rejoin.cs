@@ -27,7 +27,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         const int PatchBack = 40, PathAhead = 30, Cuts = 8, CutOffsets = 2;
         const float Box = 12f;
 
-        // Stick values a controller gives (README Rules 2): full, rest and the partial tilts 0.3-0.8; a human class's digital stick only.
+        // Stick values a controller gives (RULES.md 2): full, rest and the partial tilts 0.3-0.8; a human class's digital stick only.
         static readonly float[] Ladder = new[] { -1f }.Concat(Enumerable.Range(0, 11).Reverse().Select(i => -(float)Math.Round(.3 + .05 * i, 2)))
             .Concat(new[] { 0f }).Concat(Enumerable.Range(0, 11).Select(i => (float)Math.Round(.3 + .05 * i, 2))).Concat(new[] { 1f }).ToArray();
         static readonly float[] Digital = { -1f, 0f, 1f };

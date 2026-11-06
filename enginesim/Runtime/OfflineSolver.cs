@@ -361,7 +361,7 @@ namespace IGTAP.EngineSim
 
         /// <summary>
         /// The seam of a join at input <paramref name="at"/> (one run's inputs before it, another's from it): a jump held into it is
-        /// pressed there, one let go is released, so every press is a press (README ### Rules 3). False when the join would need its
+        /// pressed there, one let go is released, so every press is a press (RULES.md 3). False when the join would need its
         /// previous input to let go of a press, or one at or before <paramref name="floor"/>.
         /// </summary>
         internal static bool Seam(List<InputTick> t, int at, int floor)
@@ -426,7 +426,7 @@ namespace IGTAP.EngineSim
             return time < bestTime - .0001f || (time <= bestTime + .0001f && runTicks < bestRunTicks);
         }
 
-        /// <summary>A farm search (a farm loop's lap, README ### Rules 30): finishes rank by live time from the search's start
+        /// <summary>A farm search (a farm loop's lap, RULES.md 30): finishes rank by live time from the search's start
         /// (runTicks is then MacroEngine.LiveUnits of the run's physics ticks and held frames), the course timer breaking a tie.
         /// Set before the search starts.</summary>
         public bool Farm;

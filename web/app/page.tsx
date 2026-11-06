@@ -46,13 +46,13 @@ type PullNow = { pull: number; lever: string; goal: string; label: string; budge
 type Waypoints = { timing: "record" | "farm"; route: string; goals: string[]; rects: (number[] | null)[]; world: (number[] | null)[]; splits: number[]; timerGoal?: number; record?: number; farm?: number;
   /** The route's near misses at its gates (a gated course's finished route; see NearMisses). */
   bus?: { gate: BusEdge | null; finish: BusEdge | null } | null;
-  /** A farm target's loop (README Rules 30): its steady-state check, a lap's share of the cycle (`lap`, live seconds), the
+  /** A farm target's loop (RULES.md 30): its steady-state check, a lap's share of the cycle (`lap`, live seconds), the
    * loop's laps, ticks and held frames, the loops before it settled and each loop's cycle (live units, -1: didn't loop). The
    * lead's finishes are the goals up to `timerGoal`. */
   loop?: { steady: boolean; laps: number; ticks: number; held: number; live: number; lap: number; settled: number; cycles: number[] } };
 /** The course target the Optimize tab has open: its route, waypoints and Improve. `farm`: Improve the farm time. */
 type Direction = "forwards" | "backwards";
-/** A course record's human class (README ### Rules 54 on a course): ranked by its score, not the game timer. */
+/** A course record's human class (RULES.md 54 on a course): ranked by its score, not the game timer. */
 type HumanCourseClass = "human-major" | "human-nmg";
 const HUMAN_LABEL: Record<HumanCourseClass, string> = { "human-major": "Human major", "human-nmg": "Human NMG" };
 type CourseTarget = { course: number; capabilities: string; farm: boolean; direction?: Direction; class?: HumanCourseClass };

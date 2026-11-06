@@ -7,7 +7,7 @@ using UnityEngine;
 namespace IGTAPTasMod
 {
     /// <summary>
-    /// The Tree (zone 2, <c>treeNumber</c> 1) at a level, as a game load at that level leaves it (README ### Rules 21):
+    /// The Tree (zone 2, <c>treeNumber</c> 1) at a level, as a game load at that level leaves it (RULES.md 21):
     /// level L is the plant and the first L tree boxes in segment order bought once each (boxes 0-14, 16-27; TreePart15
     /// has none). <c>TreeController.load</c> sets each box's <c>TimesUsed</c> and calls <c>instaGrowSegments</c>; a box bought
     /// out (<c>Cap ≤ TimesUsed</c>) is deactivated as its <c>Start</c> does, an unbought one is the game's

@@ -33,7 +33,7 @@ namespace IGTAPTasMod
 
         void FullTasEvent(bool reached)
         {
-            // A Full-TAS run's time is live time: its ticks and the frames it stood still in (README ### Rules 31).
+            // A Full-TAS run's time is live time: its ticks and the frames it stood still in (RULES.md 31).
             if (reached && _fullTas.Done && _engine.IsRunning)
                 _engine.CompleteFromGame(MacroEngine.FullTasFinishReason, MacroEngine.LiveSeconds(_engine.PhysicsTicks, _engine.HeldFrames));
         }

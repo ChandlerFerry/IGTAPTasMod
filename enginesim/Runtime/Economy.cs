@@ -137,7 +137,7 @@ namespace IGTAP.EngineSim
         int _gridDue = -1;
         // The grid's first call is due in this frame's coroutine pass (GridStart): never across a tick, so not in snapshots.
         bool _gridNow;
-        // Start's draws (README ### Rules, exception 12): the drawing behaviours off at the export (their Start hasn't run),
+        // Start's draws (RULES.md, exception 12): the drawing behaviours off at the export (their Start hasn't run),
         // those of them woken since (Start drawn; copied on write, so a capture shares it) and those woken whose Start comes
         // at the next rendered frame's Start pass.
         readonly HashSet<Behaviour> _neverStarted;
@@ -1277,7 +1277,7 @@ namespace IGTAP.EngineSim
                 if (_openA2Door == null)
                     return Unmodeled("the atom box's first buy opens its door (doorToOpen.ForceNextPhase) unless PlayerPrefs hold "
                         + "\"OpenA2Door\", and this start doesn't say whether they do (economy.openA2Door)");
-                // A Course 6-15 start has the door at its open stop already (CourseStart.OpenAtomDoor, README ### Rules 21), so on
+                // A Course 6-15 start has the door at its open stop already (CourseStart.OpenAtomDoor, RULES.md 21), so on
                 // a machine without the key this buy moves it on to its next stop, shut: the game's branch on the stand-in's state,
                 // which a real game never has (a load opens the door only with the key or TimesUsed != 0, upgradeBox.cs:264).
                 _sim.Touch(door);
@@ -1580,7 +1580,7 @@ namespace IGTAP.EngineSim
         /// SetActive(true) as the game runs it (Simulation's Activated hook, on every SetActive that turns an object on, not a
         /// restore's): the OnEnable of every behaviour it wakes runs at once, and two of them draw UnityEngine.Random:
         /// upgradeBox.OnEnable twice (the multibuy text's repeat rate, customBoxUpdate's first delay), ObjectBobber.OnEnable
-        /// once, except in a Full-TAS run, where 1x and turbo give a bobber's draw back (README exception 11: a buy-max box's
+        /// once, except in a Full-TAS run, where 1x and turbo give a bobber's draw back (RULES.md exception 11: a buy-max box's
         /// "buy N" text turns on from its multibuy timer at 1x only). Start (LightFlicker, RandomAnimSpeedComponent,
         /// JiggleDropScript, upgradeBox) runs before the behaviour's first Update: at 1x in the same rendered frame for an object
         /// woken in a physics step, in the next for one woken at a frame's end. A turbo run never reaches it, so its draws are
@@ -1599,7 +1599,7 @@ namespace IGTAP.EngineSim
         /// A SetActive(true) woke these (Simulation's Activated hook): each drawing behaviour among them whose Start hasn't run
         /// (off at the export and not woken since) waits for the next rendered frame's Start pass (<see cref="StartPass"/>).
         /// Start runs before a behaviour's first Update: in the same frame when woken in the physics step, the next when woken
-        /// at a frame's end (README ### Rules, exception 12).
+        /// at a frame's end (RULES.md, exception 12).
         /// </summary>
         internal void Woken(GameObject g)
         {

@@ -333,7 +333,7 @@ namespace IGTAPTasMod
             VmanScript.vmanTimeLeft = 0.0;
             VmanScript.VmanStatingUpgrades = null;
             // A fresh install has no PlayerPrefs "OpenA2Door" (a savestate start: the savestate's), so the load's atom box Start
-            // leaves the atom room's door shut as a new player finds it (README ### Rules, exception 13).
+            // leaves the atom room's door shut as a new player finds it (RULES.md, exception 13).
             SavestateService.SetAtomDoorKey(state?.openA2Door == true);
             SceneManager.LoadScene("Overworld");
             _newGameStart = null;
@@ -518,7 +518,7 @@ namespace IGTAPTasMod
             return Caps.TryParse(label, out Caps caps) ? caps : Caps.Parse(label == null ? "" : label.ToUpperInvariant());
         }
 
-        /// <summary>The largest step of <see cref="Categories.Ladder"/> this unlock set has (README ### Rules 18): courses.json's
+        /// <summary>The largest step of <see cref="Categories.Ladder"/> this unlock set has (RULES.md 18): courses.json's
         /// minCapabilities/maxCapabilities name these, never anything above the ladder's top.</summary>
         internal static string LadderStepFor(Caps unlocks)
         {
@@ -527,7 +527,7 @@ namespace IGTAPTasMod
             return Categories.Ladder[0];
         }
 
-        /// <summary>The fields a category sets from its own unlocks (README ### Rules 10-13): the player's abilities, the refill
+        /// <summary>The fields a category sets from its own unlocks (RULES.md 10-13): the player's abilities, the refill
         /// orbs and zip movers it has, and the coloured blocks' start below block swap.</summary>
         internal static IEnumerable<(string field, object value)> CategoryAbilities(string caps)
         {
@@ -536,7 +536,7 @@ namespace IGTAPTasMod
                 ("maxAirDashes", unlocks.Dashes), ("airDashesLeft", unlocks.Dashes),
                 ("doubleJumpUnlocked", unlocks.DoubleJump), ("maxAirJumps", unlocks.AirJumps), ("airJumpsLeft", unlocks.AirJumps),
                 ("blockSwapUnlocked", unlocks.BlockSwap), ("omniDashUnlocked", unlocks.Omni),
-                // ORB has every refill orb (README ### Rules 11): the orbs' unlock box and the "more orbs" box (1 each) plus
+                // ORB has every refill orb (RULES.md 11): the orbs' unlock box and the "more orbs" box (1 each) plus
                 // Area 1's overgrowth (+1 more orbs, upgradeBox.cs:836), so every orb's ActivationSequence (0-2) is under their
                 // sum and dash, jump and full refill orbs are all on. ZIP has the zip movers. Nothing else turns either on.
                 (GlobalUpgradeField(globalStats.globalUpgradeSet.unlockJiggleDrops), unlocks.Orbs ? 1.0 : 0.0),
@@ -549,7 +549,7 @@ namespace IGTAPTasMod
         }
 
         /// <summary>What a run changes on its way: a category sets these at its start but nothing holds them all run, so the
-        /// gate compares the unlocks only (README ### Rules 10).</summary>
+        /// gate compares the unlocks only (RULES.md 10).</summary>
         internal static readonly string[] CategoryRunState = { "airDashesLeft", "airJumpsLeft", BlueActiveField };
 
         /// <summary>Sets the category's abilities (the values before, to put back) and the movers' start: <see cref="ResetZipMovers"/>
@@ -577,7 +577,7 @@ namespace IGTAPTasMod
         /// export and playback all begin with the movers in the same place. Not JumpToState itself: its coroutine keeps
         /// `reset` on for two physics steps, which a turbo snapshot would capture and keep. Then the atom room's door as the
         /// load's <c>upgradeBox.Start</c> leaves it: open when the save bought the first atom (the box's TimesUsed, PlayerPrefs
-        /// OpenA2Door, only read), and on Courses 6-15 always (README ### Rules 21, <see cref="CourseStart.AssumesAtomDoor"/>).
+        /// OpenA2Door, only read), and on Courses 6-15 always (RULES.md 21, <see cref="CourseStart.AssumesAtomDoor"/>).
         /// Nothing is bought and nothing written to PlayerPrefs or the save; the door keeps that stop in the session until the
         /// next category start or a reload.
         /// </summary>

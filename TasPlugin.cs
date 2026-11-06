@@ -240,7 +240,7 @@ namespace IGTAPTasMod
         static readonly FieldInfo BlockSwapperField = AccessTools.Field(typeof(Movement), "blockSwapper");
 
         // A global upgrade (globalStats.globalUpgradeDict) as a pseudo field of the player, saved and put back with the
-        // unlocks: ORB has every refill orb on and ZIP the zip movers (README ### Rules 11); every category sets them from
+        // unlocks: ORB has every refill orb on and ZIP the zip movers (RULES.md 11); every category sets them from
         // its own unlocks and nothing else turns either on.
         internal const string GlobalUpgradePrefix = "globalUpgradeDict.";
         internal static string GlobalUpgradeField(globalStats.globalUpgradeSet upgrade) { return GlobalUpgradePrefix + upgrade; }

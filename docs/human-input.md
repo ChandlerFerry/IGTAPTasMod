@@ -1,6 +1,6 @@
 # Matching human input
 
-Every route must be playable on a real controller (`README.md` "### Rules"). This is the mechanics behind that rule:
+Every route must be playable on a real controller (`RULES.md`). This is the mechanics behind that rule:
 what the game reads from a human, what a human cannot produce, and how playback, turbo and the offline engine produce
 exactly what a human would. The route gate checks it (see "The gate" below), so a route that matches human input is not
 a convention here, it is enforced.
@@ -27,7 +27,7 @@ for ~0.05 s of real time while `Movement.Update` keeps running every frame. A da
 the omnidash: with the stick at rest) goes the way the player faces and takes the stick every `Update` reads before the
 next tick, the last one winning (`WaitingForDashInput`, Movement.cs:817-834). A dash tick's `turnX`/`turnY`
 (`MacroStep.dashTurnX`/`dashTurnY`) is that stick: the dash turns to it, as a player tilting the stick during the freeze
-turns it. It is legal (README "### Rules"): the one input that changes between two ticks. Nothing else reads the stick
+turns it. It is legal (RULES.md): the one input that changes between two ticks. Nothing else reads the stick
 in that window. Without the omnidash `Update` drops the vertical, so only `turnX` counts. The recorder writes them when
 a recorded dash's first dash frame goes another way than its start (`InputRecorder.DashFrame`). They stay their own
 fields and not part of `lockMoveX` (the stick through the dash lock): 28 dash steps in saved routes press dash with no
@@ -68,7 +68,7 @@ release reaches it (`Movement.Update`); holding is never read. A jump press whil
 going down. A release lifts both. With both down there is no third button: a TAS route (a category route, a Full-TAS
 `major` or `nmg` one) still presses, as one button released and pressed again within the tick (the press clears the
 release's jump cut before the tick reads it, a 3.6 ms retap no human makes), but a human class's replay (`human-major`,
-`human-nmg`) ends there (`MacroEngine.HumanClass`, README `### Rules` 54). A human class's stick is digital too: a
+`human-nmg`) ends there (`MacroEngine.HumanClass`, RULES.md 54). A human class's stick is digital too: a
 part tilt anywhere (the tick's stick, `lockMoveX`/`lockMoveY`, `dashTurnX`/`dashTurnY` anything but 0 or ±1) ends its
 replay, so it has the KB Wall Clip and not the GC one. The `two-button-jump` lab shows what the
 second button is for. Dash presses on consecutive ticks alternate the two dash buttons. The
@@ -194,7 +194,7 @@ move a press or a dash a few ticks while keeping where the hold ends.
   fps with interpolation off; with it on, as the game ships it, 0, 0, 1, 1 and 2. The Course 1 demo chain at 280 fps
   with interpolation on climbs 112, 56, 56, 56 and its wallbounce reaches the roof (494), so a player can do it. The
   TAS keeps interpolation on and plays back on a fixed 280 fps clock; turbo and the offline engine run the same frames
-  (`MacroEngine.FrameGrid`, README "### Rules"), step-ups ungated, so a turbo-judged route plays back the same at 1x.
+  (`MacroEngine.FrameGrid`, RULES.md), step-ups ungated, so a turbo-judged route plays back the same at 1x.
   The overlay labels the chain and its wallbounce INWALL WALLBOUNCE
   (`Tech.InwallWallBounce`: a step-up whose forward rays, `wallJumpFacing`, looked away from the dot's facing, then a
   wall kick within 6 ticks).

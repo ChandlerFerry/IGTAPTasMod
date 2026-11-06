@@ -142,7 +142,7 @@ namespace IGTAPTasMod
         /// <summary>
         /// A trace that replayed the record's own inputs (the trace starts with them) keeps the record's splits, and puts the
         /// record's name to the time the replay took when it differs: a record saved when a Full-TAS time was its physics ticks
-        /// alone (before dash freezes counted, README ### Rules 31) is re-timed here on its next trace. One whose replay dies or runs
+        /// alone (before dash freezes counted, RULES.md 31) is re-timed here on its next trace. One whose replay dies or runs
         /// out of inputs short of its goals (a game update changed it) is retired, as a 1x play retires it.
         /// </summary>
         void RememberBestSplits(FullTasRunDef run, List<SolverTick> inputs, bool finished, float time, FullTasTracker tracker, string status)

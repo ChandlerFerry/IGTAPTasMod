@@ -29,7 +29,7 @@ namespace IGTAP.EngineSim.Cli
     /// no other beats on time, frame-perfect inputs and back-to-back pairs at once are measured again as the gate's techs-used does
     /// (humanize's version, spike grace, spans), listed and written to traces\human-finds\&lt;course&gt;_&lt;caps&gt;-&lt;class&gt;\. The lowest
     /// score, when it beats every seed's, is written to offline-best for the plugin's gate (the class's record: a strictly lower
-    /// score, README ### Rules 54); any other pick copied there under the name the list gives is judged the same way.
+    /// score, RULES.md 54); any other pick copied there under the name the list gives is judged the same way.
     /// </summary>
     static partial class Difficulty
     {

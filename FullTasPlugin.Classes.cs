@@ -48,7 +48,7 @@ namespace IGTAPTasMod
         /// human class. A human route with no class result ranks at its live time, its score's floor, so a route beating less
         /// never replaces it. The live time is the route's exact one from its splits (fulltas-splits.json: its last split's ticks
         /// and held frames) when it has them, not its name's, which rounds: a re-judge of the same route (704.665 against the
-        /// name's 704.67) is not faster (README ### Rules 52).
+        /// name's 704.67) is not faster (RULES.md 52).
         /// </summary>
         MacroDefinition FullTasClassBest(string run, string cls, out float rank)
         {
@@ -94,7 +94,7 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// The class half of the gate (README ### Rules 54): the engine's tech checks replay the route from the run's trace, an
+        /// The class half of the gate (RULES.md 54): the engine's tech checks replay the route from the run's trace, an
         /// nmg class refuses any major span, and a human class's score (with its difficulty counts) has to be strictly lower than its
         /// best's. The class result goes to <c>judge.record</c>. A major route is ranked by live time alone: when the checks can't
         /// class it, it is judged as before and saved without a class result.

@@ -73,7 +73,7 @@ namespace IGTAPTasMod
         public List<MacroStep> steps = new List<MacroStep>();
         public List<RouteMarker> markers;
         public int rerecords;
-        /// <summary>A farm route's loop (README ### Rules 30): the input tick its loop starts on, after the lead's last finish
+        /// <summary>A farm route's loop (RULES.md 30): the input tick its loop starts on, after the lead's last finish
         /// (0: not a farm loop), and the laps in the loop (0 or 1: one).</summary>
         public int loopFrom, loopLaps;
         public bool ShouldSerializemarkers() { return markers != null && markers.Count > 0; }

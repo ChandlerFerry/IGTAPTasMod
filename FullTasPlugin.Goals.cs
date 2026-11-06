@@ -451,7 +451,7 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// The gate's check of a route of the run for a class (README ### Rules 54; major: today's record): saved as that class's
+        /// The gate's check of a route of the run for a class (RULES.md 54; major: today's record): saved as that class's
         /// best when it holds up and beats it, live time for major and nmg, score for a human class.
         /// </summary>
         FullTasVerdict FullTasJudge(FullTasRunDef run, List<SolverTick> inputs, List<FullTasRunGoal> goals = null, List<List<FullTasRunGoal>> goalsFrom = null, string cls = MajorClass)

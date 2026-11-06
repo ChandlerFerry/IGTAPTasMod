@@ -19,7 +19,7 @@ namespace IGTAP.EngineSim.Cli
     /// solved exactly offline and played as a demo. <c>lab space</c> finds the empty regions to anchor one in; <c>lab solve</c>
     /// runs an exhaustive search over the human-legal input alphabet from the lab's start to its finish box and writes the
     /// minimum-tick demo (<c>labmaps/&lt;id&gt;.demo.json</c>); <c>lab replay</c> checks a demo offline. Lab-only: a lab map is
-    /// never a route and never on a route's path (root README "### Rules").
+    /// never a route and never on a route's path (RULES.md).
     /// </summary>
     static class Lab
     {

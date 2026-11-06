@@ -8,7 +8,7 @@ using UnityEngine;
 namespace IGTAP.EngineSim
 {
     /// <summary>
-    /// The economy without the player: the economy planner's Cash model (docs/superpowers/specs/2026-10-03-economy-planner-design.md).
+    /// The economy without the player: the economy planner's Cash model (docs/fulltas.md "Offline economy").
     /// A physics tick's economy half is the pieces below, which <see cref="Run"/>'s tick plays between the player's: the due
     /// Invokes and Seconds waits (<see cref="EconomyTickStart"/>), globalStats' NP (Economy.FixedStep), the course, Vman clock,
     /// refill orb and box cooldown FixedUpdates (<see cref="EconomyFixedUpdates"/>), the buy-max steps and FixedUpdate waits
@@ -164,7 +164,7 @@ namespace IGTAP.EngineSim
         }
 
         /// <summary>Before the tick's other FixedUpdates, in the frame that will cross the tick: the Start of what the last frame's end
-        /// woke (IE_Grow's box: Unity runs it before the frame's FixedUpdates, README ### Rules, exception 12), the due Invokes,
+        /// woke (IE_Grow's box: Unity runs it before the frame's FixedUpdates, RULES.md, exception 12), the due Invokes,
         /// then the Seconds waits.</summary>
         void EconomyTickStart()
         {

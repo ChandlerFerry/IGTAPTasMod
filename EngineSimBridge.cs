@@ -268,7 +268,7 @@ namespace IGTAPTasMod
             return new { ok = false, error = "No slack report for " + name + " yet: humanize writes one next to every best." };
         }
 
-        // The Optimize tab's class card: a course route's `techs-used --json` on its course trace (README ### Rules 54's classes:
+        // The Optimize tab's class card: a course route's `techs-used --json` on its course trace (RULES.md 54's classes:
         // its nmg and major spans, spike grace, difficulty, human inputs and scores). Read-only; kept per route while its
         // inputs and the trace stand.
         object EngineSimClasses(WebStudioRequest request, JObject body)
@@ -399,7 +399,7 @@ namespace IGTAPTasMod
             double farmBest = FarmTracked ? FarmBest(SolverCategory) : double.NegativeInfinity;
             ParkAtStart();
             var result = new JudgeResult { finished = loop.steady, loop = loop, previousFarm = double.IsInfinity(farmBest) ? (double?)null : farmBest };
-            // The record is known to its name's 4 places only: a lap that would get the same name isn't faster (README ### Rules 52).
+            // The record is known to its name's 4 places only: a lap that would get the same name isn't faster (RULES.md 52).
             if (!loop.steady || FarmName(loop.lap) >= farmBest) return result;
             if (!_startFresh)
             {
@@ -598,7 +598,7 @@ namespace IGTAPTasMod
             {
                 if (group.Key == solving || group.Key == FullTasSolvingGroup) continue;
                 var files = group.OrderBy(f => f.time).ThenBy(f => f.runTicks).ToList();
-                // The record from a plain best, the farm from a farm loop (README ### Rules 30): a plain best is no farm loop.
+                // The record from a plain best, the farm from a farm loop (RULES.md 30): a plain best is no farm loop.
                 OfflineBest fastest = files.FirstOrDefault(f => !f.loop && f.cls == null), fewest = files.FirstOrDefault(f => f.loop);
                 OfflineBest any = fastest ?? fewest ?? files[0];
                 bool judgeable = any.judgings.Count > 0;
@@ -713,7 +713,7 @@ namespace IGTAPTasMod
             if (Truthy(body, "world"))
             {
                 // The world as the run starts it, not as the live game has it: the category's abilities are applied while it
-                // is written (below block swap the coloured blocks start unswapped, README ### Rules 13), so a trace's world
+                // is written (below block swap the coloured blocks start unswapped, RULES.md 13), so a trace's world
                 // agrees with the state its run and the judge start from.
                 List<(string field, object value)> exportAbilities = player == null ? null : ApplyAbilities(player, caps, finishCourse);
                 try { EngineSimExport.WriteWorld(Path.Combine(EngineSimDir, name + ".world.json")); }

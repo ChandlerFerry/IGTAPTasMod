@@ -29,7 +29,7 @@ namespace IGTAPTasMod
             public string minCapabilities;
             public string maxCapabilities;
             public bool overgrown;
-            /// <summary>The Tree's level on this target (README ### Rules 21: the tree transitions); null: the save's own.</summary>
+            /// <summary>The Tree's level on this target (RULES.md 21: the tree transitions); null: the save's own.</summary>
             public int? tree;
             [JsonIgnore] public int GameCourse { get { return overgrown ? id - 10 : id; } }
             [JsonIgnore] public bool HasFinish { get { return endW > 0f && endH > 0f; } }
@@ -38,10 +38,10 @@ namespace IGTAPTasMod
             [JsonIgnore] public string Token { get { return string.IsNullOrEmpty(name) ? id.ToString() : name; } }
             /// <summary>The lowest <see cref="Categories.Ladder"/> step it runs (courses.json's minCapabilities; none when unset).</summary>
             [JsonIgnore] public int MinStep { get { return Math.Max(0, Categories.LadderStep(minCapabilities)); } }
-            /// <summary>The highest ladder step it runs (README ### Rules 17-18): maxCapabilities, a bonus's own step, or up to
+            /// <summary>The highest ladder step it runs (RULES.md 17-18): maxCapabilities, a bonus's own step, or up to
             /// the ladder's top when it's unset.</summary>
             [JsonIgnore] public int MaxStep { get { return !string.IsNullOrEmpty(maxCapabilities) ? Math.Max(0, Categories.LadderStep(maxCapabilities)) : IsBonus ? MinStep : Categories.Ladder.Length - 1; } }
-            /// <summary>The category is run here (README ### Rules 17-19, 26): <see cref="CategoryDef.RunsOn"/>.</summary>
+            /// <summary>The category is run here (RULES.md 17-19, 26): <see cref="CategoryDef.RunsOn"/>.</summary>
             public bool HasCategory(string idOrLabel)
             {
                 CategoryDef def = Categories.Find(idOrLabel);
@@ -86,7 +86,7 @@ namespace IGTAPTasMod
         long _solveRuns, _solveFinishes;
         int _turboChecks, _turboSaved;
         float _solveBest = float.PositiveInfinity;
-        /// <summary>The fastest offline best's farm loop cycle (live seconds, README ### Rules 30), for an Improve of the farm time.</summary>
+        /// <summary>The fastest offline best's farm loop cycle (live seconds, RULES.md 30), for an Improve of the farm time.</summary>
         float _solveBestFarm = float.PositiveInfinity;
         /// <summary>Improve's last `waypoints {json}` line: the waypoints with the best's ticks at each (null before one).</summary>
         JObject _solveWaypoints;
@@ -225,7 +225,7 @@ namespace IGTAPTasMod
                 int id = 201;
                 while (_courses.Any(c => c.id == id)) id++;
                 Movement player = FindWorldMovement();
-                // Its min is always a ladder step (README ### Rules 18): the name's category when it is one of them, else the
+                // Its min is always a ladder step (RULES.md 18): the name's category when it is one of them, else the
                 // largest the save's unlocks have (a course's, capped at the ladder's top).
                 CategoryDef named = !m.Groups["label"].Success ? null : Categories.Find(m.Groups["label"].Value.ToUpperInvariant());
                 string step = named != null && named.Scope == CategoryScope.Range ? named.Id
@@ -632,7 +632,7 @@ namespace IGTAPTasMod
             string missing = optional.FirstOrDefault(n => !known.Contains(n));
             if (missing != null) throw new InvalidOperationException("No optional block '" + missing + "' for " + def.Token + " " + capabilities + ".");
             bool farm = Truthy(item, "farm");
-            // Bonuses and transitions are timed in ticks already (README ### Rules 31): their record is their farm time.
+            // Bonuses and transitions are timed in ticks already (RULES.md 31): their record is their farm time.
             if (farm && (def.IsBonus || def.IsTransition)) throw new InvalidOperationException(def.Token + " has no separate farm time: improve its record.");
             int[] focus = item["focus"] is JArray range && range.Count == 2 ? new[] { (int)range[0], (int)range[1] } : null;
             if (focus != null && (focus[0] < 1 || focus[1] < focus[0]))
@@ -1410,7 +1410,7 @@ namespace IGTAPTasMod
                     _audit.Add("tick " + tick + ": unlocks differ from the run's purchases (" + u + ")");
                 return;
             }
-            // The unlocks must match the category exactly on every tick (README ### Rules 10): the expected values come from
+            // The unlocks must match the category exactly on every tick (RULES.md 10): the expected values come from
             // the same list its start applies, less what a run changes on its way (CategoryRunState).
             if (CategoryAbilities(_solverCaps).Any(a => !CategoryRunState.Contains(a.field) && !Equals(GetMovementField(player, a.field), a.value)))
                 _audit.Add("tick " + tick + ": unlocks differ from category " + Caps.Parse(_solverCaps).Label);
@@ -1568,9 +1568,9 @@ namespace IGTAPTasMod
         static string FarmSeconds(double seconds) { return seconds.ToString("0.0000", CultureInfo.InvariantCulture); }
 
         /// <summary>
-        /// The only way a category route is saved (README ### Rules 43). A record (<paramref name="loopFrom"/> 0): when a replay
-        /// from the course start finishes in <paramref name="time"/> and every tick obeys the category. A farm loop (README ###
-        /// Rules 30; its loop from input <paramref name="loopFrom"/>, <paramref name="loopLaps"/> laps): when a replay from the
+        /// The only way a category route is saved (RULES.md 43). A record (<paramref name="loopFrom"/> 0): when a replay
+        /// from the course start finishes in <paramref name="time"/> and every tick obeys the category. A farm loop (RULES.md 30;
+        /// its loop from input <paramref name="loopFrom"/>, <paramref name="loopLaps"/> laps): when a replay from the
         /// course start loops in exactly <paramref name="loopLive"/> units a loop (<see cref="EvaluateLoop"/>) and every tick obeys
         /// the category; named by a lap's share, `<c>&lt;category&gt; farm &lt;lap&gt;</c>`. On a two-way course a record is also
         /// saved as `<c>&lt;category&gt; &lt;direction&gt; &lt;time&gt;</c>` for each direction the replay keeps and beats
@@ -1627,7 +1627,7 @@ namespace IGTAPTasMod
         static readonly string[] HumanCourseClasses = { "human-major", "human-nmg" };
 
         /// <summary>
-        /// The human-class half of a course record's gate (README ### Rules 54, on a course): the engine's techs-used replays the
+        /// The human-class half of a course record's gate (RULES.md 54, on a course): the engine's techs-used replays the
         /// route from the course's start trace, again as a human class plays it (digital stick, two jump buttons), and scores it.
         /// The route must finish there in the gate's own time, have a score in the class (human inputs; human-nmg: no major span)
         /// and, as its name rounds it, a lower one than the class's record.
@@ -1656,7 +1656,7 @@ namespace IGTAPTasMod
                 : "score " + score.ToString("0.00", CultureInfo.InvariantCulture) + " not lower than " + SolverCategory + " " + cls + "'s " + best.ToString("0.00", CultureInfo.InvariantCulture);
         }
 
-        /// <summary>A score as a human record's name has it (to 0.01): one that would get the same name isn't lower (README ### Rules 52).</summary>
+        /// <summary>A score as a human record's name has it (to 0.01): one that would get the same name isn't lower (RULES.md 52).</summary>
         static float ScoreName(float score) { return float.Parse(score.ToString("0.00", CultureInfo.InvariantCulture), CultureInfo.InvariantCulture); }
 
         /// <summary>The category's record score in a human class (+infinity: none yet).</summary>
@@ -1689,7 +1689,7 @@ namespace IGTAPTasMod
         /// <summary>A farm route's playback (ReplaySelected): its finishes are laps' ends, not the run's.</summary>
         bool _farmPlayback;
 
-        /// <summary>A farm loop's replay (README ### Rules 30): the lead's last finish, then each loop's cycle.</summary>
+        /// <summary>A farm loop's replay (RULES.md 30): the lead's last finish, then each loop's cycle.</summary>
         sealed class LoopResult
         {
             /// <summary>Every loop finished on its own last input and the last two cycles are equal.</summary>
@@ -1746,7 +1746,7 @@ namespace IGTAPTasMod
         }
 
         /// <summary>
-        /// A farm route saved before farms were loops (README ### Rules 30) times one lap from the quick restart, not a loop: it
+        /// A farm route saved before farms were loops (RULES.md 30) times one lap from the quick restart, not a loop: it
         /// can't be compared with one, so it is renamed stale (out of the ranking, kept for its inputs).
         /// </summary>
         bool RetireLapFarms()

@@ -69,7 +69,7 @@ namespace IGTAPTasMod
         public float AuthoritativeCompletionTime { get { return _authoritativeCompletionTime; } }
         public event Action<bool, string> AttemptEnded;
         public bool Quiet;
-        /// <summary>A human class's replay (README ### Rules 54): a jump press while both jump buttons are down
+        /// <summary>A human class's replay (RULES.md 54): a jump press while both jump buttons are down
         /// (<see cref="JumpButtonsDown"/> 2), or a stick at a part tilt (anything but 0 or full: a keyboard's, so the KB wall
         /// clip stands and the GC one doesn't), ends the run instead of pressing. A setting of the replay, not engine state: FieldState
         /// skips it, so a restore keeps it.</summary>

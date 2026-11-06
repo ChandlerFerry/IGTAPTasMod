@@ -62,7 +62,7 @@ namespace IGTAPTasMod
                 if (steps.Sum(s => (long)Math.Max(1, s.durationTicks)) > TasMarkup.MaxTicks)
                     throw new InvalidOperationException("The shared route is longer than " + TasMarkup.MaxTicks + " input ticks.");
                 steps = steps.Where(s => s.enabled).ToList();
-                // Its ticks as the editor keeps them: controller sticks only (README ### Rules 2).
+                // Its ticks as the editor keeps them: controller sticks only (RULES.md 2).
                 steps = ToSteps(ToTicks(steps).Select(TasSanitize).ToList());
                 var route = new MacroDefinition { name = TasUniqueName(SharedName(((string)doc["name"] ?? "shared").Trim())), steps = steps,
                     markers = doc["markers"]?.ToObject<List<RouteMarker>>(), rerecords = (int?)doc["rerecords"] ?? 0 };

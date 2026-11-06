@@ -1,4 +1,4 @@
-"""Turns on the repo's git hooks (.githooks/): the engine check before engine commits (docs/superpowers/specs/2026-10-09-fulltas-v2-design.md, 1.2)."""
+"""Turns on the repo's git hooks (.githooks/): the engine check before engine commits (AGENTS.md "Using the game")."""
 import subprocess
 import sys
 from pathlib import Path
