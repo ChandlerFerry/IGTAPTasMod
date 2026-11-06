@@ -1,19 +1,3 @@
-"""Compare the economy of two runs of the same inputs field by field, each field as the sequence of values it takes (1x's
-physics count runs ahead through dash freezes, so ticks don't line up; enginesim/README.md#probe).
-
-  economy-diff.py <a> <b> [--fields cash,gp,np,cd,rp,atoms,waiting,npTick,npCap,npBoost,cdMult,segments,treeBoxes] [--ticks]
-
---ticks also compares the physics tick each value first appears on (each row's `physics`; the first value's is where the
-table starts, not compared): the same values, changing on the same ticks. Only meaningful where both sides count physics ticks alike (no dash freeze in the stretch, or turbo against the
-offline engine).
-
-Each side is a 1x probe log (probes/<name>.json: its `kind: "tick"` rows), enginesim's `fulltas --check --ticks-out` or
-`replay --ticks-out` lines, or a trace (`/api/enginesim/trace`: its ticks, turbo's); every row's economy is its `econ`
-object (TasPlugin.EconomyNow, FullTas.EconomyRow). A probe row's `econPre` (taken at its tick's globalStats.FixedUpdate,
-before the NP payout) is used when it has one: it is the point the others' rows are taken at, after the last tick's
-rendered frames, so two changes in one tick (a merge's NP in a frame, the next tick's payout) group the same way. Both
-sides are cut at the last physics tick they share (a 1x probe runs on past its inputs). Exits 1 when a field differs.
-"""
 import argparse
 import json
 import sys
@@ -44,14 +28,11 @@ def rows(path):
 
 
 def common(a, b):
-    """Both tables cut at the last physics tick they share."""
     last = min(max((r.get("physics", 0) for r in a), default=0), max((r.get("physics", 0) for r in b), default=0))
     return [r for r in a if r.get("physics", 0) <= last], [r for r in b if r.get("physics", 0) <= last]
 
 
 def seq(table, field, ticks=False):
-    """The values a field takes, in order; with ticks, each as (value, the physics tick it first appears on; None for the
-    first, the table's start)."""
     out = []
     for r in table:
         econ = r.get("econ") or {}

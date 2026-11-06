@@ -16,20 +16,13 @@ type Route = { id: string; name: string; actionCount: number; actions: Action[] 
 type RecordedAction = { label: string; durationTicks: number };
 type Recording = { id: string; name: string; createdUtc: string; sampleCount: number; actionCount: number; courseTimeSeconds: number; actions: RecordedAction[] };
 type Savestate = { id: string; name: string; createdUtc: string; assigned: boolean };
-// A category's unlocks (Categories.cs): the label lists them in a fixed order (WJ, DS/DSn, DJ/DJn, BS, ORB, ZIP, OM;
-// NONE when empty), and every unlock not in the label is off.
 type Caps = { wallJump: boolean; dashes: number; airJumps: number; blockSwap: boolean; orbs: boolean; zip: boolean; omni: boolean };
 type Category = { id: string; label: string; caps: Caps };
 type Course = { id: number; token: string; bonus: boolean; categories: string[]; from?: string; to?: string; hint?: string | null; optional?: OptionalBlock[] };
 type OptionalBlock = { name: string; note: string; on?: boolean; capabilities: string[] };
 type SolverState = { running: boolean; status: string; speed?: string; course: number; capabilities: string; optional?: string[]; evaluations: number; finishes: number; turboChecks: number; turboSaved: number; toValidate?: number; best: number | null; log: string[]; courses: number[]; minutes?: number; repeat?: boolean; pass?: number; queue?: { label: string; result?: string | null; active: boolean }[];
-  /** The running job: Improve (`solve --auto`) or the plain solve, by farm time or the record, focused on waypoints first..last. */
   auto?: boolean; farm?: boolean; humanClass?: HumanCourseClass | null; focus?: [number, number] | null; waypoints?: Waypoints | null; bestFarm?: number | null;
-  /** Improve's outlook after its last pull (the engine's `outlook` event), and the pulls running now (`pullStart`). */
   outlook?: Outlook | null; pulls?: PullNow[] };
-/** Improve's outlook: the chance more search beats the best (the folder's other Improve runs, past a dry spell as long as
- * this one, updated with this target's own gains), the model's floor and headroom, and what else there is to try. Seconds
- * are search (wall) seconds. */
 type Outlook = { verdict: "likely" | "possible" | "unlikely" | "exhausted" | "floor"; headline: string; advice: string[]; unit: string;
   best: number; bestTicks: number; floor: number; floorTicks: number; headroom: number; hot: { goal: string; label: string; expected: number; slow: string }[];
   searched: number; sessions: number; pulls: number; gains: number; gained: number; lastGainAgo: number | null; typicalGain: number | null;
@@ -37,22 +30,10 @@ type Outlook = { verdict: "likely" | "possible" | "unlikely" | "exhausted" | "fl
   basis: { runs: number; search: number; gains: number; spell: number; spellGains: number; spellSearch: number } };
 type PullNow = { pull: number; lever: string; goal: string; label: string; budget: number; expected: number; pulls: number; cpu: number; gained: number;
   misses: number; history: { pulls: number; gains: number } };
-/**
- * A course target's waypoints (`solve --auto --waypoints-out`): the start gate (record timing: `timerGoal`), goals along its
- * record's (farm: its farm route's) path, then the finish; `rects` their areas in the trace's frame and `world` in the game
- * world's (the map's), center x, y, w, h, null for a gate; `splits` that route's physics tick at each from the quick restart
- * (-1: not reached). Improve's focus picks goals by number (1-based).
- */
 type Waypoints = { timing: "record" | "farm"; route: string; goals: string[]; rects: (number[] | null)[]; world: (number[] | null)[]; splits: number[]; timerGoal?: number; record?: number; farm?: number;
-  /** The route's near misses at its gates (a gated course's finished route; see NearMisses). */
   bus?: { gate: BusEdge | null; finish: BusEdge | null } | null;
-  /** A farm target's loop (RULES.md 30): its steady-state check, a lap's share of the cycle (`lap`, live seconds), the
-   * loop's laps, ticks and held frames, the loops before it settled and each loop's cycle (live units, -1: didn't loop). The
-   * lead's finishes are the goals up to `timerGoal`. */
   loop?: { steady: boolean; laps: number; ticks: number; held: number; live: number; lap: number; settled: number; cycles: number[] } };
-/** The course target the Optimize tab has open: its route, waypoints and Improve. `farm`: Improve the farm time. */
 type Direction = "forwards" | "backwards";
-/** A course record's human class (RULES.md 54 on a course): ranked by its score, not the game timer. */
 type HumanCourseClass = "human-major" | "human-nmg";
 const HUMAN_LABEL: Record<HumanCourseClass, string> = { "human-major": "Human major", "human-nmg": "Human NMG" };
 type CourseTarget = { course: number; capabilities: string; farm: boolean; direction?: Direction; class?: HumanCourseClass };
@@ -68,10 +49,8 @@ type StudioState = {
   techs?: TechState;
   tas?: TasLive | null;
 };
-// The static part (GET /state/static), pushed again when its staticVersion changes.
 type StaticState = { staticVersion: number; routes: Route[]; categories: Category[]; courses?: Course[]; recordings: Recording[]; savestates: Savestate[];
   fullTas?: Pick<FullTasState, "runs">; techs?: Pick<TechState, "list" | "detectors" | "labs"> };
-// The live part (GET /state/live): everything else, pushed whenever it changes.
 type LiveState = Omit<StudioState, "routes" | "categories" | "courses" | "recordings" | "savestates" | "fullTas" | "techs"> & { staticVersion: number;
   fullTas?: Omit<FullTasState, "runs">; techs?: Pick<TechState, "injectedLab" | "seen"> };
 
@@ -87,16 +66,13 @@ export default function Studio() {
   const [state, setState] = useState<StudioState>(emptyState);
   const [tab, setTab] = useState("fulltas");
   const [error, setError] = useState("");
-  // Hide inert inputs (/enginesim/effects): the route it ran on, and its result or null while it runs.
   const [inert, setInert] = useState<{ routeId: string; text: string | null } | null>(null);
   const [mapTarget, setMapTarget] = useState<MapTarget | null>(null);
-  // The Optimize tab's targets: one opens in Improve a course, several (ctrl+click) run in turn.
   const [courseTargets, setCourseTargets] = useState<CourseTarget[]>([]);
   const setCourseTarget = (t: CourseTarget) => setCourseTargets([t]);
   const [placePrefill, setPlacePrefill] = useState<PlacePrefill | null>(null);
   const saveUnlocks = state.connected ? state.saveUnlocks ?? null : null;
 
-  // The plugin pushes both parts over the studio socket (studio-socket.ts); each merges with the other's last.
   useEffect(() => {
     let staticPart: StaticState | null = null, livePart: LiveState | null = null;
     return subscribe({
@@ -203,18 +179,13 @@ export default function Studio() {
   </main>;
 }
 
-// A category route's name: <course>_<label> [farm |forwards |backwards |human-major |human-nmg ]<time> (a human class's: its
-// score). The label must name one of the registry's
-// categories (state.categories), checked below; names like "4_almost_completed" go to the other routes.
 const CATEGORY_ROUTE = /^([^_\s]+)_([A-Z][A-Z0-9_]*) (farm |forwards |backwards |human-major |human-nmg )?([\d.]+)$/i;
 
-// Every unlock of a is in b (counts no higher): a narrower unlock set.
 function capsSubset(a: Caps, b: Caps) {
   return (!a.wallJump || b.wallJump) && a.dashes <= b.dashes && a.airJumps <= b.airJumps
     && (!a.blockSwap || b.blockSwap) && (!a.orbs || b.orbs) && (!a.zip || b.zip) && (!a.omni || b.omni);
 }
 
-// The label's tokens joined ("WJ + DS2 + BS + ZIP + OM"), "None" when the set is empty.
 function shortCaps(caps: Caps) {
   const parts: string[] = [];
   if (caps.wallJump) parts.push("WJ");
@@ -227,7 +198,6 @@ function shortCaps(caps: Caps) {
   return parts.length ? parts.join(" + ") : "None";
 }
 
-// The unlocks spelled out: "Wall jump, dash (x1), block swap".
 function describeCaps(caps: Caps) {
   const parts: string[] = [];
   if (caps.wallJump) parts.push("Wall jump");
@@ -308,7 +278,6 @@ function categoryBests(routes: Route[], courses: Course[], categories: Category[
   return {best, farm, forwards, backwards, human, other};
 }
 
-// The best route of this category or of a narrower one the course has (their unlocks are a subset).
 function soloBest(best: Bests, c: Course, cat: Category, categories: Category[]) {
   let solo: {route: Route; time: number} | undefined;
   for (const narrower of categories.filter(n => c.categories.includes(n.id) && capsSubset(n.caps, cat.caps))) {
@@ -318,27 +287,21 @@ function soloBest(best: Bests, c: Course, cat: Category, categories: Category[])
   return solo;
 }
 
-// A direction keeps out of the other direction's block (forced-paths.json): forwards never cuts avoid-backwards.
 const DIRECTION_BLOCK: Record<Direction, string> = { forwards: "avoid-backwards", backwards: "avoid-forwards" };
 const twoWay = (c: Course | undefined, cat: string) => Object.values(DIRECTION_BLOCK).every(n => c?.optional?.some(b => b.name === n && b.capabilities.includes(cat)));
 
-// The record of a direction: its direction record, or for forwards the plain record where there is none.
 function directionBest(bests: ReturnType<typeof categoryBests>, c: Course, cat: Category, categories: Category[], direction?: Direction) {
   if (direction === "backwards") return soloBest(bests.backwards, c, cat, categories);
   return (direction === "forwards" ? soloBest(bests.forwards, c, cat, categories) : undefined) ?? soloBest(bests.best, c, cat, categories);
 }
 
 const sameTarget = (a: CourseTarget, b: CourseTarget) => a.course === b.course && a.capabilities === b.capabilities && !!a.farm === !!b.farm && a.direction === b.direction && a.class === b.class;
-/** A target in words: its course, category and which of its records. */
 function targetLabel(t: CourseTarget, courses: Course[], categories: Category[]) {
   const c = courses.find(x => x.id === t.course), lapless = !!c && (c.bonus || !!c.to);
   return `${courseLabel(c, t.course)} · ${categories.find(x => x.id === t.capabilities)?.label ?? t.capabilities} · ${t.class ? HUMAN_LABEL[t.class]
     : t.farm && !lapless ? "Farm" : t.direction === "backwards" ? "Backwards" : t.direction === "forwards" ? "Forwards" : "Record"}`;
 }
 
-// Per course and category three slots, forwards record, backwards record and farm (Human: a course's two human-class records,
-// by score): a click targets Improve a course at it and selects its route; ctrl+click adds it to (or drops it from) the
-// targets Improve runs in turn.
 function RoutePicker({routes,courses,categories,activeId,saveUnlocks,targets,onTargets,onCommand}:{routes:Route[];courses:Course[];categories:Category[];activeId?:string;saveUnlocks:Caps|null;targets:CourseTarget[];onTargets:(t:CourseTarget[])=>void;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
   const bests = categoryBests(routes, courses, categories), {farm, other} = bests;
   const [human, setHuman] = useState(false);
@@ -365,14 +328,12 @@ function RoutePicker({routes,courses,categories,activeId,saveUnlocks,targets,onT
         {groups.map(([label, list]) => list.some(c => c.categories.length > 0) && <Fragment key={label}>
           <tr className="matrixSection"><th colSpan={categories.length + 1}>{label}</th></tr>
           {list.filter(c => c.categories.length > 0).sort((a, b) => a.id - b.id).map(c => {
-            // Bonuses and transitions are timed in ticks already: their record is their farm, and they have no backwards.
             const lapless = !!(c.bonus || c.to);
             return <tr key={c.id}><th title={placeTitle(c)}>{courseLabel(c, c.id)}</th>
               {categories.map(cat => {
                 if (!c.categories.includes(cat.id)) return <td key={cat.id} className="na" />;
                 const beyond = !!saveUnlocks && !capsSubset(cat.caps, saveUnlocks), both = twoWay(c, cat.id);
                 const at = { course: c.id, capabilities: cat.id };
-                // A human class keeps a gated course's record only (bonuses and transitions are timed in ticks).
                 if (human) return lapless ? <td key={cat.id} className="na" /> : <td key={cat.id} className={beyond ? "beyondUnlocks" : ""}><div className="pickSlots">
                   {(Object.keys(HUMAN_LABEL) as HumanCourseClass[]).map(k => <Fragment key={k}>{slot(k === "human-major" ? "Major" : "NMG", { ...at, farm: false, class: k }, soloBest(bests.human[k], c, cat, categories), 2)}</Fragment>)}
                 </div></td>;
@@ -395,8 +356,6 @@ function RoutePicker({routes,courses,categories,activeId,saveUnlocks,targets,onT
   </div>;
 }
 function Field({label,children}:{label:string,children:React.ReactNode}) { return <label className="field"><span>{label}</span>{children}</label>; }
-/** A waypoint in words: the start gate, the finish, or an area goal by its center in the world frame (the map's) and the
- * sides it's entered from. */
 function waypointName(label: string, world: number[] | null | undefined) {
   if (label.startsWith("start:")) return "Start gate (the timer starts)";
   if (label.startsWith("farm:")) return "Finish";
@@ -417,12 +376,10 @@ function SolveOne({solver,courses,categories,routes,running,targets,onTargets,on
   const capsOptions=chosenCourse&&chosenCourse.categories.length?categories.filter(cat=>chosenCourse.categories.includes(cat.id)):categories;
   const chosenCat=capsOptions.find(cat=>cat.id===target?.capabilities)??capsOptions[0];
   const chosenCaps=chosenCat?.id??"";
-  // Bonuses and transitions are timed in ticks already: their record is their farm time.
   const lapless=!!chosenCourse&&(chosenCourse.bonus||!!chosenCourse.to);
   const cls=lapless?undefined:target?.class;
   const farm=!!target?.farm&&!lapless&&!cls;
   const direction=!farm&&!cls&&twoWay(chosenCourse,chosenCaps)?target?.direction:undefined;
-  // Names whose checkbox was flipped from its forced-paths.json default ("default": true starts it checked).
   const [optional,setOptional]=useState<string[]>([]);
   const optionalBlocks=(chosenCourse?.optional??[]).filter(b=>b.capabilities.includes(chosenCaps)&&!(direction&&Object.values(DIRECTION_BLOCK).includes(b.name)));
   const chosenOptional=[...optionalBlocks.filter(b=>!!b.on!==optional.includes(b.name)).map(b=>b.name),...direction?[DIRECTION_BLOCK[direction]]:[]].sort();
@@ -431,11 +388,7 @@ function SolveOne({solver,courses,categories,routes,running,targets,onTargets,on
   const solo=chosenCourse&&chosenCat?directionBest(bests,chosenCourse,chosenCat,categories,direction):undefined;
   const lap=chosenCourse&&chosenCat?soloBest(lapless?best:farms,chosenCourse,chosenCat,categories):undefined;
   const humanBest=cls&&chosenCourse&&chosenCat?soloBest(bests.human[cls],chosenCourse,chosenCat,categories):undefined;
-  // Improve starts from a route; without one the plugin runs the plain solve, which finds a first finish (a human class
-  // starts from the routes a human class plays to the finish).
   const improvable=!!solo||!!lap;
-  // The waypoints the engine places on the target's route (re-placed when a new route is saved); a running Improve of this
-  // target sends its own with every new best.
   const key=JSON.stringify([job,solo?.route.name,lap?.route.name]);
   const [fetched,setFetched]=useState<{key:string;waypoints?:Waypoints;error?:string}|null>(null);
   useEffect(()=>{
@@ -448,7 +401,6 @@ function SolveOne({solver,courses,categories,routes,running,targets,onTargets,on
   const waypoints=(mine?solver.waypoints:null)??(fetched?.key===key?fetched.waypoints:undefined);
   const note=!improvable?"No route yet: Solve finds a first finish; Improve then places waypoints on it."
     :waypoints?undefined:fetched?.key===key?fetched.error:"Placing waypoints on the route…";
-  /** Waypoints picked for Improve's --focus (1-based, first..last), null for the whole course. */
   const [picked,setPicked]=useState<[number,number]|null>(null);
   useEffect(()=>setPicked(null),[chosen,chosenCaps,farm,direction]);
   const count=waypoints?.goals.length??0;
@@ -499,18 +451,10 @@ function SolveOne({solver,courses,categories,routes,running,targets,onTargets,on
   </div>;
 }
 
-/** A gate's near miss: the hurtbox-to-trigger gap the tick before it was first overlapped, the overlap on that tick, and
- * (start gate) the gap on the tick after the timer's start: a delayed start needs the hurtbox still in the gate then. */
 type BusEdge = { tick: number; timerTick?: number | null; before: number | null; at: number | null; travel: number | null; after?: number | null };
 
 const units = (v: number | null) => v == null ? "—" : `${Math.abs(v).toFixed(2)} u`;
 
-/**
- * How near the route came to its gates a tick sooner, in the simulation's own distances (Collider2D.Distance from the
- * player's hurtbox to the gate's trigger, after each physics step; docs/course-timer.md). Record: the start gate, where a
- * shallower first touch would have started the timer a tick later, and the finish, where a barely missed tick costs one.
- * Farm: the finish only.
- */
 function NearMisses({bus,farm}:{bus:NonNullable<Waypoints["bus"]>;farm:boolean}) {
   const row=(name:string,e:BusEdge,meaning:string)=><div className="tableRow" title={meaning}>
     <span>{name}</span>
@@ -529,11 +473,9 @@ function NearMisses({bus,farm}:{bus:NonNullable<Waypoints["bus"]>;farm:boolean})
   </div>;
 }
 
-/** Search time as the panel says it: seconds, minutes, then hours. */
 const searchSpan=(s:number)=>s<90?`${Math.round(s)} s`:s<5400?`${Math.round(s/60)} min`:s<172800?`${(s/3600).toFixed(1)} h`:"days";
 const pct=(p:number)=>`${Math.round(p*100)}%`;
 
-/** Improve's answer to "should I keep going?": the verdict, what to do, and the numbers behind it. */
 function OutlookCard({outlook:o,pulls}:{outlook:Outlook;pulls:PullNow[]}) {
   const odds=o.verdict!=="floor"&&o.verdict!=="exhausted";
   const tone=o.verdict==="likely"?"good":o.verdict==="possible"?"maybe":"bad";
@@ -566,41 +508,22 @@ function OutlookCard({outlook:o,pulls}:{outlook:Outlook;pulls:PullNow[]}) {
   </div>;
 }
 
-/** `waypoints`: a course target's (Improve's), drawn numbered over the map; `picked`: the ones Improve focuses on. */
-// stretch: a Full-TAS run's one goal alone (its id): only its stretch drawn, every box drawn cuts for it alone.
 type MapTarget = { course: number; capabilities: string; optional: string[]; fulltas?: string; stretch?: string; waypoints?: MapGoal[]; picked?: [number, number] | null };
-// `when`: the world state it's only in ("<state>:<option>"), none: every one. An "area" is ground off in the capture:
-// its outline rings end to end in `p`, `rings` the length of each, filled even-odd.
 type MapSolid = { k: "poly" | "line" | "circle" | "capsule" | "area"; spike: boolean; p: number[]; r: number; tone?: "blue" | "orange" | null; spring?: number[] | null; when?: string | null; rings?: number[] | null };
 type MapRoute = { name: string; kind: "seed" | "best" | "plateau" | "human" | "closest"; finished: boolean; time: number; timerStart: number; points: number[]; cells?: number[][]; state?: number[] };
-// Ghost compare (`/api/enginesim/ghost`, served from the map JSON `map` wrote to disk): two routes' per-tick positions,
-// per-cell first arrivals and per-tick state fingerprints, with the first tick their states diverge.
 type GhostRoute = MapRoute & { cells: number[][]; state: number[] };
 type GhostData = { cell: number; a: GhostRoute; b: GhostRoute; diverge: { tick: number; x: number; y: number } | null };
 const GHOST_A = "#4fc3f7", GHOST_B = "#ffb74d";
-// Every map coordinate is in the game world's frame (courses.json's, forced-paths.json's, --via/--avoid's, at:x,y goals'):
-// the same for every capture of a place, whatever FloatingOrigin the game had then.
+// Every map coordinate is in the game world's frame, whatever FloatingOrigin the capture had.
 type MapData = { course: number; capabilities: string; label: string; fulltas?: string; bounds: number[]; solids: MapSolid[];
-  // The trees' ground where it grows once its tree upgrades are bought (not in the world the run starts in).
   grown?: MapSolid[]; treeSteps?: TreeStep[];
-  // `area`: a checkpoint's trigger (touching it sets the spawn) or a box's trigger, polygons of x, y pairs. `spawn`:
-  // the player's box where a death or quick restart puts it at a checkpoint (x0, y0, x1, y1). `box`: kind "box" only,
-  // a buy box's info.
   markers: { kind: string; name: string; x: number; y: number; area?: number[][]; spawn?: number[]; when?: string | null; box?: BoxInfo }[]; avoid: number[][]; via: number[][]; goals?: MapGoal[]; optional?: { name: string; note: string; on: boolean; avoid: number[][]; via: number[][] }[]; routes: MapRoute[];
-  // The world states the level can be drawn in; `current`: the capture's, which the routes and explored cells are from.
   states?: WorldState[];
-  // Zip movers and moving platforms: box, path, per-leg corridor (Map.Zips).
   zips?: { name: string; zip: boolean; box: number[]; path: number[][]; corridor: number[][]; when?: string | null }[];
-  // `replayed` of `toReplay`: the explore prefixes the engine has replayed so far (a course map still drawing).
   explored: { cell: number; runs: number; prefixes: number; replayed?: number; toReplay?: number; cells: number[][] };
-  // The engine is still drawing it: this is what it has so far (an earlier draw's before its first write).
   pending?: boolean; queued?: boolean };
-// A Full-TAS run's at: goal: its number in the run's goal list (1-based, as the goals table), its id, its label and its rect (x0, y0, x1, y1).
 type MapGoal = { index: number; id?: string; label: string; box: number[] };
-/** A Full-TAS map's avoid box as the engine draws it (Map.AvoidDrawn): whose goal (its id; null: the run's own) and when it cuts. */
 type FullTasMapAvoid = { box: number[]; from: number; goal: string | null; when: "always" | "heading" | "after" };
-/** A Full-TAS map (its avoid boxes and goals by goal id) placed in the run's goal list `ids`: each box as the map draws it,
- * [x0, y0, x1, y1, after, until, from] (avoidLive), each goal its number; a box of a goal the list doesn't have cuts nowhere. */
 function placeFullTasMap(raw: MapData, ids: string[]): MapData {
   const avoid = (raw.avoid as unknown as FullTasMapAvoid[]).flatMap(a => {
     const at = a.goal == null ? -1 : ids.indexOf(a.goal);
@@ -612,8 +535,6 @@ function placeFullTasMap(raw: MapData, ids: string[]): MapData {
   return { ...raw, avoid, goals };
 }
 type MapLayers = { art: boolean; background: boolean; tree: boolean; shapes: boolean; explored: boolean; boxes: boolean; markers: boolean } & Record<`box:${BoxCategory}`, boolean>;
-// A Full-TAS avoid box (the map's x0, y0, x1, y1, after, until, from; OfflineSolver.Box): it cuts at g goals reached (heading
-// for goal g as the studio numbers them) from After until Until (0: no end), entering across From's sides (bits in SIDES' order).
 const SIDES = ["left", "right", "bottom", "top"];
 const avoidLive = (b: number[], g: number) => (!b[4] || g >= b[4]) && (!b[5] || g < b[5]);
 const avoidText = (b: number[]) => (b[5] ? `goal ${b[4]}` : b[4] ? `goals ${b[4]}+` : "every goal")
@@ -628,29 +549,20 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState("");
   const [layers, setLayers] = useState<MapLayers>({ art: true, background: false, tree: true, shapes: false, explored: true, boxes: true, markers: true,
-    // The one-off buy box kinds on (what you're looking for), the dense repeatables off (one question each).
     "box:secret": true, "box:bonusUnique": true, "box:bonusBoost": true, "box:achievement": true,
     "box:movement": true, "box:unlock": true, "box:tree": false, "box:course": false });
-  // The game's art (web/public/art, untracked: igtap-ultra-map/tools/render-art.py renders it; none: the level is its
-  // collision shapes). Its tiles load as they're drawn and redraw the map when they arrive.
   const [art, setArt] = useState<ArtIndex | null>(null);
   useEffect(() => { fetch("/art/index.json").then(r => r.ok ? r.json() as Promise<ArtIndex> : null).then(setArt, () => setArt(null)); }, []);
   const artImages = useRef(new Map<string, HTMLImageElement>());
   const [artLoads, setArtLoads] = useState(0);
-  // The world state the level is drawn in (Area 1 normal or overgrown); the capture's until picked.
   const [worldState, setWorldState] = useState<StatePick>({});
-  // The zip under the pointer (index into data.zips, -1: none).
   const [hotZip, setHotZip] = useState(-1);
   const markers = useMemo(() => (data?.markers ?? []).filter(m => inState(m.when, worldState)), [data, worldState]);
   const [hidden, setHidden] = useState<Set<number>>(new Set());
   const [cursor, setCursor] = useState<{ x: number; y: number; marker?: string; reached?: number; delta?: number } | null>(null);
-  // The buy box tapped (not dragged over): its tooltip card where hover titles aren't a thing.
   const [boxTip, setBoxTip] = useState<Marker | null>(null);
-  // The last press panned the map, so its click is no tap on a box.
   const panned = useRef(false);
   const arrivals = useMemo(() => new Map(data?.explored.cells.map(([cx, cy, t]) => [`${cx},${cy}`, t] as [string, number]) ?? []), [data]);
-  // Ghost compare: two routes picked from the map (saved, offline best, human version), drawn over it with their first
-  // state-divergence tick and, per map cell along the paths, the time delta at first arrival (B − A).
   const [ghostA, setGhostA] = useState("");
   const [ghostB, setGhostB] = useState("");
   const [ghost, setGhost] = useState<GhostData | null>(null);
@@ -666,7 +578,6 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
       .finally(() => { if (live) setGhostLoading(false); });
     return () => { live = false; };
   }, [data, ghostA, ghostB, target]);
-  // Cells both routes reach, by how much later B first arrives (seconds), and cells only one of them reaches.
   const ghostCells = useMemo(() => {
     if (!ghost) return null;
     const both: { cx: number; cy: number; d: number }[] = [], onlyA: number[][] = [], onlyB: number[][] = [];
@@ -686,13 +597,9 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
   }, [ghost]);
   const latest = useMemo(() => data?.explored.cells.reduce((m, v) => Math.max(m, v[2]), 0) || 1, [data]);
   const canvas = useRef<HTMLCanvasElement>(null);
-  // Full-TAS: an avoid box drawn on the map (world x0, y0, x1, y1 as dragged) and the runs it goes to.
   const [drawing, setDrawing] = useState(false);
   const [sketch, setSketch] = useState<number[] | null>(null);
   const [sketchRuns, setSketchRuns] = useState<string[]>(target.fulltas ? [target.fulltas] : []);
-  // Full-TAS: drawing stays on and each box goes in as drawn, cutting for every goal, only while heading for goal
-  // `avoidGoal` or from it on, entered across any side but the open ones (none: any tick inside). The goal also fades
-  // the boxes that don't cut there.
   const [avoidScope, setAvoidScope] = useState<"every" | "only" | "from">("every");
   const [avoidGoal, setAvoidGoal] = useState("");
   const [avoidOpen, setAvoidOpen] = useState<string[]>([]);
@@ -700,12 +607,10 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
   const focus = target.stretch != null ? stretchAt : target.fulltas && avoidGoal.trim() !== "" && Number.isInteger(Number(avoidGoal)) ? Number(avoidGoal) : null;
   const drawBlock = !sketchRuns.length ? "Pick a run for the boxes." : target.stretch == null && avoidScope !== "every" && focus == null ? "Type a goal number, or click a goal's green box while drawing."
     : avoidOpen.length === SIDES.length ? "A box open on every side cuts nothing." : "";
-  // Course maps: the avoid box's optional block name (empty: cut for every solve) and whether that block starts on.
   const [sketchName, setSketchName] = useState("");
   const [sketchOn, setSketchOn] = useState(false);
   const [saving, setSaving] = useState(false);
   const sketchStart = useRef<{ x: number; y: number } | null>(null);
-  // Full-TAS: an at: goal dragged to a new place (same size), shown there until it's saved or discarded.
   const [moving, setMoving] = useState(false);
   const [moved, setMoved] = useState<{ goal: MapGoal; box: number[] } | null>(null);
   const grab = useRef<{ goal: MapGoal; box: number[]; x: number; y: number } | null>(null);
@@ -714,9 +619,6 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
   const drag = useRef<{ x: number; y: number } | null>(null);
   const fitted = useRef(false);
 
-  // Only the latest load lands: an older one still in flight (a Redraw, a second mount) neither overwrites its data nor
-  // leaves its error standing. While the engine draws, the plugin answers with what it has so far (`pending`) and the
-  // map polls, drawing each answer: avoid boxes can go on the explored area before the replay ends.
   const loads = useRef(0);
   const poller = useRef<number | undefined>(undefined);
   const fresh = useRef(true);
@@ -749,8 +651,6 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
     view.current = { scale, ox: (x0 + x1) / 2 - c.clientWidth / 2 / scale, oy: (y0 + y1) / 2 + c.clientHeight / 2 / scale };
   }
 
-  // Everything but what follows the pointer (a box being dragged, a goal being moved, the hovered zip's corridor),
-  // drawn once per view and reused while those change: dragging an avoid box doesn't redraw the level.
   const paintBase = useCallback((g: CanvasRenderingContext2D, w: number, h: number, dpr: number) => {
     if (!data) return;
     const { ox, oy, scale } = view.current;
@@ -764,17 +664,12 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
         let img = artImages.current.get(t.href);
         if (!img) { img = new Image(); img.onload = () => setArtLoads(n => n + 1); img.src = t.href; artImages.current.set(t.href, img); }
         if (!img.complete || !img.naturalWidth) continue;
-        // The canvas is y up; the image is drawn upright.
         g.save(); g.translate(t.x, t.y + t.size); g.scale(1, -1); g.drawImage(img, 0, 0, t.size, t.size); g.restore();
       }
     };
-    // The decoration (backdrops, pillars, plants: nothing solid) under the level, off by default.
     if (artShown && layers.background) drawArt({ ...worldState, bg: "on" });
     if (artShown) drawArt(worldState);
-    // The trees' own tile set ("tree:grown", igtap-ultra-map/tools/render-art.py) over the level: off in the fresh
-    // world, so it's drawn under the tree layer.
     if (artShown && layers.tree) drawArt({ ...worldState, tree: "grown" });
-    // Over the art, where the level hurts: every spike (overgrowth vines and the hidden spikes too) tinted red.
     if (artShown && !layers.shapes) for (const s of data.solids) {
       if (!s.spike || !inState(s.when, worldState) || s.k === "circle") continue;
       g.beginPath();
@@ -790,7 +685,6 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
     }
     if (layers.explored && data.explored.cells.length) {
       const size = data.explored.cell;
-      // Over the art, see-through.
       if (artShown) g.globalAlpha = .55;
       for (const [cx, cy, t] of data.explored.cells) {
         g.fillStyle = t < 0 ? "#34383f" : `hsl(${230 - 230 * t / latest},90%,55%)`;
@@ -817,19 +711,16 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
       for (let i = 2; i < s.p.length; i += 2) g.lineTo(s.p[i], s.p[i + 1]);
       if (s.k === "poly") { g.closePath(); g.globalAlpha = s.spike ? .9 : s.tone ? .5 : .75; g.fill(); g.globalAlpha = 1; } else g.stroke();
       if (s.spring) {
-        // Launch direction: from the box's middle out past its far side.
         const [ux, uy] = s.spring, n = s.p.length / 2;
         let cx = 0, cy = 0, reach = 0;
         for (let i = 0; i < n; i++) { cx += s.p[2 * i] / n; cy += s.p[2 * i + 1] / n; }
         for (let i = 0; i < n; i++) reach = Math.max(reach, (s.p[2 * i] - cx) * ux + (s.p[2 * i + 1] - cy) * uy);
-        // Only once zoomed in (6 world units per pixel or closer); zoomed out a spring is its box.
         if (px > 6) continue;
         const len = reach + 40, head = 16, tx = cx + ux * len, ty = cy + uy * len;
         g.lineWidth = 2 * px; g.beginPath(); g.moveTo(cx, cy); g.lineTo(tx, ty);
         g.moveTo(tx - head * (ux + uy), ty - head * (uy - ux)); g.lineTo(tx, ty); g.lineTo(tx - head * (ux - uy), ty - head * (uy + ux)); g.stroke();
       }
     }
-    // Tree ground, once grown: dashed outlines, lighter than the level the engine has.
     for (const s of data.grown ?? []) {
       g.beginPath(); g.moveTo(s.p[0], s.p[1]);
       for (let i = 2; i < s.p.length; i += 2) g.lineTo(s.p[i], s.p[i + 1]);
@@ -847,7 +738,6 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
       g.fillStyle = "#3ddc97"; g.globalAlpha = .16; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1;
       g.strokeStyle = "#3ddc97"; g.lineWidth = 2 * px; g.strokeRect(x0, y0, x1 - x0, y1 - y0);
     }
-    // Avoid boxes; one not cutting at the picked goal faded, a one-way box's open sides dashed green.
     if (layers.boxes) for (const b of data.avoid) {
       const [x0, y0, x1, y1] = b, from = b[6] ?? 0, a = focus != null && !avoidLive(b, focus) ? .25 : 1;
       g.fillStyle = "#ff3030"; g.globalAlpha = .16 * a; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = a; g.lineWidth = 2 * px;
@@ -866,7 +756,6 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
           if (block.on) { g.fillStyle = color; g.globalAlpha = .16; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1; }
           g.strokeStyle = color; g.lineWidth = 2 * px; g.setLineDash(block.on ? [] : [6 * px, 4 * px]); g.strokeRect(x0, y0, x1 - x0, y1 - y0); g.setLineDash([]);
         }
-    // A course target's waypoints (Improve's), numbered as in its waypoint list; the ones Improve focuses on in gold.
     if (layers.boxes) for (const wp of target.waypoints ?? []) {
       const [x0, y0, x1, y1] = wp.box, on = !!target.picked && wp.index >= target.picked[0] && wp.index <= target.picked[1], color = on ? "#ffd54f" : "#3ddc97";
       g.fillStyle = color; g.globalAlpha = on ? .28 : .12; g.fillRect(x0, y0, x1 - x0, y1 - y0); g.globalAlpha = 1;
@@ -877,7 +766,6 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
       g.lineWidth = 3 * dpr; g.strokeStyle = "#07111f"; g.strokeText(String(wp.index), sx, sy); g.fillStyle = color; g.fillText(String(wp.index), sx, sy);
       g.restore();
     }
-    // A ghost compare fades the overview and draws its two routes over it (A solid, B dashed).
     if (ghost && ghostCells) g.globalAlpha = .15;
     data.routes.forEach((r, i) => {
       if (hidden.has(i) || r.points.length < 4) return;
@@ -892,7 +780,6 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
     g.globalAlpha = 1;
     if (ghost && ghostCells) {
       const size = ghost.cell;
-      // Per map cell along the paths: how much later B first arrives than A (blue: B earlier, red: B later).
       for (const c of ghostCells.both) {
         const m = Math.min(1, Math.abs(c.d) / ghostCells.max);
         g.fillStyle = c.d < 0 ? `rgba(72,185,255,${.18 + .5 * m})` : `rgba(255,91,110,${.18 + .5 * m})`;
@@ -926,7 +813,6 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
         g.restore();
       }
     }
-    // Zips as their boxes (the one under the pointer shows where it goes: drawn over the cached map below).
     g.strokeStyle = "#ffb74d"; g.lineWidth = 1.5 * px;
     for (const z of data.zips ?? []) if (inState(z.when, worldState)) g.strokeRect(z.box[0], z.box[1], z.box[2] - z.box[0], z.box[3] - z.box[1]);
     if (layers.markers) for (const m of markers) {
@@ -943,9 +829,6 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
         }
         g.setLineDash([]);
       };
-      // Buy boxes and gates are their trigger boxes; a checkpoint is its spawn box (where a death or quick restart puts
-      // the player, solid) over its trigger (where touching it sets the spawn, dashed).
-      // A refill orb is the game's own orb sprite (art index icons), drawn upright.
       const icon = art?.icons?.[m.kind];
       if (icon) {
         const href = `/art/${icon.file}.webp`;
@@ -1031,7 +914,6 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
     const v = view.current, rect = e.currentTarget.getBoundingClientRect();
     return { x: v.ox + (e.clientX - rect.left) / v.scale, y: v.oy - (e.clientY - rect.top) / v.scale };
   };
-  // The goal under the pointer: the smallest rect holding it.
   const goalAt = (p: { x: number; y: number }, boxOf = (goal: MapGoal) => goal.box) => (data?.goals ?? [])
     .map(goal => ({ goal, box: boxOf(goal) }))
     .filter(({ box }) => p.x >= box[0] && p.x <= box[2] && p.y >= box[1] && p.y <= box[3])
@@ -1039,7 +921,6 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
   const onDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     panned.current = false;
     if (moving) {
-      // A goal being moved is where it was dragged to.
       const p = world(e), hit = goalAt(p, goal => moved?.goal.index === goal.index ? moved.box : goal.box);
       if (hit) { grab.current = { goal: hit.goal, box: hit.box, x: p.x, y: p.y }; setMoved({ goal: hit.goal, box: hit.box }); return; }
     }
@@ -1056,7 +937,6 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
     sketchStart.current = null;
     const s = sketch && Math.abs(sketch[2] - sketch[0]) > 1 && Math.abs(sketch[3] - sketch[1]) > 1 ? sketch : null;
     if (!data?.fulltas) { setDrawing(false); setSketch(s); return; }
-    // Full-TAS: drawing stays on; a box goes in at once, a tap on a goal's box picks its number.
     if (!s) { setSketch(null); const hit = goalAt(start); if (hit) setAvoidGoal(String(hit.goal.index - 1)); return; }
     if (drawBlock) { setSketch(null); setFailure(drawBlock); return; }
     const from = avoidOpen.length ? SIDES.filter(side => !avoidOpen.includes(side)).join("+") : "";
@@ -1078,7 +958,6 @@ function SolveMap({target,courses,runs,goals:runGoals,busy,onClose}:{target:MapT
     if (zipAt !== hotZip) setHotZip(zipAt);
     setCursor({ x, y, marker: near ? (near.box ? boxTitle(near) : `${near.name} (${near.kind})`) : undefined, reached: arrivals.get(cell), delta: ghostCells?.deltaAt.get(cell) });
   };
-  // A tap (not a pan) on a buy box pins its card: what it is, gives and costs.
   const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (panned.current) return;
     const p = world(e), reach = 10 / view.current.scale;
@@ -1242,7 +1121,6 @@ function progressText(solver: SolverState) {
   return [solver.repeat ? `Pass ${solver.pass ?? 1}` : "", at >= 0 && queue.length > 1 ? `target ${at + 1} of ${queue.length}` : "", solver.minutes ? `${minutesText(solver.minutes)} each` : ""].filter(Boolean).join(" · ");
 }
 
-/** Several targets (ctrl+click in the grid): each Improve of its record, direction record or farm loop, in turn. */
 function SolveMany({solver,courses,categories,routes,targets,onTargets,onCommand}:{solver:SolverState;courses:Course[];categories:Category[];routes:Route[];targets:CourseTarget[];onTargets:(t:CourseTarget[])=>void;onCommand:(path:string,body?:unknown)=>Promise<boolean>}) {
   const [passes, updatePasses] = usePasses();
   const bests = categoryBests(routes, courses, categories);
@@ -1251,7 +1129,6 @@ function SolveMany({solver,courses,categories,routes,targets,onTargets,onCommand
     const lapless = !!c && (c.bonus || !!c.to);
     const b = !c || !cat ? undefined : t.class ? soloBest(bests.human[t.class], c, cat, categories)
       : t.farm && !lapless ? soloBest(bests.farm, c, cat, categories) : directionBest(bests, c, cat, categories, t.direction);
-    // A direction keeps the course's default-on blocks and adds its own; without one the plugin picks the defaults.
     const optional = t.direction ? [...(c?.optional ?? []).filter(o => o.on && o.capabilities.includes(t.capabilities) && !Object.values(DIRECTION_BLOCK).includes(o.name)).map(o => o.name), DIRECTION_BLOCK[t.direction]] : undefined;
     return { t, label: targetLabel(t, courses, categories),
       time: b ? `${t.class ? "score " : ""}${b.time.toFixed(t.farm && !lapless ? 4 : 2)}` : "no route yet",
@@ -1273,14 +1150,12 @@ function SolveMany({solver,courses,categories,routes,targets,onTargets,onCommand
 
 const TICK_SECONDS = 0.02;
 const tickText = (ticks: number) => `${ticks} t · ${runTime(ticks * TICK_SECONDS)}`;
-/** A Full-TAS time as live time and game frames: `1:02.37 · 3106 f`. */
 const liveText = (seconds: number, ticks: number) => `${runTime(seconds)} · ${ticks} f`;
 
 function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;running:boolean;onCommand:(path:string,body?:unknown)=>Promise<boolean>;onMap:(name:string)=>void}) {
   const runs = fullTas?.runs ?? [];
   const [selected, setSelected] = useState("");
   const [newName, setNewName] = useState("");
-  /** Goals picked for Improve's --focus (1-based, first..last), null for the whole run. */
   const [picked, setPicked] = useState<[number, number] | null>(null);
   const name = selected || runs[0]?.name || "";
   const run = runs.find(r => r.name === name);
@@ -1288,10 +1163,9 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const [draft, setDraft] = useState(savedGoals);
   useEffect(() => setDraft(savedGoals), [name, savedGoals]);
   useEffect(() => setPicked(null), [name]);
-  /** Play from this frame: turbo up to it, 1x from there. */
   const [fromFrame, setFromFrame] = useState("");
   const splitTicks = (run?.best?.splits ?? run?.offline?.splits ?? []).map(s => s.ticks);
-  useEffect(() => { if (picked) setFromFrame(String(picked[0] > 1 ? splitTicks[picked[0] - 2] ?? "" : 0)); }, [picked]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (picked) setFromFrame(String(picked[0] > 1 ? splitTicks[picked[0] - 2] ?? "" : 0)); }, [picked]);
   if (!fullTas) return <div className="panel offlinePanel"><div className="panelTitle"><div><p className="eyebrow">THE WHOLE GAME AS ONE RUN</p><h2>Full-TAS</h2></div><span className="offlineStatus">Unavailable</span></div>
     <p className="lede">The game plugin doesn&apos;t report Full-TAS runs.</p></div>;
   const solve: FullTasSolveState = fullTas.solve ?? { running: false, status: "", log: [] };
@@ -1301,14 +1175,10 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
   const splits = run?.best?.splits ?? run?.offline?.splits ?? [];
   const labels = (run?.goals ?? []).map(g => g.label), ids = (run?.goals ?? []).map(g => g.id);
   const segments = resetSegments(run?.offline?.segments);
-  // The offline best's idles (each buy's wait for its Cash at its box), when the splits shown are its own; by goal number from 1.
   const idleAt = new Map((run?.offline?.idles && (!run.best || run.best.splits.every((s, i) => run.offline?.splits[i]?.ticks === s.ticks)) ? run.offline.idles : []).map(d => [ids.indexOf(d.id) + 1, d]));
   const breakerAt = run?.breaker ? ids.indexOf(run.breaker) : -1;
-  // Improve searches a complete route; a run that misses goals gets the reach search, and Improve on picked goals it reaches.
   const complete = labels.length > 0 && splits.length === labels.length;
-  // Picked goals can be improved on a best that misses later goals too, up to the goals it reaches.
   const reached = splits.length;
-  // A click picks a goal (or a segment's goals), clicking the same pick again clears it, shift-click extends the pick to cover both.
   const pick = (first: number, last: number, shift: boolean) => setPicked(p => shift && p ? [Math.min(p[0], first), Math.max(p[1], last)]
     : p && p[0] === first && p[1] === last ? null : [first, last]);
   const pickedSeconds = picked && picked[1] <= reached ? liveSeconds(splits[picked[1] - 1]) - (picked[0] > 1 ? liveSeconds(splits[picked[0] - 2]) : 0) : null;
@@ -1375,8 +1245,6 @@ function FullTas({fullTas,running,onCommand,onMap}:{fullTas?:FullTasState;runnin
               <span>{s ? liveText(liveSeconds(s), s.ticks) : "—"}</span>
             </div></Fragment>; };
             if (segments.length <= 1) return labels.map((_, i) => goalRow(i));
-            // The best cut at its Quick Restarts: a bar down each segment's goals; goals the best doesn't reach come last. A
-            // segment is safe when no buy goal comes from its first goal on: time saved there reaches no Cash check.
             const lastBuy = labels.reduce((at, label, i) => label.startsWith("buy:") ? i : at, -1);
             const rows: ReactElement[] = segments.map((r, k) => {
               const goals: ReactElement[] = [];

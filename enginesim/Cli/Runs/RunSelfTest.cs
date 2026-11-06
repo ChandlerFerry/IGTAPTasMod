@@ -195,7 +195,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             Directory.Delete(dir, true);
         }
 
-        // A goal state captured in a dash lock whose wall touch pressed the next step early (VMAN goal 13).
         static void ResumeKeepsEarlyPress()
         {
             var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
@@ -226,7 +225,6 @@ namespace IGTAP.EngineSim.Cli.Runs
                 "the game short of the engine's goals: refused");
         }
 
-        // ZipEscape%'s goal 831 plateau: every move failed at the same goal and tick, so none was kept.
         static void StuckRanking()
         {
             var full = new RunPlan(new[] { "t00001", "a00001", "a00002", "s00007" }, new[] { "buy:buytree1", "buy:buyatom", "buy:buyatom", "buy:buytree7" });
@@ -254,7 +252,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             Check(b.Better(a) && !a.Better(b), "not stuck for income: the last skeleton goal's tick decides, as before");
         }
 
-        // A course's own score (its game timer) ranks complete runs, not their live time.
         static void PolishBookkeeping()
         {
             var b = new Built { Plan = new RunPlan(new[] { "a00001", "b00002", "c00003" }, new[] { "at:1,1,1,1", "at:2,2,2,2", "at:3,3,3,3" }) };
@@ -291,7 +288,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             Check(!Done(100, _ => 5).Better(Done(120, _ => 5)), "the same score: not ahead");
         }
 
-        // A goal's avoid boxes follow it to its place in an edited plan (one goal more before it), not stay at its old index.
         static void AvoidsByPlanIds()
         {
             string root = TechGrafts.SourceRoot();
@@ -328,8 +324,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             Directory.Delete(dir, true);
         }
 
-        // Goal to goal from captured states, the harvest and a rebuild after goal `from` out of its library (other segments than
-        // the route's: TouchGrass-ANY% from 300 picks another goal 312) must replay straight to the same goals on the same ticks.
         static void HarvestVsStraight(string trace, string best, int from)
         {
             RunContext ctx = RunContext.Open(trace);
@@ -358,8 +352,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             Check(bDiffer == null, $"{ctx.Name}: the rebuild after goal {from} ({b} goals) replays straight: {bDiffer}");
         }
 
-        // A polish's forced search at a goal (or a window of `span` goals from it), seeded with the best's own way there: the build
-        // reaches the window's goals, each with its own segment, its last no later than the harvest.
         static void OwnAt(string trace, string best, int goal, int span)
         {
             RunContext ctx = RunContext.Open(trace);
@@ -393,7 +385,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             SegmentLibrary lib = SegmentLibrary.Load(Path.Combine(dir, "lib.segments.json"), Array.Empty<string>());
             var facts = new SegmentFacts(Path.Combine(dir, "lib.failures.json"));
             Built harvested = Solve.OnThread(() => new Builder(ctx, lib, new SegmentSearch(ctx), facts, false).Harvest(full, inputs, "harvest"));
-            // A lap right before an economy buy, early in the run: without it the buy waits for its Cash.
             int lap = Enumerable.Range(10, full.Count - 20).First(i => FullTasGoal.IsLap(full.Labels[i]) && full.Labels[i + 1].StartsWith("buy:", StringComparison.Ordinal) && RunGoals.Editable(full.Labels[i + 1]));
             int end = lap + 6;
             var shortPlan = new RunPlan(full.Ids.Take(end).ToArray(), full.Labels.Take(end).ToArray());
@@ -407,8 +398,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             Directory.Delete(dir, true);
         }
 
-        // A best broken as a fidelity fix breaks a route (a jump pressed a tick late, mid-run), its own replay the old path and
-        // goal ticks: the rejoin gets it back to every goal the best reaches.
         static void RejoinBroken(string trace, string best)
         {
             RunContext ctx = RunContext.Open(trace);
@@ -422,7 +411,6 @@ namespace IGTAP.EngineSim.Cli.Runs
                 long[] Pad(long[] a) => a.Take(r.Progress).Concat(Enumerable.Repeat(-1L, plan.Count - r.Progress)).ToArray();
                 (long[] goalInput, long[] goalPhysics) = (Pad(r.GoalInputTicks), Pad(r.GoalPhysicsTicks));
                 Rejoin.Path p = Rejoin.Path.Of(rows, r.GoalPhysicsTicks.Take(r.Progress).ToArray());
-                // The first jump past mid-run whose press a tick later breaks the run.
                 for (int i = inputs.Count / 2; i + 1 < inputs.Count; i++)
                 {
                     if (!inputs[i].press || inputs[i + 1].press || inputs[i + 1].release || !inputs[i + 1].held) continue;
@@ -441,7 +429,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             Check(got >= reached, $"{ctx.Name}: broken at input {where} (reaches {brokenReached} of {reached} goals), rejoined to {got}");
         }
 
-        // A state captured at goal k and restored must play on exactly as the straight replay does.
         static void RestoreAt(string trace, string best, int k)
         {
             RunContext ctx = RunContext.Open(trace);
@@ -461,8 +448,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             Console.WriteLine(report);
         }
 
-        // `--producers N LABEL`: where the best stands after goal N (1-based), the economy drive finds LABEL among the producers of the
-        // currency goal N+1 is short of (ZipEscape%: after goal 840 buy:buycd8, record:8 pays the CloneDust buy:buyclonecd8 lacks).
         static void Producers(string trace, string best, int n, string label)
         {
             RunContext ctx = RunContext.Open(trace);
@@ -484,7 +469,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             Check(found.Any(p => p.Label == label), $"{ctx.Name}: {label} pays the {shortOf.currency} goal {n + 1} {labels[n]} lacks");
         }
 
-        // Goal by goal from captured states (as the builder plays), against one straight replay: where do they part?
         static void ChainTo(string trace, string best, int k)
         {
             RunContext ctx = RunContext.Open(trace);
@@ -512,8 +496,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             }));
         }
 
-        // A probe's rows as 1x would log the engine's: every physics tick, its input and Velocity that tick's, its body, held frames
-        // and Cash the tick before's (OneX).
         static List<OneX.Tick> AsProbe(IReadOnlyList<OneX.Tick> full)
         {
             var game = new List<OneX.Tick>();
@@ -529,7 +511,6 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         static void OneXAlign()
         {
-            // 60 ticks; a dash on input 10: two locked ticks (11, 12) take no input and a 12-frame freeze holds after tick 10.
             var full = new List<OneX.Tick>();
             long input = 0, held = 0;
             for (long p = 1; p <= 60; p++)

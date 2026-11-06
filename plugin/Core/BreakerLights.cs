@@ -13,8 +13,6 @@ namespace IGTAPTasMod
 
         readonly List<tripBreakerScript> _lightBreakers = new List<tripBreakerScript>();
         float _nextBreakerSearch;
-        // The scene generation (SceneGeneration) of the last search: the game creates no breaker at run time, so with none
-        // destroyed since and no scene loaded or unloaded, a search on the timer would find the same set and is skipped.
         int _breakerSearchGeneration = -1;
 
         void BreakerLightsFrame()
@@ -58,14 +56,9 @@ namespace IGTAPTasMod
                     if (light.activeSelf != on) light.SetActive(on);
             }
             _lightBreakers.Clear();
-            // Forcing again searches afresh: the empty list no longer says the scene has no breaker.
             _breakerSearchGeneration = -1;
         }
 
-        // The breaker's lights as the game's own code leaves them, whatever the forcing shows. OvergrowthLoadScript.OnLoad
-        // turns GlobalLight and BreakerLights on unless Area 1 is overgrown and keeps GlobalLight off after a tripped save's
-        // load (mainMenuState); TripBreaker turns GlobalLight off; an area light is on once activeLights says so (load,
-        // activateBreakerLights, fixedArea). A fresh world (a new game, a Vman speedrun) is lit, with no area light on.
         internal static List<(GameObject light, bool on)> GameBreakerLights(tripBreakerScript breaker)
         {
             globalStats stats = Singleton<globalStats>.Instance;

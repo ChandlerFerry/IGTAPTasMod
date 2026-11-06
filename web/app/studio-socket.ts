@@ -1,9 +1,3 @@
-/**
- * The studio's one connection to the game plugin: a WebSocket on /api/ws (WebStudioServer.cs). The plugin pushes the
- * static state (`{type: "static"}`) when it changes and the live state (`{type: "live"}`) whenever it differs; commands go
- * out as `{id, method, path, body}` and resolve with their `{type: "reply", id}`. A dropped socket (the game closed or
- * restarted) connects again, waiting longer after each failure.
- */
 const SOCKET_URL = "ws://127.0.0.1:17426/api/ws";
 const RETRY_MIN_MS = 250, RETRY_MAX_MS = 5000;
 
@@ -14,16 +8,13 @@ type Message = { type: "static" | "live"; data: unknown } | { type: "reply"; id:
 
 let socket: WebSocket | null = null;
 let open = false;
-// The status last given to the listeners: a failed reconnect doesn't repeat "offline".
 let reported: boolean | null = null;
 let retryMs = RETRY_MIN_MS;
 let retryTimer: number | null = null;
 let nextId = 1;
 const pending = new Map<number, Pending>();
-// Requests made while the socket connects, sent once it opens.
 const unsent: string[] = [];
 const listeners = new Set<StudioListener>();
-// This connection's last pushed parts, for a listener that subscribes after they came.
 let lastStatic: unknown = null, lastLive: unknown = null;
 
 function connect() {
@@ -63,11 +54,6 @@ function connect() {
   };
 }
 
-/**
- * Sends a command (`path` below /api, e.g. `/tas/advance`): a GET without a body, a POST with one. Resolves with the
- * handler's result (typed by each caller, as fetch's json() was); rejects with its error, or when the game is offline.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function request(path: string, body?: unknown): Promise<any> {
   connect();
   const ws = socket;
@@ -80,7 +66,6 @@ export function request(path: string, body?: unknown): Promise<any> {
   return promise;
 }
 
-/** Listens for the pushed state and the connection's status; the state already pushed comes at once. Returns the unsubscribe. */
 export function subscribe(listener: StudioListener): () => void {
   listeners.add(listener);
   connect();

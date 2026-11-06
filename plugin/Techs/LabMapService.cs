@@ -13,16 +13,6 @@ using UnityEngine.SceneManagement;
 
 namespace IGTAPTasMod
 {
-    /// <summary>
-    /// Injected lab maps (labmaps/&lt;id&gt;.json): a custom, temporary piece of level built additively in empty space to
-    /// demonstrate one tech exactly (RULES.md: lab only, never a route, restored afterwards).
-    /// <c>POST /api/labmap/inject {id}</c> builds one root of colliders at its anchor (world frame through
-    /// FloatingOrigin.currentOrigin), <c>POST /api/labmap/restore</c> destroys it and puts back anything the lab session
-    /// touched (the player included). A tech's lab demo (the Tech tab's Play, <see cref="PlayTechLab"/>) injects, plays from
-    /// the lab start (the lab savestate <c>place</c> mechanism) and, at a 1x playback's end, leaves the player in the lab's
-    /// hand play at its start (Unload puts back what loading it changed); a scene change restores, and the save gate and
-    /// autosave refuse while a lab map is injected.
-    /// </summary>
     public sealed partial class TasPlugin
     {
         public sealed class LabShapeDef
@@ -35,16 +25,10 @@ namespace IGTAPTasMod
             public string tag = "Ground";
             public bool trigger;
             public bool spike;
-            /// <summary>A box's rotation about z in degrees, counter-clockwise: its collider turns with it, and a spring's
-            /// transform.up (180 launches down).</summary>
             public float rotation;
-            /// <summary>The game's SpringScript with these serialized fields (the shape is its trigger).</summary>
             public LabSpringDef spring;
-            /// <summary>A coloured block ("blue" or "orange"): on only while its colour is the active one; swapBlocks toggles it
-            /// with the scene's coloured tilemaps (<see cref="AfterSwapBlocks"/>), as the offline engine does (LabMap.Inject).</summary>
             public string colour;
 
-            /// <summary>The shape object's rotation, the same float quaternion as the offline engine's (LabShape.Rotation).</summary>
             public Quaternion Rotation()
             {
                 if (rotation == 0f) return Quaternion.identity;
@@ -53,7 +37,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>A lab spring's SpringScript fields (the Course 5 ceiling spring's: upForce 70, strength 300, movementLock 0.25).</summary>
         public sealed class LabSpringDef
         {
             public float upForce = 70f;
@@ -64,7 +47,6 @@ namespace IGTAPTasMod
         public sealed class LabStartDef
         {
             public float? x, y, vx, vy, mx, my, facing;
-            /// <summary>The coloured blocks' state at the start (colouredBlockSwapper.isBlueActive); null keeps the game's.</summary>
             public bool? blueActive;
             public JObject fields;
         }
@@ -81,32 +63,17 @@ namespace IGTAPTasMod
             public List<LabShapeDef> shapes = new List<LabShapeDef>();
             public LabStartDef start = new LabStartDef();
             public float[] finish;
-            /// <summary>Playing the lab by hand (Tech tab, <c>inject {place: true}</c>): extra shapes and a standing start. The solver never sees it.</summary>
             public LabHandDef hand;
-            /// <summary>The input trainer shown while the lab is injected (<see cref="LabTrainer"/>): "pauselift", "final-cling-float", or none.</summary>
             public string trainer;
-            /// <summary>
-            /// The ghosts the lab shows (<see cref="LabGhost"/>), in order: each one of its demos' paths with a label, the first
-            /// in cyan, then green, magenta, yellow and orange, all on one clock. None: hand play shows the main demo's ghost alone.
-            /// A lab that lists them also shows them in its demo's playback, all but the demo being played, so the played tech runs
-            /// beside what it beats (freeze-aim: the freeze aim beside three keyboard tries that don't land).
-            /// </summary>
             public List<LabGhostDef> ghosts;
         }
 
-        /// <summary>A lab's hand-play setup: a floor to stand on (<c>shapes</c>, added to the lab's own) and where you stand (<c>start</c>).</summary>
         public sealed class LabHandDef
         {
             public List<LabShapeDef> shapes = new List<LabShapeDef>();
             public LabStartDef start;
         }
 
-        /// <summary>
-        /// One of a lab's ghosts: its demo (labmaps/&lt;id&gt;.&lt;demo&gt;.demo.json; none: &lt;id&gt;.demo.json), what it shows (the
-        /// on-screen key), a short badge drawn on its head ("KB": a keyboard's inputs), and the lane it runs in: <c>offset</c>
-        /// [dx, dy] from the lab, where a see-through copy of the lab's shapes (no colliders) is drawn, so ghosts side by side
-        /// don't overlap. No offset: the lab itself.
-        /// </summary>
         public sealed class LabGhostDef
         {
             public string demo;
@@ -123,34 +90,23 @@ namespace IGTAPTasMod
             public Savestate PlayerBefore;
             public string Scene;
             public bool PlaybackSeen;
-            /// <summary>Built for hand play (its hand shapes are in): a demo re-injects the lab without them.</summary>
             public bool Hand;
-            /// <summary>A 1x demo playback's lab: its end goes back to hand play (<see cref="ReturnToHandPlay"/>) instead of restoring.</summary>
             public bool ReturnToHand;
-            /// <summary>Set when the player was put at the lab start (<c>place</c>): the unlocks, course reset point and respawn point it replaced.</summary>
             public List<(string field, object value)> SavedAbilities;
             public Vector2? CourseResetPointBefore, RespawnPointBefore;
-            /// <summary>The ghosts replaying demo paths on a loop (<see cref="LabGhost"/>): hand play, and a playback of a lab with <c>ghosts</c>.</summary>
             public List<LabGhost> Ghosts = new List<LabGhost>();
-            /// <summary>The ghosts' shared clock (seconds of 1x play since they were built): every ghost's loop starts over together.</summary>
             public float GhostClock;
         }
 
         LabSession _lab;
 
-        /// <summary>While a lab map is injected: no autosave, and SaveSolverRoute refuses (a lab is never a route).</summary>
+        // While a lab map is injected: no autosave and SaveSolverRoute refuses (RULES.md 42, exception 7).
         internal bool LabInjected { get { return _lab != null; } }
 
         string LabMapsDir { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "labmaps"); } }
 
-        /// <summary>Lab files already checked against the plugin's embedded copy this session (<see cref="LabMapFile"/>).</summary>
         readonly HashSet<string> _labFilesSeeded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>
-        /// A lab map (or one of its solved demos) in the config's labmaps/. The plugin's embedded labmaps/ (the repo's, built in)
-        /// are the source of truth: the first time a session asks for a file it has, a missing or different config copy is
-        /// written over, so a redeploy brings every repo lab and demo in. A file only the config has is left as it is.
-        /// </summary>
         string LabMapFile(string fileName)
         {
             string path = Path.Combine(LabMapsDir, fileName);
@@ -188,9 +144,6 @@ namespace IGTAPTasMod
             return lab;
         }
 
-        // The studio's lab list (BuildTechStaticWebState) reads every lab map and demo: parsed once per file version (path and
-        // write time), the folder listed at most once a second. The web state only reads them; LoadLabMap still parses afresh
-        // for an injection, which keeps what it gets.
         static readonly string[] EmbeddedLabMapIds = Assembly.GetExecutingAssembly().GetManifestResourceNames()
             .Where(r => r.StartsWith("IGTAPTasMod.labmaps.", StringComparison.Ordinal) && r.EndsWith(".json", StringComparison.Ordinal) && !r.EndsWith(".demo.json", StringComparison.Ordinal))
             .Select(r => r.Substring("IGTAPTasMod.labmaps.".Length, r.Length - "IGTAPTasMod.labmaps.".Length - ".json".Length)).ToArray();
@@ -199,7 +152,6 @@ namespace IGTAPTasMod
         readonly CachedFiles<LabMapDef> _labMapCache = new CachedFiles<LabMapDef>();
         readonly CachedFiles<JObject> _labJsonCache = new CachedFiles<JObject>();
 
-        /// <summary>Every lab map's id: the config folder's files and the plugin's embedded seeds (solved demos excluded).</summary>
         internal List<string> LabMapIds()
         {
             if (_labMapIds != null && Time.unscaledTime - _labMapIdsAt < 1f) return new List<string>(_labMapIds);
@@ -212,14 +164,12 @@ namespace IGTAPTasMod
             return new List<string>(_labMapIds);
         }
 
-        /// <summary><see cref="LoadLabMap"/> for reading only: the same lab until its file changes.</summary>
         LabMapDef CachedLabMap(string id)
         {
             string path = string.IsNullOrWhiteSpace(id) || id.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ? null : LabMapFile(id + ".json");
             return path == null ? LoadLabMap(id) : _labMapCache.Get(path, _ => LoadLabMap(id));
         }
 
-        /// <summary>A lab demo's JSON (labmaps/&lt;name&gt;), parsed once per version of its file; null: no such demo. For reading only.</summary>
         JObject CachedLabJson(string fileName)
         {
             string path = LabMapFile(fileName);
@@ -234,7 +184,6 @@ namespace IGTAPTasMod
             {
                 case "/api/labmap/inject":
                 {
-                    // place: also put the player at the lab start with the lab's unlocks, to play it by hand.
                     string id = Text(body, "id");
                     bool place = Truthy(body, "place");
                     if (place && PlaybackActive) throw new InvalidOperationException("Stop playback first.");
@@ -254,21 +203,12 @@ namespace IGTAPTasMod
             throw new InvalidOperationException("Unknown lab map command: " + path);
         }
 
-        /// <summary>
-        /// The lab map of a tech's demo is injected before its start is restored (RestoreRouteStart), for a 1x playback and for
-        /// the tech trace's turbo run alike (which shows no ghosts). A 1x playback ends in the lab's hand play at its start
-        /// (<see cref="ReturnToHandPlay"/>), not back where the lab was loaded from; one started from hand play (or from the
-        /// playback before it) keeps that session's before-state, so Unload still puts back what loading the lab changed.
-        /// Returns the demo's tech when it plays on a lab map (its start is then <see cref="PlaceLabDemoStart"/>), else null.
-        /// </summary>
         internal TechDef LabMapEnsureFor(MacroDefinition route)
         {
             TechDef tech = TechOfRoute(route);
             if (tech == null || string.IsNullOrEmpty(tech.labmap)) return null;
             string playing = _techStart == null && !_silentEvaluation ? tech.labDemo ?? "" : null;
             LabMapDef lab = LoadLabMap(tech.labmap);
-            // A tech trace's turbo run reuses a plain injection (one it left); a 1x playback always injects afresh, its ghosts'
-            // clock starting with its first tick and its end going back to hand play.
             if (playing == null && _lab != null && _lab.Id == tech.labmap && !_lab.Hand && _lab.Ghosts.Count == 0) return tech;
             LabSession carried = null;
             if (playing != null && _lab != null && _lab.Id == tech.labmap && (_lab.Hand || _lab.ReturnToHand)) carried = DetachLab();
@@ -280,12 +220,7 @@ namespace IGTAPTasMod
             return tech;
         }
 
-        /// <summary>
-        /// A lab demo's start, built from its lab file each time (no stored savestate, which a game update's new assembly hash
-        /// rejects, and which kept whatever state the player had when the demo was installed): the player's Movement reset to
-        /// the start the demo was solved from (<see cref="ResetToLabBase"/>), then placed at the demo's own start (else the lab's)
-        /// with its fields, as `lab replay` places the offline one over that trace's start.
-        /// </summary>
+        // Built from the lab file each time: a stored savestate is rejected by a game update's new assembly hash.
         void PlaceLabDemoStart(TechDef tech, Movement player)
         {
             LabMapDef lab = _lab?.Lab ?? LoadLabMap(tech.labmap);
@@ -298,32 +233,19 @@ namespace IGTAPTasMod
             ApplyLabBlocks(player, start);
         }
 
-        /// <summary>The lab start's coloured blocks (<c>blueActive</c>): the game's own swap, which the lab's coloured shapes follow.</summary>
         static void ApplyLabBlocks(Movement player, LabStartDef start)
         {
             if (start.blueActive is bool blue) SetMovementField(player, BlueActiveField, blue);
         }
 
-        /// <summary>
-        /// Movement fields a lab start's reset keeps from the live player: the save's (Movement.save: the respawn point, the
-        /// light) and the session's (course reset point, checkpoint respawns, the menu, pause and init flags, the block swap's
-        /// respawn colour).
-        /// </summary>
         static readonly HashSet<string> LabBaseKept = new HashSet<string> { "respawnPoint", "courseResetPoint", "isRespawningAtCheckpoints",
             "lightActive", "lightRadius", "init", "isOnMainMenu", "GamePaused", "DEBUG_startingCourse", "isBlueActiveOnRespawn" };
 
-        /// <summary>The start trace a lab demo is solved from when its demo names none (`lab solve`'s usual one).</summary>
         const string LabBaseTrace = "start-c1-none.json";
 
         readonly CachedFiles<(List<(FieldInfo field, object value)> fields, JArray colliders)> _labBases =
             new CachedFiles<(List<(FieldInfo, object)>, JArray)>();
 
-        /// <summary>
-        /// Every value-type Movement field (and the hitbox colliders) set to a start trace's (enginesim/&lt;trace&gt;, the one the
-        /// lab demo was solved from: its `solvedIn`), all but <see cref="LabBaseKept"/>: no leftover of earlier play (a
-        /// wallCoyoteFrames, a dash's timers) reaches the lab start, and the in-game start is the offline one. Object references
-        /// and lists stay the live player's.
-        /// </summary>
         void ResetToLabBase(Movement player, string trace)
         {
             string path = Path.Combine(EngineSimDir, string.IsNullOrEmpty(trace) ? LabBaseTrace : trace);
@@ -358,8 +280,6 @@ namespace IGTAPTasMod
                 }
         }
 
-        /// <summary>A start trace's field value (EngineSimJson: numbers, "Infinity"/"NaN" strings, {x, y[, z]} vectors, enums as
-        /// numbers) as the field's type; false for what a trace can't give back (object references, lists, nulls).</summary>
         static bool LabBaseValue(Type type, JToken token, out object value)
         {
             value = null;
@@ -377,7 +297,6 @@ namespace IGTAPTasMod
             return false;
         }
 
-        /// <summary>Removes the injected lab without putting anything back (the session goes on in another injection).</summary>
         LabSession DetachLab()
         {
             LabSession lab = _lab;
@@ -386,8 +305,6 @@ namespace IGTAPTasMod
             return lab;
         }
 
-        /// <summary>What a lab session restores on Unload (the player's state before the lab, the unlocks, the course reset and
-        /// respawn points), handed to the session that replaces it.</summary>
         static void CarryLabState(LabSession from, LabSession to)
         {
             to.PlayerBefore = from.PlayerBefore;
@@ -396,10 +313,6 @@ namespace IGTAPTasMod
             to.RespawnPointBefore = from.RespawnPointBefore;
         }
 
-        /// <summary>
-        /// A demo's playback is over: the lab goes back to hand play (its hand floor and ghosts) with the player at its start and
-        /// its unlocks, ready to try the tech; Unload then puts back what loading the lab (or starting the demo) changed.
-        /// </summary>
         void ReturnToHandPlay()
         {
             LabSession demo = DetachLab();
@@ -409,8 +322,6 @@ namespace IGTAPTasMod
             Logger.LogInfo("Lab map " + demo.Id + ": the demo ended, back to hand play at its start.");
         }
 
-        /// <param name="hand">Hand play: the lab's <c>hand.shapes</c> go in too (a floor to stand on); a demo's and the solver's lab never has them.</param>
-        /// <param name="playing">The lab demo a 1x playback plays ("" the main one), whose ghost the others run beside; null: none.</param>
         void InjectLab(LabMapDef lab, bool hand, string playing = null)
         {
             FindLabSortingCeiling();
@@ -469,8 +380,7 @@ namespace IGTAPTasMod
                 if (shape.spike) go.AddComponent<spikeScript>();
                 if (shape.spring != null)
                 {
-                    // The game's own spring, its serialized fields as a scene spring carries them (no Animator: OnTriggerStay2D
-                    // skips the animation and the sound).
+                    // No Animator on the spring: OnTriggerStay2D then skips the animation and the sound.
                     var spring = go.AddComponent<SpringScript>();
                     LabSpringUpForce.SetValue(spring, shape.spring.upForce);
                     LabSpringStrength.SetValue(spring, shape.spring.strength);
@@ -490,11 +400,9 @@ namespace IGTAPTasMod
                 + "); autosave and the route gate are off until it is restored.");
         }
 
-        /// <summary>The injected lab's coloured shapes' colliders and colours (blue: true).</summary>
         static readonly List<(Collider2D collider, bool blue)> LabColours = new List<(Collider2D, bool)>();
         bool _labColoursPatched;
 
-        /// <summary>swapBlocks's postfix, patched when a lab with coloured shapes is first injected.</summary>
         void PatchLabColours()
         {
             if (_labColoursPatched) return;
@@ -503,7 +411,6 @@ namespace IGTAPTasMod
                 postfix: new HarmonyMethod(AccessTools.Method(typeof(TasPlugin), nameof(AfterSwapBlocks))));
         }
 
-        /// <summary>A block swap toggles the lab's coloured shapes with the scene's coloured tilemaps.</summary>
         static void AfterSwapBlocks(bool BlueActive)
         {
             foreach (var (collider, blue) in LabColours)
@@ -525,7 +432,6 @@ namespace IGTAPTasMod
         static Material _labMaterial;
         static Sprite _labPixel;
 
-        /// <summary>An unlit sprite material, so the lab stays visible with the game's 2D lights off (the breaker).</summary>
         static Material LabMaterial()
         {
             if (_labMaterial != null) return _labMaterial;
@@ -535,18 +441,10 @@ namespace IGTAPTasMod
             return _labMaterial = any != null ? any.sharedMaterial : null;
         }
 
-        /// <summary>Sorting ranks under the lab's ceiling (<see cref="FindLabSortingCeiling"/>): ghosts on top, then the lab's shapes and
-        /// paths, then the ghost lanes' see-through copies.</summary>
         const int LabGhostRank = 0, LabShapeRank = 1, LabLaneRank = 10;
 
         static int _labSortingLayer, _labSortingTop = 32000;
 
-        /// <summary>
-        /// Where the lab draws: above the level, below the game's own menus. The pause menu (pauseMenuScript, the settings
-        /// screens under it) and the settings (SettingsScript) are Screen Space - Camera canvases, sorted with the sprites
-        /// (pauseMenu: layer Default, order 10001), so the lab draws just under the lowest of them; with none, on the top
-        /// layer's top order. Found at each injection, since a scene brings its own menu.
-        /// </summary>
         static void FindLabSortingCeiling()
         {
             SortingLayer[] layers = SortingLayer.layers;
@@ -568,18 +466,12 @@ namespace IGTAPTasMod
                 }
         }
 
-        /// <summary>Drawn above the level and under the game's menus, at <paramref name="rank"/> below the lab's ceiling.</summary>
         static void LabSorting(Renderer renderer, int rank = LabShapeRank)
         {
             renderer.sortingLayerID = _labSortingLayer;
             renderer.sortingOrder = _labSortingTop - rank;
         }
 
-        /// <summary>
-        /// A lab shape as drawn in game, under <paramref name="parent"/> (at the shape's own position and rotation): ground dark
-        /// with a cyan outline, spikes red, springs yellow with an arrow along their launch (transform.up), other triggers
-        /// purple, moss green; <paramref name="alpha"/> below 1 for a ghost lane's see-through copy.
-        /// </summary>
         static void LabShapeVisual(Transform parent, LabShapeDef shape, float alpha)
         {
             Color color = shape.spike || shape.layer == "Spikes" ? new Color(0.75f, 0.22f, 0.17f, alpha) : shape.spring != null ? new Color(1f, 0.84f, 0.31f, alpha)
@@ -592,7 +484,6 @@ namespace IGTAPTasMod
                 LabLine(parent, new[] { new Vector2(-w, -h), new Vector2(w, -h), new Vector2(w, h), new Vector2(-w, h) }, true, new Color(0.3f, 0.85f, 1f, alpha), 3f);
                 if (shape.spring != null)
                 {
-                    // The launch direction, local up (the parent carries the rotation): out of the far side, in the spring's colour.
                     float tip = h + 40f, head = Mathf.Min(w, 16f);
                     LabLine(parent, new[] { new Vector2(0f, h), new Vector2(0f, tip) }, false, color, 6f);
                     LabLine(parent, new[] { new Vector2(-head, tip - head), new Vector2(0f, tip), new Vector2(head, tip - head) }, false, color, 6f);
@@ -601,7 +492,6 @@ namespace IGTAPTasMod
             else LabLine(parent, shape.points.Select(p => new Vector2(p[0], p[1])).ToArray(), shape.kind == "polygon", color, 6f);
         }
 
-        /// <summary>A filled box (a scaled 1-unit sprite) as a child of <paramref name="parent"/>, centred at <paramref name="at"/>.</summary>
         static SpriteRenderer LabBox(Transform parent, Vector2 at, Vector2 size, Color color, Sprite image = null)
         {
             if (_labPixel == null)
@@ -624,7 +514,6 @@ namespace IGTAPTasMod
             return sprite;
         }
 
-        /// <summary>A line through <paramref name="points"/> (local to <paramref name="parent"/>), closed when <paramref name="loop"/>.</summary>
         static void LabLine(Transform parent, Vector2[] points, bool loop, Color color, float width)
         {
             var go = new GameObject("visual");
@@ -641,12 +530,6 @@ namespace IGTAPTasMod
             LabSorting(line);
         }
 
-        /// <summary>
-        /// Puts the player at the injected lab's start to play it by hand (its <c>hand.start</c>, standing, when it has one): the
-        /// Movement reset to the start trace its main demo was solved from (<see cref="ResetToLabBase"/>), the lab category's
-        /// unlocks (put back on restore, never autosaved while the lab is injected), then that start as a lab savestate restored
-        /// in place (not kept on disk). A death or quick restart respawns there too until the lab is restored.
-        /// </summary>
         void PlaceAtLabStart()
         {
             Movement player = FindWorldMovement() ?? throw new InvalidOperationException("No player in the world.");
@@ -672,7 +555,6 @@ namespace IGTAPTasMod
             Logger.LogInfo("Player placed at lab " + lab.id + "'s " + (lab.hand?.start != null ? "hand-play start" : "start") + " with " + category.Label + " unlocks.");
         }
 
-        /// <summary>A lab start as a <c>/api/savestates/place</c> body: the start relative to the lab's anchor, in the world frame.</summary>
         static JObject LabStartBody(LabMapDef lab, LabStartDef start)
         {
             return new JObject
@@ -687,7 +569,6 @@ namespace IGTAPTasMod
             };
         }
 
-        /// <summary>Destroys the injected lab and puts back anything its session touched (the player's state, unlocks, course reset and respawn points).</summary>
         void RestoreLab(string why)
         {
             if (_lab == null) return;
@@ -711,8 +592,6 @@ namespace IGTAPTasMod
             Logger.LogInfo("Lab map " + lab.Id + " restored (" + why + ").");
         }
 
-        // The active scene's name by its handle: Scene.name makes a new string on every call, and PumpLabMap compares it every
-        // frame. A loaded scene keeps its handle and name; another scene (a reload of the same one too) has another handle.
         int _labSceneHandle;
         string _labSceneName;
 
@@ -727,7 +606,6 @@ namespace IGTAPTasMod
             return _labSceneName;
         }
 
-        /// <summary>Restores the lab map on a scene change or at a playback's end (plugin Update).</summary>
         void PumpLabMap()
         {
             if (_lab == null) return;

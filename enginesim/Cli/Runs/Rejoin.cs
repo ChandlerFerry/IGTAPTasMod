@@ -10,38 +10,26 @@ using IGTAPTasMod;
 
 namespace IGTAP.EngineSim.Cli.Runs
 {
-    // Route repair by rejoin (the old stack's transplant, FullTasTransplant.cs, deleted in 0c35faa): a route a fidelity fix broke keeps
-    // its inputs. Its replay here is followed against its own path where it was found (a --ticks-out of it there) and the goal ticks
-    // it recorded; at the first break only the inputs just before it change (a tick held or dropped, a press, release or dash moved a
-    // tick, the stick re-aimed: one change, else a pair of the best), or, when none plays better, the goal it misses is searched from a
-    // little before the break and the old inputs from where the route reached that goal are appended (-4..+4 inputs). Then the next
-    // break, while it gets further. What comes out is only a starting route: the improver keeps it only as its straight replay plays it.
     sealed class Rejoin
     {
         const float PathTolerance = 6f;
         const int PathSlack = 3, PathPersist = 3, GoalSlack = 8;
         static readonly int[] Windows = { 24, 60 };
         const int Horizon = 250, Beam = 6, MaxRepairsPerGoal = 40, SpliceOffsets = 4, SearchBack = 120, MaxFinds = 24;
-        // A path patch: from PatchBack inputs before the break to an `at:` box Box wide on the path PathAhead ticks past it, cut at up to
-        // Cuts places it comes within PathTolerance of the path, the old inputs from each (-CutOffsets..+CutOffsets).
         const int PatchBack = 40, PathAhead = 30, Cuts = 8, CutOffsets = 2;
         const float Box = 12f;
 
-        // Stick values a controller gives (RULES.md 2): full, rest and the partial tilts 0.3-0.8; a human class's digital stick only.
+        // Stick values a controller gives (RULES.md 2): full, rest and partial tilts 0.3-0.8; a human class digital only.
         static readonly float[] Ladder = new[] { -1f }.Concat(Enumerable.Range(0, 11).Reverse().Select(i => -(float)Math.Round(.3 + .05 * i, 2)))
             .Concat(new[] { 0f }).Concat(Enumerable.Range(0, 11).Select(i => (float)Math.Round(.3 + .05 * i, 2))).Concat(new[] { 1f }).ToArray();
         static readonly float[] Digital = { -1f, 0f, 1f };
 
-        // The route's own run where it was found: the player's world place per physics tick and the first tick each input count played
-        // on (a `fulltas --check --ticks-out` row's "input").
         public sealed class Path
         {
             public float[] X, Y;
             public long[] InputAt;
             public Dictionary<long, long> FirstTick = new Dictionary<long, long>();
 
-            // Kept through the last goal it reached on the route's recorded tick: a path taken on an engine near the route's own (the
-            // old frame grid's) parts from it somewhere after that.
             public static Path Load(string file, long[] goalPhysics)
             {
                 var rows = new List<(long t, long input, int goal, float x, float y)>();
@@ -56,7 +44,6 @@ namespace IGTAP.EngineSim.Cli.Runs
                 return Of(rows, goalPhysics);
             }
 
-            // A route's path on this engine: its straight replay's place each physics tick (a polish's rejoin follows the best's own).
             public static Path Replayed(RunContext run, RunPlan plan, List<InputTick> inputs, long[] goalPhysics) => Solve.OnThread(() =>
             {
                 Simulation sim = run.Make();
@@ -90,7 +77,6 @@ namespace IGTAP.EngineSim.Cli.Runs
                 return path;
             }
 
-            // How far (x, y) is from the path at the k-th tick of the input count `input`, a few ticks either way; NaN off its ends.
             public float Off(float x, float y, long input, long k)
             {
                 if (!FirstTick.TryGetValue(input, out long t0)) return float.NaN;
@@ -105,7 +91,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             }
         }
 
-        // A repaired route: its inputs and, for each, the old input it is (-1: a tick put in or a searched patch's).
         sealed class Graft
         {
             public List<InputTick> Inputs;
@@ -113,8 +98,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             public string How;
         }
 
-        // How a stretch played, higher is better: goals; then the last one sooner; then ticks on the old path, alive, nearer the next
-        // goal, inputs lasted.
         struct Score : IComparable<Score>
         {
             public int Progress, Gained, Followed;
@@ -137,7 +120,6 @@ namespace IGTAP.EngineSim.Cli.Runs
                 + (Alive ? ", alive" : ", dead") + (float.IsNaN(Distance) ? "" : $", {Distance:0} from the next goal") + $", {Lasted} inputs";
         }
 
-        // With the old path only more goals, the last one sooner or more ticks on the path count: alive longer off it isn't a repair.
         bool Beats(Score a, Score b)
         {
             if (_path == null) return a.CompareTo(b) > 0;
@@ -146,8 +128,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             return a.Followed > b.Followed && (a.Alive || !b.Alive);
         }
 
-        // Follows a replay along the old path tick by tick, lined up by input: an old input's k-th tick against the path's k-th tick of it.
-        // It has left the path once it is off for PathPersist ticks in a row (a jump's or dash's position write puts it off for one).
         sealed class Follower
         {
             readonly Path _path;
@@ -181,7 +161,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             }
         }
 
-        // Worker threads, each with a simulation of its own (the game's statics are per thread), playing stretches from a cached prefix.
         sealed class Lanes : IDisposable
         {
             readonly BlockingCollection<Action<Lane>> _jobs = new BlockingCollection<Action<Lane>>();
@@ -244,9 +223,6 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         sealed class Diag
         {
-            // Fail: the first break (off the old path too); Hard: where its goals stop coming (a goal missed, a death). Progress: the most
-            // goals it reached (a death takes back the area goals after its checkpoint), GoalInput/GoalPhysics where it first reached
-            // each; Reached and Last: the straight replay's goals and its last goal's tick.
             public int Progress, Fail, Hard, Reached;
             public long Last;
             public long[] GoalInput, GoalPhysics;
@@ -268,7 +244,6 @@ namespace IGTAP.EngineSim.Cli.Runs
         readonly Stopwatch _clock = new Stopwatch();
         bool TimeUp => Stop() || _clock.Elapsed > Budget;
 
-        // oldInput: per plan goal, the input count where the route reached it (its run file's goals' "input"), -1 unknown.
         public Rejoin(RunContext run, RunPlan plan, List<InputTick> old, long[] oldInput, long[] oldPhysics, Path path, SegmentSearch search, int threads)
         {
             (_run, _plan, _old, _oldInput, _oldPhysics, _path, _search, _threads) = (run, plan, old, oldInput, oldPhysics, path, search, Math.Max(1, threads));
@@ -276,7 +251,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             _ladder = Glitches.Human(run.Class) ? Digital : Ladder;
         }
 
-        // The route file's recorded goal ticks by the plan's goal ids (-1: not reached, or no such goal).
         public static (long[] input, long[] physics) Recorded(JsonElement file, RunPlan plan)
         {
             long[] input = Enumerable.Repeat(-1L, plan.Count).ToArray(), physics = Enumerable.Repeat(-1L, plan.Count).ToArray();
@@ -291,7 +265,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             return (input, physics);
         }
 
-        // With a prefix: another route's way to a goal, then the old inputs from oldFrom (where the route reached that goal), repaired.
         public List<InputTick> Repair(List<InputTick> prefix = null, int oldFrom = 0)
         {
             _clock.Start();
@@ -305,7 +278,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             int repairs = 0, atGoal = d.Progress;
             var searched = new HashSet<(int, int)>();
             var patched = new HashSet<(int, ulong)>();
-            // A break whose local changes (or path patch) were tried with the same inputs up to it isn't tried again.
             var tried = new HashSet<(int, ulong)>();
             Graft Local(int fail) => tried.Add((fail, SnapshotIndex.Hash(g.Inputs, Math.Min(g.Inputs.Count, fail + 3)))) ? RepairLocally(lanes, g, d, fail) : null;
             while (!TimeUp && d.Progress < _goals.Length)
@@ -331,8 +303,6 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         bool Died(string reason) => reason != null && FullTasTracker.Unexplained(reason) != "Solver run ended" && !reason.StartsWith("Full-TAS", StringComparison.Ordinal);
 
-        // Where the replay from the run's start breaks: the input on which it leaves the old path, where it passes the input the route
-        // reached its next goal on without reaching it, or else where it dies (or is nearest the next goal).
         Diag Diagnose(Lanes.Lane lane, Graft g)
         {
             Simulation sim = lane.Sim;
@@ -409,7 +379,6 @@ namespace IGTAP.EngineSim.Cli.Runs
                 if (d != 0 && at + d >= 0 && at + d < _ladder.Length) yield return _ladder[at + d];
         }
 
-        // The single local changes at input i: ticks held or dropped there, its press, release or dash a tick earlier or later, its stick re-aimed.
         IEnumerable<Graft> Mutations(Graft g, int i)
         {
             List<InputTick> s = g.Inputs;
@@ -461,7 +430,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             }
         }
 
-        // The best single change before the break, else the best pair (a beam of the best singles), that plays better than the graft.
         Graft RepairLocally(Lanes lanes, Graft g, Diag d, int fail)
         {
             int limit = Math.Min(_goals.Length, d.Progress + 2);
@@ -494,19 +462,13 @@ namespace IGTAP.EngineSim.Cli.Runs
             return null;
         }
 
-        // A short patch from just before the break back onto the old path a little past it: the solver aims at an `at:` box on the path
-        // (a goal put in before the next one), each find is cut where it comes within PathTolerance of the path, and the old inputs are
-        // played on from that place's input.
         Graft PathPatch(Lanes lanes, Graft g, Diag d)
         {
             int b = d.Fail, m = Math.Min(b, g.Map.Count - 1), s = Math.Max(0, b - PatchBack);
             while (m >= 0 && g.Map[m] < 0) m--;
-            // A break before the old inputs start (another route's prefix): the path from where they start.
             if (m < 0) { m = b; while (m < g.Map.Count && g.Map[m] < 0) m++; }
             if (m >= g.Map.Count || !_path.FirstTick.TryGetValue(g.Map[m] + 1, out long t0)) return null;
             if (m > b) t0--;
-            // The box goes in before the first goal the graft reaches after the patch's start (the run can leave the path before a goal
-            // it still reaches).
             int p = 0;
             while (p < d.Progress && d.GoalInput[p] <= s) p++;
             long end = _path.X.Length - 1;
@@ -521,7 +483,6 @@ namespace IGTAP.EngineSim.Cli.Runs
                 int seedEnd = g.Map.IndexOf((int)_path.InputAt[target], Math.Min(s, g.Map.Count));
                 var seeds = seedEnd > s ? new List<List<InputTick>> { g.Inputs.GetRange(s, seedEnd - s) } : new List<List<InputTick>>();
                 Log($"rejoin: from input {s} back onto the old path at tick {target} ({box.label}; {Builder.Budgets[0] / 1_000_000}M ticks)");
-                // The prefix replayed on the search's own simulations: their tracker has the box as goal p.
                 List<List<InputTick>> finds = _search.Find(null, g.Inputs.Take(s).ToList(), goals, ids, p, seeds, Builder.Budgets[0], out string nearest);
                 GC.Collect();
                 if (_search.Stopped) return null;
@@ -539,8 +500,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             return null;
         }
 
-        // Each find (from input s) cut at up to Cuts places it comes within PathTolerance of the old path's ticks t0+1..end, and the old
-        // inputs from that place's input after it.
         List<Graft> PathSplices(Lanes lanes, Graft g, int s, List<List<InputTick>> finds, long t0, long end)
         {
             List<List<InputTick>> picked = finds.OrderBy(f => f.Count).Take(MaxFinds).Select(f => f.Concat(Enumerable.Repeat(new InputTick(), 20)).ToList()).ToList();
@@ -590,8 +549,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             return tries;
         }
 
-        // The goal the graft misses, searched from a little before the break (the old way there the seed), and the old inputs from where
-        // the route reached that goal appended to each find (-4..+4 inputs): the one that plays furthest along them, if better than the graft.
         Graft SearchPatch(Lanes lanes, Graft g, Diag d)
         {
             int p = d.Progress;
@@ -620,7 +577,6 @@ namespace IGTAP.EngineSim.Cli.Runs
                 Log($"rejoin: goal {p + 1} not found ({nearest})");
             }
             if (finds.Count == 0) return null;
-            // Each find cut where it reaches the goal, as the builder plays it.
             List<InputTick>[] cut = lanes.Map(finds.OrderBy(f => f.Count).Take(MaxFinds).Select(f => (Func<Lanes.Lane, List<InputTick>>)(l =>
             {
                 SimSnapshot at = l.At(g.Inputs, s);
@@ -642,7 +598,6 @@ namespace IGTAP.EngineSim.Cli.Runs
                         How = $"goal {p + 1} searched from input {s} ({f.Count} inputs), the old inputs from {from} after it",
                     });
                 }
-            // With the old path: also each find cut where it comes back onto it.
             int m = Math.Min(s, g.Map.Count) - 1;
             while (m >= 0 && g.Map[m] < 0) m--;
             if (_path != null && m >= 0 && _path.FirstTick.TryGetValue(g.Map[m] + 1, out long t0)) tries.AddRange(PathSplices(lanes, g, s, finds, t0, _path.X.Length - 1));

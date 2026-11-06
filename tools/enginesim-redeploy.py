@@ -20,7 +20,7 @@ def main():
     exe = str(GAME / "IGTAPfullGame.exe").replace("'", "''")
     subprocess.run(["powershell", "-NoProfile", "-Command", "Get-Process IGTAPfullGame -ErrorAction SilentlyContinue"
                     f" | Where-Object {{ $_.Path -eq '{exe}' }} | Stop-Process -Force"], capture_output=True)
-    # Only the solver the plugin launches (the shared build); other IGTAP.EngineSim copies (private search bins) keep running.
+    # Stop only the shared solver build: other searches' private engine builds keep running.
     solver = str(ROOT / "enginesim" / "Cli" / "bin" / "Release" / "net10.0" / "IGTAP.EngineSim.exe").replace("'", "''")
     subprocess.run(["powershell", "-NoProfile", "-Command", "Get-Process IGTAP.EngineSim -ErrorAction SilentlyContinue"
                     f" | Where-Object {{ $_.Path -eq '{solver}' }} | Stop-Process -Force"], capture_output=True)

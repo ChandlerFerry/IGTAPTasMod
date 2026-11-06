@@ -12,7 +12,6 @@
 @media (max-width: 1200px) { .fullTasGrid { grid-template-columns: 1fr; } }
 .fullTasGoals .tableHead, .fullTasGoals .tableRow { grid-template-columns: 40px minmax(0,1fr) 130px 130px; }
 .fullTasGoals .tableRow.pending { color: var(--muted); }
-/* A run's goals (hundreds) scroll in place, so Improve's progress below stays a short scroll away. */
 .fullTasGoals .resultTable { max-height: 62vh; overflow-y: auto; }
 .fullTasGoals .resultTable > .tableHead { position: sticky; top: 0; z-index: 1; background: #0b1829; }
 
@@ -62,8 +61,6 @@
 .ftSort.on::after { content: " \25B2"; opacity: 1; }
 .ftDifficulty { background: #2a2214; box-shadow: inset 3px 0 0 var(--amber); }
 .ftDifficulty .ftMeter i { background: var(--amber); }
-/* A candidate's hard inputs along its input ticks: frame-perfect inputs marked red, close pairs bracketed below (forced ones
- * bright, the rest faint), nmg (amber) and major (violet) spans marked across. */
 .ftStrip { grid-column: 1 / -1; position: relative; z-index: 0; height: 17px; background: linear-gradient(#15283f, #15283f) top / 100% 10px no-repeat; }
 .ftStrip i { position: absolute; display: block; }
 .ftFp { top: 0; width: 3px; height: 10px; margin-left: -1px; background: var(--red); z-index: 1; }

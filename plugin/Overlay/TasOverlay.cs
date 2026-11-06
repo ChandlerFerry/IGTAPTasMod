@@ -15,10 +15,8 @@ namespace IGTAPTasMod
             public float x, y;
             public string stickText;
             public bool jumpPress, jumpRelease, jumpCut, dash;
-            /// <summary>The stick held in a dash's freeze (turnX/turnY): its own row under the dash's tick, the input that turns the dash.</summary>
             public bool freeze;
             public bool jump1, jump2, jump1Press, jump2Press, dash1, dash2, dash1Press, dash2Press;
-            /// <summary>A respawn came between this row and the one listed before it (RowBreak).</summary>
             public RowBreak breakBefore;
         }
 
@@ -29,7 +27,6 @@ namespace IGTAPTasMod
         readonly List<BoxCollider2D> _hitboxes = new List<BoxCollider2D>();
         Movement _overlayPlayer;
         Vector2 _overlayAxis;
-        /// <summary>The stick the last listed tick left held (its freeze stick when it had one): a tech demo lists the tick that lets it go.</summary>
         Vector2 _overlayHeldStick;
         long _overlayLastTick;
         long _overlayTicks;
@@ -39,16 +36,11 @@ namespace IGTAPTasMod
         int _overlayJumpPresses, _overlayDashPresses, _overlayJumpReleases;
         long _overlayRunTicks;
         bool _padJump1, _padJump2, _padJump2Newer, _padDash1Last;
-        // The running route's inert inputs (TasOverlayInert.cs), numbered from the counts before its first tick; whether each
-        // pad button's hold is shown, and whether the last release did nothing (its jump cut buffer neither).
         InertInputs _overlayInert;
         int _inertJumpBase, _inertDashBase, _inertReleaseBase;
         bool _padJump1Shown = true, _padJump2Shown = true, _lastReleaseInert;
-        // Manual play (OverlayListsManual): the list shows the player's own ticks. A session starts at the first tick that
-        // holds an input, or at a respawn, so the rows a playback left stay until the player plays.
         bool _overlayManual, _manualRestart;
         bool _manualJump1Press, _manualJump2Press, _manualDash1Press, _manualDash2Press, _manualRelease;
-        // A respawn since the last listed row: the next row the list adds draws a line above it.
         RowBreak _pendingBreak;
         static readonly AccessTools.FieldRef<Movement, bool> JumpCutBuffer = AccessTools.FieldRefAccess<Movement, bool>("jumpCutBuffer");
         GUIStyle _overlayTitle, _overlayText, _overlayTicksStyle, _overlaySmall, _overlaySmallRight, _overlayGraze, _overlayPadButton;
@@ -59,7 +51,6 @@ namespace IGTAPTasMod
         long _lastDropTick;
         const float DroppedFramesLingerSeconds = 10f;
         float _droppedFramesShownUntil;
-        // DrawDroppedFrames' text, built again (null) only when a drop or a new route changes its numbers.
         string _droppedFramesBanner;
 
         void OverlayFrame()
@@ -146,19 +137,13 @@ namespace IGTAPTasMod
 
         bool OverlayListsRun { get { return _engine.IsRunning && !_engine.Quiet && !_silentEvaluation && !TurboRunner.Active; } }
 
-        /// <summary>The player plays by hand: no route, turbo run or silent evaluation drives the ticks.</summary>
         bool OverlayListsManual { get { return !_engine.IsRunning && !_silentEvaluation && !TurboRunner.Active; } }
 
-        /// <summary>
-        /// Movement.respawn (a quick restart or a death's respawn): the list draws a line between the ticks before and after it.
-        /// Manual play also counts its ticks from 1 again; a route's keep its own count.
-        /// </summary>
         void OverlayRespawned(bool quickRestart)
         {
             if (!OverlayListsRun && !OverlayListsManual) return;
             _pendingBreak = quickRestart ? RowBreak.QuickRestart : RowBreak.Death;
             if (OverlayListsManual) _manualRestart = true;
-            // The checkpoint coyote jump's respawn: the tick it came after (manual play counts from 0 again).
             else _techRespawnTick = _overlayTicks;
         }
 
@@ -171,7 +156,6 @@ namespace IGTAPTasMod
         {
             _overlayPlayer = player;
             ApplyTasSkin(player);
-            // Every tick can change the list, the velocity and the pad: the cached panels (DrawCachedPanels) are drawn again.
             _panelCacheDirty = true;
             if (!OverlayListsRun)
             {
@@ -194,7 +178,6 @@ namespace IGTAPTasMod
                     _overlayRoute = _engine.ActiveMacroName;
                     _overlayCourse = _runCourse != null ? _runCourse.Token : "—";
                     _overlayHeldStick = Vector2.zero;
-                    // Numbered from the route's first input: a list started later (a TAS editor seek) can't number them.
                     _overlayInert = _engine.RunTicks == 1 ? LoadInertInputs(_engine.ActiveMacro) : null;
                     _inertJumpBase = _overlayJumpPresses;
                     _inertDashBase = _overlayDashPresses;
@@ -209,8 +192,6 @@ namespace IGTAPTasMod
                 _overlayClock = null;
                 bool jumpPress = _engine.JumpPresses != _overlayJumpPresses, jumpRelease = _engine.JumpReleases != _overlayJumpReleases,
                     dash = _engine.DashPresses != _overlayDashPresses;
-                // The route's inert inputs are left out. A tick that took no input (a dash's) holds the next input's y, unless a lock
-                // or a jump on the dash's frame sets it.
                 InertInputs inert = _overlayInert;
                 bool played = _engine.RunTicks != _overlayRunTicks;
                 long input = played ? _engine.RunTicks - 1 : _engine.RunTicks;
@@ -218,14 +199,11 @@ namespace IGTAPTasMod
                 bool pressShown = jumpPress && (inert == null || !inert.Jumps.Contains(_engine.JumpPresses - _inertJumpBase - 1));
                 bool releaseShown = jumpRelease && (inert == null || !inert.Releases.Contains(release));
                 if (jumpRelease) _lastReleaseInert = !releaseShown;
-                // A press's hold shows while the press or its release (the next one: it lets go of both buttons) does something.
                 bool holdShown = pressShown || inert == null || !inert.Releases.Contains(jumpRelease ? release : release + 1);
                 bool dashShown = dash && (inert == null || !inert.Dashes.Contains(_engine.DashPresses - _inertDashBase - 1));
                 Vector2 axis = _overlayAxis;
                 if (inert != null && played && InertInputs.At(inert.X, input)) axis.x = 0f;
                 if (inert != null && (played || !jumpPress && !_engine.TickStickFromLockY) && InertInputs.At(inert.Y, input)) axis.y = 0f;
-                // A tech demo lists only the ticks that hold an input: its idle tail (and the stick at rest between presses) is noise.
-                // Letting go of a held stick (a freeze turn's, or the tick's) is an input, so that tick is listed.
                 Vector2? freezeStick = _engine.FreezeStick;
                 bool idle = !jumpPress && !jumpRelease && !dash && !_engine.JumpHeld && _overlayAxis == Vector2.zero && _overlayHeldStick == Vector2.zero;
                 if (!(idle && IsTechDemo(_engine.ActiveMacro)))
@@ -242,8 +220,6 @@ namespace IGTAPTasMod
                     AssignPadButtons(row, _engine.JumpHeld || row.jumpPress, pressShown, holdShown);
                     _inputRows.Add(row);
                     row.tick = _overlayTicks;
-                    // A dash's freeze stick (turnX/turnY) comes between this tick and the next and turns the dash: its own row, so
-                    // the dash's two inputs read in order (press dash with this tick's stick, then this stick in the freeze).
                     if (freezeStick is Vector2 freeze && (inert == null || !inert.Turns.Contains(_engine.DashPresses - _inertDashBase - 1)))
                     {
                         InputRow turn = NextInputRow();
@@ -271,7 +247,6 @@ namespace IGTAPTasMod
             SampleVelocity(player);
         }
 
-        /// <summary>A row for the list's newest tick: a new one until the list fills, then its oldest. It takes the pending break.</summary>
         InputRow NextInputRow()
         {
             int slots = InputRowSlots;
@@ -289,10 +264,6 @@ namespace IGTAPTasMod
             return row;
         }
 
-        /// <summary>
-        /// One tick of manual play: the stick the tick read (MoveAxis) and the presses and releases Movement.Update took since the
-        /// last tick (SampleLiveInput). Idle ticks count but aren't listed, as a tech demo's.
-        /// </summary>
         void ManualOverlayTick(Movement player)
         {
             bool jump1 = _manualJump1Press || _liveJump1 != null && _liveJump1.IsPressed();
@@ -312,7 +283,6 @@ namespace IGTAPTasMod
                 _overlayTicks = 0;
                 _overlayManual = true;
                 _manualRestart = false;
-                // The ticks count from 1 again, so the tech bars do too; a respawn's coyote ticks follow tick 0.
                 ResetTechs(player);
                 if (respawned) _techRespawnTick = 0;
             }
@@ -362,7 +332,6 @@ namespace IGTAPTasMod
             row.dash2Press = row.dash2;
         }
 
-        // The last stick's text: a route or a player holds one stick over many ticks, so a listed tick rarely builds it again.
         float _stickTextX = float.NaN, _stickTextY = float.NaN;
         string _stickText;
 
@@ -380,10 +349,7 @@ namespace IGTAPTasMod
         static int _sceneGeneration;
         static bool _sceneGenerationHooked;
 
-        /// <summary>
-        /// Counts scene loads and unloads (hooked on first use). The scan caches below compare it: the game creates no spike,
-        /// checkpoint, clone course or breaker at run time, so a scene's set changes only with a load or an unload.
-        /// </summary>
+        // Scan caches compare this: the game creates no spike, checkpoint, clone course or breaker at run time.
         static int SceneGeneration
         {
             get
@@ -401,10 +367,6 @@ namespace IGTAPTasMod
         int _menuCanvasScene = -1;
         readonly List<Canvas> _menuCanvases = new List<Canvas>();
 
-        /// <summary>
-        /// The player has the game's pause menu (or the settings under it) open: its canvases (pauseMenuScript's, found once per
-        /// scene) are enabled. A playback's own pause (MacroStep.pauseFrames, the pauselift) doesn't count: its overlay stays.
-        /// </summary>
         bool GameMenuOpen
         {
             get
@@ -432,10 +394,7 @@ namespace IGTAPTasMod
 
         void OverlayGui()
         {
-            // Only Repaint draws (useGUILayout is off, so the other events are input): they skip even the checks below.
             if (Event.current.type != EventType.Repaint) return;
-            // Under the game's pause menu nothing anchored in the world is drawn (it would sit on top of the menu): the lab
-            // ghosts' key and badges, spikes, checkpoints, the hitbox and the graze. The screen panels stay.
             bool goals = !string.IsNullOrEmpty(_settings.fullTasGoalsRun), origin = OriginOverlayShown, trainer = LabTrainerShown, ghosts = LabGhostOverlayShown;
             bool techs = TechPathsShown;
             if (!origin) ResetOriginOverlay();
@@ -472,8 +431,6 @@ namespace IGTAPTasMod
             PerfSection(9);
         }
 
-        /// <summary>While a Full-TAS playback stands in one of its idles (the run waiting at a box for its Cash): a banner naming the
-        /// buy and the seconds left, so a viewer sees the run waiting, not dawdling.</summary>
         void DrawFullTasIdle(float scale)
         {
             FullTasIdle idle = CurrentIdle(_fullTasPlay);
@@ -481,7 +438,6 @@ namespace IGTAPTasMod
             long tick = _engine.PhysicsTicks, held = _engine.HeldFrames;
             string goal = idle.label ?? "the next buy";
             double left = System.Math.Max(0.0, MacroEngine.LiveSeconds(idle.afford[0], idle.afford[1]) - MacroEngine.LiveSeconds(tick, held));
-            // Rebuilt only when the tenths change: a new string every frame is IMGUI garbage (docs/internals.md "Studio").
             int tenths = (int)System.Math.Ceiling(left * 10);
             if (_idleBanner == null || _idleBannerGoal != idle.id || _idleBannerTenths != tenths)
             {
@@ -499,7 +455,6 @@ namespace IGTAPTasMod
         string _idleBannerGoal;
         int _idleBannerTenths;
 
-        /// <summary>The idle the playback stands in now (its tick between the player's arrival at the box and the Cash), or null.</summary>
         FullTasIdle CurrentIdle(FullTasPlay play)
         {
             if (play?.idles == null || !play.started) return null;
@@ -593,7 +548,6 @@ namespace IGTAPTasMod
 
         const float SpikeScanSeconds = 1f;
         readonly List<SpikeCollider> _spikeColliders = new List<SpikeCollider>();
-        // checkpointScript triggers (script null): touching one sets respawnPoint to its position.
         readonly List<SpikeCollider> _checkpointColliders = new List<SpikeCollider>();
         readonly Dictionary<Collider2D, SpikeCollider> _spikeByCollider = new Dictionary<Collider2D, SpikeCollider>();
         readonly List<Collider2D> _colliderBuffer = new List<Collider2D>();
@@ -614,7 +568,6 @@ namespace IGTAPTasMod
         int _lastGrazeTicks, _lastGrazeLimit;
         bool _lastGrazeKilled;
         float _lastGrazeTime = float.NegativeInfinity;
-        // DrawGraze's text: null after SampleSpikes changes a value it shows.
         string _grazeText;
 
         static long FixedStep() { return (long)System.Math.Round(Time.fixedTimeAsDouble / Time.fixedDeltaTime); }
@@ -660,7 +613,6 @@ namespace IGTAPTasMod
             }
             int grazeLimit = ticks > 0 ? limit : 0;
             bool grounded = player.onGround;
-            // DrawGraze's text is built again only when what it shows changed (the lingering text follows a change of ticks).
             if (ticks != _grazeTicks || grazeLimit != _grazeLimit || killed != _grazeKilled || dashing != _grazeDashing || grounded != _grazeGrounded)
                 _grazeText = null;
             _grazeTicks = ticks;
@@ -670,17 +622,12 @@ namespace IGTAPTasMod
             _grazeGrounded = grounded;
         }
 
-        // The scene's spikes and checkpoints, inactive ones too: found again only after a scene load or unload, or a lab
-        // injection (InjectLab adds its spikes before it sets _lab), not with every rescan.
+        // Found again only after a scene change or lab injection (InjectLab adds its spikes before it sets _lab).
         spikeScript[] _spikeScripts;
         checkpointScript[] _checkpointScripts;
         int _spikeScriptsGeneration;
         LabSession _spikeScriptsLab;
 
-        /// <summary>
-        /// Every SpikeScanSeconds: the colliders of the spikes and checkpoints on active objects (what a find that leaves out
-        /// inactive objects returns), their shapes built again where they changed.
-        /// </summary>
         void ScanSpikes()
         {
             _spikeScanTime = Time.unscaledTime;
@@ -848,7 +795,6 @@ namespace IGTAPTasMod
                     _overlaySmall, label.Value ? CheckpointActiveColor : CheckpointColor);
         }
 
-        /// <summary>One collider shape, faint fill and solid outline, inside DrawSpikes' GL.QUADS block.</summary>
         void DrawShape(Camera cam, SpikeShape shape, Color color, float half)
         {
             _screenPoints.Clear();
@@ -883,11 +829,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>
-        /// A spike or checkpoint collider not to draw this frame. A static one's shapes lie inside the bounds they were built
-        /// from (padded for rounding): off screen there, the collider isn't asked anything. A moving one's shapes are built
-        /// again only when its bounds moved, not every frame.
-        /// </summary>
         bool Culled(SpikeCollider entry, Rect view, out Bounds bounds)
         {
             bounds = entry.bounds;
@@ -908,7 +849,6 @@ namespace IGTAPTasMod
             Movement player = _overlayPlayer;
             Camera cam = Camera.main;
             if (player == null || cam == null) return;
-            // The text (_grazeText) is built once per change, not every frame.
             Color color;
             if (_grazeTicks > 0)
             {
@@ -938,13 +878,11 @@ namespace IGTAPTasMod
 
         FullTasRunDef _goalOverlayRun;
         FullTasGoal[] _goalOverlayGoals;
-        // Each goal's label as drawn ("3  label"), built with the goals.
         string[] _goalOverlayLabels;
 
         void DrawFullTasGoals(float scale)
         {
             Camera cam = Camera.main;
-            // A loop rather than List.Find: Find's predicate would be a new closure every frame.
             FullTasRunDef run = null;
             if (_fullTasRuns != null)
                 foreach (FullTasRunDef candidate in _fullTasRuns)
@@ -1077,7 +1015,6 @@ namespace IGTAPTasMod
             if (!any) Segment(x, y, height, gap, "NONE", _overlayTitle, MutedColor);
         }
 
-        /// <summary>The input list; with <paramref name="withPad"/>, the pad under it showing the newest listed tick.</summary>
         void DrawInputPanel(float screenScale, bool withPad)
         {
             float scale = PanelScale(screenScale);
@@ -1119,7 +1056,6 @@ namespace IGTAPTasMod
                 Rect band = new Rect(panel.x, y, width - 1, rowHeight);
                 if (live && n == 0) Fill(band, PanelCurrent);
                 else if (n % 2 == 1) Fill(band, PanelStripe);
-                // A freeze row (the stick held in a dash's freeze) reads in the dash's colour, its stick across the empty button columns.
                 Label(new Rect(cx, y, tickWidth, rowHeight), row.tickText, _overlayTicksStyle, row.freeze ? DashColor : n == 0 ? PanelText : MutedColor);
                 Label(new Rect(stickX, y, row.freeze ? dashX - stickX : 110 * scale, rowHeight), row.stickText, _overlayText,
                     row.freeze ? DashColor : row.x == 0f && row.y == 0f ? MutedColor : PanelText);
@@ -1127,7 +1063,6 @@ namespace IGTAPTasMod
                 if (row.jump2) Label(new Rect(jumpX + 40 * scale, y, 40 * scale, rowHeight), "J2", _overlayText, row.jump2Press ? JumpColor : HeldColor);
                 if (!row.jump1 && !row.jump2 && (row.jumpRelease || row.jumpCut))
                     Label(new Rect(jumpX, y, 90 * scale, rowHeight), row.jumpRelease ? "release" : "cut", _overlayText, row.jumpRelease ? PanelText : MutedColor);
-                // Letting go of one button while the other stays down still cuts the jump: the cut goes in the released button's slot.
                 else if (row.jump1 != row.jump2 && (row.jumpRelease || row.jumpCut))
                     Label(new Rect(row.jump1 ? jumpX + 40 * scale : jumpX, y, 40 * scale, rowHeight), "cut", _overlayText, row.jumpRelease ? PanelText : MutedColor);
                 if (row.dash1) Label(new Rect(dashX, y, 40 * scale, rowHeight), "D1", _overlayText, DashColor);
@@ -1136,7 +1071,6 @@ namespace IGTAPTasMod
             for (int n = shown; n < slots; n++, y += rowHeight)
                 if (n % 2 == 1) Fill(new Rect(panel.x, y, width - 1, rowHeight), PanelStripe);
             DrawTechBars(gutter, listTop, rowHeight, _inputRows[_inputRows.Count - 1].tick, shown, scale);
-            // A respawn between two listed ticks: a line under the first tick after it (the list runs newest first).
             float breakLine = Mathf.Max(2f, Mathf.Round(3 * scale));
             for (int i = _inputRows.Count - 1, n = 0; n < shown - 1; i--, n++)
             {

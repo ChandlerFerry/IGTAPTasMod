@@ -9,7 +9,6 @@ namespace IGTAPTasMod
 {
     internal sealed class InputRecorder
     {
-        // Read every tick while recording: typed refs, as FieldInfo.GetValue boxes each read.
         private static readonly AccessTools.FieldRef<Movement, bool> JumpBuffer = AccessTools.FieldRefAccess<Movement, bool>("jumpBuffer");
         private static readonly AccessTools.FieldRef<Movement, bool> JumpCutBuffer = AccessTools.FieldRefAccess<Movement, bool>("jumpCutBuffer");
         private static readonly AccessTools.FieldRef<Movement, bool> DashBuffer = AccessTools.FieldRefAccess<Movement, bool>("dashBuffer");
@@ -34,10 +33,6 @@ namespace IGTAPTasMod
             _tick = 0;
         }
 
-        /// <summary>
-        /// Recording that starts mid-run (a TAS re-record): the buffers the run's own presses left are no edge of this
-        /// recording's, so they count as already seen.
-        /// </summary>
         public void SeedEdges(Movement movement)
         {
             if (movement == null) return;
@@ -123,15 +118,12 @@ namespace IGTAPTasMod
             RawTickSample dash = Current.samples[Current.samples.Count - 1];
             if (jump && !_lastJump && dash.dashPressed && dash.dashJumpFrame == 0)
                 dash.dashJumpFrame = Math.Max(1, (int)movement.framesSinceLastDash);
-            // The dash's first frame after its start: facing is still the way it started, dashDirection is the way the stick
-            // held in its freeze turned it (a dash started with the stick at rest waits for one).
             if (dash.dashPressed && !dash.dashTurnX.HasValue && !dash.dashTurnY.HasValue && movement.framesSinceLastDash == 1f)
             {
                 Vector2 turned = DashDirection(movement);
                 if (turned.y != 0f && dash.moveX == 0f && dash.moveY == 0f)
                 {
-                    // An omnidash aimed in its freeze: dashDirection is the normalized (x, ±1) NormaliseInput passed, so x is
-                    // back as x / |y| and the vertical is full tilt, as NormaliseInput snaps it.
+                    // Omnidash aimed in the freeze: NormaliseInput snaps the vertical to full tilt, so x is recovered as x/|y| (exception 1).
                     dash.dashTurnX = turned.x / Mathf.Abs(turned.y);
                     dash.dashTurnY = Mathf.Sign(turned.y);
                 }

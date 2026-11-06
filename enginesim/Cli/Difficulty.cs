@@ -11,51 +11,24 @@ using IGTAPTasMod;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// <c>difficulty &lt;trace.json&gt; &lt;route.json&gt; [--json] [--radius R] [--pos U] [--vel F] [--raw] [--threads T]</c>: how hard a
-    /// route's inputs are to time (docs/fulltas.md "Difficulty"), counted, not sampled: no player's skill is assumed. The route
-    /// played is humanize's version of it cut to its end (<see cref="Canonical"/>, then <see cref="Humanizer.Simplified"/>: a
-    /// search's stray inputs are no part of it; <c>--raw</c>, or a route that doesn't finish offline: its own inputs, cut alike).
-    /// Each input a player times (a stick change, a jump press or release, a dash, a jump on a dash frame) is moved alone up to
-    /// <c>--radius</c> ticks either way: it still works when the run goes on (<see cref="Holds"/>). Its window is the ticks it
-    /// works on; a <b>frame-perfect</b> input works on one tick only (20 ms). Two actions (inputs on one tick are one) fewer
-    /// than <see cref="Apart"/> ticks apart (60 ms) that no timing of the inputs inside their windows avoids are a
-    /// <b>back-to-back</b> pair (<see cref="Pairs"/>).
-    /// <c>difficulty &lt;trace.json&gt; --candidates &lt;dir&gt;</c>: every *.json in dir into dir/difficulty/&lt;name&gt; (a sidecar newer than
-    /// its candidate, made with the same parameters, is kept), an <c>@difficulty</c> progress line after each.
-    /// </summary>
     static partial class Difficulty
     {
         const string Usage = "usage: difficulty <trace.json> <route.json> [--json] [--radius R] [--pos U] [--vel F] [--raw] [--threads T]"
             + " | difficulty <trace.json> --candidates <dir> [same options]";
-        /// <summary>Two inputs fewer input ticks apart are back to back: a player needs two ticks between them, the second on the
-        /// third (60 ms).</summary>
         public const int Apart = 3;
-        /// <summary>Anchors fewer input ticks apart are one; a moved input's run may reach its next anchor this many ticks (and as
-        /// many as it moved) early or late.</summary>
         const int Merge = 3, Sync = 3;
-        /// <summary>Input ticks after the route's own (and as many as the input moved) that a moved input's run may reach the next
-        /// goal on.</summary>
         const int Late = 25;
-        /// <summary>The least velocity difference (u/s) that matches: the --vel share of a standing player's 0 is nothing.</summary>
         const float MinSpeed = 1f;
 
         sealed class Settings
         {
             public int Radius = Humanizer.Radius, Threads = Environment.ProcessorCount;
             public float Pos = 4f, Vel = .05f;
-            /// <summary>--raw: the route's own inputs, not humanize's version of them.</summary>
             public bool Raw;
-            /// <summary>What a sidecar measured: one of another kind (the sampled chance, or pairs judged two ticks at a time) is
-            /// measured again.</summary>
             public const string Kind = "windows-3";
             public object Json => new { radius = Radius, sync = Sync, pos = Pos, vel = Vel, raw = Raw, measure = Kind };
         }
 
-        /// <summary>A point of a route where a player re-syncs (<see cref="Anchors"/>): its kind (<c>start</c>, <c>land</c>, <c>wall</c>,
-        /// <c>dash</c> (a dash's freeze starts), <c>respawn</c>, <c>goal</c>, <c>finish</c> (a course's), <c>end</c> (an unfinished route's
-        /// last input tick)), the input tick next there and the run's physics ticks so far, the simulation's state there (null when
-        /// not asked for, and at a course's finish, where the run stops), the player then and the goals reached.</summary>
         internal struct Anchor
         {
             public string Kind;
@@ -66,9 +39,6 @@ namespace IGTAP.EngineSim.Cli
             public int Progress;
         }
 
-        /// <summary>The same resources (air jumps, air dashes, wall jumps) and jump buffer (a press still to come out as a jump), the
-        /// position within <paramref name="pos"/> u and the velocity within <paramref name="vel"/> of <paramref name="route"/>'s speed
-        /// (at least <see cref="MinSpeed"/>). The goals reached are the caller's to compare.</summary>
         internal static bool SameState(MoveState sample, MoveState route, float pos, float vel)
         {
             if (sample.AirJumps != route.AirJumps || sample.AirDashes != route.AirDashes || sample.WallJumps != route.WallJumps || sample.Buffer != route.Buffer) return false;
@@ -77,30 +47,21 @@ namespace IGTAP.EngineSim.Cli
             return dx * dx + dy * dy <= pos * pos && dvx * dvx + dvy * dvy <= speed * speed;
         }
 
-        /// <summary>A route replayed once: its anchors, its goals and the physics tick at every input tick.</summary>
         sealed class Line
         {
             public string Name;
             public List<InputTick> Inputs;
-            /// <summary>The inputs are humanize's version of the route's.</summary>
             public bool Human;
             public bool FullTas, Finished;
             public int Goals;
             public float Live;
-            /// <summary>The input tick of each goal reached (a course: its finish).</summary>
             public int[] GoalTicks;
             public List<Anchor> Anchors;
-            /// <summary>The run's physics ticks when each input tick is next, up to the last anchor.</summary>
             public long[] Physics;
         }
 
-        /// <summary>What ends an input's window on one side: nothing within the radius, the run no longer going on, or no such
-        /// move (it would cross another input of its button, or leave the route).</summary>
         enum Limit { Open, Fail, Blocked }
 
-        /// <summary>One input a player times: a humanize event (<see cref="Humanizer.Events"/>), or the jump on a dash frame of a
-        /// dash event (<see cref="DashJump"/>, its frame the event's value); the input tick it comes on (a dash's jump: the dash's
-        /// tick plus its frame), and the ticks it works on.</summary>
         sealed class Timed
         {
             public Humanizer.Event Event;
@@ -113,9 +74,6 @@ namespace IGTAP.EngineSim.Cli
             public bool Done(int sign) => (sign < 0 ? Early : Late) != Limit.Open;
         }
 
-        /// <summary>Two inputs on action ticks fewer than <see cref="Apart"/> apart: <see cref="Gap"/> as the route plays them,
-        /// <see cref="Spread"/> as the timing with the fewest back-to-back pairs places them (<see cref="Pairs"/>); forced when
-        /// that timing still puts them back to back.</summary>
         sealed class Pair
         {
             public int First, Second, Gap, Spread;
@@ -134,23 +92,17 @@ namespace IGTAP.EngineSim.Cli
             public int BackToBack => Pairs.Count(p => p.Forced);
         }
 
-        /// <summary>A whole route's counts (RULES.md 54): the inputs a player times, the frame-perfect ones and the
-        /// back-to-back pairs.</summary>
         internal readonly struct Tally
         {
             public readonly int Inputs, FramePerfect, BackToBack;
 
             public Tally(int inputs, int framePerfect, int backToBack) { Inputs = inputs; FramePerfect = framePerfect; BackToBack = backToBack; }
 
-            /// <summary>{inputs, framePerfect, backToBack}: techs-used's, a run file's and a candidate's <c>difficulty</c>.</summary>
             public object Json => new { inputs = Inputs, framePerfect = FramePerfect, backToBack = BackToBack };
 
             public override string ToString() => $"{FramePerfect} frame-perfect, {BackToBack} back-to-back of {Inputs} inputs";
         }
 
-        /// <summary>Measures whole routes as <c>difficulty</c> does with its defaults (cut to their end, humanize's version), on
-        /// threads of its own: what <c>techs-used</c> and a human class's whole-route judging price. One trace and goal list per
-        /// meter.</summary>
         internal sealed class Meter : IDisposable
         {
             readonly Pool _pool;
@@ -162,7 +114,6 @@ namespace IGTAP.EngineSim.Cli
                 _pool = new Pool(tracePath, header, labels, threads);
             }
 
-            /// <summary>The route's counts; <paramref name="name"/> names it on stderr only.</summary>
             public Tally Measure(string name, List<InputTick> inputs)
             {
                 var (own, human) = _pool.Routes(new List<string> { name }, new List<List<InputTick>> { inputs }, false)[0];
@@ -233,8 +184,6 @@ namespace IGTAP.EngineSim.Cli
                 }
                 catch (Exception ex) when (Expected(ex)) { Failed(name, ex); }
             }
-            // One pool per goal list (a route's own adopted goals play on a simulation of their own); each route cut to its end and
-            // humanize's version of it first, a route a lane, then each route's moved inputs on every lane.
             foreach (var group in routes.GroupBy(r => r.labels == null ? "" : string.Join("\n", r.labels)))
             {
                 var list = group.ToList();
@@ -258,14 +207,12 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        /// <summary>A candidate that can't be read or measured: logged, the batch goes on.</summary>
         static bool Expected(Exception ex)
         {
             return ex is IOException || ex is JsonException || ex is InvalidOperationException || ex is KeyNotFoundException || ex is FormatException
                 || ex is ArgumentException || ex is UnauthorizedAccessException;
         }
 
-        /// <summary>The sidecar is newer than its candidate and was made with these parameters.</summary>
         static bool Fresh(string sidecar, string candidate, Settings s)
         {
             if (!File.Exists(sidecar) || File.GetLastWriteTimeUtc(sidecar) <= File.GetLastWriteTimeUtc(candidate)) return false;
@@ -283,10 +230,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>The route measured: humanize's version (<paramref name="human"/>, null for none), unless it doesn't finish under
-        /// the run's strict buys where the route's own inputs do (humanize plays it without them, <see cref="Pool.Routes"/>); then those.
-        /// Each input's window grows a tick a side at a time (<see cref="Holds"/>, every lane at once) until that side stops or the
-        /// radius is reached; then the back-to-back pairs (<see cref="Pairs"/>).</summary>
         static Result Measure(Pool pool, string name, List<InputTick> own, List<InputTick> human, Settings s)
         {
             var watch = Stopwatch.StartNew();
@@ -328,8 +271,6 @@ namespace IGTAP.EngineSim.Cli
             return r;
         }
 
-        /// <summary>The inputs a player times, by tick: every humanize event before the route's end but a stick held from the start,
-        /// and each dash's jump on a dash frame (MacroEngine.BeforeTick presses it once the dash's frames reach it).</summary>
         static List<Timed> Inputs(Line line)
         {
             int end = line.Anchors[line.Anchors.Count - 1].Tick;
@@ -348,11 +289,6 @@ namespace IGTAP.EngineSim.Cli
             return inputs.OrderBy(t => t.Tick).ThenBy(t => t.Event.Kind).ThenBy(t => t.DashJump).ToList();
         }
 
-        /// <summary>The route's inputs with <paramref name="t"/> moved by <paramref name="d"/> ticks alone, and the input ticks the
-        /// change starts and ends on; null when there is no such move. A stick change keeps both runs around it
-        /// (<see cref="Humanizer.Shift"/>); a jump press stays off the last hold, and moved past its own release moves the release
-        /// too (the tap comes late: <see cref="MovePress"/>); a release stays inside its hold (<see cref="MoveRelease"/>); a dash
-        /// crosses no other dash (<see cref="MoveDash"/>); a dash's jump stays on a dash frame (the first is 1).</summary>
         static List<InputTick> Move(List<InputTick> inputs, Timed t, int d, out int lo, out int hi)
         {
             lo = Math.Min(t.Tick, t.Tick + d);
@@ -377,7 +313,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>A jump release on input tick i, as the engine plays it (MacroEngine.PressStep): its flag, or the button let go.</summary>
         static bool Released(List<InputTick> c, int i) => !c[i].press && (c[i].release || i > 0 && c[i - 1].held && !c[i].held);
 
         static void Held(List<InputTick> c, int from, int to, bool held)
@@ -398,9 +333,6 @@ namespace IGTAP.EngineSim.Cli
             c[i] = k;
         }
 
-        /// <summary>The jump press on input tick p, d ticks off: earlier only while the button is up (after the last release),
-        /// later inside its hold, or past its release with the release as late (the whole tap; <see cref="MoveRelease"/>, which
-        /// sets <paramref name="hi"/> to the release's new tick).</summary>
         static List<InputTick> MovePress(List<InputTick> inputs, int p, int d, ref int hi)
         {
             int q = p + d;
@@ -432,7 +364,6 @@ namespace IGTAP.EngineSim.Cli
             return c;
         }
 
-        /// <summary>The jump release on input tick r moved to q: after its hold's press and before the next press.</summary>
         static List<InputTick> MoveRelease(List<InputTick> inputs, int r, int q)
         {
             if (q < 1 || q >= inputs.Count) return null;
@@ -455,8 +386,6 @@ namespace IGTAP.EngineSim.Cli
             return c;
         }
 
-        /// <summary>The dash on input tick t moved to q with its own fields (jump frame, turn, lock, pause), as
-        /// <see cref="Humanizer"/>'s dash move but across any tick but another dash's.</summary>
         static List<InputTick> MoveDash(List<InputTick> inputs, int t, int q)
         {
             if (q < 0 || q >= inputs.Count) return null;
@@ -472,14 +401,6 @@ namespace IGTAP.EngineSim.Cli
             return c;
         }
 
-        /// <summary>
-        /// Input <paramref name="t"/> moved by <paramref name="d"/> ticks alone (<see cref="Move"/>; null: blocked), played from the
-        /// route's state at the last anchor before the change: it holds when the run goes on as the route does, in the state of
-        /// the first anchor after the change (<see cref="SameState"/> but for the jump buffer, the same goals) within
-        /// <see cref="Sync"/> ticks and |d| of the route's tick there, or reaching the next goal (a course: the finish) at most
-        /// <see cref="Late"/> ticks and |d| after the route. The route's last anchor is its last goal: reaching it is all. A death
-        /// ends the run.
-        /// </summary>
         static bool? Holds(Simulation sim, SimSnapshot[] states, Line line, Timed t, int d, Settings s)
         {
             List<InputTick> inputs = Move(line.Inputs, t, d, out int lo, out int hi);
@@ -503,14 +424,6 @@ namespace IGTAP.EngineSim.Cli
             return works || goal >= 0 && (line.FullTas ? run.Progress > goal : run.Finished);
         }
 
-        /// <summary>
-        /// The back-to-back pairs no timing avoids: the fewest action ticks fewer than <see cref="Apart"/> apart over every
-        /// placing of each input inside its window (inputs on one tick are one action), a point set hitting every window
-        /// (dynamic programming over the ticks: from a point, the next may come no later than the earliest window end of the
-        /// windows starting after it). Each such pair of points is forced, by an input placed on each (the tightest-windowed);
-        /// then the route's own close action ticks that the placing spreads, not forced. The windows are measured one input at a
-        /// time: the placing assumes moving each alone, as measured, combines.
-        /// </summary>
         static List<Pair> Pairs(List<Timed> inputs)
         {
             var pairs = new List<Pair>();
@@ -523,7 +436,6 @@ namespace IGTAP.EngineSim.Cli
                 endsFrom[t.Earliest - lo] = Math.Min(endsFrom[t.Earliest - lo], t.Latest - lo);
                 for (int i = t.Earliest; i <= t.Latest; i++) covered[i - lo] = true;
             }
-            // after[p]: the earliest end of the windows starting after p, the furthest the next point may come.
             var after = new int[n];
             int least = int.MaxValue;
             for (int p = n - 1; p >= 0; p--)
@@ -552,7 +464,6 @@ namespace IGTAP.EngineSim.Cli
             var points = new List<int>();
             for (int p = end; p >= 0; p = prev[p]) points.Add(p + lo);
             points.Reverse();
-            // Each input on the point nearest its own tick inside its window.
             var placed = new int[inputs.Count];
             for (int i = 0; i < inputs.Count; i++)
             {
@@ -578,14 +489,6 @@ namespace IGTAP.EngineSim.Cli
             return pairs.OrderBy(p => Math.Min(inputs[p.First].Tick, inputs[p.Second].Tick)).ThenBy(p => p.First).ToList();
         }
 
-        /// <summary>
-        /// The route up to its end, so it measures alike whatever follows it (the plugin's gate saves a route cut at its finish, a
-        /// search hands on its inputs past it): its inputs before its last goal's input tick (a course: its finish's), less every
-        /// trailing input it plays alike without (<see cref="Alike"/>: the engine's idle step after a route's inputs, stick at
-        /// rest, can play the last goal's step). Kept whole where it reaches no goal and doesn't finish. Fields the engine never
-        /// plays are cleared as a saved route drops them (<see cref="Simulation.ToSteps"/>: a dash's turn and jump frame off its
-        /// dash tick, a pause's tick and frame without a pause), so a saved route measures as the inputs it was saved from.
-        /// </summary>
         static List<InputTick> Canonical(Simulation sim, List<InputTick> route)
         {
             route = route.Select(c =>
@@ -610,8 +513,6 @@ namespace IGTAP.EngineSim.Cli
             return cut;
         }
 
-        /// <summary>The same goals at the same input and physics ticks and held frames (a Full-TAS run: nothing after its last goal
-        /// counts, its strict finish included); a course: the same finish, time and physics ticks.</summary>
         static bool Alike(RunResult a, RunResult b, bool fullTas)
         {
             if (!fullTas) return a.Finished == b.Finished && a.Time == b.Time && a.PhysicsTicks == b.PhysicsTicks;
@@ -621,9 +522,6 @@ namespace IGTAP.EngineSim.Cli
             return true;
         }
 
-        /// <summary>The route replayed for its anchors and goals
-        /// (<see cref="Anchors(Simulation, List{InputTick}, SimSnapshot, bool, out TechSteps, out RunResult, out int[])"/>) and the
-        /// physics tick at each input tick.</summary>
         static Line Trace(Simulation sim, string name, List<InputTick> inputs)
         {
             List<Anchor> anchors = Anchors(sim, inputs, null, false, out _, out RunResult run, out int[] goalTicks);
@@ -645,20 +543,11 @@ namespace IGTAP.EngineSim.Cli
             };
         }
 
-        /// <summary>The route's anchors from <paramref name="from"/> (null: the simulation's start), as
-        /// <see cref="Anchors(Simulation, List{InputTick}, SimSnapshot, bool, out TechSteps, out RunResult, out int[])"/>.</summary>
         internal static List<Anchor> Anchors(Simulation sim, List<InputTick> route, SimSnapshot from = null, bool states = true)
         {
             return Anchors(sim, route, from, states, out _, out _, out _);
         }
 
-        /// <summary>
-        /// The route's anchors from <paramref name="from"/> (null: the simulation's start) to its end
-        /// (<see cref="Anchors(List{TechStep}, int[], int, bool)"/>). The route plays twice: with the tech record
-        /// (<paramref name="record"/>, <paramref name="run"/>) for the kinds and goals, then without its hooks, as a sample plays, for
-        /// each anchor's player and, with <paramref name="states"/>, its state. <paramref name="goalTicks"/>: the input tick of every
-        /// goal reached (a course: its finish), goals before <paramref name="from"/> included.
-        /// </summary>
         internal static List<Anchor> Anchors(Simulation sim, List<InputTick> route, SimSnapshot from, bool states, out TechSteps record, out RunResult run,
             out int[] goalTicks)
         {
@@ -699,7 +588,6 @@ namespace IGTAP.EngineSim.Cli
                 }
                 return tick < end;
             }, extra);
-            // A course's finish stops the run before its input tick is next: the player after the finishing step.
             for (int i = 1; i < anchors.Count; i++)
                 if (!seen[i])
                 {
@@ -709,13 +597,6 @@ namespace IGTAP.EngineSim.Cli
             return anchors;
         }
 
-        /// <summary>
-        /// The anchors of a recorded run (<see cref="TechSteps"/>, from input tick <paramref name="first"/>) with its goals' input ticks
-        /// (a course: its finish; goals before <paramref name="first"/> may be listed), Kind and Tick only: the start, every step that
-        /// respawns, starts a dash's freeze, or is the second on the ground or on a wall off the ground (settled there, not passing
-        /// through), every goal, and the end (the last goal; with none, the last step's input tick). Anchors fewer than
-        /// <see cref="Merge"/> input ticks apart are one (the earlier; a goal first at a tick; the start and the end kept).
-        /// </summary>
         internal static List<Anchor> Anchors(List<TechStep> steps, int[] goalTicks, int first, bool fullTas)
         {
             int end = goalTicks.Length > 0 ? goalTicks[goalTicks.Length - 1] : steps.Count > 0 ? steps[steps.Count - 1].Tick : first;
@@ -738,14 +619,11 @@ namespace IGTAP.EngineSim.Cli
             return anchors;
         }
 
-        /// <summary>The second step in a row the player is so: settled there, not passing through.</summary>
         static bool Settled(List<TechStep> steps, int i, Func<TechStep, bool> so)
         {
             return i > 0 && so(steps[i]) && so(steps[i - 1]) && (i < 2 || !so(steps[i - 2]));
         }
 
-        /// <summary>The measure's workers, each with a simulation of its own (the game's statics are per thread) and the states at
-        /// the anchors of the route it last played, from one straight replay of it.</summary>
         sealed class Pool : IDisposable
         {
             sealed class Lane
@@ -771,11 +649,6 @@ namespace IGTAP.EngineSim.Cli
                 return line;
             }
 
-            /// <summary>Each route as measured, a route a lane: cut to its end (<see cref="Canonical"/>), and humanize's version of
-            /// that unless <paramref name="raw"/> (its greedy passes, no slack report), played as the <c>humanize</c> command plays it
-            /// (a Full-TAS run without strict buys: it finishes at its last goal, not the strict finish's 12 ticks later, which a run
-            /// touching its last goal after its last input never reaches: it stops 20 idle steps after that input); human null, said
-            /// on stderr, where it doesn't finish.</summary>
             public List<(List<InputTick> own, List<InputTick> human)> Routes(List<string> names, List<List<InputTick>> routes, bool raw)
             {
                 var played = new (List<InputTick> own, List<InputTick> human)[routes.Count];
@@ -793,7 +666,6 @@ namespace IGTAP.EngineSim.Cli
                 return played.ToList();
             }
 
-            /// <summary>Each moved input's outcome (<see cref="Holds"/>): null where it holds, else what limits its window.</summary>
             public Limit?[] Run(Line line, List<(Timed input, int shift)> jobs, Settings s)
             {
                 var outcome = new Limit?[jobs.Count];
@@ -806,8 +678,6 @@ namespace IGTAP.EngineSim.Cli
                 return outcome;
             }
 
-            /// <summary>Each route played whole from the start, as a human class plays it (MacroEngine.HumanClass: digital stick,
-            /// two jump buttons) with <paramref name="human"/>.</summary>
             public RunResult[] Play(List<List<InputTick>> routes, bool human)
             {
                 var results = new RunResult[routes.Count];
@@ -827,7 +697,6 @@ namespace IGTAP.EngineSim.Cli
                 return anchors;
             }
 
-            /// <summary>The route's spans and spike-grace ticks, as techs-used classifies them.</summary>
             public GlitchReport Report(List<InputTick> inputs, HumanWeights weights)
             {
                 GlitchReport report = null;
@@ -843,7 +712,6 @@ namespace IGTAP.EngineSim.Cli
                 return report;
             }
 
-            /// <summary>work(lane, i) for every i below count, on every lane.</summary>
             void Each(int count, Action<Lane, int> work)
             {
                 if (count == 0) return;
@@ -864,7 +732,6 @@ namespace IGTAP.EngineSim.Cli
                 if (failure != null) throw new InvalidOperationException(failure.GetBaseException().Message, failure);
             }
 
-            /// <summary>The lane's states at the route's anchors (the start's is the simulation's own), unless it has them.</summary>
             static void Prepare(Lane lane, Line line)
             {
                 if (lane.Line == line) return;
@@ -912,7 +779,6 @@ namespace IGTAP.EngineSim.Cli
 
         static string LimitText(Limit l) => l == Limit.Fail ? "fail" : l == Limit.Blocked ? "blocked" : "open";
 
-        /// <summary>The sidecar and <c>--json</c>'s object (docs/fulltas.md "Difficulty").</summary>
         static object Json(Result r)
         {
             Line line = r.Line;

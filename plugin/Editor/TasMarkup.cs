@@ -7,16 +7,10 @@ using System.Text.RegularExpressions;
 
 namespace IGTAPTasMod
 {
-    /// <summary>
-    /// A route's inputs as text, one line per input run (docs/tas-markup.md): <c>ticks,inputs</c>, e.g. <c>  12,R,J</c>.
-    /// Lines are raw-input steps one to one, so text and route convert both ways without loss.
-    /// </summary>
     internal static class TasMarkup
     {
         static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
-        /// <summary>The most input ticks a route text, a share or an edit may hold (about 33 minutes): a pasted count can't
-        /// make the game allocate billions of ticks.</summary>
         public const int MaxTicks = 100000;
 
         public static string Format(string name, List<MacroStep> steps, List<RouteMarker> markers)
@@ -33,7 +27,6 @@ namespace IGTAPTasMod
             {
                 int length = Math.Max(1, step.durationTicks);
                 int done = 0;
-                // A marker inside a run splits it: the second part is its continuation (no press), which parses back the same.
                 while (done < length)
                 {
                     while (next < marks.Count && marks[next].tick < tick + done) next++;
@@ -85,7 +78,6 @@ namespace IGTAPTasMod
         static readonly Regex Stick = new Regex(@"^([RL])([0-9.]*)$"), Dash = new Regex(@"^X(?:\+(\d+))?(?:\(([-0-9.]*):([-0-9.]*)\))?$"),
             Lock = new Regex(@"^K\(([-0-9.]*):([-0-9.]*)\)$"), Pause = new Regex(@"^Z(\d+)(?:@(\d+)\.(\d+))?$"), Spring = new Regex(@"^S(\d+)$");
 
-        /// <summary>The steps and markers of a text; a line it can't read throws, naming the line.</summary>
         public static List<MacroStep> Parse(string text, out List<RouteMarker> markers)
         {
             var steps = new List<MacroStep>();

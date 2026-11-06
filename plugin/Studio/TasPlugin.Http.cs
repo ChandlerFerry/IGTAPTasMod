@@ -20,12 +20,9 @@ namespace IGTAPTasMod
     {
         private object HandleWebRequest(WebStudioRequest request)
         {
-            // Any command can change what GET /api/state/static returns, but an open TAS session's own commands (step, seek, edit,
-            // hover...) change only the live part: its route reaches routes.json, and the static part, when the session closes.
             if (request.Method != "GET" && !TasSessionCommand(request.Path)) BumpWebState();
             if (request.Method != "GET") OneXCommand(request.Path);
             JObject body = string.IsNullOrWhiteSpace(request.Body) ? new JObject() : JObject.Parse(request.Body);
-            // An avoid box drawn on a course's search map edits forced-paths.json (a new partial file, not the engine bridge).
             if (request.Path == "/api/enginesim/avoid") return HandleCourseAvoid(body);
             if (request.Path.StartsWith("/api/enginesim/", StringComparison.Ordinal)) return HandleEngineSim(request, body);
             if (request.Path.StartsWith("/api/fulltas/", StringComparison.Ordinal)) return HandleFullTas(request, body);
@@ -47,7 +44,6 @@ namespace IGTAPTasMod
                 StartSolver(body);
                 return new { ok = true };
             }
-            // What start would run, started nothing (the studio's command preview, RULES.md 48: agents check with this).
             if (request.Path == "/api/solver/preview") return PreviewSolver(body);
             if (request.Path == "/api/solver/waypoints") return EngineSimWaypoints(request, body);
             if (request.Path == "/api/solver/stop")
@@ -352,8 +348,6 @@ namespace IGTAPTasMod
                 throw new InvalidOperationException("Category route names are reserved for routes that passed the solver's gate.");
         }
 
-        /// <summary>A command to the open TAS session (TasPlugin.Editor.cs HandleTas past its session check): not open, new,
-        /// from-best, close or share/*, which add routes or write routes.json.</summary>
         static bool TasSessionCommand(string path)
         {
             if (!path.StartsWith("/api/tas/", StringComparison.Ordinal)) return false;
@@ -361,17 +355,10 @@ namespace IGTAPTasMod
             return command != "open" && command != "new" && command != "from-best" && command != "close" && !command.StartsWith("share/", StringComparison.Ordinal);
         }
 
-        // The studio's socket (GET /api/ws, WebStudioServer.PushState) gets the live part (BuildLiveWebState, small and
-        // fast-changing) whenever its JSON changes, checked every 33 ms at most, and the static part (routes, recordings,
-        // savestates, courses, Full-TAS runs, techs) again only when staticVersion (_webStateVersion) changes. It changes
-        // with every command but an open TAS session's own (TasSessionCommand), every write through WriteJsonAtomic, and
-        // within a second of anything else the static part reads (WebStateStamp). GET /api/state/live and
-        // GET /api/state/static serve the same parts over HTTP, GET /api/state both in one, for tools.
         void BumpWebState() { _webStateVersion++; }
 
         long WebStateVersion()
         {
-            // A file scan finished since the last check is folded in at once, not a second later.
             long files = System.Threading.Interlocked.Read(ref _webStateFiles);
             bool due = Time.unscaledTime >= _webStateCheckAt;
             if (due || files != _webStateFilesSeen)
@@ -389,13 +376,6 @@ namespace IGTAPTasMod
             return _webStateVersion;
         }
 
-        /// <summary>
-        /// What the static part reads that changes without a command or a plugin write: the files the offline solver and the
-        /// lab tools write (Full-TAS bests, closest attempts, human candidates and their difficulty, faster ways, traces, lab
-        /// maps and demos, forced-paths.json), data/runs/ edited by hand, the lists' sizes, playback, recording and solving
-        /// starting or ending, the scene, and the bonus reward boxes' purchases (the courses' hints). The files come as
-        /// <paramref name="files"/>, the last <see cref="StartWebStateFileScan"/>'s hash.
-        /// </summary>
         long WebStateStamp(long files)
         {
             long h = 17;
@@ -414,19 +394,14 @@ namespace IGTAPTasMod
             Add(_fullTasSplits.Count);
             Add(_fullTasClasses.Count);
             foreach (upgradeBox box in _bonusRewardBoxes.Values) Add(box != null ? box.TimesUsed : -1);
-            // The files not while a route plays: a static state rebuilt for them would cost 1x playback's paced frames. What
-            // changed on disk meanwhile shows at the first check after it.
             if (PlaybackActive) return h;
             Add(files);
             return h;
         }
 
-        // The files' part of WebStateStamp, hashed on a pool thread (stat calls on hundreds of lab and solver files took the
-        // main thread's frame once a second) and read by the next check; _webStateFilesBusy is 1 while a scan runs.
         long _webStateFiles, _webStateFilesSeen;
         int _webStateFilesBusy;
 
-        /// <summary>Hashes the files WebStateStamp watches off the main thread; the paths are taken here, on it.</summary>
         void StartWebStateFileScan()
         {
             if (System.Threading.Interlocked.CompareExchange(ref _webStateFilesBusy, 1, 0) != 0) return;
@@ -469,13 +444,11 @@ namespace IGTAPTasMod
                     if (forced != null) AddFile(forced);
                     System.Threading.Interlocked.Exchange(ref _webStateFiles, h);
                 }
-                // A file that went mid-scan: the next scan, a second later, takes them again.
                 catch (Exception) { }
                 finally { System.Threading.Interlocked.Exchange(ref _webStateFilesBusy, 0); }
             });
         }
 
-        /// <summary>A caps object (the web API's): what a set of unlocks has.</summary>
         static object CapsWebState(Caps caps)
         {
             return new { wallJump = caps.WallJump, dashes = caps.Dashes, airJumps = caps.AirJumps,
@@ -527,7 +500,6 @@ namespace IGTAPTasMod
             foreach (Savestate savestate in _savestates)
                 savestates.Add(new { id = savestate.id, name = savestate.name, createdUtc = savestate.createdUtc,
                     assigned = selected != null && selected.savestateId == savestate.id });
-            // Every recording's exact inputs (the steps Create route makes): the Recordings tab lists them as its summary.
             List<object> recordings = new List<object>();
             foreach (RecordingDefinition recording in _recordings)
             {

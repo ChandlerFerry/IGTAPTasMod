@@ -10,11 +10,6 @@ namespace IGTAPTasMod
 {
     public sealed partial class TasPlugin
     {
-        /// <summary>
-        /// A route's inputs that change nothing in the game (the engine's <c>effects</c>, enginesim/Cli/Effects.cs): the overlay
-        /// leaves them out while the route plays. Presses, dashes and releases by their number in the run (MacroEngine.JumpPresses,
-        /// DashPresses, JumpReleases from the run's start), a dash's turn by its dash, the stick's x and y by input tick.
-        /// </summary>
         sealed class InertInputs
         {
             public HashSet<int> Jumps, Dashes, Turns, Releases;
@@ -27,7 +22,6 @@ namespace IGTAPTasMod
 
         string InertPath(string key) { return Path.Combine(EngineSimDir, "effects-" + key + ".json"); }
 
-        /// <summary>The route's inputs hashed: its effects file's name.</summary>
         static string InertKey(List<MacroStep> steps)
         {
             ulong h = 14695981039346656037UL;
@@ -43,7 +37,6 @@ namespace IGTAPTasMod
             return h.ToString("x16");
         }
 
-        /// <summary>The route's inert inputs, null when the engine hasn't found them for these inputs.</summary>
         InertInputs LoadInertInputs(MacroDefinition macro)
         {
             if (macro == null || macro.steps == null || macro.steps.Any(s => s.type != MacroStepType.RawInput || !s.enabled)) return null;
@@ -73,10 +66,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>
-        /// The studio's "Find inert inputs": the engine's <c>effects</c> on a route, replayed from its start trace (a course's, a
-        /// Full-TAS run's under its goals), to finish a route before recording it. Kept per route inputs while the trace stands.
-        /// </summary>
         object EngineSimEffects(WebStudioRequest request, JObject body)
         {
             MacroDefinition route = _library.macros.Find(m => m.id == Text(body, "routeId"));

@@ -15,21 +15,14 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim
 {
-    /// <summary>Where a run's tech lives: the ticks where the player's contact changes. Recorded by <see cref="ContactLog"/>;
-    /// <see cref="OfflineSolver"/>'s grafts and the mined tech grafts (<see cref="TechGrafts"/>) both key on it. A Left/Right
-    /// kind names the side of the thing touched (-x: Left), except a spring's, which names the side it launches toward.</summary>
     public enum Contact : byte
     {
         Died, LeftGround, Landed, TouchedWall, LeftWall, CornerHyper, WallBehindLeft, WallBehindRight, WallAheadLeft, WallAheadRight,
         NearGateLeft, NearGateRight, WallAboveLeft, WallAboveRight,
-        // Per physics step (ContactLog.Step): the game's own calls and the player's touches.
         SpringHitLeft, SpringHitRight, SpringHitUp, SpringHitDown, SpikeTouched, SpikeCleared, OverhangLeft, OverhangRight,
         SlopeLeft, SlopeRight, DoubleJump, DashJump, WallBoostLeft, WallBoostRight, Paused, SteppedUpLeft, SteppedUpRight
     }
 
-    /// <summary>The unlocks a run's player holds now, as the <see cref="Caps"/> they make (a Full-TAS window's, what its search
-    /// may press): the Movement's own fields, and the refill orbs and zip movers from the run's global upgrades (its own
-    /// economy's when it has one: a buy mid-run, like the Omni Dash box's refresh orb, changes only those).</summary>
     public static class PlayerCaps
     {
         public static Caps Of(Simulation sim)
@@ -56,17 +49,12 @@ namespace IGTAP.EngineSim
         }
     }
 
-    /// <summary>The ray probes a contact is made of, and the Movement getters they need: the same detection the solver's
-    /// grafts and the demo miner share.</summary>
     public static class ContactRays
     {
         internal static readonly AccessTools.FieldRef<Movement, LayerMask> GroundLayer = AccessTools.FieldRefAccess<Movement, LayerMask>("groundRaycastLayer");
         internal static readonly AccessTools.FieldRef<Movement, bool> CanHyper = AccessTools.FieldRefAccess<Movement, bool>("canHyper");
         internal static readonly AccessTools.FieldRef<Movement, float> CoyoteFrames = AccessTools.FieldRefAccess<Movement, float>("coyoteFrames");
 
-        /// <summary>The side of a wall at the player's back that isn't clip-ready yet because its bottom is still above the ground
-        /// rays (the back ray at y + 19 or y + 45 hits it within 12 u, the one at y - 18 doesn't), 0 for none: rising up
-        /// the wall's side with the stick at rest makes it clip-ready.</summary>
         public static float WallBehindAbove(Movement player)
         {
             if (player.onGround || player.dashActive) return 0f;
@@ -78,10 +66,6 @@ namespace IGTAP.EngineSim
                 || Physics2D.Raycast(new Vector2(p.x + back * 15f, p.y + 45f), dir, 12f, layer) ? back : 0f;
         }
 
-        /// <summary>The side of a wall behind the player (-1: at -x, 1: at +x) that a wall clip can use now, 0 for none. The turn
-        /// swings the hitbox's back edge (x ∓ 15.5, offset 5, width 41) 10 u into the wall, and the front ground ray (x ∓ 25
-        /// after the turn) grounds the player from inside it while Velocity.y is under 200; a clip needs the back edge
-        /// within ~8 u, so the ray looks 12 u out from x ∓ 15 at the ground rays' height (y - 18).</summary>
         public static float WallBehind(Movement player)
         {
             if (player.onGround || player.dashActive || player.Velocity.y >= 580f) return 0f;
@@ -90,8 +74,6 @@ namespace IGTAP.EngineSim
             return Physics2D.Raycast(new Vector2(p.x + back * 15f, p.y - 18f), new Vector2(back, 0f), 12f, GroundLayer(player)) ? back : 0f;
         }
 
-        /// <summary>The side of a wall in front of the player within 12 u of the hitbox's front edge (x ± 25.5), at the wall rays'
-        /// heights (y + 19, y - 18) or just over the head (y + 45: a wall whose bottom the player is rising up to), 0 for none.</summary>
         public static float WallAhead(Movement player)
         {
             if (player.onGround || player.dashActive || player.OnWall) return 0f;
@@ -106,17 +88,13 @@ namespace IGTAP.EngineSim
         static readonly float[] AheadHeights = { -18f, 19f, 45f };
     }
 
-    /// <summary>The target course's start gate within 16 u of the hitbox while the timer is off (the late gate touch): the gate
-    /// boxes in the scene frame, cached until FloatingOrigin moves the world.</summary>
     public sealed class ContactProbe
     {
         readonly Simulation _sim;
 
         public ContactProbe(Simulation sim) { _sim = sim; }
 
-        /// <summary>The side of the target course's start gate (-1: at -x) when the timer is off and the gate is within 16 u of the
-        /// hurtbox (x + 5 × facing ± 20, y ± 27: the 40×54 box the gates touch; the 41×72 body box excludes their Default layer)
-        /// at its height, 0 otherwise.</summary>
+        // Gate box is the 40x54 hurtbox (x + 5*facing +-20, y +-27); the 41x72 body box excludes their Default layer.
         public float NearGate()
         {
             if (_sim.TimingCourse() != null) return 0f;
@@ -142,7 +120,6 @@ namespace IGTAP.EngineSim
             {
                 if (!gate.gameObject.activeInHierarchy) continue;
                 courseScript course = gate.transform.parent != null ? gate.transform.parent.GetComponentInParent<courseScript>() : null;
-                // A lab run (TargetCourse -1) takes any course's gate: a gate-touch lab stands by one.
                 if (course == null || _sim.TargetCourse > 0 && course.courseNumber != _sim.TargetCourse) continue;
                 BoxCollider2D box = gate.GetComponent<BoxCollider2D>();
                 if (box == null) continue;
@@ -155,10 +132,6 @@ namespace IGTAP.EngineSim
         ScenePos _gatesOrigin;
     }
 
-    /// <summary>The contacts of one run: every tick where the player's contact changes (it leaves the ground at a ledge, lands,
-    /// touches or leaves a wall, dies) plus the wall clip's set-up probes behind and ahead and the start gate in reach, and
-    /// (on every physics step, because a dash's ticks consume no input) the corner hyper's flat dash leaving the floor's edge
-    /// and the per-step tech contacts (<see cref="Step"/>).</summary>
     public sealed class ContactLog
     {
         public readonly List<(int tick, Contact kind)> Contacts = new List<(int, Contact)>();
@@ -173,11 +146,8 @@ namespace IGTAP.EngineSim
             _stepPrimed = _wasSpike = _wasStepUp = false; _wasOverhang = _wasSlope = 0f;
         }
 
-        /// <summary>The last <see cref="Tick"/>'s <see cref="ContactRays.WallBehind"/> probe, for a caller that needs it on the
-        /// same tick (the ray is cast once).</summary>
         public float Behind => _wasBehind;
 
-        /// <summary>Drops the contacts before <paramref name="tick"/>, keeping the rest in order.</summary>
         public void DropBefore(int tick)
         {
             int kept = 0;
@@ -186,8 +156,7 @@ namespace IGTAP.EngineSim
             Contacts.RemoveRange(kept, Contacts.Count - kept);
         }
 
-        /// <summary>What the next tick's detection compares with (the last tick's contact state), so a run resumed from a
-        /// snapshot taken after that tick sees the same contacts as the run that took it (the planner's edges, <see cref="Planner"/>).</summary>
+        // Holds the last tick's contact state so a run resumed from a snapshot sees the same contacts as the run that took it.
         public readonly struct Mark
         {
             internal readonly bool Primed, Ground, Wall, Dash, Slide, StepPrimed, Spike, StepUp;
@@ -209,7 +178,6 @@ namespace IGTAP.EngineSim
                 _stepPrimed, _wasSpike, _wasStepUp, _wasOverhang, _wasSlope);
         }
 
-        /// <summary>Clears the contacts and picks the detection up where <paramref name="m"/> left it.</summary>
         public void Load(Mark m)
         {
             Contacts.Clear();
@@ -233,8 +201,6 @@ namespace IGTAP.EngineSim
             }
             else
             {
-                // An explore from a clip-ready cell (or one by the gate, or under a wall at its back) starts in it: that
-                // is the contact too.
                 if (behind != 0f) Contacts.Add((tick, behind < 0f ? Contact.WallBehindLeft : Contact.WallBehindRight));
                 if (above != 0f) Contacts.Add((tick, above < 0f ? Contact.WallAboveLeft : Contact.WallAboveRight));
                 if (gate != 0f) Contacts.Add((tick, gate < 0f ? Contact.NearGateLeft : Contact.NearGateRight));
@@ -248,8 +214,6 @@ namespace IGTAP.EngineSim
             _wasNearGate = gate;
         }
 
-        /// <summary>Every physics step of a run (a dash runs ticks with no input tick, which Tick never sees): the input tick a dash
-        /// was pressed on, and a CornerHyper contact there when its flat hyper dash leaves the floor.</summary>
         public void Slide(int runTicks, Movement player)
         {
             bool dash = player.cutsceneMode == Movement.cutsceneModes.dash;
@@ -260,16 +224,6 @@ namespace IGTAP.EngineSim
             _wasSlide = slide;
         }
 
-        /// <summary>Every physics step of a run, after it (a dash's ticks consume no input, and a spring, a wall boost or a spike
-        /// touch happens inside a physics callback): the game's own calls this step made (<see cref="Simulation.Events"/>) and
-        /// the player's touches (<see cref="PhysicsWorld.PlayerTouch"/>), filed at the input tick <see cref="Tick"/> files that
-        /// step's contacts at. A spring hit (SpringHitLeft/Right when its up has an x, launching that way, else Up/Down); an air
-        /// jump (DoubleJump); a jump out of a dash (DashJump: a super or hyper, or a ground bounce's jump); a special wall jump
-        /// (WallBoostLeft/Right: the wall's side; a wallbounce, a dash into a wall with the jump buffered, a dash-boosted wall
-        /// jump); a landing the same tick jumps out of (Landed when onGround is already off again; one it stays on is Tick's);
-        /// a pause (Paused); a step-up that follows a step without one (SteppedUpLeft/Right: the step's side, the facing); a
-        /// spike trigger touched (SpikeTouched) or left alive (SpikeCleared); a slanted surface newly touched, facing down
-        /// (OverhangLeft/Right) or up (SlopeLeft/Right), by the surface's side.</summary>
         public void Step(Simulation sim)
         {
             int tick = (int)sim.Engine.RunTicks;
@@ -291,7 +245,6 @@ namespace IGTAP.EngineSim
             }
             _wasStepUp = (e & StepEvents.SteppedUp) != 0;
             PhysicsWorld.PlayerTouches touch = sim.Physics.PlayerTouch;
-            // A run's first step only primes the touches: a spike, overhang or slope it starts in wasn't touched in this run.
             if (_stepPrimed)
             {
                 if (touch.Spike != _wasSpike && (touch.Spike || sim.Engine.IsRunning)) Contacts.Add((tick, touch.Spike ? Contact.SpikeTouched : Contact.SpikeCleared));
@@ -305,14 +258,10 @@ namespace IGTAP.EngineSim
         }
     }
 
-    /// <summary>A studio savestate (or a probe's) applied onto a simulation, as the probe and the tech demo miner start:
-    /// its world position is its scene position minus the FloatingOrigin it recorded.</summary>
     public static class DemoStart
     {
         const BindingFlags Fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
 
-        /// <summary>The start: a studio savestate (its world position is its scene position minus the FloatingOrigin it recorded),
-        /// then any of position [x, y] and velocity [vx, vy] in the world frame, scaleX, and Movement fields by name.</summary>
         public static void ApplyStart(Simulation sim, JsonElement start, string baseDir)
         {
             WorldPos position = sim.PlayerWorld;
@@ -332,7 +281,6 @@ namespace IGTAP.EngineSim
             Place(sim, position, velocity, scaleX);
         }
 
-        /// <summary>One studio savestate: its Movement fields and body velocity, its world position and facing.</summary>
         public static void ApplySavestate(Simulation sim, string path)
         {
             WorldPos position = sim.PlayerWorld;
@@ -342,8 +290,6 @@ namespace IGTAP.EngineSim
             Place(sim, position, velocity, scaleX);
         }
 
-        /// <summary>The player at a lab map's start (what Cli\Lab.cs places for a lab run): position and velocity in the world
-        /// frame, facing, Movement fields; a lab's inputs start on the first tick, with no start alignment.</summary>
         public static void ApplyLabStart(Simulation sim, LabMapDef lab)
         {
             LabStart s = lab.start ?? new LabStart();
@@ -367,13 +313,10 @@ namespace IGTAP.EngineSim
             };
             using JsonDocument doc = JsonDocument.Parse(JsonSerializer.Serialize(start));
             ApplyStart(sim, doc.RootElement, ".");
-            // The coloured blocks: the lab start's state (the game's own swap: the scene's tilemaps and the lab's coloured shapes),
-            // else the host trace's, which the lab's coloured shapes follow.
             colouredBlockSwapper swapper = sim.World.All<colouredBlockSwapper>().FirstOrDefault();
             if (s.blueActive is bool blue && swapper != null) swapper.swapBlocks(blue);
             else sim.SetLabColours(s.blueActive ?? swapper?.isBlueActive ?? true);
-            // A lab start is often mid-air: the demo's inputs start on the first tick (no wait for three grounded ticks and no
-            // start alignment), as an in-game lab demo's do, and inside that tick (Simulation.StartsInsideTick).
+            // A lab start is often mid-air: demo inputs start on the first tick, inside it (Simulation.StartsInsideTick), as in-game.
             SetEngineField(sim, "_waitingForStable", false);
             SetEngineField(sim, "_preRollTicksRemaining", 0);
             SetEngineField(sim, "_requireCourseFinish", false);
@@ -411,7 +354,6 @@ namespace IGTAP.EngineSim
             WorldPos now = sim.PlayerWorld;
             if (Math.Abs(now.x - position.x) > 0.01f || Math.Abs(now.y - position.y) > 0.01f)
                 throw new InvalidOperationException("The start position did not stick: " + now + " for " + position + ".");
-            // The trace's engine state still pins the player to the route start while it waits for stable ticks.
             sim.Engine.GetType().GetField("_hasSynchronizationPosition", Fields).SetValue(sim.Engine, false);
             sim.SetStart(sim.Capture(0), 0);
         }
@@ -439,49 +381,31 @@ namespace IGTAP.EngineSim
         }
     }
 
-    /// <summary>A tech demo's own input window around one of its contact ticks, relative to that tick: the demo's real
-    /// stick values, presses/holds/releases, dash, dash jump and dash turn (human-legal as the demo recorded them),
-    /// tagged by the contact type and the unlocks it needs. A window is also offered mirrored (x negated, side flipped)
-    /// for the contact's opposite side; one at a contact with no side is turned to the run's own direction when grafted.
-    /// A lab demo's graft spec (<see cref="GraftSpec"/>, the demo file's "grafts") gives its window, placement, the spread
-    /// its runs are sampled over, its coast, how often it is tried and what it chains into.</summary>
     public sealed class TechPattern
     {
-        public string Tech;          // techs.json id
+        public string Tech;
         public string Name;
-        public string Category;      // glitchless | nmg | major
-        public Caps Requires;        // the unlocks the window needs: techs.json "requires" (a Caps label, e.g. DS_OM) plus its own dash presses
+        public string Category;
+        public Caps Requires;
         public Contact Kind;
-        public int First, Last;      // window offsets around the contact tick
+        public int First, Last;
         public InputTick[] Ticks;
-        public bool Key;             // the demo's key contact: the one its tech happens at
-        public bool Mirrored;        // x values negated for the contact's opposite side
-        public int DemoContact;      // the contact's tick in the demo
-        public string DemoStart;     // where the demo played (its trace)
-        /// <summary>The window's direction: a sided contact's side (-1: Left), else the sign of its stick at or after the
-        /// contact (0: none); a stick <see cref="PatternVary.X"/>/<see cref="CoastX"/> value is relative to it.</summary>
+        public bool Key;
+        public bool Mirrored;
+        public int DemoContact;
+        public string DemoStart;
         public int Dir;
-        /// <summary>Where the window's contact goes relative to the run's: uniform in [ShiftLo, ShiftHi].</summary>
         public int ShiftLo = -TechGrafts.Jitter, ShiftHi = TechGrafts.Jitter;
-        /// <summary>The runs of equal ticks sampled at graft time (null: the window as the demo played it).</summary>
         public PatternVary[] Vary;
-        /// <summary>The coast's stick choices (relative to <see cref="Dir"/>; null: the window's last stick) and hold (null: as the window ends;
-        /// <see cref="CoastHolds"/>: a jump down at the window's end held one of these many ticks).</summary>
         public float[] CoastX;
         public bool? CoastHeld;
         public int[] CoastHolds;
-        /// <summary>How many sampled grafts one contact gets (a gate tap brushes the gate only at the right height).</summary>
         public int Tries = 1;
-        /// <summary>How often a pick draws it over the other windows at its contact kind (the tech's weight is its largest).</summary>
         public int Weight = 1;
         public PatternChain Chain;
-        /// <summary>Cut by a graft spec (A/B: --no-graft-specs drops these).</summary>
         public bool Spec;
-        /// <summary>The window quick-restarts: grafted only where a run may restart (a Full-TAS window; the game's own
-        /// RestartRefused still aborts a restart it refuses), never in a course solve.</summary>
         public bool Resets;
 
-        /// <summary>The solver's mode for a graft of this pattern ("tech graft &lt;id&gt;"), as a new best's "via" names it.</summary>
         [JsonIgnore] public string Mode => _mode ??= "tech graft " + Tech;
         string _mode;
 
@@ -490,9 +414,6 @@ namespace IGTAP.EngineSim
         internal TechPattern Copy() => (TechPattern)MemberwiseClone();
     }
 
-    /// <summary>One run of equal ticks in a pattern's window (from <see cref="Index"/>, <see cref="Run"/> ticks), sampled at graft
-    /// time: its length, its stick (x relative to the tick's own sign; a pair: x relative to the pattern's direction, and y) and
-    /// its dash's jump frame, each drawn from its choices (null: as the demo played it).</summary>
     public sealed class PatternVary
     {
         public int Index, Run;
@@ -500,14 +421,9 @@ namespace IGTAP.EngineSim
         public float[] X;
         public float[][] Stick;
         public int[] DashJump;
-        /// <summary>The run's jump button as the grafted run's was at the placement (held on, or off), no edge of its own.</summary>
         public bool RunButton;
     }
 
-    /// <summary>What a graft's own run grafts next: the first contact of an <see cref="On"/> kind at least 2 ticks after its
-    /// placement gets a pattern of that kind (a key window of <see cref="With"/>'s when given), placed <see cref="ShiftLo"/>..
-    /// <see cref="ShiftHi"/> after it, up to <see cref="Depth"/> deep, 85% of the time. With <see cref="Expect"/>, only when
-    /// the run shows that contact where the demo did (<see cref="ExpectAt"/> after the placement, -1..+2): the graft worked.</summary>
     public sealed class PatternChain
     {
         public int Depth;
@@ -520,33 +436,20 @@ namespace IGTAP.EngineSim
         internal PatternChain Copy() => (PatternChain)MemberwiseClone();
     }
 
-    /// <summary>What the miner saw in one tech's demo: where it replayed, the contacts along it and the patterns cut out.</summary>
     public sealed class TechDemo
     {
         public string Tech, Name, Category, Requires, Start, Source, Error;
-        /// <summary>The tech's overlay detector (techs.json "detector", the TAS overlay's Tech name; null: none): what
-        /// <see cref="TechChecks"/> looks for in a run to say the tech happened.</summary>
         public string Detector;
-        /// <summary>The tech's graftKey (techs.json): the contact kind its key window sits on, near this demo input tick (optional).</summary>
         public Contact? KeyContact;
         public int? KeyTick;
         public int InputTicks, PhysicsTicks;
         public bool Finished, Died;
-        /// <summary>The tech's techs.json "graft" marker when it has no demo to mine yet: "todo" (not demonstrable yet, no lab);
-        /// null for a mined tech. A marked tech isn't counted as missing.</summary>
         public string Marker;
         public List<(int tick, Contact kind)> Contacts = new List<(int, Contact)>();
         public List<TechPattern> Patterns = new List<TechPattern>();
-        /// <summary>What the graft specs couldn't cut (a contact the demo never shows, a vary outside its window).</summary>
         public List<string> Notes = new List<string>();
     }
 
-    /// <summary>The tech demos of the studio's Tech tab (techs.json) mined into solver grafts: each demo replays offline from
-    /// its start (its category's start trace, its own savestate, or a captured tech-<id>.json trace), the contact events
-    /// along it are detected with the solver's own contact detection (<see cref="ContactLog"/>), and the input window around
-    /// each contact becomes a pattern. <c>solve</c> grafts them at the same contact kinds (filter by the run's unlocks): they
-    /// are its only grafts; <c>--no-tech-grafts</c> turns them off. The mining is cached in the configured
-    /// traces folder (where the demos resolve from; <c>--tech-dir</c>), keyed by the catalog content and the engine build.</summary>
     public sealed partial class TechGrafts
     {
         public List<TechDemo> Demos = new List<TechDemo>();
@@ -554,31 +457,16 @@ namespace IGTAP.EngineSim
         public string CacheFile, Key;
         public bool FromCache;
 
-        // The input window cut around a contact: WindowBefore ticks before it (the tech's set-up: a hop, a turn, the
-        // approach), WindowAfter after it (the tech's own inputs and its hold). A death's window stops at the death: a run
-        // ends there, so only the inputs that can prevent it matter.
         public const int WindowBefore = 10, WindowAfter = 30;
-        /// <summary>The contacts per demo that make patterns: the ones nearest its action.</summary>
         public const int MaxContacts = 8;
-        /// <summary>The contact tick's placement jitter at graft time (a pattern's default shift).</summary>
         public const int Jitter = 3;
         public const int GraftCoast = 40;
 
-        /// <summary>The share of picks that take the tech's key window (the contact its demo does the tech at) over the
-        /// demo's other contact windows, which are mostly its set-up and travel.</summary>
         public const double KeyShare = .6;
 
-        /// <summary>What the miner detects and cuts, versioned: part of the cache key (bump it when the detection changes).
-        /// 2: the per-step tech contacts (ContactLog.Step) and the repo catalog/lab maps read from the source tree.
-        /// 3: lab demos' graft specs ("grafts"), their variant demos and techs.json's graftDemos, the window's direction, windows
-        /// with a quick restart. 4: a coast's hold lengths ("held": [ticks]), a window ending on a dash jump coasting with its jump down.</summary>
+        // Miner version is part of the cache key: bump it when detection changes.
         const int MinerVersion = 4;
 
-        /// <summary>The patterns ready for one solve's unlocks (its caps id, <see cref="Caps"/>), by contact kind and then by
-        /// tech (read-only once prepared): those whose <see cref="TechPattern.Requires"/> is a subset of the run's unlocks,
-        /// each listed <see cref="TechPattern.Weight"/> times, once without the windows that quick-restart and once with them
-        /// (a run that may restart: a Full-TAS window's). A pick draws the tech first (by its weight there: its largest
-        /// window's), so a demo with many contacts doesn't crowd out a short one.</summary>
         public void Prepare(string capabilities)
         {
             Caps caps = Caps.Parse(capabilities);
@@ -611,9 +499,6 @@ namespace IGTAP.EngineSim
         }
         Ready[] _ready, _readyResets;
 
-        /// <summary>A pattern for this contact kind the run's unlocks allow (with <paramref name="resets"/>, the windows that
-        /// quick-restart too): a tech drawn by its weight, then its key window <see cref="KeyShare"/> of the time (when it has
-        /// one here), else any of its windows; null when there is none.</summary>
         public TechPattern Pick(Contact kind, System.Random rng, bool resets = false)
         {
             Ready ready = (resets ? _readyResets : _ready)[(int)kind];
@@ -624,8 +509,6 @@ namespace IGTAP.EngineSim
             return tech.Key.Length > 0 && rng.NextDouble() < KeyShare ? tech.Key[rng.Next(tech.Key.Length)] : tech.All[rng.Next(tech.All.Length)];
         }
 
-        /// <summary>A chained graft's pattern at this contact kind (<see cref="PatternChain"/>): a key window of the tech
-        /// <paramref name="tech"/> when given (else of any tech), else any of that tech's windows; null when there is none.</summary>
         public TechPattern PickChain(Contact kind, string tech, System.Random rng, bool resets = false)
         {
             if (tech == null) return Pick(kind, rng, resets);
@@ -634,19 +517,8 @@ namespace IGTAP.EngineSim
             return null;
         }
 
-        /// <summary>Whether <see cref="Pick"/> has a pattern for this contact kind (after <see cref="Prepare"/>).</summary>
         public bool Offers(Contact kind, bool resets = false) { return (resets ? _readyResets : _ready)[(int)kind].Techs.Length > 0; }
 
-        /// <summary>The pattern's input window on <paramref name="run"/>, its contact at the run's contact tick plus a shift drawn
-        /// from the pattern's (<see cref="TechPattern.ShiftLo"/>..<see cref="TechPattern.ShiftHi"/>): the run is cut at the
-        /// window's first tick and the window's own inputs follow, its <see cref="TechPattern.Vary"/> runs sampled, then
-        /// GraftCoast ticks of its coast (the window's last stick and hold, or the pattern's coast choices; a hold released at
-        /// the end). A window at a contact with no side (<see cref="Sided"/>) is turned to the run's direction (its last stick
-        /// before the placement, else either way), the other way 30% of the time. A press or release at the cut keeps the jump
-        /// button's edges real (docs/human-input.md). <paramref name="placed"/>: the run tick the window's contact went to;
-        /// <paramref name="shift"/> overrides the pattern's own range (a chained graft's); <paramref name="turn"/> the direction a
-        /// window with no side is turned to (-1, 1: no random turn).
-        /// False: the window doesn't fit after the run's kept prefix.</summary>
         public static bool Compose(List<InputTick> run, int contactTick, int lo, TechPattern p, System.Random rng, out List<InputTick> grafted, out int placed,
             (int lo, int hi)? shift = null, int turn = 0)
         {
@@ -668,8 +540,6 @@ namespace IGTAP.EngineSim
             List<InputTick> window = Sample(p, rng, flip, dir, runHeld, out int contactIndex);
             int start = at - contactIndex;
             if (start > run.Count) return false;
-            // The window may reach before the run's kept prefix: drop the head it can't have (the run starts from a cell's
-            // state there), as long as some of the tech's own inputs survive.
             int skip = 0;
             if (start < Math.Max(lo, 1)) { skip = Math.Max(lo, 1) - start; start = Math.Max(lo, 1); }
             if (skip >= window.Count || start > run.Count) return false;
@@ -678,13 +548,9 @@ namespace IGTAP.EngineSim
             bool down = start > 0 && (t[start - 1].held || t[start - 1].press) && !t[start - 1].release;
             if (down && !first.held && !first.release) first.release = true;
             else if (!down && first.release && !first.press) first.release = false;
-            // A dash with a jump frame holds the button from that frame (its own press): no press on the dash tick.
             if (!down && first.held && !first.press && !(first.dash && first.dashJump > 0)) first.press = true;
             for (int i = skip; i < window.Count; i++) t.Add(i == skip ? first : window[i]);
-            // The coast keeps the window's last stick and hold, as the demo's follow-up would (or the pattern's coast); the hold
-            // ends at the run's end.
             InputTick last = t[t.Count - 1];
-            // A dash jump presses the jump in its dash: the button is down after it.
             bool endDown = (last.held || last.press || last.dash && last.dashJump > 0) && !last.release;
             float coastX = p.CoastX != null ? p.CoastX[rng.Next(p.CoastX.Length)] * (dir == 0 ? 1 : dir) : last.x;
             int hold = !endDown ? 0 : p.CoastHolds != null ? p.CoastHolds[rng.Next(p.CoastHolds.Length)] : p.CoastHeld ?? true ? GraftCoast : 0;
@@ -694,9 +560,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>The pattern's window with its <see cref="TechPattern.Vary"/> runs sampled (turned the other way when
-        /// <paramref name="flip"/>; a run whose button follows the run's takes <paramref name="runHeld"/>), and the index its
-        /// contact tick landed on.</summary>
         static List<InputTick> Sample(TechPattern p, System.Random rng, bool flip, int dir, bool runHeld, out int contactIndex)
         {
             var w = new List<InputTick>(p.Ticks.Length + 16);
@@ -736,24 +599,14 @@ namespace IGTAP.EngineSim
             return w;
         }
 
-        /// <summary>Whether a contact kind names a side (its window is mirrored for the other one at mining time).</summary>
         public static bool Sided(Contact kind) { return Mirror(kind) != kind; }
-
-        // ---- mining ----
 
         internal sealed class TechDef
         {
             public string id, name, category, requires, start, routeId, labmap, labDemo, detector;
-            /// <summary>The live entry's own demo wiring when the repo seed's differs (Catalog): the seed's is the tech's, this is mined too.</summary>
             public string LiveLabmap, LiveLabDemo;
-            /// <summary>Where the tech happens when the last button isn't it (a demo with trailing inputs): {"contact": a Contact
-            /// name, "tick": the demo's input tick near it (optional)}. The key window and the kept windows centre on it.</summary>
             public GraftKeyDef graftKey;
-            /// <summary>More demos of its lab mined besides its default (labmaps/&lt;labmap&gt;.&lt;name&gt;.demo.json): a demo that
-            /// shows the tech in full where the default is a short or trimmed one. Not the comparison ghosts, which fail on purpose.</summary>
             public string[] graftDemos;
-            /// <summary>"todo" (not demonstrable yet, no lab): it has
-            /// no demo to mine and the listing says so instead of counting it missing.</summary>
             public string graft;
             public bool floatingOrigin;
             public int fastForward;
@@ -770,30 +623,22 @@ namespace IGTAP.EngineSim
         internal sealed class DemoSource
         {
             public TechDef Tech;
-            public string Trace, Savestate;   // the trace the demo replays over, and its own savestate (macro demos)
+            public string Trace, Savestate;
             public MacroDefinition Macro;
-            public bool Lab;                  // a lab map's solved demo (labmaps/<id>.demo.json, or <id>.<LabDemo>.demo.json)
+            public bool Lab;
             public string LabId, LabDemo, LabMapPath, LabDemoPath;
-            public List<string> KeyFiles = new List<string>();   // everything the replay reads (the cache key)
+            public List<string> KeyFiles = new List<string>();
         }
 
         static readonly JsonSerializerOptions Json = new JsonSerializerOptions { IncludeFields = true, WriteIndented = true,
             Converters = { new JsonStringEnumConverter(), new CapsConverter() } };
 
-        /// <summary>The cache's <see cref="TechPattern.Requires"/> as its caps id ("dsom"); a cache written in another shape
-        /// fails to read and is mined again (<see cref="Load"/>'s try).</summary>
         sealed class CapsConverter : JsonConverter<Caps>
         {
             public override Caps Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) => Caps.Parse(reader.GetString());
             public override void Write(Utf8JsonWriter writer, Caps value, JsonSerializerOptions options) => writer.WriteStringValue(value.Id);
         }
 
-        /// <param name="tracesDir">The trace's own folder (the fallback when there is no configured traces dir).</param>
-        /// <param name="refresh">Re-mine instead of reading the cache.</param>
-        /// <param name="techDir">Where the demos' traces, savestates, lab maps and the cache resolve from
-        /// (<c>--tech-dir</c>); the configured traces dir when it is absent.</param>
-        /// <param name="cacheFile">Where the mining is cached (<c>--tech-cache</c>); <c>tech-grafts.cache.json</c> in the tech dir
-        /// when it is absent.</param>
         public static TechGrafts Load(string tracesDir, bool refresh = false, string techDir = null, string cacheFile = null)
         {
             tracesDir = ResolveTechDir(tracesDir, techDir);
@@ -809,7 +654,7 @@ namespace IGTAP.EngineSim
                     {
                         cached.CacheFile = cache;
                         cached.FromCache = true;
-                        return cached.WithRoutes(tracesDir, refresh, cache);   // route-corpus grafts (RouteGrafts.cs)
+                        return cached.WithRoutes(tracesDir, refresh, cache);
                     }
                 }
                 catch (Exception) { }
@@ -824,10 +669,9 @@ namespace IGTAP.EngineSim
                 File.WriteAllText(cache, JsonSerializer.Serialize(mined, Json));
             }
             catch (Exception ex) { Console.Error.WriteLine("tech grafts: cache not written (" + ex.Message + ")"); }
-            return mined.WithRoutes(tracesDir, refresh, cache);   // route-corpus grafts (RouteGrafts.cs)
+            return mined.WithRoutes(tracesDir, refresh, cache);
         }
 
-        /// <summary>Every tech's demo sources, as <see cref="Load"/> mines them (a "todo" tech's has no trace).</summary>
         static List<DemoSource> Sources(string tracesDir)
         {
             string config = Directory.Exists(Path.GetDirectoryName(tracesDir)) ? Path.GetDirectoryName(tracesDir) : null;
@@ -843,9 +687,7 @@ namespace IGTAP.EngineSim
                 void AddLab(string id, string demo) { if (!string.IsNullOrEmpty(id) && !labs.Contains((id, demo))) labs.Add((id, demo)); }
                 AddLab(tech.labmap, tech.labDemo);
                 AddLab(tech.LiveLabmap, tech.LiveLabDemo);
-                // A lab map naming this tech ("tech") demos it with its default demo, unless the tech already plays one on it.
                 foreach ((string id, string techId, _) in labmaps) if (techId == tech.id && !labs.Any(l => l.id == id)) AddLab(id, null);
-                // The tech's graftDemos (techs.json) of its own lab, and every lab variant demo with a graft spec made for it.
                 if (!string.IsNullOrEmpty(tech.labmap)) foreach (string name in tech.graftDemos ?? Array.Empty<string>()) AddLab(tech.labmap, name);
                 foreach ((string lab, string demo, string owner) in specDemos) if (owner == tech.id) AddLab(lab, demo);
                 var forTech = new List<DemoSource>();
@@ -856,8 +698,6 @@ namespace IGTAP.EngineSim
                     catch (Exception ex) { source.Trace = ex.Message; }
                     forTech.Add(source);
                 }
-                // A tech with a lab demo that resolves is mined from its lab demos alone: its captured tech-<id>.json trace or demo
-                // macro (a recording from a course start, with the travel and noise around the tech) is mined only without one.
                 if (!forTech.Any(s => s.LabDemoPath != null && File.Exists(s.Trace)))
                 {
                     var own = new DemoSource { Tech = tech };
@@ -870,19 +710,15 @@ namespace IGTAP.EngineSim
             return sources;
         }
 
-        /// <summary>A demo the tech checks are measured on (<c>techs --demos</c>, <see cref="TechChecks"/>): one a tech is mined
-        /// from, or a comparison ghost of its lab (labmaps/&lt;lab&gt;.json "ghosts": most miss the tech on purpose).</summary>
         public sealed class CheckDemo
         {
             public string Tech, Category, Detector, Name, Label, Error;
             public bool Ghost;
             internal DemoSource Source;
 
-            /// <summary>Plays <paramref name="run"/> on the demo's simulation at its start, with its inputs.</summary>
             public T Play<T>(Func<Simulation, List<InputTick>, T> run) => WithDemo(Source, (sim, inputs, _, _) => run(sim, inputs));
         }
 
-        /// <summary>Every tech's mined demos and its labs' ghosts (<see cref="CheckDemo"/>).</summary>
         public static List<CheckDemo> CheckDemos(string tracesDir, string techDir = null)
         {
             tracesDir = ResolveTechDir(tracesDir, techDir);
@@ -920,10 +756,6 @@ namespace IGTAP.EngineSim
             return demos;
         }
 
-        // The configured traces dir (tools/gamepaths.py's TRACES: the game's config folder's enginesim dir) when it exists:
-        // the catalog, the demo traces and the cache resolve from there whatever trace is being solved, so a copied trace
-        // mines (or reads) the same patterns as the real folder. --tech-dir overrides it; without a configured folder the
-        // trace's own folder is used.
         public static string ResolveTechDir(string tracesDir, string techDir = null)
         {
             if (!string.IsNullOrEmpty(techDir)) return Path.GetFullPath(techDir);
@@ -934,8 +766,6 @@ namespace IGTAP.EngineSim
             return Directory.Exists(canonical) ? canonical : Path.GetFullPath(tracesDir);
         }
 
-        /// <summary>Every tech of the catalog (<see cref="Catalog"/>: the config folder's techs.json merged with the repo seed, as
-        /// <see cref="Load"/> reads it) with its category and detector.</summary>
         public static List<(string id, string category, string detector)> Categories(string tracesDir, string techDir = null)
         {
             tracesDir = ResolveTechDir(tracesDir, techDir);
@@ -943,12 +773,6 @@ namespace IGTAP.EngineSim
             return Catalog(config).Select(t => (t.id, t.category, t.detector)).ToList();
         }
 
-        // The catalog as the plugin merges it (TechCatalog.MergeSeedTechs): the config folder's techs.json (the Tech tab's live
-        // copy) keeps its own entries, and the repo's seed (SeedTechs) adds the techs the live copy lacks, except one the Tech tab
-        // deleted (listed in techs.seeded.json: offered once already). Unlike the plugin, which merges only on the game's next
-        // launch, the miner merges on every load, so a tech or demo added to the repo mines before the game has run. The repo is
-        // the source of truth for the offline-only demo wiring: a seed's labmap/labDemo and graftKey replace a live entry's (a
-        // live labmap that differs is mined too, LiveLabmap/LiveLabDemo), and a live one fills in only where the seed has none.
         static List<TechDef> Catalog(string config)
         {
             List<TechDef> Read(string file)
@@ -971,9 +795,6 @@ namespace IGTAP.EngineSim
             {
                 if (byId.TryGetValue(seed.id, out TechDef mine))
                 {
-                    // graftKey, graftDemos and graft are offline-only: the repo's win, the live ones fill a gap, and a live "todo"
-                    // goes once the seed has a lab and no marker (as TechCatalog.FillSeedGaps). So does the detector: the code
-                    // that runs it (the overlay, TechChecks) is the repo's.
                     mine.graftKey = seed.graftKey ?? mine.graftKey;
                     mine.graftDemos = seed.graftDemos ?? mine.graftDemos;
                     mine.graft = seed.graft ?? (mine.graft == "todo" && !string.IsNullOrEmpty(seed.labmap) ? null : mine.graft);
@@ -990,8 +811,6 @@ namespace IGTAP.EngineSim
             return byId.Values.OrderBy(t => t.id, StringComparer.Ordinal).ToList();
         }
 
-        /// <summary>The repo's data\techs.json (the plugin's embedded seed): the source tree's (<see cref="SourceRoot"/>), else the copy
-        /// the build put beside the binary.</summary>
         static string SeedTechs()
         {
             string root = SourceRoot();
@@ -1000,9 +819,6 @@ namespace IGTAP.EngineSim
             return File.Exists(copy) ? copy : null;
         }
 
-        /// <summary>The source tree the engine was built from (the folder holding data\techs.json, data\labmaps\ and enginesim\): walked up
-        /// from the running binary, else the one the build recorded (IgtapRepo, IGTAP.EngineSim.Runtime.csproj) for a solver
-        /// copied out of the tree; null when neither exists (the build's copies beside the binary are used).</summary>
         public static string SourceRoot()
         {
             static bool IsRoot(string dir) => File.Exists(Path.Combine(dir, "data", "techs.json")) && Directory.Exists(Path.Combine(dir, "enginesim", "Runtime"));
@@ -1012,9 +828,6 @@ namespace IGTAP.EngineSim
             return !string.IsNullOrEmpty(built) && Directory.Exists(built) && IsRoot(built) ? Path.GetFullPath(built) : null;
         }
 
-        /// <summary>Where lab maps resolve, first wins: the source tree's data\labmaps\ (the source of truth: a lab edited there wins over
-        /// a stale copy), then the config folder's (the studio's live copies: they fill in only the labs the repo lacks), then the
-        /// build's copies.</summary>
         static IEnumerable<string> LabDirs(string config)
         {
             string root = SourceRoot();
@@ -1039,9 +852,6 @@ namespace IGTAP.EngineSim
             }
         }
 
-        // Where a demo replays: a captured tech-<id>.json trace when the game has captured one (lab demos included), a lab
-        // map's solved demo over the trace it was solved in, else its macro's raw inputs over its category's start trace,
-        // from its own savestate when it has one.
         static void Resolve(DemoSource source, string tracesDir, string config, Dictionary<string, MacroDefinition> macros)
         {
             TechDef tech = source.Tech;
@@ -1083,8 +893,6 @@ namespace IGTAP.EngineSim
             }
         }
 
-        // The lab maps on disk (LabDirs: the source tree's copy, else the config folder's, else the build's): their ids and the
-        // techs.json id each demos.
         static List<(string id, string tech, string path)> LabMaps(string config)
         {
             var found = new List<(string, string, string)>();
@@ -1109,8 +917,6 @@ namespace IGTAP.EngineSim
             return found;
         }
 
-        // A lab's variant demos (labmaps/<lab>.<name>.demo.json, first of LabDirs wins) that carry a graft spec ("grafts"): each is
-        // mined for the tech the demo file names ("tech"), else its lab's.
         static List<(string lab, string demo, string tech)> SpecDemos(string config, List<(string id, string tech, string path)> labmaps)
         {
             var found = new List<(string, string, string)>();
@@ -1140,7 +946,6 @@ namespace IGTAP.EngineSim
             return found;
         }
 
-        // labmaps/<name>, the first of LabDirs that has it.
         static string FindLab(string config, string name)
         {
             foreach (string dir in LabDirs(config))
@@ -1153,8 +958,6 @@ namespace IGTAP.EngineSim
 
         static string WorldOf(string trace) { return Path.ChangeExtension(trace, null) + ".world.json"; }
 
-        /// <summary>A course target's category start: its start trace (start-c&lt;target&gt;-&lt;caps&gt;.json), else the Optimize
-        /// tab's capture of the same start (optimize-c&lt;target&gt;-&lt;caps&gt;.json); null when neither is there.</summary>
         public static string CategoryStart(string tracesDir, string target, string capsId)
         {
             foreach (string prefix in new[] { "start-c", "optimize-c" })
@@ -1165,7 +968,6 @@ namespace IGTAP.EngineSim
             return null;
         }
 
-        // The demo's category start (CategoryStart); a full-tas demo plays from its run's fresh start.
         static string StartTrace(string tracesDir, string start)
         {
             string course = null, caps = null;
@@ -1190,9 +992,6 @@ namespace IGTAP.EngineSim
             throw new InvalidDataException("no start trace for " + start);
         }
 
-        // The cache key: what the miner reads and nothing else, so a note edit in techs.json or a new route saved to routes.json
-        // doesn't re-mine: per demo source its tech's mined fields (TechDef), where it resolved (or why it didn't), its macro,
-        // and every file it replays over; plus the engine build.
         static string CacheKey(List<DemoSource> sources)
         {
             using var sha = SHA256.Create();
@@ -1208,7 +1007,6 @@ namespace IGTAP.EngineSim
                 hash.Append(JsonSerializer.Serialize(s.Tech, Json)).Append('|').Append(s.Lab).Append(s.LabId).Append('|').Append(s.LabDemo).Append('|')
                     .Append(s.Trace).Append('|').Append(s.Macro == null ? "" : JsonSerializer.Serialize(s.Macro, Json)).Append('\n');
             foreach (string file in sources.SelectMany(s => s.KeyFiles).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(f => f, StringComparer.Ordinal)) Add(file);
-            // The miner's own version: a change to what it detects re-mines even when the build hashes below didn't move.
             hash.Append("miner ").Append(MinerVersion).Append('\n');
             foreach (string file in new[] { typeof(TechGrafts).Assembly.Location, typeof(Movement).Assembly.Location })
                 if (!string.IsNullOrEmpty(file)) Add(file);
@@ -1256,8 +1054,7 @@ namespace IGTAP.EngineSim
                     demo.Finished = run.Finished;
                     demo.Died = run.EndReason != null && run.EndReason.StartsWith("Player death", StringComparison.Ordinal);
                     if (demo.Died) log.Contacts.Add((lastTick, Contact.Died));
-                    // A demo that finishes inside a dash (its steps consume no input tick) never had its last steps' contact changes
-                    // looked at (a dash off a wall cling leaves the wall mid-dash): the finish files them at the dash's tick.
+                    // A demo finishing inside a dash never saw its last steps' contact changes; the finish files them at the dash's tick.
                     if (demo.Finished && (int)sim.Engine.RunTicks == lastTick) log.Tick(lastTick, sim.Player, probe.NearGate());
                     demo.Contacts.AddRange(log.Contacts);
                     if (specs != null) CutSpecs(demo, inputs, specs);
@@ -1272,12 +1069,6 @@ namespace IGTAP.EngineSim
             return demo;
         }
 
-        /// <summary>
-        /// The demo's simulation at its start and its inputs, handed to <paramref name="run"/>: a lab demo on its lab (its own
-        /// finish box judges it), a captured trace from its own start, a macro over its category start (from its savestate, with
-        /// the omnidash its tech needs). Also the lab demo's graft specs (null: none) and what its windows need (null: the tech's
-        /// own requires): the demo's own "requires", else the tech's narrowed to the lab's category.
-        /// </summary>
         static T WithDemo<T>(DemoSource source, Func<Simulation, List<InputTick>, List<GraftSpec>, string, T> run)
         {
             TechDef tech = source.Tech;
@@ -1294,14 +1085,9 @@ namespace IGTAP.EngineSim
             string requires = null;
             if (lab != null)
             {
-                // A lab demo's start is the lab's own (its geometry injected above), and its inputs are `lab solve`'s; a lab
-                // run is judged on its own finish box, not the host trace's course (Cli\Lab.cs's lab replay).
                 using JsonDocument solved = JsonDocument.Parse(File.ReadAllText(source.LabDemoPath));
                 inputs = SolveInputs(solved.RootElement);
                 specs = GraftSpec.Parse(solved.RootElement);
-                // A lab demo's windows need what its tech needs and its lab runs with: the demo's own "requires", else the tech's
-                // requires narrowed to the lab's category (a lab variant may need less than the tech's label: a side spring
-                // without the omnidash, a spring double hit with no double jump; and a lab run with every unlock needs no more).
                 if (solved.RootElement.TryGetProperty("requires", out JsonElement needs) && needs.ValueKind == JsonValueKind.String) requires = needs.GetString();
                 else if (lab.CategoryGiven && Caps.TryParse(lab.category, out Caps labCaps) && Caps.TryParse(tech.requires ?? "NONE", out Caps techCaps))
                     requires = Narrow(techCaps, labCaps).Label;
@@ -1318,7 +1104,6 @@ namespace IGTAP.EngineSim
             {
                 inputs = ToInputs(source.Macro);
                 if (source.Savestate != null) DemoStart.ApplySavestate(sim, source.Savestate);
-                // A demo plays with the omnidirectional dash on top of its start's unlocks (TechCatalog.ApplyTechAbilities).
                 if (Caps.TryParse(tech.requires, out Caps needs) && needs.Omni) DemoStart.SetField(sim.Player, "omniDashUnlocked", "true");
                 sim.SetStart(sim.Capture(0), 0);
             }
@@ -1331,8 +1116,6 @@ namespace IGTAP.EngineSim
             return list.EnumerateArray().Select(InputTick.FromJson).ToList();
         }
 
-        // A demo macro is raw input (TechCatalog refuses anything else): one input tick per duration tick, with the press,
-        // release, dash, dash jump, spring dash, lock, dash turn and pause on the step's first tick (Solver.ToTicks's shape).
         static List<InputTick> ToInputs(MacroDefinition macro)
         {
             var ticks = new List<InputTick>();
@@ -1355,15 +1138,11 @@ namespace IGTAP.EngineSim
             return ticks;
         }
 
-        // The input window around every contact of the demo, tagged by the contact type. The tech's key contact is the one
-        // nearest the demo's last press, release or dash (the input that does the tech), or in a demo with no button at all its
-        // first contact the player ran into (TouchContact); its window is flagged "key".
         static void Cut(TechDemo demo, List<InputTick> inputs)
         {
             int action = -1;
             for (int i = 0; i < inputs.Count; i++) if (inputs[i].press || inputs[i].release || inputs[i].dash) action = i;
             if (action < 0) action = demo.Contacts.Where(c => TouchContact(c.kind)).Select(c => c.tick).DefaultIfEmpty(0).First();
-            // The tech's graftKey: its contact (nearest its tick) is where the tech happens.
             Contact? keyKind = null;
             if (demo.KeyContact is Contact want)
                 foreach ((int tick, Contact kind) in demo.Contacts.Where(c => c.kind == want).OrderBy(c => demo.KeyTick is int t ? Math.Abs(c.tick - t) : 0).ThenBy(c => c.tick).Take(1))
@@ -1377,9 +1156,6 @@ namespace IGTAP.EngineSim
                 int lo = Math.Max(0, tick - WindowBefore), hi = Math.Min(inputs.Count - 1, tick + (kind == Contact.Died ? -1 : WindowAfter));
                 if (hi < lo) continue;
                 var window = inputs.GetRange(lo, hi - lo + 1);
-                // A window with no button in it is travel, not tech, unless its contact is something the player ran into (a
-                // spring, a spike, an overhang, a slope, a step): there the stick that meets it is the tech. A quick restart counts
-                // as a button (the window is flagged Resets: only a run that may restart grafts it).
                 if (!TouchContact(kind) && !window.Any(k => k.press || k.release || k.dash || k.reset)) continue;
                 var pattern = new TechPattern
                 {
@@ -1391,9 +1167,6 @@ namespace IGTAP.EngineSim
                 cuts.Add((tick, kind, pattern));
             }
             if (cuts.Count == 0) return;
-            // Only the contacts around the demo's action make patterns: a full-tas demo's travel touches walls and gates
-            // the whole way, and its windows are travel, not tech. At the same distance a per-step tech contact (a spring, a dash
-            // jump, an air jump ...) goes before a plain one, and a step-up (mostly incidental: a dash along the floor) after.
             var near = cuts.OrderBy(c => Math.Abs(c.tick - action)).ThenBy(c => c.kind == keyKind ? 0 : 1).ThenBy(c => KeyRank(c.kind)).ThenBy(c => c.tick).ToList();
             var keep = new HashSet<TechPattern>(near.Take(MaxContacts).Select(c => c.pattern));
             foreach ((int tick, Contact kind, TechPattern pattern) in cuts)
@@ -1404,7 +1177,6 @@ namespace IGTAP.EngineSim
             }
         }
 
-        /// <summary>The pattern, and for a sided contact its twin for the other side (x negated, the chain's kinds mirrored).</summary>
         static void AddWithTwin(TechDemo demo, TechPattern pattern)
         {
             demo.Patterns.Add(pattern);
@@ -1424,8 +1196,6 @@ namespace IGTAP.EngineSim
             demo.Patterns.Add(twin);
         }
 
-        /// <summary>A pattern's direction: a sided contact's side, else the sign of the window's first stick x at or after the
-        /// contact (before it when there is none), 0 when the window never moves sideways.</summary>
         static int DirOf(Contact kind, IReadOnlyList<InputTick> window, int contact)
         {
             string name = kind.ToString();
@@ -1435,8 +1205,6 @@ namespace IGTAP.EngineSim
             return 0;
         }
 
-        /// <summary>A demo with graft specs is cut only where they say, each spec's window a key pattern at each kind it
-        /// grafts at (and its twin).</summary>
         static void CutSpecs(TechDemo demo, List<InputTick> inputs, List<GraftSpec> specs)
         {
             foreach (GraftSpec spec in specs)
@@ -1486,21 +1254,11 @@ namespace IGTAP.EngineSim
             }
         }
 
-        /// <summary>One of a lab demo's graft specs (the demo file's "grafts" list): which of its contacts (the one of kind
-        /// "contact" nearest its input "tick"), the window cut around it ("window": [first, last] offsets, default -10..30),
-        /// the kinds it grafts at ("as": [{"kind", "shift", "weight"}], default its own contact's), where the window's contact
-        /// goes relative to the run's ("shift": [lo, hi], default ±3), the runs of equal ticks sampled at graft time ("vary":
-        /// [{"at": offset, "ticks", "x", "stick", "dashJump"}], each a choice list or an "a..b" integer range), the coast
-        /// ("coast": {"x": choices relative to the window's direction, "held"}), the grafts per contact ("tries"), its pick
-        /// weight ("weight") and what its run grafts next ("chain": {"depth", "on": kinds, "with": tech, "expect": kind,
-        /// "shift": [lo, hi]}).</summary>
         sealed class GraftSpec
         {
             public Contact Contact;
             public List<At> As = new List<At>();
             public int? Tick;
-            /// <summary>The window's direction at a contact with no side ("dir": the way the run was going, e.g. +1 for a backwards
-            /// dash pressed to the left out of a run to the right); default the window's own first stick.</summary>
             public int? Dir;
             public int WindowLo = -WindowBefore, WindowHi = WindowAfter, ShiftLo = -Jitter, ShiftHi = Jitter, Tries = 1, Weight = 1;
             public List<Run> Vary = new List<Run>();
@@ -1527,7 +1285,6 @@ namespace IGTAP.EngineSim
                 public int? ShiftLo, ShiftHi, Weight;
             }
 
-            /// <summary>The demo's specs; null when it has none (its windows are cut as a plain demo's).</summary>
             public static List<GraftSpec> Parse(JsonElement demo)
             {
                 if (!demo.TryGetProperty("grafts", out JsonElement list) || list.ValueKind != JsonValueKind.Array) return null;
@@ -1585,7 +1342,6 @@ namespace IGTAP.EngineSim
 
             static Contact Kind(JsonElement e) { return Enum.Parse<Contact>(e.GetString()); }
 
-            // A choice list, or an "a..b" integer range.
             static int[] Ints(JsonElement e)
             {
                 if (e.ValueKind == JsonValueKind.Array) return e.EnumerateArray().Select(x => x.GetInt32()).ToArray();
@@ -1597,8 +1353,6 @@ namespace IGTAP.EngineSim
             static float[] Floats(JsonElement e) { return e.EnumerateArray().Select(x => x.GetSingle()).ToArray(); }
         }
 
-        /// <summary>A contact the player runs into (a spring, a spike, a slanted surface, a step), where the stick meeting it is
-        /// the tech even with no button pressed.</summary>
         static bool TouchContact(Contact kind)
         {
             return kind is Contact.SpringHitLeft or Contact.SpringHitRight or Contact.SpringHitUp or Contact.SpringHitDown
@@ -1606,7 +1360,6 @@ namespace IGTAP.EngineSim
                 or Contact.SlopeLeft or Contact.SlopeRight or Contact.SteppedUpLeft or Contact.SteppedUpRight;
         }
 
-        /// <summary>The unlocks both hold (a label Caps parses: block swap and the omnidash only with a dash).</summary>
         static Caps Narrow(Caps a, Caps b)
         {
             var both = new Caps
@@ -1628,14 +1381,11 @@ namespace IGTAP.EngineSim
         static void Tag(TechPattern pattern, string requires, List<(int tick, Contact kind)> contacts, int lo, int hi)
         {
             Caps caps = Caps.Parse(requires);
-            // The window presses dash: it needs the dash unlock on top of the tech's own label; an air jump the demo spent in it
-            // (a DoubleJump contact inside it) needs the double jump.
             if (pattern.Ticks.Any(k => k.dash || k.dashJump > 0 || k.springDash > 0)) caps.Dashes = Math.Max(caps.Dashes, 1);
             if (contacts.Any(c => c.kind == Contact.DoubleJump && c.tick - 1 >= lo && c.tick - 1 <= hi)) caps.AirJumps = Math.Max(caps.AirJumps, 1);
             pattern.Requires = caps;
         }
 
-        /// <summary>A sided contact's other side (its name's Left and Right swapped); any other kind is its own.</summary>
         static Contact Mirror(Contact kind)
         {
             string name = kind.ToString();
@@ -1651,7 +1401,6 @@ namespace IGTAP.EngineSim
             return t;
         }
 
-        // The same window (every InputTick field, InputTick.Equals) at the same contact kind and offset is one pattern.
         void Dedupe()
         {
             var seen = new HashSet<TechPattern>(SameWindow.Instance);
@@ -1672,11 +1421,6 @@ namespace IGTAP.EngineSim
             }
         }
 
-        // ---- the CLI listing ----
-
-        /// <summary>techgrafts &lt;traces dir or trace&gt; [--refresh] [--tech-dir &lt;dir&gt;]: every tech's demo replayed and mined,
-        /// per contact. The demos' traces, savestates, lab maps and the cache resolve from the configured traces dir
-        /// (the game's config folder's enginesim dir when it exists) whatever trace is listed; --tech-dir overrides it.</summary>
         public static int Command(string[] args)
         {
             if (args.Length == 0)
@@ -1707,7 +1451,6 @@ namespace IGTAP.EngineSim
                 foreach (TechPattern p in demo.Patterns.Where(p => p.Key && !p.Mirrored))
                     Console.WriteLine("      " + Format(p));
             }
-            // Per contact kind: the techs with a window there (key windows, all windows; a spec'd tech's weight).
             Console.WriteLine();
             Console.WriteLine("by contact kind (tech key/all windows, xN: pick weight):");
             foreach (var kind in mined.Patterns.GroupBy(p => p.Kind).OrderBy(g => g.Key))
@@ -1716,7 +1459,6 @@ namespace IGTAP.EngineSim
             return 0;
         }
 
-        // A spec'd pattern's spread: its shift, sampled runs, coast, tries, weight and chain.
         static string Spread(TechPattern p)
         {
             var s = new StringBuilder();

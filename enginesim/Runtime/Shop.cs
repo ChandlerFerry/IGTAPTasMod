@@ -26,7 +26,6 @@ namespace IGTAP.EngineSim
         double[] _awarded = new double[CurrencyCount];
         internal Economy Economy { get; private set; }
         readonly List<BuyMaxRoutine> _buyMax = new List<BuyMaxRoutine>();
-        // Set while FixedStep runs the buy-max routines (once per physics step): those purchases continue the touch that started them (Simulation.Bought).
         bool _continuing;
 
         internal struct BuyMaxRoutine
@@ -74,7 +73,7 @@ namespace IGTAP.EngineSim
             Array.Clear(_spent, 0, _spent.Length);
             Array.Clear(_awarded, 0, _awarded.Length);
             _buyMax.Clear();
-            Economy = null;   // the new economy's constructor reads Holds: not the last start's income
+            Economy = null; // the new economy's constructor reads Holds
             Economy = economy.TryGetProperty("clones", out _) ? new Economy(_sim, economy) : null;
         }
 
@@ -97,26 +96,18 @@ namespace IGTAP.EngineSim
 
         public double CashNow => Available(Cash);
 
-        /// <summary>The box is one of these (by id or hierarchy path).</summary>
         internal bool Named(string[] boxes, upgradeBox b) => Array.IndexOf(boxes, _ids[b]) >= 0 || Array.IndexOf(boxes, _paths[b]) >= 0;
 
-        /// <summary>The box's id (FullTasGoal.BoxId).</summary>
         internal string Id(upgradeBox box) => _ids[box];
 
-        /// <summary>The boxes a touch would buy now: active, on, and paid for.</summary>
         internal IEnumerable<upgradeBox> PaidFor()
         {
             foreach (upgradeBox b in _boxes)
                 if (Affordable(new[] { _ids[b] }) == true) yield return b;
         }
 
-        /// <summary>What the run holds of a currency now (the start's, less spent, plus awarded and, for Cash, the economy's income).</summary>
         internal double Holds(globalStats.Currencies currency) { return Available((int)currency); }
 
-        /// <summary>
-        /// Whether the run holds enough now to buy each of these boxes once (their costs added per currency); null when one of
-        /// them can't be bought (not active: capped, or not unlocked yet), which Cash doesn't change.
-        /// </summary>
         internal bool? Affordable(string[] boxes, int levels = 1)
         {
             double[] need = Need(boxes, levels);
@@ -126,20 +117,15 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>What buying each of these boxes once (<paramref name="levels"/> times: its next levels) costs now, per currency
-        /// (their costs added); null when one of them can't be bought (<see cref="Affordable"/>; or hasn't that many levels left
-        /// under its cap).</summary>
         internal double[] Need(string[] boxes, int levels = 1, bool shown = true)
         {
             var need = new double[CurrencyCount];
             foreach (upgradeBox b in _boxes)
             {
                 if (!Named(boxes, b)) continue;
-                // Not shown (shown: false): a tree box its segment hasn't grown yet is priced at its cost as loaded.
                 if (shown && (!b.isActive || !b.gameObject.activeInHierarchy) || b.TimesUsed + levels > b.Cap) return null;
                 int currency = (int)Currency(b);
                 if (currency < 0 || currency >= CurrencyCount) continue;
-                // The next `levels` levels' costs, each raised as ScaleBoxCost raises it after a buy.
                 double cost = b.upgradeCost;
                 for (int i = 0; i < levels; i++)
                 {
@@ -154,12 +140,6 @@ namespace IGTAP.EngineSim
         static readonly AccessTools.FieldRef<TreeSegmentActivationComponent, bool> AutoTriggerNext = AccessTools.FieldRefAccess<TreeSegmentActivationComponent, bool>("autoTriggerNext");
         static readonly AccessTools.FieldRef<TreeSegmentActivationComponent, int> NextAuto = AccessTools.FieldRefAccess<TreeSegmentActivationComponent, int>("NextSegmentToAutoTriggerIndex");
 
-        /// <summary>
-        /// The boxes (ids, the root's first) whose buys grow an upgrade tree down to this box's segment, this box left out: segment by
-        /// segment, the box whose buy grows it (upgradeBox.upgradeTree, SegmentsToTrigger: <see cref="GrowTree"/>), else the
-        /// segment whose growth triggers it (TreeSegmentActivationComponent.autoTriggerNext, IE_Grow's end). Empty for a box on no
-        /// tree segment.
-        /// </summary>
         internal List<string> TreeWay(string box)
         {
             var way = new List<string>();
@@ -184,10 +164,8 @@ namespace IGTAP.EngineSim
             return way;
         }
 
-        /// <summary>What the run has gained of a currency so far, its spending left out (<see cref="Holds"/> plus what it spent).</summary>
         internal double Gained(globalStats.Currencies currency) { return Available((int)currency) + _spent[(int)currency]; }
 
-        /// <summary>Whether a buy-max touch of one of these boxes is still buying (it goes on without another touch).</summary>
         internal bool Buying(string[] boxes)
         {
             foreach (BuyMaxRoutine r in _buyMax)
@@ -195,7 +173,6 @@ namespace IGTAP.EngineSim
             return false;
         }
 
-        /// <summary>For logs: each box's state (bought/cap, on or off, cost against what the run holds).</summary>
         internal string Describe(string[] boxes)
         {
             var parts = new List<string>();
@@ -210,15 +187,12 @@ namespace IGTAP.EngineSim
             return string.Join("; ", parts);
         }
 
-        /// <summary>A rendered frame's clonesScript and AtomColliderSystem Updates (Time.deltaTime <paramref name="dt"/>).</summary>
         internal void StepClones(float dt)
         {
             Economy?.Step(dt);
             Economy?.AtomFrame(dt);
         }
 
-        /// <summary>The first <paramref name="levels"/> levels of the box from its base cost (an atom box reset by the collider's clear,
-        /// upgradeBox.onPrestige(force)), in its currency.</summary>
         internal double FromBase(string box, int levels)
         {
             upgradeBox b = Box(box);
@@ -228,10 +202,8 @@ namespace IGTAP.EngineSim
             return sum;
         }
 
-        /// <summary>The levels a running buy-max routine on the box still buys (0: none running).</summary>
         internal int BuyMaxLeft(upgradeBox box) { int left = 0; foreach (BuyMaxRoutine r in _buyMax) if (r.Box == box) left += r.Left; return left; }
 
-        /// <summary>The levels running buy-max routines still buy on any of these boxes (by id or path).</summary>
         internal int BuyMaxLeft(string[] boxes) { int left = 0; foreach (BuyMaxRoutine r in _buyMax) if (Named(boxes, r.Box)) left += r.Left; return left; }
 
         internal void FixedStep()
@@ -265,7 +237,6 @@ namespace IGTAP.EngineSim
             var box = (upgradeBox)boxObject;
             if (!(Cooldown(box) <= 0f)) return;
             Cooldown(box) = 0.2f;
-            // Nothing after a bonus's finish is part of its route (a global box's buy may not be modeled without the economy).
             if (_sim.RewardHit(box, collision)) return;
             int currency = (int)Currency(box);
             if (!(Available(currency) >= box.upgradeCost && box.isActive))
@@ -291,7 +262,7 @@ namespace IGTAP.EngineSim
             UnityEngine.Random.Draw();
         }
 
-        /// <summary>buyUpgrade's atom block, before the touch's buys (upgradeBox.cs:641-654): <see cref="Economy.AtomPrestige"/>.</summary>
+        // Mirrors buyUpgrade's atom block (upgradeBox.cs:641-654).
         bool AtomPrestige(upgradeBox box, int currency)
         {
             if (Economy != null) return Economy.AtomPrestige(box, (globalStats.Currencies)currency);
@@ -302,11 +273,6 @@ namespace IGTAP.EngineSim
         static readonly AccessTools.FieldRef<upgradeBox, TreeController> UpgradeTree = AccessTools.FieldRefAccess<upgradeBox, TreeController>("upgradeTree");
         static readonly AccessTools.FieldRef<upgradeBox, int[]> SegmentsToTrigger = AccessTools.FieldRefAccess<upgradeBox, int[]>("SegmentsToTrigger");
 
-        /// <summary>
-        /// buyUpgrade's upgradeTree.growSegments(SegmentsToTrigger) (upgradeBox.cs:668-671), the game's own: each segment not
-        /// grown yet grows (TreeController.onNewGrowCommandRecieved: the growth sound, its Invoke'd cooldown, the segment on and
-        /// TreeSegmentActivationComponent.IE_Grow started, which the Scheduler runs on: Simulation's Continues).
-        /// </summary>
         void GrowTree(upgradeBox box)
         {
             TreeController tree = UpgradeTree(box);
@@ -357,14 +323,13 @@ namespace IGTAP.EngineSim
             string why;
             if (global || kind == localUpgrades.localUpgradeSet.prestige)
             {
-                // A global upgrade the engine doesn't model is refused by Economy.BoughtGlobal (Unmodeled).
                 modeled = Economy != null && (kind != localUpgrades.localUpgradeSet.prestige || !VmanScript.isCurrentlyVman);
                 why = Economy == null ? " (a global upgrade needs the native economy: this trace's start state has no clones)"
                     : " (a Vman prestige: the game returns before ScaleBoxCost and spends nothing)";
             }
             else if (kind == localUpgrades.localUpgradeSet.Movement)
             {
-                // The Omni Dash box's first buy resets Courses 1-5 (Economy.OmniDashFirstBuy); its later ones only toggle.
+                // The Omni Dash box's first buy resets Courses 1-5 (Economy.OmniDashFirstBuy); later buys only toggle.
                 bool omniFirst = move == upgradeBox.movementUpgrades.OmniDash && box.TimesUsed == 0;
                 modeled = player != null && (swapBlocks || move == upgradeBox.movementUpgrades.dash || move == upgradeBox.movementUpgrades.wallJump
                     || move == upgradeBox.movementUpgrades.doubleJump || move == upgradeBox.movementUpgrades.unlockBlockSwap
@@ -435,8 +400,7 @@ namespace IGTAP.EngineSim
                 _sim.Engine.Abort("Category unlocks changed: bought " + move + " at " + path);
         }
 
-        /// <summary>A tree's dash or double-jump box counts itself (upgradeBox.cs:788-791,799-802): the Omni Dash toggle sets the
-        /// air jumps and dashes from these counts.</summary>
+        // A tree's dash/double-jump box counts itself (upgradeBox.cs:788-802); Omni Dash toggle derives counts from them.
         void TreeBoxTriggered(bool dash)
         {
             globalStats stats = Singleton<globalStats>.Instance;
@@ -450,11 +414,7 @@ namespace IGTAP.EngineSim
             else stats.DjBoxesTriggered++;
         }
 
-        /// <summary>
-        /// The Omni Dash box's on/off toggle (upgradeBox.cs:841-860): an odd buy turns the omnidirectional dash on with the
-        /// tree's double jumps, an even one off with one more; dashes are the tree's plus one either way. The box is free from
-        /// then on (its cost and base cost 0, then ScaleBoxCost).
-        /// </summary>
+        // Omni Dash toggle (upgradeBox.cs:841-860): odd buy on with tree's double jumps, even off with one more; dashes +1.
         bool OmniDashToggle(upgradeBox box, Movement player)
         {
             globalStats stats = Singleton<globalStats>.Instance;
@@ -476,8 +436,7 @@ namespace IGTAP.EngineSim
 
         internal static void ScaleBoxCost(upgradeBox box) { box.upgradeCost = NextCost(box.upgradeCost, box); }
 
-        /// <summary>A box's cost after a buy at <paramref name="cost"/>, as upgradeBox raises it (upgradeBox.cs:941-944: add, power,
-        /// ceiling of the scaled cost, ceiling).</summary>
+        // Replicates upgradeBox's cost raise (upgradeBox.cs:941-944): add, power, ceiling of scaled cost, ceiling.
         static double NextCost(double cost, upgradeBox box)
         {
             cost += box.upgradeAddFactor;
@@ -497,8 +456,6 @@ namespace IGTAP.EngineSim
             return null;
         }
 
-        /// <summary>A GLOBAL cashPerLoop box's scene position (+1 level of every course's reward: the cash bonuses' boxes,
-        /// buyglobalreward2-5); null for any other box.</summary>
         internal (float x, float y)? GlobalCashAt(string box)
         {
             upgradeBox b = Box(box);
@@ -513,13 +470,6 @@ namespace IGTAP.EngineSim
             return b != null && b.upgrade == localUpgrades.localUpgradeSet.Movement ? b.movementUpgrade : null;
         }
 
-        /// <summary>
-        /// The unlocks <paramref name="caps"/> become once these boxes are bought in order, as <see cref="Buy"/> applies them and
-        /// <see cref="PlayerCaps"/> reads them: a tree's dash or double-jump box also counts itself, and each Omni Dash buy toggles
-        /// the omnidirectional dash (an odd one on, with the tree's double jumps; an even one off, with one more; the tree's
-        /// dashes plus one either way: <see cref="OmniDashToggle"/>, counts that give nothing while the dash or double jump
-        /// isn't unlocked), its first adding a refresh orb (<see cref="Economy.OmniDashFirstBuy"/>).
-        /// </summary>
         internal Caps AfterBuys(Caps caps, IEnumerable<string> boxes)
         {
             globalStats stats = Singleton<globalStats>.Instance;

@@ -65,11 +65,6 @@ namespace IGTAPTasMod
             _engine.Quiet = _vmanSetupQuiet;
         }
 
-        /// <summary>
-        /// A savestate start's rebaseAt: FloatingOrigin.MoveOrigin's own moves (roots, camera, backgrounds, particles, trails, lines,
-        /// currentOrigin) by the rebase point's scene position, done at once while the player rests, then a physics sync. The
-        /// player has to stay inside Threshold of it, or the game rebases again on the next frame.
-        /// </summary>
         void ApplyNewGameRebase(Movement player)
         {
             _newGameRebased = true;
@@ -82,12 +77,7 @@ namespace IGTAPTasMod
             _newGameFrame = Time.frameCount;
         }
 
-        /// <summary>
-        /// FloatingOrigin.MoveOrigin's own moves (roots, camera, backgrounds, particles, trails, lines, currentOrigin) by the scene
-        /// position of world point <paramref name="at"/>, then a physics sync: the world rebased around it, as FloatingOrigin
-        /// would have with the player there. Null, or why not (the player has to stay inside Threshold of it, or the game
-        /// rebases again on the next frame).
-        /// </summary>
+        // Replicates FloatingOrigin.MoveOrigin's moves around world point `at`, then a physics sync (exception 6, rebaseAt).
         string RebaseWorldAround(Movement player, Vector2 at, out float distance)
         {
             distance = 0f;
@@ -110,12 +100,6 @@ namespace IGTAPTasMod
             return null;
         }
 
-        /// <summary>
-        /// A savestate start's tree, right after the restore: at a level, Area 1 overgrown from 23 and The Tree at the level, as
-        /// a tree transition's start sets them (Solver EnsureArea1State, EnsureTree); with segments, exactly those grown and the
-        /// path shut. Then the zone at the player loaded (its floor with it, EnsureZone); the player then settles and rests,
-        /// every box the tree woke has run its Start, and the start is taken. False when it failed the new game.
-        /// </summary>
         bool ApplyNewGameTree(Movement player)
         {
             int[] segments = _newGameTree is JArray ? _newGameTree.Select(t => (int)t).ToArray() : null;
@@ -134,8 +118,6 @@ namespace IGTAPTasMod
             return true;
         }
 
-        /// <summary>A savestate start's savestate, its file reread: a hand edit (the unlocks it carries, its <c>openA2Door</c>)
-        /// applies without a relaunch. Null when there is none.</summary>
         internal Savestate ReloadSavestate(string id)
         {
             int index = _savestates.FindIndex(s => s.id == id);
@@ -156,8 +138,7 @@ namespace IGTAPTasMod
             }
             SavestateResult restored = SavestateService.Restore(player, state);
             if (!restored.Success) { FailNewGame(restored.Message); return; }
-            // The savestate holds no checkpoint, and the plugin writes none: respawnPoint stays the new game's. A quick restart
-            // before a real checkpoint moves it ends the run (FullTasTracker.RestartRefused).
+            // The savestate holds no checkpoint, none is written: respawnPoint stays the new game's (FullTasTracker.RestartRefused).
             _newGameSavestateApplied = true;
             _newGameAirStart = state.movementFields.TryGetValue("onGround", out SnapshotValue ground)
                 && string.Equals(ground?.value, "false", StringComparison.OrdinalIgnoreCase) ? state : null;

@@ -17,18 +17,11 @@ namespace IGTAP.EngineSim
             public float Repeat;
         }
 
-        /// <summary>Where in a tick a parked coroutine resumes (Unity's player loop at playback's frame rate).</summary>
         public enum Wait
         {
-            /// <summary><c>WaitForSeconds</c>: at the start of the tick <see cref="Routine.Due"/>, as an Invoke of that delay.</summary>
             Seconds,
-            /// <summary><c>WaitForFixedUpdate</c>: right after the next physics step (one yielded inside its callbacks: that step).</summary>
             FixedUpdate,
-            /// <summary><c>yield return null</c>: after the Updates of a later rendered frame than the one it yielded in
-            /// (<see cref="Routine.Due"/>, a <see cref="Scheduler.Frame"/>), Simulation.InterpolatedFrames.</summary>
             Frame,
-            /// <summary><c>WaitForEndOfFrame</c>: at the end of each rendered frame (a dash freeze's and a pause's held frames
-            /// included, on Time.deltaTime 0), Simulation.InterpolatedFrames.</summary>
             EndOfFrame,
         }
 
@@ -42,36 +35,20 @@ namespace IGTAP.EngineSim
         }
 
         public readonly List<Pending> Queue = new List<Pending>();
-        /// <summary>Coroutines parked on a yield, in start order.</summary>
         public readonly List<Routine> Routines = new List<Routine>();
         public int Tick;
-        /// <summary>The rendered frames so far (a held frame included; a tick's physics step is in its first): Simulation counts them.</summary>
         public int Frame;
-        /// <summary>
-        /// Targets whose coroutines run on past their first yield. The rest run to it and stop there: their later steps are
-        /// presentation or real-time work turbo never runs within a run (enginesim/README.md).
-        /// </summary>
         public Predicate<MonoBehaviour> Continues;
-        /// <summary>
-        /// Targets whose Invokes run in the Update phase of their tick's first rendered frame (after the frame's Updates, as the
-        /// atom grid's call: <see cref="FireInUpdate"/>), not at the tick's start: one started
-        /// with no delay inside a physics step runs in that step's frame. A TeleporterScript's manualUpdate, whose teleport
-        /// moves the player.
-        /// </summary>
+        // InUpdate targets' Invokes run in the first frame's Update phase (a teleporter's manualUpdate moves the player).
         public Predicate<MonoBehaviour> InUpdate;
-        /// <summary>Called before a coroutine step changes its target (Simulation.Touch keeps the target's fields in snapshots).</summary>
         public Action<MonoBehaviour> Stepping;
-        /// <summary>A coroutine yielded something this scheduler doesn't model.</summary>
         public Action<string> Unmodeled;
         static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type, string), Action<MonoBehaviour>> Methods =
             new System.Collections.Concurrent.ConcurrentDictionary<(Type, string), Action<MonoBehaviour>>();
         static readonly Func<object, object> MemberwiseClone = (Func<object, object>)Delegate.CreateDelegate(typeof(Func<object, object>),
             typeof(object).GetMethod("MemberwiseClone", BindingFlags.Instance | BindingFlags.NonPublic));
 
-        // While FireDue runs, Queue[0.._kept) are the entries it has passed over (kept, in order), Queue[_kept.._next) the
-        // slots of the ones it fired (dropped when the pass ends), and Queue[_next..] the rest, in order; _kept is -1 outside
-        // a pass. _skip is how many entries the pass still steps over unfired: an index loop over a list that an Invoke'd
-        // method's CancelInvoke shrank behind the index moves past as many entries as it lost there.
+        // FireDue emulates an index loop removing fired entries in one pass: [0.._kept) kept, [_kept.._next) fired.
         int _kept = -1, _next, _skip;
 
         public void Invoke(MonoBehaviour target, string method, float delay, float repeatRate)
@@ -97,7 +74,6 @@ namespace IGTAP.EngineSim
             Skip();
         }
 
-        /// <summary>Drops the entries of Queue[from..to) a CancelInvoke matches, the others kept in order from <paramref name="from"/>; returns where they end.</summary>
         int Drop(int from, int to, MonoBehaviour target, string method)
         {
             int end = from;
@@ -111,7 +87,6 @@ namespace IGTAP.EngineSim
             return ReferenceEquals(p.Target, target) && (method == null || p.Method == method);
         }
 
-        /// <summary>Mid-pass: the entries the pass steps over unfired join the kept ones.</summary>
         void Skip()
         {
             for (; _skip > 0 && _next < Queue.Count; _skip--) Queue[_kept++] = Queue[_next++];
@@ -119,8 +94,7 @@ namespace IGTAP.EngineSim
 
         public Coroutine StartCoroutine(MonoBehaviour target, IEnumerator routine)
         {
-            // Unity refuses a coroutine on an object that is off in the hierarchy (it logs an error and returns null): a tree
-            // segment whose tree is in an unloaded zone (TreeController.onNewGrowCommandRecieved) never grows.
+            // Unity refuses a coroutine on an object inactive in hierarchy (a tree segment in an unloaded zone never grows).
             if (!target.gameObject.activeInHierarchy) return null;
             var handle = new Coroutine { routine = routine };
             bool continues = Continues != null && Continues(target);
@@ -154,17 +128,12 @@ namespace IGTAP.EngineSim
             Routines.Add(r);
         }
 
-        /// <summary>Time.deltaTime of the rendered frame that resumes WaitForSeconds, frame and end-of-frame waits (the playback
-        /// clock's crossing frame; for end of frame, each frame's own).</summary>
         public float FrameDeltaTime;
 
-        // Resume's due routines, reused call to call.
         Routine[] _due = Array.Empty<Routine>();
 
-        /// <summary>Resumes every coroutine parked on <paramref name="wait"/> that is due, each one step, in start order.</summary>
         public void Resume(Wait wait)
         {
-            // Unity stops a coroutine when its object goes off (a zone unloaded: its zip movers mid-move, a tree growing).
             Routines.RemoveAll(r => !r.Target || !r.Target.gameObject.activeInHierarchy);
             int count = Routines.Count;
             if (count == 0) return;
@@ -177,8 +146,7 @@ namespace IGTAP.EngineSim
                 _due[n++] = r;
             }
             if (n == 0) return;
-            // As the game's player loop: a WaitForFixedUpdate resumes in the physics step (deltaTime the fixed step), the
-            // others in a rendered frame (a zip mover's first tween step after its WaitForSeconds adds that frame's time).
+            // WaitForFixedUpdate resumes in the physics step (fixed deltaTime), others in a rendered frame.
             Time.resumeDeltaTime = wait == Wait.FixedUpdate ? Time.fixedDeltaTime : FrameDeltaTime;
             int resumed = 0;
             try
@@ -186,7 +154,6 @@ namespace IGTAP.EngineSim
                 while (resumed < n)
                 {
                     Routine r = _due[resumed++];
-                    // One an earlier routine's step switched off (a zone load's) is stopped.
                     if (!r.Target || !r.Target.gameObject.activeInHierarchy) continue;
                     Stepping?.Invoke(r.Target);
                     if (r.Body.MoveNext()) Park(r, r.Body.Current);
@@ -195,8 +162,6 @@ namespace IGTAP.EngineSim
             finally
             {
                 Time.resumeDeltaTime = null;
-                // Each resumed routine leaves its place in one pass (nothing reads the list while they step): the due ones sit
-                // in Routines[0..count) in _due's order, and one parked again, or a routine one of them started, past count.
                 int kept = 0, left = 0;
                 for (int i = 0; i < Routines.Count; i++)
                 {
@@ -209,17 +174,10 @@ namespace IGTAP.EngineSim
             }
         }
 
-        /// <summary>A parked coroutine's own copy (the compiler's iterator object, fields shallow-copied), for a snapshot.</summary>
         public static IEnumerator Copy(IEnumerator body) { return (IEnumerator)MemberwiseClone(body); }
 
-        /// <summary>
-        /// Fires the due invokes in queue order; a repeating one goes back at the end. Behaves as an index loop over the list
-        /// that removes each fired entry (see <see cref="_kept"/>), in one pass.
-        /// </summary>
         public void FireDue() => Fire(false, Tick);
 
-        /// <summary>The due Invokes of <see cref="InUpdate"/> targets, in the Update phase of the tick's first rendered frame: one
-        /// started in this tick's step (due next tick) runs now.</summary>
         public void FireInUpdate() => Fire(true, Tick + 1);
 
         void Fire(bool inUpdate, int now)
@@ -248,7 +206,6 @@ namespace IGTAP.EngineSim
             }
         }
 
-        /// <summary>The parameterless instance method Invoke calls by name (the nearest declaring type's), compiled once: MethodInfo.Invoke per call is reflection.</summary>
         static Action<MonoBehaviour> Resolve(Type type, string name)
         {
             return Methods.GetOrAdd((type, name), key =>

@@ -7,11 +7,6 @@ type Run = { name: string; section: string; goals: FullTasGoal[]; best: { splits
   offline?: { reached: number; splits: FullTasSplit[]; waits?: number[] | null; idles?: FullTasIdle[] | null } | null;
   stretches?: { goal: string; bestTicks: number; runTicks: number }[] };
 
-/**
- * A Full-TAS run's stretches (goal N-1 to goal N of its best, costed from its splits), longest first: pick one to map it, fence
- * it with avoid boxes ("only" that goal on the map) and Improve it alone (/fulltas/solve with focus [N, N], the Full-TAS tab's
- * "Improve selected"). The next goal the best doesn't reach yet is listed but can't be improved (a focus is on reached goals).
- */
 export function FullTasTransitions({ runs, solve, lastResult, busy, onMap, onCommand }: { runs: Run[]; solve: FullTasSolveState;
   lastResult?: FullTasOutcome | null; busy: boolean; onMap: (run: string, stretch: string) => void; onCommand: (path: string, body?: unknown) => Promise<boolean> }) {
   const [name, setName] = useState(() => runs.find(r => r.section === "wip")?.name ?? runs[0]?.name ?? "");
@@ -19,11 +14,8 @@ export function FullTasTransitions({ runs, solve, lastResult, busy, onMap, onCom
   const [all, setAll] = useState(false);
   const run = runs.find(r => r.name === name);
   const splits = run?.best?.splits ?? run?.offline?.splits ?? [];
-  // A wait for Cash isn't the stretch's: a stretch is its movement, the wait the economy planner's. A buy's idle (the player at
-  // its box before its Cash, FullTasIdles.cs) splits it at the arrival; without one, its still runs (25+ inputs) are its wait.
   const waits = run?.offline?.waits ?? [];
   const idles = run?.offline?.idles ?? [];
-  // A lap (record:N, farm:N) is its course's route, improved on its own (Optimize's Improve), not here.
   const stretches = splits.map((s, i) => {
     const prev: FullTasSplit = i > 0 ? splits[i - 1] : { label: "the start", ticks: 0 };
     const idle = idles.find(d => d.id === run?.goals[i]?.id && d.arrive[0] >= prev.ticks && d.arrive[0] <= s.ticks);
@@ -34,13 +26,10 @@ export function FullTasTransitions({ runs, solve, lastResult, busy, onMap, onCom
       ticks: s.ticks - prev.ticks - wait, seconds: liveSeconds(s) - liveSeconds(prev) - waitSeconds };
   }).filter(s => !/^(record|farm):/.test(run?.goals[s.goal - 1]?.label ?? ""));
   const waited = stretches.filter(s => s.wait > 0);
-  // The 15 longest (or all), in goal order.
   const shown = all ? stretches : [...stretches].sort((a, b) => b.ticks - a.ticks).slice(0, 15).sort((a, b) => a.goal - b.goal);
   const next = run && splits.length < run.goals.length ? { goal: splits.length + 1, label: run.goals[splits.length].label } : null;
   const picked = stretches.find(s => s.goal === goal);
-  // A stretch's best found by Improve this stretch, by its goal's id.
   const found = (g: number) => run?.stretches?.find(s => s.goal === run.goals[g - 1]?.id);
-  // The stretch search's latest word (the engine's `stretch` event): its best against the run's own ticks.
   const stretchBest = solve.name === name ? (solve.events ?? []).filter(e => e.type === "stretch").at(-1) : undefined;
   const stretchBestGoal = stretchBest ? (run?.goals.findIndex(g => g.id === stretchBest.goal) ?? -1) + 1 : 0;
   return <div className="panel routePicker">
@@ -60,7 +49,6 @@ export function FullTasTransitions({ runs, solve, lastResult, busy, onMap, onCom
           onClick={() => onCommand("/fulltas/play", { name, stretch: picked.id })}>Play stretch best</button>
       </span></div>}
     {stretchBest && <p className="hint">Stretch to {stretchBestGoal > 0 ? goalSpan([stretchBestGoal, stretchBestGoal]) : String(stretchBest.label)}: best <b>{String(stretchBest.bestTicks)}</b> ticks against the run's {String(stretchBest.runTicks)} ({Number(stretchBest.runTicks) - Number(stretchBest.bestTicks)} faster); kept in fulltas/{name}.stretches.json for a whole run's Improve</p>}
-    {/* The solve's progress as the Full-TAS tab shows it: runs, ticks, runs a second, windows, finds, gate checks. */}
     <FullTasSolvePanel solve={solve} goals={run?.goals ?? []} run={solve.name ?? name} lastResult={lastResult} canPlay={false} onPlay={() => {}}
       route={run ? { progress: splits.length, time: splits.length ? liveSeconds(splits[splits.length - 1]) : null, splits: splits.map(liveSeconds) } : null}
       picked={picked ? [picked.goal, picked.goal] : null} onPick={g => setGoal(g)}/>

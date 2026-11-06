@@ -15,7 +15,6 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         public static string FileOf(RunContext run, string ext) => Path.Combine(run.Dir, "fulltas", run.Key + ext);
 
-        // The plugin's run file format (fulltas/<run>.json): each goal's id, label and where the route reached it (-1: not).
         public static void WriteRunFile(RunContext run, Built b, (float x, float y, bool facingRight) startAt)
         {
             var waitAt = b.Waits.GroupBy(w => w.Goal).ToDictionary(g => g.Key, g => g.Sum(w => w.Ticks));
@@ -70,7 +69,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             return def != null && File.Exists(def) ? def : null;
         }
 
-        // The plugin compares data/runs/<run>.json's goals with the trace header's, so both change together; a goal keeps its avoids by id.
+        // The plugin compares data/runs/<run>.json goals with the trace header's, so both change together.
         public static bool InstallGoals(RunContext run, RunPlan plan)
         {
             if (run.HeaderIds.SequenceEqual(plan.Ids) && run.HeaderGoals.Select(g => g.label).SequenceEqual(plan.Labels)) return false;
@@ -99,7 +98,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             return true;
         }
 
-        // The header's goals live in the trace's first 16 MB; the rest (its ticks, over a GB for a long run) is copied as it is.
         static void SpliceHeaderGoals(string trace, string goals)
         {
             byte[] head;

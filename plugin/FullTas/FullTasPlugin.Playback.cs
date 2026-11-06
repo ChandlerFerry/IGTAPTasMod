@@ -33,11 +33,8 @@ namespace IGTAPTasMod
                 idles = offline?.idles != null && offline.idles.Count > 0 && SameInputs(route, offline.inputs) ? offline.idles : null };
         }
 
-        /// <summary>Whether the route plays these inputs first (the offline best's, cut at its last goal): its idles are then the
-        /// route's.</summary>
         static bool SameInputs(MacroDefinition route, List<SolverTick> inputs)
         {
-            // Both as a route plays them (ToSteps keeps a dash's turn and jump frame, a pause's tick, only where they apply).
             List<SolverTick> ticks = ToTicks(route.steps), own = ToTicks(ToSteps(inputs));
             return ticks.Count >= own.Count && JsonConvert.SerializeObject(ticks.GetRange(0, own.Count)) == JsonConvert.SerializeObject(own);
         }
@@ -53,8 +50,6 @@ namespace IGTAPTasMod
             GuardSavestateRestarts(play.run, play.tracker, movement);
             _fullTas = play.tracker;
             _fullTasUnlocks = _newGameUnlocks;
-            // Only a complete route waits for its last goal after its inputs; a partial one (the offline best so far, Test best's
-            // attempt) ends with its inputs, instead of idling on until the player falls, dies and respawns at the world start.
             bool complete = play.expected == play.tracker.Goals.Length;
             SnapCameraAtPlaybackStart(movement);
             _engine.Run(play.route, false, complete && !IsTechDemo(play.route) && play.route.id != ProbeRouteId, 0, null);
@@ -62,11 +57,6 @@ namespace IGTAPTasMod
             if (_engine.TakeQuickRestart()) QuickRestart(movement);
         }
 
-        /// <summary>
-        /// A demo's fast-forward, or a play from a tick (plugin Update, outside the physics loop): its first input ticks in turbo, the way the gate replays
-        /// a run, so it starts at 1x where the tech begins, in the world the run made (boxes, unlocks, economy, FloatingOrigin
-        /// rebases), which a savestate can't hold.
-        /// </summary>
         void PumpFastForward()
         {
             FullTasPlay play = _fullTasPlay;
@@ -75,10 +65,7 @@ namespace IGTAPTasMod
             play.fastForward = 0;
             Movement player = FindWorldMovement();
             bool frames = play.fastForwardFrames;
-            // As the TAS editor's seek leaves 1x (TasSeek): turbo models a dash's freeze itself, so a real IE_TimeStop it started
-            // would freeze 1x again after it (ZipEscape% from tick 73000, mid-dash: frames frozen at 1x, the run a tick behind,
-            // buycd8 missed; a stretch's play died before the stretch); one tick short, the last at 1x; the player at the last
-            // frame's blend, where 1x's next FixedUpdate reads it.
+            // Turbo models a dash freeze itself: drop real IE_TimeStop so it can't freeze 1x again after a seek.
             TurboRunner.DropTimeStops = true;
             try
             {
@@ -113,21 +100,17 @@ namespace IGTAPTasMod
                 droppedFrames = _droppedFrames, splits });
             if (!finished && _droppedFrames == 0 && play.expected == tracker.Goals.Length)
                 RetireBrokenFullTasRoute(play.route, "1x play", reason, tracker);
-            // A saved route of any class times its splits on its first finish (major: RememberBestSplits on a trace too).
             if (finished && FullTasSavedRoute(play.run.name, play.route) && !_fullTasSplits.ContainsKey(play.route.id)
                 && FullTasRouteOf(play.route.name, out _, out _, out float named) && Mathf.Abs(named - time) <= .0001f)
                 StoreFullTasSplits(play.route, splits);
             FullTasQueuePlayed(play, finished, time, tracker.Next, reason);
         }
 
-        /// <summary>A route the gate saved for the run, of any class (not stale), in the library.</summary>
         bool FullTasSavedRoute(string run, MacroDefinition route)
         {
             return FullTasRouteOf(route.name, out string r, out _, out _) && string.Equals(r, run, StringComparison.OrdinalIgnoreCase) && _library.macros.Contains(route);
         }
 
-        /// <summary>MacroEngine.RefreshRewards in a Full-TAS run (1x and turbo): each active course with local upgrades updates its
-        /// reward, the set enginesim's Economy.RefreshReward updates.</summary>
         void RefreshFullTasRewards()
         {
             if (_fullTas == null) return;
@@ -135,8 +118,7 @@ namespace IGTAPTasMod
                 if (c.gameObject.activeInHierarchy && c.localUpgradesScript != null) c.UpdateReward();
         }
 
-        /// <summary>The game's own 5 s UpdateReward timers (courseScript.Start, a random phase): off while a Full-TAS run plays at 1x,
-        /// which refreshes rewards on MacroEngine's fixed phase instead, and back on after it.</summary>
+        // The game's 5 s UpdateReward timers are off at 1x in a Full-TAS run; MacroEngine refreshes on a fixed phase (exc. 10).
         static void SetGameRewardTimers(bool on)
         {
             foreach (courseScript c in FindObjectsByType<courseScript>(FindObjectsInactive.Include, FindObjectsSortMode.None))

@@ -5,31 +5,14 @@ using IGTAPTasMod;
 
 namespace IGTAP.EngineSim
 {
-    /// <summary>
-    /// Tech checks for how the dot moves along the ground and through tight spaces: ground bounce pumping, the step-up
-    /// techs (Movement.Update's step-up teleports the dot onto a ground top 13-44 u above its feet), the roof squeeze, gap stick and
-    /// edge stop. Each reads the player's own state (Movement's fields, recorded per step) and never the geometry around it: a step-up
-    /// is told from a landing's tiny correction by how far it lifted the dot, a squeeze by the dot stalling against something its
-    /// standing hitbox does not fit and the jump's short hitbox carrying it on.
-    /// </summary>
     public static partial class TechChecks
     {
-        /// <summary>The standing hitbox is 72 u tall, a jump's or dash's 54: anything under this is the short one.</summary>
         const float MotionStandingH = 70f;
 
-        /// <summary>A step-up that is a climb lifts the dot at least this much (a landing's correction is under 11).</summary>
         const float MotionClimbRise = 13f;
 
-        /// <summary>Each ground bounce has to beat the last one's momentum by this much (the pump's +11 % a cycle, with room).</summary>
         const float MotionPumpGrowth = 1.05f;
 
-        /// <summary>
-        /// Ground bounce momentum pump: chained ground bounces (the overlay's <c>DashBounce</c>, <c>WaveBounce</c> and
-        /// <c>SuperGroundBounce</c> spans: a bounce jump inside DashBounceFrames after a straight-down dash landed) where the sideways
-        /// momentum right after a bounce is above the previous bounce's by 5 % or more, and nothing but the bounce itself raised it in
-        /// between (no step between them holds more momentum.x than the first bounce left). One bounce and a coast decays; the pump is
-        /// the second bounce beating the first.
-        /// </summary>
         [TechCheck("ground-bounce-pump")]
         static int MotionGroundBouncePump(TechSteps run, int from, int to)
         {
@@ -56,16 +39,9 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>The state the step started from: the step before's end (the first step's first call).</summary>
         static MoveState MotionBefore(List<TechStep> steps, int i) =>
             i > 0 ? steps[i - 1].After : steps[i].Calls.Count > 0 ? steps[i].Calls[0].State : steps[i].After;
 
-        /// <summary>
-        /// A step on which the dot climbed by a step-up: a step-up in the step's frames (not an inwall climb, whose wall rays look
-        /// against the facing, and not after a respawn), the dot not rising on its own (Velocity.y under 60, Movement's own gate is
-        /// 10) and up at least <see cref="MotionClimbRise"/> u over the step before. A landing at speed is a step-up too, but it only
-        /// corrects the dot's sunk position (10 u at most in the recorded runs).
-        /// </summary>
         static bool MotionClimbStep(List<TechStep> steps, int i)
         {
             TechStep step = steps[i];
@@ -74,11 +50,6 @@ namespace IGTAP.EngineSim
             return MotionSteppedUp(step) && step.After.Vy < 60f && step.After.Y - MotionBefore(steps, i).Y >= MotionClimbRise;
         }
 
-        /// <summary>
-        /// Fast steps (blocks and slopes are one mechanism, the description of one is "same as" the other): the dot steps up many
-        /// times in a row, each climb within 12 steps of the last, three or more. A climb is a step-up that lifts the dot (see
-        /// <see cref="MotionClimbStep"/>). Reported on the third.
-        /// </summary>
         [TechCheck("fast-steps-slopes", "fast-steps-blocks")]
         static int MotionFastSteps(TechSteps run, int from, int to)
         {
@@ -94,12 +65,6 @@ namespace IGTAP.EngineSim
             return -1;
         }
 
-        /// <summary>
-        /// Fast steps blocks clip: the step-up is a teleport, so a step-up puts the hitbox across a solid and the push-out lifts the
-        /// dot onto it, which is a second step-up the next tick without moving on. Two climbs at most two steps apart that lift the dot
-        /// 60 u or more together (one step-up lifts 44 at most), stay within 5 u sideways, and no jump or dash press in them: the
-        /// dot went up by teleports alone, in place, not by running up stairs.
-        /// </summary>
         [TechCheck("fast-steps-blocks-clip")]
         static int MotionFastStepsClip(TechSteps run, int from, int to)
         {
@@ -119,13 +84,6 @@ namespace IGTAP.EngineSim
             return -1;
         }
 
-        /// <summary>
-        /// Fast steps slopes glitch: the step-up teleports the dot into the ceiling over the step and the ceiling pushes it back down,
-        /// so it steps up again every tick, and it lives: five step-up steps in a row (Movement kills a squish past
-        /// SquishGraceFrames 4, five squished ticks) with the jump's short hitbox on (the jump spam: the collider is the 54 tall one,
-        /// whose overlap stays under squishDistance) and no death within the next three steps. Reported on the fifth. The record's
-        /// Squished stays 0 here (that is the point), so it cannot be read.
-        /// </summary>
         [TechCheck("fast-steps-slopes-glitch")]
         static int MotionFastStepsGlitch(TechSteps run, int from, int to)
         {
@@ -139,7 +97,6 @@ namespace IGTAP.EngineSim
             return -1;
         }
 
-        /// <summary>A step-up (not an inwall climb) happened in the step's frames.</summary>
         static bool MotionSteppedUp(TechStep step)
         {
             bool up = false;
@@ -153,12 +110,6 @@ namespace IGTAP.EngineSim
             return up;
         }
 
-        /// <summary>
-        /// Roof squeeze: the dot runs into something its standing hitbox (72 tall) does not fit under and stalls (on the ground,
-        /// pushing along its Velocity.x of 200 or more, x not moving), then a jump press shrinks the hitbox to the 54 tall one and
-        /// the dot goes on under it: from the next step on it stays within 14 u of the stall's height (a jump would rise 16 a step;
-        /// the roof stops it) and covers 5 u a step or more. Reported on the jump.
-        /// </summary>
         [TechCheck("roof-squeeze")]
         static int MotionRoofSqueeze(TechSteps run, int from, int to)
         {
@@ -177,7 +128,6 @@ namespace IGTAP.EngineSim
             return -1;
         }
 
-        /// <summary>Standing on the ground with the full hitbox, pushing along at Velocity.x 200 or more and not getting anywhere.</summary>
         static bool MotionStalled(List<TechStep> steps, int k)
         {
             if (k < 1) return false;
@@ -186,12 +136,6 @@ namespace IGTAP.EngineSim
                 && Math.Abs(a.X - before.X) < 1.5f;
         }
 
-        /// <summary>
-        /// Gap stick: in a shaft too narrow for the hitbox's turn, turning every tick swings the hitbox into the walls and a ground ray
-        /// starts inside one, which grounds the dot every tick (Velocity.y set to 0, one tick of gravity left) with no floor under it.
-        /// Eight steps in a row on which the dot is grounded with the full hitbox, faces the other way than the step before, stays
-        /// within 6 u sideways and still sinks 0.1-2 u (a dot on a floor does not sink: only the 4 steps after a step-up settle).
-        /// </summary>
         [TechCheck("gap-stick")]
         static int MotionGapStick(TechSteps run, int from, int to)
         {
@@ -208,14 +152,6 @@ namespace IGTAP.EngineSim
             return -1;
         }
 
-        /// <summary>
-        /// Edge stop: turning into a wall's bottom edge on the way up. The turn swings the hitbox (offset x 5) into the wall, the
-        /// overlap is shallower upward than sideways, so the depenetration pushes the dot down out of the wall's bottom face and the
-        /// contact is a ceiling: Velocity.y and momentum.y are zeroed. On a step where the dot faces the other way, is still rising
-        /// at 300 or more (the step before too) and ends lower than the step before, with Velocity.y at 50 or less on the next
-        /// step: the jump stopped dead. A plain ceiling bonk does not turn the dot nor push it down. Reported on the step with
-        /// Velocity.y zeroed.
-        /// </summary>
         [TechCheck("edge-stop")]
         static int MotionEdgeStop(TechSteps run, int from, int to)
         {
@@ -229,14 +165,6 @@ namespace IGTAP.EngineSim
             return -1;
         }
 
-        /// <summary>
-        /// Up-diagonal turned dash climb: a dash pressed from a wall cling, which flips away from the wall on its first step
-        /// (Velocity.x away) while the freeze turn already aimed it back up-diagonally into the wall (dashDirection.x against that
-        /// Velocity.x, y up), then given back while it slides up the face (airDashesLeft from 0 to more on a later step of the same
-        /// dash, rising, in the air: FixedUpdate's wall branch, open while dashActive, refilling on a Ground-tagged wall). An
-        /// up-diagonal dash into a wall from the air isn't flipped; a dash from the cling left aimed away gets no refill. Reported on
-        /// the refill's step.
-        /// </summary>
         [TechCheck("updiag-wall-climb")]
         static int MotionUpdiagWallClimb(TechSteps run, int from, int to)
         {

@@ -16,11 +16,10 @@ namespace IGTAP.EngineSim.Cli.Runs
         public bool Dashing, Ground;
         public List<InputTick> Inputs;
         public long Ticks, Held;
-        // Simulation.MovementFingerprint of the start: HashCode is seeded per process, so it lives in memory only.
+        // HashCode is seeded per process, so the fingerprint lives in memory only, never on disk.
         public int? Fp;
     }
 
-    // Reuse is checked by replay from the actual state, never assumed: a candidate that doesn't replay exactly is just skipped.
     sealed class SegmentLibrary
     {
         readonly string _file;
@@ -57,8 +56,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             }
         }
 
-        // The start is part of a segment: the same inputs filed from another state (a run whose earlier goals changed) are another
-        // segment, found from there.
         static string Key(Segment s) => FormattableString.Invariant($"{s.To}|{s.Unlocks}|{s.X:R},{s.Y:R},{s.Phase},{s.Facing}|") + Solve.EncodeTicks(s.Inputs);
 
         public bool Add(Segment s)
@@ -108,7 +105,6 @@ namespace IGTAP.EngineSim.Cli.Runs
         }
     }
 
-    // A search that found nothing isn't repeated with the same budget on the same engine build; a bigger budget may try again.
     sealed class SegmentFacts
     {
         readonly string _file;

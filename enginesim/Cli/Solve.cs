@@ -20,11 +20,9 @@ namespace IGTAP.EngineSim.Cli
 
         public static int Run(string[] args) => Run(args, out _);
 
-        /// <summary>The solve; <paramref name="best"/> is its fastest route once its workers have stopped (null: none finished).</summary>
         internal static int Run(string[] args, out List<InputTick> best)
         {
             best = null;
-            // --auto: the Full-TAS --auto loop over the course's waypoints (CourseAuto.cs).
             if (args.Contains("--auto")) return CourseAuto.Run(args);
             string startTrace = args[0];
             int threads = Option(args, "--threads", Environment.ProcessorCount);
@@ -32,9 +30,7 @@ namespace IGTAP.EngineSim.Cli
             double stallMinutes = Option(args, "--stall-minutes", double.PositiveInfinity);
             bool submit = !args.Contains("--no-submit");
             bool fresh = args.Contains("--fresh");
-            // --no-archive: none read or written (CourseAuto's whole-route search, a new target's every Improve).
             bool archive = !args.Contains("--no-archive");
-            // --no-seed-files: a seed's or plateau route's best isn't written to offline-best (the caller has those routes).
             bool seedFiles = !args.Contains("--no-seed-files");
             bool techGrafts = !args.Contains("--no-tech-grafts");
             bool guide = args.Contains("--guide");
@@ -56,7 +52,6 @@ namespace IGTAP.EngineSim.Cli
             if (guide) DistanceField.Enabled = true;
             var seeds = new List<List<InputTick>> { ReadInputs(header) };
             seeds.AddRange(seedPaths.Select(Plan.ReadRoute));
-            // Nothing finishes in this category yet: along another category's way first, up to half the minutes (CourseAuto.cs).
             var firstClock = Stopwatch.StartNew();
             if (!args.Contains("--no-first-finish") && CourseAuto.FirstFinish(startTrace, header, forced, seeds, seedPaths, minutes / 2) is List<InputTick> first) seeds.Add(first);
             minutes -= firstClock.Elapsed.TotalMinutes;
@@ -79,12 +74,10 @@ namespace IGTAP.EngineSim.Cli
             if (mined != null)
                 Console.WriteLine($"Tech grafts: {mined.Patterns.Count} patterns from {mined.Demos.Count(d => d.Patterns.Count > 0)} of {mined.Demos.Count} tech demos"
                     + $" ({(mined.FromCache ? "cached" : "mined")}, {Path.GetFileName(mined.CacheFile)}), {mined.Patterns.Count(p => p.Category == TechGrafts.RouteCategory)} of them from the saved routes");
-            // --plan: the planner (and the timing polish) first, within this solve's time; its route seeds the search.
             var clock = Stopwatch.StartNew();
             if (args.Contains("--plan"))
             {
                 var options = new Planner.Options { Threads = threads, Width = Math.Max(48, 2 * threads), Seconds = Option(args, "--plan-minutes", minutes / 3) * 60.0 };
-                // The seeds that finish guide it (their cost to go); unseeded, the field's distance does.
                 options.Guides.AddRange(seeds.Where(s => s.Count > 0));
                 void PlanLog(string line) => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {line}");
                 (float cell, Vector2 clearance) = (DistanceField.CellSize, DistanceField.Clearance);
@@ -111,7 +104,6 @@ namespace IGTAP.EngineSim.Cli
             TimeSpan lastBest = TimeSpan.Zero;
             Humanize.Background humanize = args.Contains("--no-humanize") ? null
                 : new Humanize.Background(create, forced, course, caps, threads, line => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {line}"));
-            // The directions of the picked direction blocks (IGTAPTasMod.Categories.Directions): every run keeps their boxes.
             string[] directions = IGTAPTasMod.Categories.Directions.Where(d => optional.Contains(d.block)).Select(d => d.name).ToArray();
             solver.Improved += (time, runTicks, inputs, how) =>
             {
@@ -123,7 +115,7 @@ namespace IGTAP.EngineSim.Cli
                     + (seedFiles || !known ? " -> " + Path.GetFileName(file) : ""));
                 if (submit && !known) pending.Set(new Pending(time, runTicks, inputs));
                 if (seedFiles || !known) humanize?.Set(file, inputs);
-                // Raised one at a time, in the order the bests were found, so the appends never interleave.
+                // Raised one at a time in the order the bests were found, so the appends never interleave.
                 if (logJson != null)
                     File.AppendAllText(logJson, JsonSerializer.Serialize(new { wall = clock.Elapsed.TotalSeconds, time, runTicks, ticks = Interlocked.Read(ref solver.Ticks), how,
                         cpu = Process.GetCurrentProcess().TotalProcessorTime.TotalSeconds }) + "\n");
@@ -131,7 +123,6 @@ namespace IGTAP.EngineSim.Cli
             Console.WriteLine($"Solving course {course} ({caps}) on {threads} threads from {Path.GetFileName(startTrace)} with {seeds.Count} seed routes"
                 + (guide ? $", guide weight {guideWeight}" : ", no guide"));
             Thread[] workers = solver.Start(threads);
-            // --walk-seed: routes from another start a run can walk to (a tree transition's into this course), played on from there.
             Action<OfflineSolver> walks = CourseAuto.PlainWalks(create, Args(args, "--walk-seed").ToList(), caps, line => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] walk: {line}"));
             Thread confirmer = submit ? new Thread(() => Confirm(target, pending, clock)) { IsBackground = true } : null;
             confirmer?.Start();
@@ -199,7 +190,6 @@ namespace IGTAP.EngineSim.Cli
             Replace(temp, path);
         }
 
-        /// <summary>An exclusive lock on path + ".lock" across processes, held until disposed.</summary>
         internal static FileStream Lock(string path)
         {
             for (int attempt = 1; ; attempt++)
@@ -220,8 +210,6 @@ namespace IGTAP.EngineSim.Cli
 
         internal sealed record OptionalBlock(string Name, string Note, bool Default, OfflineSolver.ForcedPath Boxes);
 
-        // The picked optional blocks: those marked "default": true, plus each `--optional <name>`, less each
-        // `--no-optional <name>`.
         internal static List<string> Optional(string[] args, int course, string caps)
         {
             List<OptionalBlock> blocks = OptionalBlocks(course, caps, new OfflineSolver.ForcedPath());
@@ -271,8 +259,6 @@ namespace IGTAP.EngineSim.Cli
             return blocks;
         }
 
-        /// <summary>forced-paths.json's rules: a course's and category's boxes (a Full-TAS run's are its definition's,
-        /// <see cref="FullTasPaths"/>). The studio edits the file while a solve runs, so it is read again whenever it has changed.</summary>
         sealed record PathRule(int? Course, string[] Capabilities, float[][] Via, float[][] Avoid, bool Guide, PathBlock[] Optional);
         sealed record PathBlock(string Name, string Note, bool Default, float[][] Via, float[][] Avoid, string From);
         sealed record PathsFile(PathRule[] Paths);
@@ -289,16 +275,12 @@ namespace IGTAP.EngineSim.Cli
             return read.Item2;
         }
 
-        /// <summary>A run definition's avoid block (data/runs/&lt;run&gt;.json "avoid"[], a goal's "avoid"[] and "avoidAfter"[]): its boxes
-        /// (world corners), the sides a move must cross into one to be cut ("from": "bottom", "left+top", ...; unset: any), and for
-        /// a run-wide block the goals (ids) while heading for which it is off.</summary>
         internal sealed record AvoidBlock(float[][] Boxes, string From, string[] OffFor);
         internal sealed record RunGoal(string Id, string Goal, AvoidBlock[] Avoid, AvoidBlock[] AvoidAfter);
         internal sealed record RunAvoids(AvoidBlock[] Avoid, RunGoal[] Goals);
         static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Tuple<DateTime, RunAvoids>> _runAvoids =
             new System.Collections.Concurrent.ConcurrentDictionary<string, Tuple<DateTime, RunAvoids>>();
 
-        /// <summary>The run definition's avoids (the source tree's data/runs/&lt;run&gt;.json), read again whenever the studio has changed it.</summary>
         internal static RunAvoids RunDefinitionAvoids(string run)
         {
             string root = TechGrafts.SourceRoot();
@@ -311,17 +293,9 @@ namespace IGTAP.EngineSim.Cli
             return def;
         }
 
-        /// <summary>
-        /// The run's avoid boxes (its definition's, data/runs/&lt;run&gt;.json) for a window heading for the goals at places
-        /// <paramref name="heading"/> of a run whose goals are <paramref name="ids"/> (null ids: the definition's own list; null heading:
-        /// every block on, as the map draws them). The run-wide blocks cut always, except one whose "offFor" names a goal headed for.
-        /// A goal's "avoid" blocks cut only while the run heads for it (from the goal before it until it is reached), its
-        /// "avoidAfter" blocks once it is reached; a goal the run's list doesn't have (an edit dropped it) takes its boxes with it.
-        /// </summary>
         internal static OfflineSolver.ForcedPath FullTasPaths(string run, IReadOnlyList<string> ids = null, ICollection<int> heading = null)
         {
             var forced = new OfflineSolver.ForcedPath();
-            // A course searched as a Full-TAS run (solve --auto): its course and category's rules, set when the run started.
             if (CourseRuns.TryGetValue(run, out OfflineSolver.ForcedPath course))
             {
                 forced.Avoid.AddRange(course.Avoid);
@@ -348,8 +322,6 @@ namespace IGTAP.EngineSim.Cli
             return forced;
         }
 
-        /// <summary>The course runs searched as Full-TAS runs in this process (solve --auto, CourseAuto.cs), by run name: their
-        /// course rules' avoid boxes (forced-paths.json's rules for the course and category, with the picked optional blocks).</summary>
         internal static readonly System.Collections.Concurrent.ConcurrentDictionary<string, OfflineSolver.ForcedPath> CourseRuns =
             new System.Collections.Concurrent.ConcurrentDictionary<string, OfflineSolver.ForcedPath>();
 
@@ -359,8 +331,6 @@ namespace IGTAP.EngineSim.Cli
             foreach (float[] c in avoid ?? Array.Empty<float[]>()) forced.Avoid.Add(new OfflineSolver.Box(new WorldPos(c[0], c[1]), new WorldPos(c[2], c[3]), after, from, until));
         }
 
-        /// <summary>A block's "from" ("bottom", "left+top", ...): its avoid boxes cut only a move into them across those edges
-        /// (<see cref="OfflineSolver.Box.From"/>).</summary>
         static int Sides(PathBlock block) => Sides(block.From, "forced-paths.json: block '" + block.Name + "'");
 
         internal static int SidesOf(string sides) => Sides(sides);
@@ -377,11 +347,7 @@ namespace IGTAP.EngineSim.Cli
             return from;
         }
 
-        /// <summary>
-        /// The trace without its "ticks" (the game's state after every tick, which only `replay` reads): a Full-TAS trace runs to a
-        /// gigabyte of them, past what one string holds. Streamed, so the file is never in memory whole. A trace that plays its
-        /// "ticks" as its inputs (a tech trace: no "inputs" before them) keeps them.
-        /// </summary>
+        // Stream the trace minus its "ticks" (a GB, past one string); a tech trace plays its ticks as inputs, keep those.
         internal static JsonElement ReadHeader(string trace)
         {
             var output = new ArrayBufferWriter<byte>();
@@ -472,14 +438,12 @@ namespace IGTAP.EngineSim.Cli
             return i < 0 || i + 1 >= args.Length ? fallback : (T)Convert.ChangeType(args[i + 1], typeof(T), CultureInfo.InvariantCulture);
         }
 
-        /// <summary>The value after every <paramref name="name"/> (a repeatable option), in order.</summary>
         internal static IEnumerable<string> Args(string[] args, string name)
         {
             for (int i = 0; i < args.Length - 1; i++) if (args[i] == name) yield return args[i + 1];
         }
 
-        /// <summary>f on a thread of its own (64 MB stack), joined: a Simulation made there leaves the caller's thread-static game
-        /// state as it was. Its exception is rethrown wrapped.</summary>
+        // Run on a thread of its own (64 MB stack): a Simulation made there leaves the caller's thread-static game state intact.
         internal static T OnThread<T>(Func<T> f)
         {
             T value = default;
@@ -493,9 +457,6 @@ namespace IGTAP.EngineSim.Cli
 
         internal static void OnThread(Action f) { OnThread(() => { f(); return 0; }); }
 
-        /// <summary>Starts work(state, i) for every i below count on up to <paramref name="threads"/> threads of their own (64 MB
-        /// stacks), each with its state made on it by init (a Simulation: the game's statics are per thread); the returned wait
-        /// joins them and rethrows the first failure.</summary>
         internal static Action Workers<T>(int threads, int count, Func<T> init, Action<T, int> work)
         {
             int next = -1;
@@ -517,7 +478,6 @@ namespace IGTAP.EngineSim.Cli
             };
         }
 
-        /// <summary>POSTs a JSON body to the plugin's API and returns its reply.</summary>
         internal static string Post(HttpClient http, string path, string body)
         {
             return http.PostAsync(Api + path, new StringContent(body, Encoding.UTF8, "application/json")).Result.Content.ReadAsStringAsync().Result;
@@ -536,7 +496,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>Runs of equal ticks as text (adjacent runs are expected to differ: each is written as one).</summary>
         static string EncodeRuns(IEnumerable<(InputTick tick, int count)> runs)
         {
             var text = new StringBuilder();
@@ -593,10 +552,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>
-        /// Writes the archive streamed, each source's inputs as the count it shares with the previous source ("shared") and the rest:
-        /// a Full-TAS window's sources all repeat the window's prefix, which written whole passed .NET's 1 G-char string limit.
-        /// </summary>
         internal static void SaveMemory(string path, OfflineSolver.Memory memory)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path));
@@ -722,7 +677,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
     }
-    /// <summary>A one-item mailbox: Set replaces what is there, Take waits for an item and empties it.</summary>
     sealed class Latest<T> where T : class
     {
         T _item;
@@ -740,8 +694,6 @@ namespace IGTAP.EngineSim.Cli
         }
     }
 
-    /// <summary>A thread of its own holding a state made on it (a Simulation: the game's statics are per thread), running the
-    /// jobs posted to it in order.</summary>
     sealed class Worker<T>
     {
         readonly BlockingCollection<Action<T>> _jobs = new BlockingCollection<Action<T>>();
@@ -759,7 +711,6 @@ namespace IGTAP.EngineSim.Cli
 
         public void Post(Action<T> job) { _jobs.Add(job); }
 
-        /// <summary>Runs job on the worker and waits for it; its exception is rethrown wrapped.</summary>
         public void Do(Action<T> job)
         {
             using var done = new ManualResetEventSlim();

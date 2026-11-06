@@ -7,20 +7,13 @@ namespace IGTAPTasMod
 {
     public sealed partial class TasPlugin
     {
-        /// <summary>
-        /// The velocity panel's DEBUG section, below SEED: one row per label, an x/y pair or one span of text. Nothing the
-        /// input panel and pad (bottom left) already show: ticks, charges, GROUND/WALL/DASHING, the jump cut.
-        /// </summary>
         static readonly string[] DebugLabels =
             { "TIMESTOP", "TIME", "POS", "FACING", "CONTROL", "DASH", "BUFFERED", "COYOTE", "WJ LOCK", "HYPER", "ULTRA" };
         readonly string[] _debugX = new string[DebugLabels.Length], _debugY = new string[DebugLabels.Length];
         readonly Color[] _debugColor = new Color[DebugLabels.Length];
 
-        // Real time left in the running Movement.TimeStop freezes (timeScale 0, not paused); the longest one wins.
         float _timeStopLeft;
 
-        // Movement's private fields the overlay reads every frame or tick (the DEBUG rows, the tech detectors): typed field
-        // references, no reflection or boxing per read.
         static class DebugFields
         {
             public static readonly AccessTools.FieldRef<Movement, bool> JumpBuffer = AccessTools.FieldRefAccess<Movement, bool>("jumpBuffer"),
@@ -40,7 +33,6 @@ namespace IGTAPTasMod
             if (Instance != null) Instance._timeStopLeft = Mathf.Max(Instance._timeStopLeft, duration);
         }
 
-        /// <summary>Once per rendered frame (OverlayFrame): runs the TimeStop countdown and rebuilds the rows whose values changed.</summary>
         void SampleDebug(Movement player)
         {
             bool paused = player.pauseMenu != null && player.pauseMenu.menuOpen, frozen = Time.timeScale == 0f && !paused;
@@ -49,9 +41,6 @@ namespace IGTAPTasMod
             if (frozen) _timeStopLeft = Mathf.Max(0f, _timeStopLeft - Time.unscaledDeltaTime);
         }
 
-        // The values each row's text was built from, bit for bit: SampleDebug runs every rendered frame and most rows change
-        // once a physics tick (POS every interpolated frame, TIMESTOP while it counts down), so a row is built only when
-        // one of its values changes.
         readonly int[,] _debugInputs = new int[DebugLabels.Length, 6];
         bool _debugBuilt;
 
@@ -84,7 +73,6 @@ namespace IGTAPTasMod
             if (DebugRowChanged(2, position.x, position.y)) Pair(2, position);
             if (DebugRowChanged(3, Flag(player.facingRight))) _debugX[3] = player.facingRight ? "→ right" : "← left";
 
-            // cutsceneMode: the game drives the player (no stick) while it is not none.
             Movement.cutsceneModes mode = player.cutsceneMode;
             if (DebugRowChanged(4, (int)mode))
             {
@@ -108,7 +96,6 @@ namespace IGTAPTasMod
                 if (!(jump || dash)) _debugColor[6] = MutedColor;
             }
 
-            // The counters run on below zero; only an open window means anything.
             float ground = DebugFields.Coyote(player), wall = DebugFields.WallCoyote(player), platform = DebugFields.PlatformCoyote(player);
             if (DebugRowChanged(7, ground, wall, platform))
             {
@@ -129,8 +116,7 @@ namespace IGTAPTasMod
                 _debugX[9] = hyper ? "ready" : "no";
                 _debugColor[9] = hyper ? GraceColor : MutedColor;
             }
-            // A hyper adds the pre-dash momentum when it starts over 4u below the last hyper or wall bounce (Movement.cs 1444);
-            // lastHyperY starts at 1e8, before either has happened.
+            // A hyper adds pre-dash momentum when over 4u below the last hyper/wall bounce (Movement.cs 1444); lastHyperY starts 1e8.
             float lastHyperY = DebugFields.LastHyperY(player), below = lastHyperY - 4f - scene.y;
             if (DebugRowChanged(10, lastHyperY, scene.y))
             {
@@ -140,7 +126,6 @@ namespace IGTAPTasMod
             _debugBuilt = true;
         }
 
-        // The POS values its X and Y texts were built from, bit for bit: moving along one axis builds only that axis' text.
         int _pairXBits, _pairYBits;
 
         void Pair(int row, Vector2 v)
@@ -160,13 +145,11 @@ namespace IGTAPTasMod
 
         float DebugSectionHeight(float scale) { return 8 * scale + 1 + 8 * scale + DebugLabels.Length * DebugRowHeight(scale); }
 
-        /// <summary>Draws the section from y (the row under SEED): a rule, then label | value (or X | Y) rows.</summary>
         void DrawDebugSection(Rect panel, float x, float y, float scale)
         {
             y += 8 * scale;
             Fill(new Rect(panel.x, y, panel.width, 1), PanelLine);
             y += 1 + 8 * scale;
-            // The panel is always cached (DrawCachedPanels): the live rows are drawn over it every frame from here.
             _debugPanel = panel;
             _debugTop = new Vector2(x, y);
             float row = DebugRowHeight(scale);
@@ -177,7 +160,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>A cached panel's (DrawCachedPanels) live rows: the values that change on every rendered frame.</summary>
         void DrawLiveDebugValues(float scale)
         {
             for (int i = 0; i < DebugLabels.Length; i++)

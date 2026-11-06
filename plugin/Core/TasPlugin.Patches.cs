@@ -24,18 +24,13 @@ namespace IGTAPTasMod
             if (Instance.SavedArea1State == null && !Instance.TreeSaved) return true;
             if (Instance._solverRunning || Instance.PlaybackActive || Instance._recorder.IsRecording) return false;
             Movement player = FindWorldMovement();
-            // TreeController.save writes the grown segments and the boxes: a tree level waits for the save's tree.
             if (player != null && player.courseResetPoint != Vector2.zero) return !Instance.TreeSaved;
             Instance.RestoreArea1State();
             Instance.RestoreTree();
             return true;
         }
 
-        // FakeCreditsControlScript.IE_DoVmanCredits ends a Vman run by crashing the game on purpose (Utils.ForceCrash), after
-        // writing PlayerPrefs "VmanCoursesCompleteTemp" (+10 Vman score, added by the next VmanScript.Start). Every judge of
-        // the VMAN run's last goal (the credits trigger) killed the game. Both calls come after the goal, so the route never
-        // sees them; the crash goes, and so does the PlayerPrefs write, which without the crash would reach the next new
-        // game's VmanScript in the same process and change its score.
+        // Drops IE_DoVmanCredits' ForceCrash and PlayerPrefs write; both come after the goal (RULES.md exception 3).
         private void PatchVmanCreditsCrash()
         {
             MethodInfo coroutine = AccessTools.Method(typeof(FakeCreditsControlScript), "IE_DoVmanCredits");
@@ -67,21 +62,7 @@ namespace IGTAPTasMod
             if (dropped != 2) Log.LogWarning("Vman credits: expected ForceCrash and PlayerPrefs.SetInt, dropped " + dropped + " calls.");
         }
 
-        // 1x playback runs on a fixed clock (PacePlayback, FixedClockStep). Three game scripts read the wall clock
-        // (Time.unscaledDeltaTime / unscaledTime), which Time.captureDeltaTime leaves alone, so playback would still vary with
-        // real frame times:
-        // - Movement.TimeStop's freeze (IE_TimeStop) counts unscaledDeltaTime: it froze for 3, 8 and 7 frames at 240 fps,
-        //   each one a Movement.Update that can step up;
-        // - cameraMover.LateUpdate eases the camera by unscaledDeltaTime;
-        // - ObjectBobber.FixedUpdate bobs its object by unscaledTime.
-        // While playback is paced they read the fixed clock's frame step and its running total instead (FixedFrameStep,
-        // FixedUnscaledTime); otherwise the wall clock, as before. timer.Update (the play-time display) is left alone.
-        // Presentation that turbo and the offline engine don't play draws UnityEngine.Random at 1x: the run animation's footstep
-        // event (PlayerAnimationEventProxy.RelayFootstep, on rendered frames; its sound draws twice) and a floating number
-        // (spawnNewFloatingNumber, six draws; turbo spawns none). In a Full-TAS run they play but give the RNG back, so the fixed
-        // seed's draws (clone rolls) are the same at 1x as judged (RULES.md exception 11). Movement's own PlayFootstep calls (a
-        // landing, in the physics step) draw as before, in all three.
-        // Harmony keys __state by the patch's class, and ObjectBobber.OnEnable also takes the probe's RNG patch (TasPlugin's).
+        // Playback counts fixed-clock frames, not wall clock, in TimeStop's freeze, camera easing, ObjectBobber (exception 2).
         static class PresentationDraw
         {
             internal static void Before(out UnityEngine.Random.State? __state)
@@ -97,7 +78,6 @@ namespace IGTAPTasMod
 
         private void PatchWallClock()
         {
-            // The local iterator IE_TimeStop compiles to "<TimeStop>g__IE_TimeStop|…" on Movement or on its closure class.
             const BindingFlags any = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
             MethodInfo coroutine = Array.Find(typeof(Movement).GetMethods(any), m => m.Name.Contains("IE_TimeStop"));
             foreach (Type nested in typeof(Movement).GetNestedTypes(BindingFlags.NonPublic))
@@ -111,10 +91,7 @@ namespace IGTAPTasMod
 
         static readonly AccessTools.FieldRef<TeleporterScript, Movement> TeleporterPlayer = AccessTools.FieldRefAccess<TeleporterScript, Movement>("player");
 
-        /// <summary>
-        /// TeleporterScript.manualUpdate reads the Move action itself, not the player's input: during a run it reads the run's stick
-        /// (what Movement.NormaliseInput gets, BeforeNormaliseInput), as the offline engine's InputAction does. An input patch.
-        /// </summary>
+        // TeleporterScript.manualUpdate reads the Move action directly; during a run it must read the run's stick.
         private static IEnumerable<CodeInstruction> ReadTeleporterStick(IEnumerable<CodeInstruction> instructions)
         {
             MethodInfo stick = AccessTools.Method(typeof(TasPlugin), nameof(TeleporterStick));
@@ -171,7 +148,6 @@ namespace IGTAPTasMod
             if (!IsMenuPlayer(__instance)) Instance.OverlayRespawned(__0);
         }
 
-        /// <summary>The scene's roots as loaded, before the first rebase moves them (the category starts' canonical origin).</summary>
         private static void BeforeMoveRootTransforms(FloatingOrigin __instance) { TurboRunner.RecordPristineRoots(__instance); }
 
         private static void AfterMoveRootTransforms(Vector3 __0)
@@ -197,7 +173,6 @@ namespace IGTAPTasMod
                 Instance.OverlayBeforeTick(__instance);
             }
             CourseDef course = Instance._engine.IsRunning && !IsMenuPlayer(__instance) ? Instance.RunCourse : null;
-            // A bonus with a reward box finishes on the box's hit instead (RewardHit).
             if (course != null && course.HasFinish && (course.IsTransition || Instance.BonusRewardBox(course, out _) == null)
                 && Instance.TouchesEndBox(__instance, course))
                 Instance._engine.CompleteFromGame(course.IsTransition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
@@ -217,7 +192,6 @@ namespace IGTAPTasMod
                 Instance._pendingSilentMacro = null;
                 bool savestateRestored = Instance.RestoreRouteStart(macro);
                 Movement movement = FindWorldMovement();
-                // A tech demo's start (EngineSimTechTrace) runs as its playback does: from its savestate at once, no course finish needed.
                 bool tech = Instance._techStart != null;
                 Instance._engine.Run(macro, !(tech && savestateRestored), !tech, 0,
                     movement == null ? (Vector2?)null : TurboRunner.BlendRead(movement.transform));
@@ -232,8 +206,7 @@ namespace IGTAPTasMod
                 Instance.BeginFullTasPlayback(__instance);
                 return true;
             }
-            // A replay starts only once playback runs on the fixed clock (PacePlayback, in Update): a request that lands in a long
-            // frame would otherwise play its first ticks back to back with no Update between them (a dash freeze's turn lost).
+            // Start a replay only once playback is on the fixed clock, else early ticks run back to back and lose a freeze's turn.
             if (Instance._pendingReplay != null && !Instance._engine.IsRunning && Instance._playbackPaced)
             {
                 if (!Instance.TreeStartReady(Instance._pendingReplay)) return true;
@@ -291,7 +264,6 @@ namespace IGTAPTasMod
             {
                 DeferredRunning.Clear();
                 DeferredRunning.AddRange(DeferredFixedUpdates);
-                // Every course first, then Vman.
                 foreach (MonoBehaviour script in DeferredRunning)
                     if (script != null && script.isActiveAndEnabled && script is courseScript course) _courseFixedUpdate(course);
                 foreach (MonoBehaviour script in DeferredRunning)
@@ -312,7 +284,6 @@ namespace IGTAPTasMod
             Instance._recorder.FixedTick(__instance);
             if (Instance._recorder.IsRecording) return true;
             Instance._engine.FixedTick(__instance);
-            // A loading new game takes no input: the start is where the game spawns the player (NewGameLoading).
             if (Instance.NewGameLoading && !Instance._engine.IsRunning && !IsMenuPlayer(__instance)) Instance._engine.ClearInjectedInput(__instance);
             Instance.OverlayCaptureAxis(__instance);
             if (Instance._brakeTicks >= 0 && !IsMenuPlayer(__instance)) Instance.Brake(__instance);
@@ -399,7 +370,6 @@ namespace IGTAPTasMod
         {
             if (Instance != null && savePositionData && Instance._fullTasFinishCourse >= 0) Instance.FullTasCourseFinished(Instance._fullTasFinishCourse);
             if (Instance == null || !savePositionData || !Instance._pendingCourseWasTracking) return;
-            // A farm loop's replay (EvaluateLoop) plays through every finish: each is a lap's end, not the run's.
             if (Instance._loopFinishes != null)
             {
                 Instance._loopFinishes.Add((Instance._engine.RunTicks, Instance._engine.PhysicsTicks, Instance._engine.HeldFrames));

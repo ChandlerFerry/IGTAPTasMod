@@ -1,24 +1,3 @@
-"""Run a 1x probe in the game and summarise its log (ProbeRunner.cs; enginesim/README.md#probe).
-
-  probe.py <name> <route> <ticks.json> [--savestate ID] [--capture-at N] [--from-tick N] [--fps N] [--omni]
-           [--pause-at N [--pause-offset K] --pause-frames F] [--fast] [--lean]
-  probe.py <name> --tech ID [...]   a tech demo as its playback plays it (its start, inputs, savestate or lab map)
-  probe.py --show <name>          summarise a probe log already written
-
-route is a category prefix (1_WJ_DS). ticks.json is a list of input ticks ({x, y, held, press, release, dash, dashJump,
-lockX, lockY, turnX, turnY}). --fps sets the playback's fixed clock (default 280, the rate turbo and enginesim model; 50 or
-more, see enginesim/README.md#probe).
-Plays at normal speed from the category's quick restart (or the savestate), waits for the log, and prints each
-physics tick plus every rendered frame where the player moved with no physics tick since the frame before (the moves
-only Update makes: a TimeStop's frames, the pause menu's, or several frames between two ticks).
---from-tick N (a Full-TAS route, fulltas/<run>_NONE, from its new game) plays its first N physics ticks in turbo, unlogged.
-Zone rows (an activator's trigger, the zone load, the atom collider's OnEnable and Start, an upgrade box's first Start with
-what it would change, a zip mover's OnEnable) print with k, the rendered frame
-within their physics tick (0: the tick's own frame), as do the atom grid's calls and the RNG draws from the first zone row on.
---pause-at N opens the pause menu (the Pause button's menuButtonPressed) right after physics tick N (the log's `tick N`),
-or --pause-offset K Movement.Update frames after it, and --pause-frames F closes it after F frames: time stands still
-(timeScale 0), but Update's step-up runs every frame.
-"""
 import argparse
 import json
 import sys
@@ -45,7 +24,7 @@ def show(name):
         if row["kind"] == "tick":
             tick_frame[row["physics"]] = row["frame"]
             ticked = True
-            if "mode" not in row:  # a lean probe's row: what the aligner compares
+            if "mode" not in row:
                 print(f"tick {row['physics']:4} in {row['input']:4} held {row['held']:3} pos {row['x']:9.2f},{row['y']:9.2f}"
                       f" body {row['bodyX']:9.2f},{row['bodyY']:9.2f} v {row['vx']:8.2f},{row['vy']:8.2f} cash {row['cashPre']:.6g}")
                 continue

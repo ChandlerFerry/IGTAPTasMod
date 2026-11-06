@@ -37,7 +37,6 @@ namespace IGTAPTasMod
 
         private void StopRecording(string reason)
         {
-            // A TAS re-record ends at the next hold point, where its ticks go into the session (a death or finish stops it too).
             if (_tas != null && _tas.recording) { _tas.recordStop = reason; return; }
             RecordingDefinition recording = _recorder.Stop(reason);
             if (recording == null) return;

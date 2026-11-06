@@ -26,18 +26,10 @@ namespace IGTAP.EngineSim.Cli
             public float Time;
             public int TimerStart = -1;
             public readonly List<float> Points = new List<float>();
-            // The first arrival in each cell along the route (`Earlier`, the explore cells' time) and, per tick, the
-            // player's physical state fingerprint: the first tick two routes' fingerprints differ is where their
-            // bodies part (input and buffer fields stay out of it).
             public readonly Dictionary<long, float> Cells = new Dictionary<long, float>();
             public readonly List<int> State = new List<int>();
         }
 
-        // `area`: a checkpoint's trigger shapes (polygons, game-world x, y pairs), where touching it sets respawnPoint,
-        // or an upgrade box's trigger box (touching it buys it).
-        // `spawn`: the player's box where a death or quick restart puts it at that checkpoint (x0, y0, x1, y1; x, y is
-        // its centre). `when`: the world state it's only in (WorldStates), none: every one. `box`: kind "box" only, an
-        // upgrade box's buy info.
         internal sealed record Marker(string kind, string name, float x, float y,
             [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] float[][] area = null,
             [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string when = null,
@@ -63,7 +55,6 @@ namespace IGTAP.EngineSim.Cli
             List<string> seedFiles = Solve.Args(args, "--seed").ToList();
 
             string engine = EngineStamp();
-            // The explore cells' cache is the simulation's (not the CLI's, rebuilt with every map or solve edit).
             string simKey = string.Join(";", engine.Split(';').Where(d => !d.StartsWith("IGTAP.EngineSim.dll=", StringComparison.OrdinalIgnoreCase)))
                 + "|" + Stamp(trace) + "|" + Stamp(worldPath);
             string human = best == null ? null : HumanFile(dir, best);
@@ -88,7 +79,6 @@ namespace IGTAP.EngineSim.Cli
             if (best != null)
             {
                 routes.Add(("offline best " + System.IO.Path.GetFileNameWithoutExtension(best).Substring(label.Length + 1) + "s", "best", global::IGTAP.EngineSim.Cli.Plan.ReadRoute(best)));
-                // Its human version (humanize), so the studio can ghost it against the best or a saved route.
                 if (human != null)
                     routes.Add(("human " + System.IO.Path.GetFileNameWithoutExtension(best).Substring(label.Length + 1) + "s", "human", global::IGTAP.EngineSim.Cli.Plan.ReadRoute(human)));
             }
@@ -99,14 +89,10 @@ namespace IGTAP.EngineSim.Cli
 
             List<InputRuns> sources = memory?.Sources.Select(s => s.Inputs).ToList() ?? new List<InputRuns>();
             string cellsPath = System.IO.Path.ChangeExtension(archivePath, ".mapcells.bin");
-            // The cache is every cell the prefixes replayed so far reached (its earliest time) and their hashes: only new
-            // prefixes replay, and a prefix the archive has dropped since keeps its cells (the map is where the search went).
             var (seen, reached) = memory == null ? (new HashSet<Hash>(), new Dictionary<long, float>()) : ReadCells(cellsPath, simKey);
             var hashes = new Hash[sources.Count];
             Parallel.For(0, sources.Count, k => hashes[k] = HashInputs(sources[k]));
             var current = new HashSet<Hash>();
-            // --closest: every prefix replays (not only new ones), and the one whose player came nearest the finish box (straight
-            // line, capture frame) is drawn as a route and written beside the map (<map>.closest.json), for a target no run finishes.
             bool closest = args.Contains("--closest");
             int[] missing = Enumerable.Range(0, sources.Count).Where(k => current.Add(hashes[k]) && (closest || !seen.Contains(hashes[k]))).ToArray();
             int replayed = 0;
@@ -135,9 +121,6 @@ namespace IGTAP.EngineSim.Cli
             });
             var paths = new List<Path>();
             CapturePos origin;
-            // Nothing run yet (a new target's first map, before a solve keeps an archive): the frame is the start and the
-            // gates it finishes at (a transition's next course's start gate, a course's end gate) and a bonus's finish rect,
-            // so avoid boxes can be placed before the first solve.
             var frame = new List<float[]>();
             {
                 Simulation sim = create();
@@ -170,9 +153,6 @@ namespace IGTAP.EngineSim.Cli
                     paths.Add(path);
                 }
             }
-            // The map is written as soon as the routes are run, with the cells cached so far, and again every few seconds
-            // while the explore prefixes replay (`explored.replayed` of `toReplay`), so the studio draws it a bit at a time.
-            // The level is clipped to the first write's bounds until the last write.
             using JsonDocument world = JsonDocument.Parse(File.ReadAllText(worldPath), new JsonDocumentOptions { MaxDepth = 256 });
             var states = WorldStates(world.RootElement).states;
             List<Zip> allZips = Zips(world.RootElement, origin);
@@ -193,14 +173,12 @@ namespace IGTAP.EngineSim.Cli
                     tree = Grown(world.RootElement, origin, drawn.x0, drawn.y0, drawn.x1, drawn.y1);
                 }
                 var (x0, y0, x1, y1) = drawn;
-                // Read again each write: the studio adds avoid boxes while the map draws.
                 var forced = new OfflineSolver.ForcedPath();
                 List<Solve.OptionalBlock> blocks = Solve.OptionalBlocks(course, caps, forced);
                 return JsonSerializer.Serialize(new
                 {
                     course, capabilities = caps, label,
                     bounds = new[] { bounds.x0, bounds.y0, bounds.x1, bounds.y1 },
-                    // The world states the level is drawn in (solids' and markers' `when`); `current`: the capture's.
                     states,
                     solids,
                     zips = allZips.Where(z => z.box[2] >= x0 && z.box[0] <= x1 && z.box[3] >= y0 && z.box[1] <= y1),
@@ -253,13 +231,9 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        /// <param name="stretchId">One stretch alone (the id of the goal heading for; null: the whole run): the best's path from the
-        /// goal before it to it, the box around that, its goal and the avoid boxes that cut there.</param>
         static int FullTasMap(string trace, JsonElement header, JsonElement fulltas, string goalsFile, string output, string stretchId = null)
         {
             string name = fulltas.GetProperty("name").GetString();
-            // The trace's goals are the ones it was captured with; --goals (the run's goals now, [{id, goal}]) wins, so a goal moved
-            // since the capture is drawn where it is now. The replay itself checks the trace's goals.
             string[] traced = fulltas.GetProperty("goals").EnumerateArray().Select(g => g.GetProperty("label").GetString()).ToArray();
             FullTas.GoalList run = FullTas.HeaderGoals(fulltas);
             if (goalsFile != null)
@@ -314,12 +288,10 @@ namespace IGTAP.EngineSim.Cli
                 goals.Add((i + 1, labels[i], new[] { v[0] - v[2] / 2, v[1] - v[3] / 2, v[0] + v[2] / 2, v[1] + v[3] / 2 }));
             }
             List<AvoidDrawn> avoid = DrawnAvoids(name, ids, stretch);
-            // ponytail: no explored cells since the old window search (which wrote archive\fulltas-<run>.visits.json) went; the v2
-            // segment search keeps none on disk. Draw them again if it does.
+            // shortcut: no explored cells drawn, the v2 segment search keeps none on disk; draw them again if it does.
             var visits = new Dictionary<long, float>();
             const float cell = 16f;
 
-            // A stretch's box is its path and goal's; the explored cells drawn are those inside it.
             if (stretch >= 0 && Bounds(paths, Array.Empty<long>(), cell, goals.Select(g => g.box)) is var (sx0, sy0, sx1, sy1))
                 visits = visits.Where(v => (v.Key >> 32) * cell >= sx0 && ((v.Key >> 32) + 1) * cell <= sx1 && (int)v.Key * cell >= sy0 && ((int)v.Key + 1) * cell <= sy1)
                     .ToDictionary(v => v.Key, v => v.Value);
@@ -339,7 +311,6 @@ namespace IGTAP.EngineSim.Cli
                 grown = tree.Shapes, treeSteps = tree.Steps,
                 markers = Markers(world.RootElement, origin).Where(m => m.x >= x0 && m.x <= x1 && m.y >= y0 && m.y <= y1)
                     .Concat(goals.Select(g => new Marker("goal", "goal " + (g.index - 1) + " " + g.label, Round((g.box[0] + g.box[2]) / 2), Round((g.box[1] + g.box[3]) / 2)))),
-                // Each box, the goal whose it is (null: the run's own) and when it cuts, and its one-way sides (OfflineSolver.Box).
                 avoid,
                 via = goals.Select(g => g.box),
                 goals = goals.Select(g => new { id = ids[g.index - 1], label = g.label, box = g.box }),
@@ -355,14 +326,9 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        /// <summary>An avoid box as the map draws it: its corners, its one-way sides (<see cref="OfflineSolver.Box.From"/>), the goal
-        /// whose block it is (its id; null: the run-wide blocks) and when it cuts: "always", "heading" (while the run heads for that
-        /// goal) or "after" (once the run has reached it); a run-wide block's goals while heading for which it is off.</summary>
         internal sealed record AvoidDrawn(float[] box, int from, string goal, string when,
             [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string[] offFor = null);
 
-        /// <summary>The run definition's avoid boxes (Solve.FullTasPaths' source) for the map; with a stretch (a goal's place), only
-        /// those that cut while the run heads for that goal.</summary>
         static List<AvoidDrawn> DrawnAvoids(string run, string[] ids, int stretch)
         {
             var drawn = new List<AvoidDrawn>();
@@ -390,8 +356,6 @@ namespace IGTAP.EngineSim.Cli
 
         static float[] Corners(float[] c) => new[] { Math.Min(c[0], c[2]), Math.Min(c[1], c[3]), Math.Max(c[0], c[2]), Math.Max(c[1], c[3]) };
 
-        /// <summary>The box around the paths' points, the cells (cell units on a side) and the boxes, 300 units of margin
-        /// around; null when there is nothing to draw.</summary>
         static (float x0, float y0, float x1, float y1)? Bounds(List<Path> paths, IEnumerable<long> cells, float cell, IEnumerable<float[]> boxes)
         {
             float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
@@ -434,8 +398,7 @@ namespace IGTAP.EngineSim.Cli
 
         static Hash HashInputs(IReadOnlyList<InputTick> inputs)
         {
-            // 29 bytes a tick, plus 4 for a freeze stick's vertical (turnY), 8 for a pause and 4 for its frame offset, so older
-            // inputs keep their hash.
+            // Byte layout fixed (29/tick plus optional extras) so older inputs keep their hash.
             byte[] bytes = new byte[inputs.Count * 29 + inputs.Count(t => t.turnY.HasValue) * 4 + inputs.Count(t => t.pause > 0) * 8
                 + inputs.Count(t => t.pause > 0 && t.pauseFrame != 0) * 4];
             Span<byte> b = bytes;
@@ -502,7 +465,6 @@ namespace IGTAP.EngineSim.Cli
 
         static float Round(float v) { return (float)Math.Round(v, 1); }
 
-        /// <summary>The player's straight-line distance to the finish box, capture frame; infinite without one.</summary>
         static float FinishDistance(Simulation sim)
         {
             CaptureRect f = sim.TargetFinish;
@@ -514,10 +476,6 @@ namespace IGTAP.EngineSim.Cli
 
         static float Earlier(float a, float b) { return a < 0f ? b : b < 0f ? a : Math.Min(a, b); }
 
-        // One tick of a replayed route's path: the world position, the first arrival in its 16-unit cell (`t`, the
-        // explore cells' time: the course timer, or the run time where the run is timed from its start) and the
-        // player's physical state fingerprint. The studio's ghost compare draws two paths over the map with their first
-        // differing fingerprint tick and the per-cell `t` delta (`/api/enginesim/ghost`).
         static void Step(Path path, Simulation sim, float t)
         {
             WorldPos p = sim.PlayerWorld;
@@ -528,10 +486,6 @@ namespace IGTAP.EngineSim.Cli
             path.State.Add(PhysicalFingerprint(sim));
         }
 
-        // The player's physical state at one tick, rounded to what the path draws: position (0.1), `Velocity`,
-        // `momentum` and the body's velocity (0.01), ground/wall, the dash state and the jumps/dashes left. Input and
-        // buffer fields (the stick, press buffers, coyote counters) stay out: a ghost compare's divergence tick is
-        // where the bodies part, not where two input streams first differ (`jumpBuffer` ticks before anything moves).
         static readonly FieldInfo[] PhysicalFields = new[] { "Velocity", "momentum", "onGround", "OnWall", "dashActive",
                 "framesSinceLastDash", "airDashesLeft", "airJumpsLeft", "wallJumpsLeft" }
             .Select(name => typeof(Movement).GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
@@ -559,8 +513,6 @@ namespace IGTAP.EngineSim.Cli
             return h.ToHashCode();
         }
 
-        // A best's human version (humanize): `<best>-human.json` beside it, or in `offline-best\` when the judged best
-        // has since moved to `offline-best\judged\`.
         static string HumanFile(string dir, string best)
         {
             string name = System.IO.Path.GetFileNameWithoutExtension(best) + "-human.json";
@@ -579,22 +531,10 @@ namespace IGTAP.EngineSim.Cli
                 .Where(e => e.ok).OrderBy(e => e.t).Select(e => e.f).FirstOrDefault();
         }
 
-        // One collider shape of an enabled collider on an object that is on, in game-world coordinates. `Tone`: "blue" or
-        // "orange" for a coloured block or spike (colouredBlockSwapper), which only collides while its colour is active.
-        // `Up`: a spring's launch direction (its trigger box is the shape). `When`: the world state it's only in
-        // (WorldStates, "<state>:<option>"), none: every one. An object that is off in the capture has no shapes for a
-        // composite, so it comes as one "Area": its outline paths end to end in V, `Rings` the length of each, filled
-        // even-odd (islands and their holes).
         internal sealed record WorldShape(string Type, float[] V, float R, int Layer, string Tag, bool Trigger, bool Spike, bool Moving, bool Player, string Tone = null, float[] Up = null, string When = null, int[] Rings = null);
 
-        // A world state a map switches between: `options`, the capture's (`current`) among them.
         internal sealed record WorldState(string id, string label, string[] options, string current);
 
-        // The world states and, per state root object, the "<state>:<option>" it and everything under it are only in.
-        // Area 1: normal or overgrown (OvergrowthLoadScript turns overgrowthEnable on and overgrowthDisable off when
-        // Area 1 is overgrown, the reverse otherwise).
-        // WorldStates, OnObjects and StateOf read the whole world; a map calls them for every layer it draws, so each result
-        // is kept for the world it came from.
         static readonly Dictionary<(JsonElement, string), object> Memo = new Dictionary<(JsonElement, string), object>();
         static T Remember<T>(JsonElement world, string what, Func<T> make)
         {
@@ -614,8 +554,6 @@ namespace IGTAP.EngineSim.Cli
             var roots = new Dictionary<int, string>();
             var active = new Dictionary<int, bool>();
             foreach (JsonElement o in world.GetProperty("objects").EnumerateArray()) active[o.GetProperty("id").GetInt32()] = o.GetProperty("activeSelf").GetBoolean();
-            // Component id → its object; the upgrade boxes under an object (its own and its children's, as
-            // GetComponentsInChildren).
             var owner = new Dictionary<int, int>();
             var components = new Dictionary<int, JsonElement>();
             var children = new Dictionary<int, List<int>>();
@@ -645,18 +583,14 @@ namespace IGTAP.EngineSim.Cli
                     string type = c.GetProperty("type").GetString();
                     if (type != "OvergrowthLoadScript" && type != "Zone2to1TransitionController") continue;
                     var f = Fields(c);
-                    // One reference or an array of them.
                     List<int> Refs(string name) => !f.TryGetValue(name, out JsonElement v) ? new List<int>()
                         : (v.ValueKind == JsonValueKind.Array ? v.EnumerateArray() : new[] { v }.AsEnumerable())
                             .Where(r => r.ValueKind == JsonValueKind.Object && r.TryGetProperty("$ref", out _)).Select(r => r.GetProperty("$ref").GetInt32()).Where(id => active.ContainsKey(id) || owner.ContainsKey(id)).ToList();
                     if (type == "Zone2to1TransitionController")
                     {
-                        // The path from Zone 2 into Area 1 above Course 10 opens with Area 1's overgrowth (buying the
-                        // omnidash sets both, upgradeBox): the closed ground goes, the open ground and first trunk come.
+                        // The Zone 2 path above Course 10 opens with Area 1's overgrowth (buying the omnidash sets both, upgradeBox).
                         foreach (int id in Refs("closedObject")) roots[id] = "area1:normal|vman";
                         foreach (int id in Refs("openObject").Concat(Refs("trunks").Take(1))) roots[id] = "area1:overgrown";
-                        // The rest under the path's root (its zone activators, checkpoints, loading area) is in the tunnel
-                        // the open path is: only there when it's open. The other trunks and the closed ground keep theirs.
                         var keep = new HashSet<int>(Refs("closedObject").Concat(Refs("trunks")));
                         int self = owner.TryGetValue(c.GetProperty("id").GetInt32(), out int so) ? so : o.GetProperty("id").GetInt32();
                         if (children.TryGetValue(self, out var under))
@@ -666,8 +600,6 @@ namespace IGTAP.EngineSim.Cli
                     List<int> overgrown = Refs("overgrowthEnable"), normal = Refs("overgrowthDisable");
                     foreach (int id in overgrown) roots[id] = "area1:overgrown";
                     foreach (int id in normal) roots[id] = "area1:normal|vman";
-                    // Overgrowth (SetA1CourseTiers) hides the Area 1 courses' movement, prestige, breaker-light and
-                    // unlock-prestige boxes (a bonus's reward among them) and shows the atom box and boxesToEnable.
                     foreach (int course in Refs("courses"))
                         foreach (int box in BoxesUnder(owner.TryGetValue(course, out int co) ? co : course))
                             if (Fields(components[box]) is var bf && bf.TryGetValue("upgrade", out JsonElement up) && up.ValueKind == JsonValueKind.Number
@@ -675,8 +607,6 @@ namespace IGTAP.EngineSim.Cli
                                 roots[owner[box]] = "area1:normal|vman";
                     foreach (int box in Refs("boxesToEnable").Append(Refs("rpAtomBox").FirstOrDefault()).Where(b => b != 0))
                         if (owner.TryGetValue(box, out int bo)) roots[bo] = "area1:overgrown";
-                    // A Vman speedrun is Area 1 as normal plus the boxes only a Vman run shows (the free omnidash:
-                    // upgradeBox.freeVmanOmnidash, on only while VmanScript.isCurrentlyVman).
                     var vmanBoxes = components.Where(kv => kv.Value.GetProperty("type").GetString() == "upgradeBox" && Fields(kv.Value) is var vf
                         && vf.TryGetValue("upgrade", out JsonElement vu) && vu.ValueKind == JsonValueKind.Number && vu.GetInt32() == 1
                         && vf.TryGetValue("movementUpgrade", out JsonElement vm) && vm.ValueKind == JsonValueKind.Number && vm.GetInt32() == 7).Select(kv => owner[kv.Key]).ToList();
@@ -687,9 +617,7 @@ namespace IGTAP.EngineSim.Cli
             return (states, roots);
         }
 
-        // The objects that are on. With `allStates` (a map of the whole world): as if every zone were loaded (the export
-        // holds the world with only the player's zone loaded, and a run loads each zone it enters: ZoneLoader._LoadZone,
-        // the zone's root and its ZoneDisableLoadList.toLoad on), in every world state (WorldStates' roots on).
+        // The export holds only the player's zone loaded; allStates turns every zone and world state on (ZoneLoader._LoadZone).
         internal static HashSet<int> OnObjects(JsonElement world, bool allStates) =>
             Remember(world, allStates ? "on:all" : "on", () => MakeOnObjects(world, allStates));
 
@@ -726,7 +654,6 @@ namespace IGTAP.EngineSim.Cli
             return on;
         }
 
-        // Per object, the world state it's only in (its nearest WorldStates root's); objects in every state are absent.
         static Dictionary<int, string> StateOf(JsonElement world) => Remember(world, "when", () => MakeStateOf(world));
 
         static Dictionary<int, string> MakeStateOf(JsonElement world)
@@ -756,8 +683,6 @@ namespace IGTAP.EngineSim.Cli
             return bodies;
         }
 
-        // Shape or path vertices (relative to the collider's attached body, or scene positions without one) in
-        // game-world coordinates, in place.
         static void ToWorld(float[] v, (float x, float y, float cos, float sin, bool moving)? body, CapturePos origin)
         {
             if (body is { } b)
@@ -777,8 +702,6 @@ namespace IGTAP.EngineSim.Cli
                 && rb.TryGetProperty("$ref", out JsonElement id) && bodies.TryGetValue(id.GetInt32(), out var found) ? found : null;
         }
 
-        // With `allStates`, every zone and world state (OnObjects), and both colours of coloured blocks: each coloured
-        // composite's geometry with its tilemap on (`sourceShapes`), whichever colour is active.
         internal static List<WorldShape> Shapes(JsonElement world, CapturePos origin, bool allStates)
         {
             var bodies = Bodies(world, origin);
@@ -803,7 +726,6 @@ namespace IGTAP.EngineSim.Cli
                 var components = o.GetProperty("components").EnumerateArray().ToList();
                 bool spike = components.Any(c => c.GetProperty("type").GetString() == "spikeScript");
                 bool player = components.Any(c => c.GetProperty("type").GetString() == "Movement");
-                // A spring launches along its transform.up (SpringScript.OnTriggerStay2D → Movement.hitSpring).
                 float[] up = null;
                 if (components.Any(c => c.GetProperty("type").GetString() == "SpringScript"))
                 {
@@ -825,7 +747,6 @@ namespace IGTAP.EngineSim.Cli
                     foreach (JsonElement s in shapes.GetProperty("list").EnumerateArray())
                         loops.Add((s.GetProperty("type").GetString(), s.GetProperty("vertices").EnumerateArray().Select(e => e.GetSingle()).ToArray(),
                             s.TryGetProperty("radius", out JsonElement rad) ? rad.GetSingle() : 0f, null));
-                    // An off composite has no shapes: its outline paths, all of them one even-odd area (islands and holes).
                     if (!live && loops.Count == 0 && c.TryGetProperty("paths", out JsonElement paths) && paths.ValueKind == JsonValueKind.Array)
                     {
                         float[][] rings = paths.EnumerateArray().Select(path => path.EnumerateArray().Select(e => e.GetSingle()).ToArray()).Where(p => p.Length >= 6).ToArray();
@@ -842,7 +763,6 @@ namespace IGTAP.EngineSim.Cli
             return shapesOut;
         }
 
-        // Where the drawn level (Solids, every zone and world state) lies: the extent of a map of the whole world.
         internal static (float x0, float y0, float x1, float y1) LevelBounds(JsonElement world, CapturePos origin)
         {
             float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
@@ -858,7 +778,6 @@ namespace IGTAP.EngineSim.Cli
             return (x0, y0, x1, y1);
         }
 
-        // `when`: the world state it's only in (WorldShape.When); the viewers draw the state picked.
         internal static List<object> Solids(JsonElement world, CapturePos origin, float x0, float y0, float x1, float y1)
         {
             var solids = new List<object>();
@@ -876,15 +795,6 @@ namespace IGTAP.EngineSim.Cli
             return solids;
         }
 
-        // The ground the game's trees grow: TreeController's segments, each turned on when an upgrade box that names
-        // it in SegmentsToTrigger is bought (TreeSegmentActivationComponent.growTreePart), as polygons in Solids'
-        // format. A fresh world has none of it grown, so the engine and the other layers don't have it; this is where it
-        // will be. Off composites keep their outlines (`paths`) but no shapes, so a tree platform is its outline.
-        //
-        // `Steps`: one label per segment, the fewest tree purchases that grow it. Plant Tree is purchase 1 and grows its
-        // segments; each grown segment shows its own box, whose purchase grows the segments it names (one more
-        // purchase), and a segment with autoTriggerNext grows the next one along with it. `via`: the box that grows it,
-        // `box`: the box it carries.
         internal sealed record TreeGround(List<object> Shapes, List<object> Steps);
 
         internal static TreeGround Grown(JsonElement world, CapturePos origin, float x0, float y0, float x1, float y1)
@@ -908,7 +818,6 @@ namespace IGTAP.EngineSim.Cli
             int Ref(JsonElement? v) => v is { ValueKind: JsonValueKind.Object } r && r.TryGetProperty("$ref", out JsonElement id) ? id.GetInt32() : 0;
             string Name(int objectId) => byId.TryGetValue(objectId, out JsonElement o) ? o.GetProperty("name").GetString() : "?";
 
-            // Segment GameObject → (tree number, step, via, box).
             var steps = new Dictionary<int, (int tree, int step, string via, string box)>();
             foreach (JsonElement o in objects)
                 foreach (JsonElement tc in o.GetProperty("components").EnumerateArray())
@@ -916,7 +825,6 @@ namespace IGTAP.EngineSim.Cli
                     if (tc.GetProperty("type").GetString() != "TreeController" || Field(tc, "TreeSegments") is not { ValueKind: JsonValueKind.Array } list) continue;
                     int treeId = tc.GetProperty("id").GetInt32(), tree = Field(tc, "treeNumber")?.GetInt32() ?? 0;
                     var segs = list.EnumerateArray().Select(r => components.TryGetValue(Ref(r), out JsonElement s) ? s : (JsonElement?)null).ToList();
-                    // Every box on this tree: its GameObject → the segments its purchase grows.
                     var triggers = new Dictionary<int, int[]>();
                     foreach (JsonElement b in components.Values)
                         if (b.GetProperty("type").GetString() == "upgradeBox" && Ref(Field(b, "upgradeTree")) == treeId && Field(b, "SegmentsToTrigger") is { ValueKind: JsonValueKind.Array } grows)
@@ -938,7 +846,6 @@ namespace IGTAP.EngineSim.Cli
                         var (box, step) = queue.Dequeue();
                         if (triggers.TryGetValue(box, out int[] grows)) foreach (int index in grows) Grow(index, step, box);
                     }
-                    // A segment no box grows (none found) keeps its ground, with no step.
                     for (int index = 0; index < segs.Count; index++)
                         if (segs[index] is { } s && !seen.Contains(index))
                             steps[owner[s.GetProperty("id").GetInt32()]] = (tree, 0, null, Ref(Field(s, "box")) is var b and not 0 ? Name(b) : null);
@@ -985,11 +892,8 @@ namespace IGTAP.EngineSim.Cli
             return new TreeGround(shapes, labels);
         }
 
-        // Upgrade box currencies (upgradeBox.upgradeCurrency).
         static readonly string[] Currencies = { "W", "GP", "NP", "number", "CD", "RP", "BP" };
 
-        // What an upgrade box gives (upgradeBox.upgrade, then .globalUpgrade or .movementUpgrade), the enum order the
-        // game serializes: the same tables tools/upgrade-boxes.py decodes with.
         static readonly string[] BoxLocal = { "GLOBAL", "Movement", "cloneCount", "cashPerLoop", "fastCloneChance", "bigCloneChance",
             "prestige", "cloneMult", "DUMMY_cloneCountPlural", "GreenCloneRewardBase", "activateNextBreakerLights",
             "enableCloneDustGeneration", "moreWatts", "baseRP" };
@@ -1003,8 +907,6 @@ namespace IGTAP.EngineSim.Cli
             "wattPower", "MoreRpCap" };
         static readonly string[] BoxMovement = { "dash", "wallJump", "doubleJump", "swapBlocksOnce", "unlockBlockSwap", "endDemo", "OmniDash", "freeVmanOmnidash" };
 
-        // The upgrade names that only stack cash or a stat (a count, a chance, a duration): a free box giving one of
-        // these is a weak bonus beside one that unlocks something (bonusBoost vs bonusUnique).
         static readonly HashSet<string> BoxBoosts = new HashSet<string> { "cloneCount", "cashPerLoop", "fastCloneChance", "bigCloneChance",
             "cloneMult", "DUMMY_cloneCountPlural", "GreenCloneRewardBase", "moreWatts", "baseRP", "maxCloneFastness", "maxCloneBigness",
             "spawnNewAtom", "atomLevelChance", "greenCloneClance", "increasedWatts", "increasedGreenPower", "increasedNuclearPower",
@@ -1012,13 +914,6 @@ namespace IGTAP.EngineSim.Cli
             "redCloneChance", "blueCloneChance", "compBoostDoublesNP", "vmanTime", "moreGP", "increasedRP", "moreRP", "RPcap",
             "NpGenerationSpeed", "wattPower", "MoreRpCap" };
 
-        // An upgrade box's buy info (a kind "box" marker). `upgrade`: the enum names as tools/upgrade-boxes.py prints
-        // them ("GLOBAL:cashPerLoop", "Movement:doubleJump", "cashPerLoop"); `gives` the same worded. `cap`: how often
-        // it can be bought (1: one-off). `category`, first match wins: secret (isSecret, a bonus's hidden reward;
-        // `number` its achievement digits) > movement (an ability) > tree (under a TreeController) > bonusUnique/
-        // bonusBoost (free, cap 1: a bonus's finish reward; what it gives decides good from weak) > achievement (`ach`
-        // the id it triggers) > unlock (any other one-off) > course (a repeatable). `fresh`: on in the fresh world
-        // (activeInHierarchy), else only later (grown, another zone).
         internal sealed record BoxInfo(string upgrade, string gives, double cost, string currency, int cap, string category,
             bool fresh, bool secret, bool tree,
             [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string number = null,
@@ -1050,7 +945,6 @@ namespace IGTAP.EngineSim.Cli
                 o.GetProperty("activeInHierarchy").GetBoolean(), secret, tree, number, ach);
         }
 
-        // Whether a box is a tree upgrade: it names a tree (upgradeTree) or sits under a TreeController's root or segments.
         static bool TreeOf(JsonElement c, JsonElement o, HashSet<int> trees, Dictionary<int, int> parents)
         {
             if (Fields(c).TryGetValue("upgradeTree", out JsonElement t) && t.ValueKind == JsonValueKind.Object) return true;
@@ -1058,8 +952,6 @@ namespace IGTAP.EngineSim.Cli
             return false;
         }
 
-        // The in-game name a box shows: its nameDisplay TMP's m_text where an export carries text (the world exports do
-        // not serialize TMP fields today), else the object's name comes out of Markers' own `name`.
         static string DisplayName(Dictionary<string, JsonElement> f, Dictionary<int, JsonElement> components)
         {
             return f.TryGetValue("upgradeNameDisplay", out JsonElement v) && v.ValueKind == JsonValueKind.Object && v.TryGetProperty("$ref", out JsonElement id)
@@ -1067,11 +959,8 @@ namespace IGTAP.EngineSim.Cli
                 && text.ValueKind == JsonValueKind.String && text.GetString().Trim() is { Length: > 0 } shown ? shown : null;
         }
 
-        // The initialisms an upgrade name keeps ("baseRP" → "base RP", "RPcap" → "RP cap").
         static readonly HashSet<string> Initialisms = new HashSet<string> { "W", "GP", "NP", "CD", "RP", "BP" };
 
-        // An upgrade name worded for reading ("cashPerLoop" → "cash per loop"): camel humps split, an initialism's caps
-        // run kept whole ("CDdigits" → "CD digits", else the run splits before its last letter, "GPAtoms…" → "GP atoms…").
         static string Words(string name)
         {
             var words = new List<string>();
@@ -1099,15 +988,12 @@ namespace IGTAP.EngineSim.Cli
 
         internal static List<Marker> Markers(JsonElement world, CapturePos origin)
         {
-            // Refill orbs (JiggleDropScript on a trigger capsule) by what they give back: the name says which.
             var kinds = new Dictionary<string, string> { ["startGate"] = "start", ["endGate"] = "end", ["checkpointScript"] = "checkpoint",
                 ["TeleporterScript"] = "teleporter", ["FakeCreditsControlScript"] = "falseEnding", ["EndCreditsTrigger"] = "trueEnding", ["JiggleDropScript"] = "refill", ["upgradeBox"] = "box" };
             var markers = new List<Marker>();
             HashSet<int> on = OnObjects(world, allStates: true);
             Dictionary<int, string> when = StateOf(world);
             var bodies = Bodies(world, origin);
-            // Every component by id (with its object), every object's parent and the objects carrying an upgrade box:
-            // display names and tree lookups need the first two, boxes are emitted whatever the capture has on.
             var components = new Dictionary<int, JsonElement>();
             var owners = new Dictionary<int, int>();
             var parents = new Dictionary<int, int>();
@@ -1123,7 +1009,6 @@ namespace IGTAP.EngineSim.Cli
                     if (c.GetProperty("type").GetString() == "upgradeBox") boxes.Add(id);
                 }
             }
-            // The root and segments a TreeController hangs its boxes under: a box below one is a tree upgrade.
             var trees = new HashSet<int>();
             foreach (JsonElement c in components.Values)
             {
@@ -1136,8 +1021,6 @@ namespace IGTAP.EngineSim.Cli
             var box = PlayerBox(world);
             foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
             {
-                // A box marker comes out however the capture has the box (a tree's boxes only exist once bought): the
-                // map shows where one that is only there later will be too, `box.fresh` saying which is which.
                 int id = o.GetProperty("id").GetInt32();
                 if (!on.Contains(id) && !boxes.Contains(id)) continue;
                 foreach (JsonElement c in o.GetProperty("components").EnumerateArray())
@@ -1146,27 +1029,22 @@ namespace IGTAP.EngineSim.Cli
                     string name = o.GetProperty("name").GetString();
                     JsonElement p = o.GetProperty("position");
                     float x = Round(p.GetProperty("x").GetSingle() - origin.x), y = Round(p.GetProperty("y").GetSingle() - origin.y);
-                    // A checkpoint's and a gate's trigger: where touching it respawns there, starts or ends the timer.
                     float[][] area = kind is "checkpoint" or "start" or "end" or "falseEnding" or "trueEnding" ? TriggerArea(o, bodies, origin, triggersOnly: false) : null;
                     float[] spawn = null;
                     BoxInfo info = null;
                     if (kind == "checkpoint" && box != null)
                     {
-                        // A respawn puts the player's standing box at the checkpoint 12 units down (Movement.respawn;
-                        // checkpointScript writes respawnPoint = its position), so x, y is the spawn's centre.
+                        // A respawn puts the standing box at the checkpoint 12 units down (Movement.respawn), so x, y is its centre.
                         float cy = Round(y - 12f);
                         spawn = new[] { Round(x + box.Value.ox - box.Value.hx), Round(cy + box.Value.oy - box.Value.hy),
                             Round(x + box.Value.ox + box.Value.hx), Round(cy + box.Value.oy + box.Value.hy) };
                         y = cy;
                     }
                     if (kind == "refill") kind = name.Contains("Full") ? "fullRefill" : name.Contains("Jump") ? "jumpRefill" : "dashRefill";
-                    // An end gate that isn't the course's end (endGate.isEndOfCourse off) only stops the course's timer:
-                    // leaving the course that way ends the run without a finish (courseScript.stopTracking).
+                    // An end gate with isEndOfCourse off only stops the timer: leaving that way ends the run without a finish.
                     else if (kind == "end" && Fields(c).TryGetValue("isEndOfCourse", out JsonElement eoc) && eoc.ValueKind == JsonValueKind.False) kind = "exit";
                     else if (kind == "box")
                     {
-                        // Every upgrade box at its trigger box, where touching it buys it (a bonus's finish): what it
-                        // gives and costs in `box`, the marker at the trigger box's middle.
                         info = BuyInfo(c, o, TreeOf(c, o, trees, parents));
                         name = DisplayName(Fields(c), components) ?? name;
                         area = TriggerArea(o, bodies, origin, triggersOnly: true);
@@ -1184,11 +1062,6 @@ namespace IGTAP.EngineSim.Cli
             return markers;
         }
 
-        // Zip movers and moving platforms (PlatformMover): the moving part runs its Positions in order (local positions,
-        // wrapping to the first), each leg a Lerp from the one before (PlatformMover.IE_AdvanceToNextState). `box`: its
-        // collider where it rests now; `path`: its box's middle at each position in travel order, starting there;
-        // `corridor`: per leg, the hull of the box at both ends (the ground it sweeps). `zip`: a zip mover (PlatformType
-        // 1), which only moves once zip movers are unlocked.
         internal sealed record Zip(string name, bool zip, float[] box, float[][] path, float[][] corridor,
             [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string when = null);
 
@@ -1211,12 +1084,10 @@ namespace IGTAP.EngineSim.Cli
                     var local = positions.EnumerateArray().Select(p => p.GetProperty("position")).Select(p => (x: p.GetProperty("x").GetSingle(), y: p.GetProperty("y").GetSingle())).ToList();
                     if (local.Count < 2) break;
                     int at = f.TryGetValue("indexInPositions", out JsonElement ix) && ix.ValueKind == JsonValueKind.Number ? Math.Clamp(ix.GetInt32(), 0, local.Count - 1) : 0;
-                    // The collider's world box now (its non-trigger shapes).
                     float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
                     foreach (float[] poly in TriggerArea(o, bodies, origin, triggersOnly: false))
                         for (int i = 0; i + 1 < poly.Length; i += 2) { x0 = Math.Min(x0, poly[i]); x1 = Math.Max(x1, poly[i]); y0 = Math.Min(y0, poly[i + 1]); y1 = Math.Max(y1, poly[i + 1]); }
                     if (x0 > x1) break;
-                    // Local to world: the parent's scale (the moving part isn't rotated), from where it is now.
                     JsonElement lp = o.GetProperty("localPosition"), ls = o.GetProperty("localScale"), gs = o.GetProperty("lossyScale");
                     float sx = gs.GetProperty("x").GetSingle() / Math.Max(1e-6f, ls.GetProperty("x").GetSingle()), sy = gs.GetProperty("y").GetSingle() / Math.Max(1e-6f, ls.GetProperty("y").GetSingle());
                     float nowX = lp.GetProperty("x").GetSingle(), nowY = lp.GetProperty("y").GetSingle();
@@ -1241,7 +1112,6 @@ namespace IGTAP.EngineSim.Cli
             return zips;
         }
 
-        // The convex hull of points (monotone chain), as a flat x, y polygon.
         static float[] Hull((float x, float y)[] pts)
         {
             var p = pts.Distinct().OrderBy(q => q.x).ThenBy(q => q.y).ToArray();
@@ -1269,8 +1139,6 @@ namespace IGTAP.EngineSim.Cli
             return fields;
         }
 
-        // The player's standing box (Movement.defaultColliderSize/Offset: what Movement.respawn restores) as half
-        // extents and offset, read from the export's player.
         static (float hx, float hy, float ox, float oy)? PlayerBox(JsonElement world)
         {
             foreach (JsonElement o in world.GetProperty("objects").EnumerateArray())
@@ -1285,8 +1153,6 @@ namespace IGTAP.EngineSim.Cli
             return null;
         }
 
-        // An object's enabled collider shapes (with `triggersOnly`, its trigger colliders') as game-world polygons (a box
-        // collider is one 4-corner polygon).
         static float[][] TriggerArea(JsonElement o, Dictionary<int, (float x, float y, float cos, float sin, bool moving)> bodies, CapturePos origin, bool triggersOnly)
         {
             var area = new List<float[]>();

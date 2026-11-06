@@ -5,26 +5,17 @@ namespace IGTAPTasMod
 {
     public sealed partial class TasPlugin
     {
-        // The Float Ultra overlay, drawn while a demo of a `floatingOrigin` tech plays. FloatingOrigin keeps the player within
-        // Threshold of scene (0, 0), the sphere's centre. Past the edge it moves the world back by the player's scene
-        // position, so the player's scene y drops by its height above the sphere's centre line. lastHyperY (the height the
-        // game's ultra check compares a hyper against) is a scene number the move leaves alone. So a chained hyper whose
-        // air crosses the edge ABOVE the centre line lands that far under lastHyperY: a float ultra. Crossing BELOW the line
-        // raises the player's scene y over lastHyperY instead: no float ultra.
         FloatingOrigin _originOverlayInstance;
         Vector2 _originOverlaySeen;
         int _originOverlayRebases, _originOverlayFloats;
         Vector2 _originOverlayShift;
         float _originOverlayRebaseAt = float.NegativeInfinity, _originOverlayFloatAt = float.NegativeInfinity;
-        // Armed: the last rebase came from above the centre line and lastHyperY hasn't been written since.
         bool _originOverlayArmed;
         float _originOverlayArmedHyperY;
-        // Every sphere centre (world frame) this playback saw, the first the one it started in, and the dot's path.
         readonly List<Vector2> _originOverlayCenters = new List<Vector2>();
         readonly List<Vector2> _originOverlayTrail = new List<Vector2>();
         const int OriginTrailPoints = 6000;
         const float OriginTrailStep = 40f;
-        // The minimap's world (courses.json frame): the Overworld's floors span about x -10400..34900, y -4600..27300.
         static readonly Rect OriginMapWorld = Rect.MinMaxRect(-11000f, -6000f, 36000f, 28500f);
         const int OriginSphereSegments = 4096;
         const float OriginSphereBand = 90f, OriginFlashSeconds = 3f;
@@ -73,7 +64,6 @@ namespace IGTAPTasMod
                 _originOverlayShift = origin - _originOverlaySeen;
                 _originOverlayRebaseAt = Time.unscaledTime;
                 _originOverlayCenters.Add(-origin);
-                // The world moved by minus the dot's scene position: a negative y means the dot was above the centre line.
                 _originOverlayArmed = _originOverlayShift.y < 0f;
                 _originOverlayArmedHyperY = lastHyper;
             }
@@ -120,7 +110,6 @@ namespace IGTAPTasMod
         void DrawOriginPanel(float scale, Vector3 scene, Vector2 world, float distance, float threshold, bool sideways, bool above, bool moved, bool floated)
         {
             float width = 820 * scale, row = 24 * scale, big = 30 * scale, pad = 10 * scale;
-            // Under the Vman clock (top centre).
             var panel = new Rect((Screen.width - width) / 2f, 120 * scale, width, row * 4 + big + pad * 2);
             Fill(panel, PanelBack);
             float x = panel.x + pad, y = panel.y + pad, inner = width - pad * 2;
@@ -175,10 +164,6 @@ namespace IGTAPTasMod
                 + "   ·   world: x " + world.x.ToString("#,0") + ", y " + world.y.ToString("#,0") + "   ·   sphere moves: " + _originOverlayRebases, _overlaySmall, MutedColor);
         }
 
-        /// <summary>
-        /// The sphere's centre line (scene y 0) across the view, green above and red below; off screen, where it is and which
-        /// side the dot is on.
-        /// </summary>
         void DrawOriginCentreLine(Camera cam, Vector3 scene, Vector2 origin, float scale)
         {
             float line = Mathf.Max(2f, Mathf.Round(3 * scale)), labelHeight = 22 * scale;
@@ -208,16 +193,11 @@ namespace IGTAPTasMod
             Label(new Rect(at.x + arm, at.y + 4f, 520 * scale, labelHeight), "the sphere's centre", _overlaySmall, OriginMoveColor);
         }
 
-        /// <summary>
-        /// The world minimap: every sphere this playback was in (green upper half, red lower half, the current one bright),
-        /// where the dot crossed each (the next centre), the dot's path and the courses, in the courses.json frame.
-        /// </summary>
         void DrawOriginMap(float scale, Vector2 dot, float threshold, bool sideways)
         {
             Material material = OverlayMaterial();
             if (material == null) return;
             float width = 470f * scale, height = width * OriginMapWorld.height / OriginMapWorld.width, row = 20f * scale;
-            // Bottom right: the velocity panel holds the top right.
             var map = new Rect(Screen.width - width - 16f * scale, Screen.height - height - 16f * scale, width, height);
             Fill(new Rect(map.x, map.y - row * 2, map.width, map.height + row * 2), PanelBack);
             int thresholdBits = System.BitConverter.SingleToInt32Bits(threshold);
@@ -290,15 +270,12 @@ namespace IGTAPTasMod
         string _originMapTitle;
         static readonly Dictionary<int, string> CourseMapLabels = new Dictionary<int, string>();
 
-        /// <summary>A course's minimap label ("C12"), built once per id.</summary>
         static string CourseMapLabel(int id)
         {
             if (!CourseMapLabels.TryGetValue(id, out string label)) CourseMapLabels[id] = label = "C" + id;
             return label;
         }
 
-        // The minimap circles' and the sphere edge's unit directions, computed once with the expressions the draw used every
-        // frame (the same floats): MapCircle* at s·π/128 for s 0..256; Sphere*0 at i·step and Sphere*1 at i·step + step.
         static readonly float[] MapCircleCos = CircleTable(257, s => Mathf.Cos(s * Mathf.PI / 128f)), MapCircleSin = CircleTable(257, s => Mathf.Sin(s * Mathf.PI / 128f));
         const float OriginSphereStep = 2f * Mathf.PI / OriginSphereSegments;
         static readonly float[] SphereCos0 = CircleTable(OriginSphereSegments, i => Mathf.Cos(i * OriginSphereStep)),
@@ -326,7 +303,6 @@ namespace IGTAPTasMod
             GL.Vertex3(at.x + half, at.y + half, 0f); GL.Vertex3(at.x - half, at.y + half, 0f);
         }
 
-        /// <summary>The sphere's edge around scene (0, 0) where it is in view, green above the centre line and red below, with a faint band outside.</summary>
         void DrawOriginSphere(Camera cam, float threshold, bool sideways, float scale)
         {
             Material material = OverlayMaterial();
@@ -370,7 +346,6 @@ namespace IGTAPTasMod
 
         static readonly float[] SphereSides = { -1f, 1f };
 
-        /// <summary>One piece of the sphere: the edge a–b as a solid line, the band a–b–c–d outside it faint.</summary>
         static void OriginQuad(Camera cam, Vector2 a, Vector2 b, Vector2 c, Vector2 d, Color color, float half)
         {
             Vector2 sa = OriginScreen(cam, a), sb = OriginScreen(cam, b), sc = OriginScreen(cam, c), sd = OriginScreen(cam, d);

@@ -21,7 +21,6 @@ namespace IGTAPTasMod
         public int StatusCode = 200;
         public bool AsyncHandling = false;
         public readonly ManualResetEvent Completed = new ManualResetEvent(false);
-        /// <summary>The studio socket the request came in on (its reply goes back there, tagged <see cref="SocketId"/>), null for HTTP.</summary>
         public WebStudioSocket Socket;
         public long SocketId;
     }
@@ -32,7 +31,6 @@ namespace IGTAPTasMod
 
         public static string Url => "http://127.0.0.1:" + Port + "/";
 
-        // A studio socket's state checks: at most this often, and at most a tenth of the main thread (the last check's cost × 10).
         const double PushIntervalMs = 33;
         const double PushShare = 10;
 
@@ -42,19 +40,16 @@ namespace IGTAPTasMod
         private volatile bool _running;
         private string _staticRoot;
 
-        // The studio's push (GET /api/ws): the live and static state builders (main thread only) and the sockets they go to.
         private readonly Func<object> _live;
         private readonly Func<long> _staticVersion;
         private readonly Func<object> _static;
         private readonly object _socketsGate = new object();
         private readonly List<WebStudioSocket> _sockets = new List<WebStudioSocket>();
         private readonly List<WebStudioSocket> _joining = new List<WebStudioSocket>();
-        // The sockets a check pushes to, copied under the lock into this one list (main thread only) instead of a new array.
         private readonly List<WebStudioSocket> _pushTargets = new List<WebStudioSocket>();
         private readonly Stopwatch _pushClock = Stopwatch.StartNew();
         private double _pushDue;
         private double _pushWarnedAt = double.NegativeInfinity;
-        // The last state pushed: a socket that joins gets these, and a live state is pushed only when its JSON differs.
         private string _liveJson;
         private byte[] _liveFrame;
         private byte[] _staticFrame;
@@ -67,7 +62,7 @@ namespace IGTAPTasMod
             _static = staticState;
         }
 
-        // A TcpListener on 127.0.0.1, not HttpListener: Mono's HttpListener needs URL-ACL reservations.
+        // Use a TcpListener, not HttpListener: Mono's HttpListener needs URL-ACL reservations.
         public void Start(string staticRoot)
         {
             if (_running) return;
@@ -79,13 +74,6 @@ namespace IGTAPTasMod
             _thread.Start();
         }
 
-        /// <summary>
-        /// Runs the queued requests on the calling (main) thread. A GET without a body is answered once per pump: the same
-        /// path queued again in this pump (several tabs, tools) gets the first one's response, built and serialised once. Any
-        /// other request can change what a GET returns, so it drops the answers kept so far. Then the studio sockets get the
-        /// state that changed (<see cref="PushState"/>), and after it the replies to their requests answered in this pump, so a
-        /// studio that has a command's reply has the state it left too.
-        /// </summary>
         public void Pump(Func<WebStudioRequest, object> handler)
         {
             WebStudioRequest request;
@@ -140,7 +128,6 @@ namespace IGTAPTasMod
             else (replies ?? (replies = new List<WebStudioRequest>())).Add(request);
         }
 
-        /// <summary>A socket request the handler answers later (AsyncHandling): its reply goes out when it's set, off the main thread.</summary>
         private static void ReplyWhenCompleted(WebStudioRequest request)
         {
             ThreadPool.RegisterWaitForSingleObject(request.Completed, (state, timedOut) =>
@@ -154,12 +141,6 @@ namespace IGTAPTasMod
             }, null, 600000, true);
         }
 
-        /// <summary>
-        /// Sends the studio sockets the state that changed: the static part when <c>WebStateVersion</c> moved, the live part
-        /// when its JSON differs from the last one pushed, each built and serialised once for every socket. A socket that just
-        /// joined gets both. Checked at most every <see cref="PushIntervalMs"/> (a command's pump checks at once), and only
-        /// while a socket is open.
-        /// </summary>
         private void PushState(bool force)
         {
             List<WebStudioSocket> joined = null;
@@ -173,8 +154,6 @@ namespace IGTAPTasMod
                     _joining.Clear();
                 }
                 if (_sockets.Count == 0) return;
-                // Checked before the sockets are copied: between checks (every frame at 280 fps) the pump takes the lock and
-                // nothing else.
                 now = _pushClock.Elapsed.TotalMilliseconds;
                 if (!force && joined == null && now < _pushDue) return;
                 _pushTargets.Clear();
@@ -215,7 +194,6 @@ namespace IGTAPTasMod
             }
             catch (Exception ex)
             {
-                // Every socket gets both parts again at the next check that builds them (one that joined now got neither).
                 _staticFrame = null;
                 _liveJson = null;
                 _pushDue = now + 1000;
@@ -285,8 +263,6 @@ namespace IGTAPTasMod
 
                 WebStudioRequest request = new WebStudioRequest { Method = method, Path = path, Body = body };
                 _requests.Enqueue(request);
-                // A request the main thread never answered may still be set later (a Full-TAS run's pending start), so only an
-                // answered one's event is disposed here.
                 if (!request.Completed.WaitOne(600000))
                 { WriteResponse(stream, 503, "application/json", "{\"error\":\"Game main thread did not respond within timeout\"}"); return; }
                 request.Completed.Dispose();
@@ -298,10 +274,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>
-        /// GET /api/ws: the studio's socket (RFC 6455). The next pump sends it the static and live state; see
-        /// <see cref="WebStudioSocket"/> for what it sends and takes.
-        /// </summary>
         private bool AcceptSocket(TcpClient client, NetworkStream stream, string[] lines, byte[] early, int earlyCount)
         {
             string key = HeaderValue(lines, "Sec-WebSocket-Key");
@@ -348,10 +320,6 @@ namespace IGTAPTasMod
             WriteResponse(stream, 200, ContentType(full), content);
         }
 
-        /// <summary>
-        /// Reads up to the blank line that ends the header, in chunks. What a chunk holds past it (the body's start) comes back
-        /// in <paramref name="early"/>'s first <paramref name="earlyCount"/> bytes for <see cref="ReadBody"/>.
-        /// </summary>
         private static string ReadHeader(NetworkStream stream, out byte[] early, out int earlyCount)
         {
             byte[] buffer = new byte[4096];
@@ -437,7 +405,6 @@ namespace IGTAPTasMod
             return MessageFrame("{\"type\":\"reply\",\"id\":" + id + ",\"status\":" + status + ",\"data\":", json, "}");
         }
 
-        /// <summary>One unmasked, unfragmented text frame holding <paramref name="prefix"/> + <paramref name="json"/> + <paramref name="suffix"/> (ASCII around UTF-8), encoded straight into it.</summary>
         internal static byte[] MessageFrame(string prefix, string json, string suffix)
         {
             long length = prefix.Length + Encoding.UTF8.GetByteCount(json) + suffix.Length;
@@ -479,13 +446,6 @@ namespace IGTAPTasMod
         }
     }
 
-    /// <summary>
-    /// One studio tab's WebSocket (GET /api/ws). It takes <c>{"id", "method", "path", "body"}</c> text messages, run as HTTP
-    /// requests are (the main thread's <see cref="WebStudioServer.Pump"/>), and sends <c>{"type": "reply", "id", "status",
-    /// "data"}</c> for each, and <c>{"type": "static" | "live", "data"}</c> when the state changes. A thread reads and one
-    /// writes: the writer sends the newest static and live state only (a slow tab skips the states it missed), then the
-    /// replies and control frames in order.
-    /// </summary>
     internal sealed class WebStudioSocket
     {
         const int MaxMessage = 64 << 20;
@@ -532,7 +492,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>Queues a close frame (code, or none) as the last one; the writer closes the connection after sending it.</summary>
         private void SendClose(int code)
         {
             lock (_gate)
@@ -607,7 +566,6 @@ namespace IGTAPTasMod
                         length = 0;
                         for (int i = 0; i < 8; i++) length = (length << 8) | head[i];
                     }
-                    // RFC 6455 5.1: a client masks every frame.
                     if (!masked) { SendClose(1002); return; }
                     if (length < 0 || length > MaxMessage || message.Length + length > MaxMessage) { SendClose(1009); return; }
                     byte[] mask = new byte[4];
@@ -647,14 +605,12 @@ namespace IGTAPTasMod
             catch (Exception) { }
             finally
             {
-                // A close frame queued here closes the connection once the writer has sent it.
                 bool closing;
                 lock (_gate) closing = _closing;
                 if (!closing) Close();
             }
         }
 
-        /// <summary>A request message: queued for the main thread as an HTTP request is; a malformed one is answered here.</summary>
         private void Handle(string text)
         {
             long id = 0;
@@ -679,7 +635,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>Fills <paramref name="buffer"/>'s first <paramref name="count"/> bytes: what came with the handshake first, then the stream.</summary>
         private void ReadExactly(byte[] buffer, int count)
         {
             int offset = 0;

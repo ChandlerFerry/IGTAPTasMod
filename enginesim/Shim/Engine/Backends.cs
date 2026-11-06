@@ -36,9 +36,7 @@ namespace IGTAP.EngineSim
         [ThreadStatic] public static Action<GameObject> ActiveChanging;
         [ThreadStatic] public static Action<Behaviour> EnabledChanging;
         [ThreadStatic] public static Action<GameObject> LayerChanging;
-        /// <summary>Before a script writes a transform's position, rotation or scale (Simulation keeps it in snapshots).</summary>
         [ThreadStatic] public static Action<Transform> TransformChanging;
-        /// <summary>After SetActive(true) turned an object on in the hierarchy: the OnEnable of what it woke (Simulation's draws).</summary>
         [ThreadStatic] public static Action<GameObject> Activated;
         public static string[] LayerNames = new string[32];
         public static int NextInstanceId = -1;
@@ -61,8 +59,6 @@ namespace IGTAP.EngineSim
         [ThreadStatic] public static Action<object, Vector2> HitSpring;
         [ThreadStatic] public static Action<object> SteppedUp;
         [ThreadStatic] public static Action<object, float> SpecialWallJump;
-        /// <summary>Tech observers (Runtime\TechSteps.cs): CheckForSuperJump's entry, determineSpriteDirection's (right after
-        /// getPlayerControlledInput, the dash branch and the wall jump lock), a zip mover made intangible.</summary>
         [ThreadStatic] public static Action<object> SuperJumpCheck, SpriteDirection, Intangible;
 
         public static void OnPlayerInput(object movement) { PlayerInput?.Invoke(movement); }

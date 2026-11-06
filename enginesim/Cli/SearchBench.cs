@@ -10,19 +10,10 @@ using IGTAP.EngineSim;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// searchbench &lt;suite.json&gt; [--seeds N] [--minutes M] [--threads T] [--arms {name: [solve args]}] [--traces dir] [--out file]
-    /// [--keep]: runs `solve --rng s --no-submit --fresh --no-humanize` per course, arm and seed (s = 1..N) as a child process, each
-    /// on its own temp copy of the start trace (so its archive and offline bests stay there) with its own tech-graft cache copy, and
-    /// reports per arm the median/min/max of the wall time to the first finish, to the course's target time, and the final best.
-    /// An arm's `--exe path` (taken out of its solve args) runs that build instead of this one: two builds benched on the same seeds.
-    /// A suite with "cases" (searchbench --suite grafts) is the planted-waste suite: see <see cref="Case"/>.
-    /// </summary>
     static class SearchBench
     {
         public static int Run(string[] args)
         {
-            // --suite NAME: the build's searchbench-NAME.json (grafts: the planted-waste suite, below).
             string suitePath = Path.GetFullPath(args.Contains("--suite")
                 ? Path.Combine(AppContext.BaseDirectory, "searchbench-" + Solve.Option(args, "--suite", "") + ".json") : args[0]);
             int seeds = Solve.Option(args, "--seeds", 3);
@@ -36,7 +27,6 @@ namespace IGTAP.EngineSim.Cli
             string outFile = Solve.Option(args, "--out", Path.Combine(root, suite["cases"] != null ? "searchbench.jsonl" : "searchbench.json"));
             bool keep = args.Contains("--keep");
             Directory.CreateDirectory(root);
-            // One cache copy for the whole bench: the first run mines it if the build changed; the real folder's is never written.
             string techCache = Path.Combine(root, "tech-grafts.cache.json");
             string realCache = Path.Combine(traces, "tech-grafts.cache.json");
             if (File.Exists(realCache)) File.Copy(realCache, techCache);
@@ -48,8 +38,6 @@ namespace IGTAP.EngineSim.Cli
                 string name = (string)course["name"], trace = Path.Combine(traces, (string)course["trace"]);
                 double target = (double)course["target"];
                 string[] courseArgs = course["args"]?.AsArray().Select(a => (string)a).ToArray() ?? Array.Empty<string>();
-                // The arms take turns seed by seed (seed 1 of each arm, then seed 2 ...), so a load that comes and goes on the
-                // machine falls on every arm alike.
                 var runsByArm = arms.Keys.ToDictionary(a => a, a => new List<(double? first, double? toTarget, double? best, JsonArray bests)>());
                 for (int s = 1; s <= seeds; s++)
                 {
@@ -59,7 +47,6 @@ namespace IGTAP.EngineSim.Cli
                         int exeAt = Array.IndexOf(armSpec, "--exe");
                         string exe = exeAt >= 0 ? Path.GetFullPath(armSpec[exeAt + 1]) : Environment.ProcessPath;
                         string[] armArgs = exeAt >= 0 ? armSpec.Where((_, i) => i != exeAt && i != exeAt + 1).ToArray() : armSpec;
-                        // Another build mines under another cache key: its own copy, so the builds don't re-mine over each other.
                         string cache = exeAt >= 0 ? Path.Combine(root, "tech-grafts." + arm + ".cache.json") : techCache;
                         if (exeAt >= 0 && !File.Exists(cache) && File.Exists(realCache)) File.Copy(realCache, cache);
                         string dir = Path.Combine(root, name, arm, "seed" + s);
@@ -128,20 +115,13 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        /// <summary>
-        /// A planted-waste case (searchbench-grafts.json): a known-good stretch of a saved route (a course route trace's inputs, or a
-        /// Full-TAS route's goals From+1..To) with a waste planted in it. Scores are course-timer ticks (a course) or the physics
-        /// tick of goal To (a Full-TAS window). A case without a waste is open: the route as it is, to beat by Gain ticks.
-        /// </summary>
         sealed class Case
         {
             public string Name, Waste, Trace, Invalid;
             public bool FullTas;
             public int From, To, At = -1, Rejoin;
-            /// <summary>A Full-TAS case's window by its first and last goals' ids (the trace's: goals From+1..To from 1).</summary>
             public string FirstId, LastId;
             public long Original, Target, Seed, AtPhysics;
-            /// <summary>The seed from the run's start (a Full-TAS one cut after goal To).</summary>
             public List<InputTick> Inputs;
         }
 
@@ -159,7 +139,6 @@ namespace IGTAP.EngineSim.Cli
                     : $" {Window(c)}, original {c.Original}, seed {c.Seed} (+{c.Seed - c.Original}), target {c.Target}"
                         + (c.At >= 0 ? $", planted at input {c.At} of the window (physics tick {c.AtPhysics}), rejoin {c.Rejoin:+0;-0;0}" : "")));
             }
-            // --check: plant and replay only, no search (after an engine change: which cases still plant, and where).
             if (args.Contains("--check")) return cases.Any(k => k.c.Invalid != null) ? 1 : 0;
 
             var lines = new List<JsonObject>();
@@ -186,7 +165,6 @@ namespace IGTAP.EngineSim.Cli
                         File.Copy(Path.ChangeExtension(c.Trace, null) + ".world.json", Path.ChangeExtension(copy, null) + ".world.json");
                         string log = Path.Combine(dir, "bests.jsonl");
                         string M = minutes.ToString(CultureInfo.InvariantCulture);
-                        // A Full-TAS case polishes its one window (--goal To, --window To - From) for the whole budget.
                         var runArgs = c.FullTas
                             ? new List<string> { "fulltas", copy, "--goal", c.LastId, "--window", (c.To - c.From).ToString(CultureInfo.InvariantCulture),
                                 "--window-minutes", M }
@@ -247,8 +225,6 @@ namespace IGTAP.EngineSim.Cli
 
         static string Window(Case c) => c.FullTas ? $"goals {c.From + 1}-{c.To}" : "course";
 
-        /// <summary>One search of a case as a child process, stopped as soon as its log shows a best within the slack (the budget
-        /// otherwise). CPU and wall count from the log's first line (the seed's replay: setup left out).</summary>
         static JsonObject RunCase(Case c, string exe, List<string> runArgs, string dir, string log, int slack, double minutes)
         {
             long goal = c.Waste == "open" ? c.Target : c.Target + slack;
@@ -296,7 +272,6 @@ namespace IGTAP.EngineSim.Cli
                         p.WaitForExit();
                         done = true;
                     }
-                    // Setup and the last window's save aside, a run past its budget is stuck: stopped.
                     else if (!done && clock.Elapsed.TotalMinutes > minutes + 5)
                     {
                         p.Kill(true);
@@ -314,10 +289,6 @@ namespace IGTAP.EngineSim.Cli
             };
         }
 
-        /// <summary>
-        /// Replays the case's route, plants its waste at the first input of its "at" range where the planted route still gets
-        /// there at least minCost (default 5) ticks later (a bonk only where the jump hits a ceiling), and keeps that as the seed.
-        /// </summary>
         static Case Prepare(string traces, JsonNode spec)
         {
             var c = new Case { Name = (string)spec["name"], Waste = (string)spec["waste"] ?? "open", Trace = Path.Combine(traces, (string)spec["trace"]) };
@@ -327,7 +298,6 @@ namespace IGTAP.EngineSim.Cli
             Simulation sim = Solve.Creator(c.Trace, header)();
             if (c.FullTas)
             {
-                // The window by its first and last goals' ids (the trace's).
                 string[] ids = FullTas.HeaderGoals(header.GetProperty("fulltas")).Ids;
                 c.FirstId = (string)spec["goals"][0];
                 c.LastId = (string)spec["goals"][1];
@@ -353,7 +323,6 @@ namespace IGTAP.EngineSim.Cli
             c.Original = score;
             int from = c.From == 0 ? 0 : (int)original.GoalInputTicks[c.From - 1];
             if (c.FullTas) route = route.GetRange(0, Math.Min(route.Count, (int)original.GoalInputTicks[c.To - 1] + 1));
-            // The window's runs start after the prefix, on window inputs (the goals' input ticks stay the run's).
             if (from > 0) sim.SetStart(sim.Advance(route.GetRange(0, from)), from);
             if (c.Waste == "open")
             {
@@ -363,7 +332,6 @@ namespace IGTAP.EngineSim.Cli
             c.Target = c.Original;
             int minCost = (int?)spec["minCost"] ?? 5, maxCost = (int?)spec["maxCost"] ?? 100, hold = (int?)spec["hold"] ?? 8;
             JsonArray range = spec["at"].AsArray(), rejoin = spec["rejoin"]?.AsArray();
-            // The rejoin shifts in order 0, 1, -1, 2, -2 ... 8, -8 (a "rejoin" [lo, hi] instead: those, in order).
             IEnumerable<int> Shifts() => rejoin != null ? Enumerable.Range((int)rejoin[0], (int)rejoin[1] - (int)rejoin[0] + 1)
                 : Enumerable.Range(0, 17).Select(k => (k + 1) / 2 * (k % 2 == 1 ? 1 : -1));
             for (int at = (int)range[0]; at <= (int)range[1] && from + at < route.Count; at++)
@@ -375,7 +343,6 @@ namespace IGTAP.EngineSim.Cli
                 {
                     List<InputTick> planted = Rejoin(waste, j, m);
                     if (planted == null) continue;
-                    // A bonk: rising at 150+ one physics tick, not rising the next, in the air, in the ticks after the press.
                     bool bonked = false;
                     float vy = 0f;
                     RunResult r = sim.Run(planted.GetRange(from, planted.Count - from), null, null, 1000000, c.Waste != "bonk" ? null : _ =>
@@ -396,13 +363,6 @@ namespace IGTAP.EngineSim.Cli
             return c;
         }
 
-        /// <summary>
-        /// The route with a waste planted at input i, and the input the original goes on from after it (null where the waste
-        /// doesn't apply): dashrun (a super chain played as dashes and a run: from a super at i, len ticks (default 12) with every
-        /// dash's jump and every jump press dropped), bonk (a jump pressed at i and held hold ticks (default 8), on a walk: no jump
-        /// or dash there), dashpair (a dash back and a dash forward inserted at i, running either way), restart (a quick restart
-        /// inserted at i, then the inputs since the last restart before i, or the start, played again: a filler lap).
-        /// </summary>
         static (List<InputTick>, int) Plant(List<InputTick> route, int i, string waste, JsonNode spec)
         {
             var r = new List<InputTick>(route);
@@ -447,9 +407,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>A planted route whose original inputs go on m inputs later (m &gt; 0: m of them dropped) or sooner (m &lt; 0: -m
-        /// ticks of the stick there, no new edge, first) after the waste, so it can finish again; a hold that goes on after a
-        /// released waste presses at the join.</summary>
         static List<InputTick> Rejoin(List<InputTick> planted, int j, int m)
         {
             if (j + Math.Max(m, 0) >= planted.Count) return null;
@@ -465,8 +422,6 @@ namespace IGTAP.EngineSim.Cli
             return r;
         }
 
-        /// <summary>The case's trace with its seed as the trace's inputs (what solve and fulltas seed from); a Full-TAS trace's goals
-        /// cut after goal To, so the window's goal is the run's last.</summary>
         static void WriteTrace(Case c, string path)
         {
             JsonNode trace = JsonNode.Parse(File.ReadAllText(c.Trace), null, new JsonDocumentOptions { MaxDepth = 256 });
@@ -481,7 +436,6 @@ namespace IGTAP.EngineSim.Cli
 
         static string Show(JsonNode x) => x == null ? "-" : x.ToString();
 
-        // Median, min and max over every run, a run that never got there counting as never (null, above every number).
         static JsonObject Stats(IEnumerable<double?> values)
         {
             List<double> v = values.Select(x => x ?? double.PositiveInfinity).OrderBy(x => x).ToList();

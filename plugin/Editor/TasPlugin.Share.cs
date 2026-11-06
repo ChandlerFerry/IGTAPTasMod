@@ -10,11 +10,6 @@ using UnityEngine;
 
 namespace IGTAPTasMod
 {
-    /// <summary>
-    /// Sharing routes (/api/tas/share/*): a route with its markers, re-record count and savestate as one JSON document, or as
-    /// a code to paste (<c>IGTAS1:</c> + base64url of its gzip), or as TAS text (TasMarkup). An import is a plain route: a
-    /// record's name gets " shared" after its category, so the only way it becomes a record again is the gate.
-    /// </summary>
     public sealed partial class TasPlugin
     {
         const string ShareFormat = "igtap-tas-route", ShareCodePrefix = "IGTAS1:";
@@ -62,7 +57,6 @@ namespace IGTAPTasMod
                 if (steps.Sum(s => (long)Math.Max(1, s.durationTicks)) > TasMarkup.MaxTicks)
                     throw new InvalidOperationException("The shared route is longer than " + TasMarkup.MaxTicks + " input ticks.");
                 steps = steps.Where(s => s.enabled).ToList();
-                // Its ticks as the editor keeps them: controller sticks only (RULES.md 2).
                 steps = ToSteps(ToTicks(steps).Select(TasSanitize).ToList());
                 var route = new MacroDefinition { name = TasUniqueName(SharedName(((string)doc["name"] ?? "shared").Trim())), steps = steps,
                     markers = doc["markers"]?.ToObject<List<RouteMarker>>(), rerecords = (int?)doc["rerecords"] ?? 0 };
@@ -70,7 +64,7 @@ namespace IGTAPTasMod
                 if (doc["savestate"] is JObject shared)
                 {
                     Savestate savestate = shared.ToObject<Savestate>();
-                    // Only what a capture holds: no unlocks (they would stay on the save and be autosaved) or other fields.
+                    // Keep only captured fields: unlocks would stay on the save and be autosaved (RULES.md 42).
                     SavestateService.KeepCapturedFields(savestate);
                     savestate.id = Guid.NewGuid().ToString("N");
                     savestate.name = "shared/" + savestate.name;
@@ -88,7 +82,6 @@ namespace IGTAPTasMod
             throw new InvalidOperationException("Unknown share command: " + action);
         }
 
-        /// <summary>A record's name ("4_WJ_DS 13.28", "4_WJ_DS farm 13.62") as a plain route of the same category.</summary>
         static string SharedName(string name)
         {
             var record = MatchGatedRoute(name);

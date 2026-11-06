@@ -9,14 +9,6 @@ using IGTAPTasMod;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// coverage &lt;trace&gt; &lt;route-human.json&gt; [--out file.md] [--no-tech-grafts]: issue #19's step 0. Replays the route
-    /// with the solver's contact detection (<see cref="ContactLog"/>) and maps each of its inputs (<see cref="Humanizer.Events"/>,
-    /// with the human file's class) onto the primitive library: the contact whose <see cref="Planner.Primitives"/> window
-    /// reaches it and the graft kind that makes that input there (its tick relative to the graft's start and its value), or
-    /// a mined tech demo window (<see cref="TechGrafts"/>) with the same input at that offset (±<see cref="TechGrafts.Jitter"/>);
-    /// else none. Prints a markdown table and the coverage count.
-    /// </summary>
     static class Coverage
     {
         public static int Run(string[] args)
@@ -114,7 +106,6 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        /// <summary>The input's value is one the planner's decisions make (<see cref="Planner"/>: its stick, press, release and dash grid).</summary>
         static bool Grid(Humanizer.Event e, List<InputTick> route, Caps caps)
         {
             InputTick k = route[e.Tick];
@@ -152,12 +143,6 @@ namespace IGTAP.EngineSim.Cli
         static readonly int[] Holds = { 1, 3, 6, 10, 16, 24, 30, 40 }, DashHolds = { 3, 6, 10, 16, 24 }, BounceHolds = { 3, 6, 10, 16 }, ClipHolds = { 0, 3, 6, 9, 12, 16, 20, 26 };
         static readonly float[] ClipFlicks = { .3f, .35f, .4f, .45f, .5f, .55f }, ClipBacks = { .3f, .4f, .5f, .65f, 1f }, TurnAways = { .3f, .5f, .7f, 1f };
 
-        /// <summary>
-        /// The planner primitive at this contact that makes the input: its start `at` anywhere in the contact's window, the input at
-        /// the kind's own offset from `at` with a value it makes (the jump's holds, the dash jump's frames 1-4, the primed dash 1-6
-        /// after its jump, the superbounce's jump 0-5 after its dash, the wall clip's flick, jump and hold, the turn away, the gate
-        /// tap, the omnidash kinds' aims and frames). The primitive's coast (the stick full one way from `at`) makes a full x there.
-        /// </summary>
         static string Graft(Humanizer.Event e, List<InputTick> route, (int tick, Contact kind) c, Caps caps)
         {
             if (!Planner.Primitives.TryGetValue(c.kind, out var w)) return null;
@@ -181,7 +166,6 @@ namespace IGTAP.EngineSim.Cli
         {
             float v = e.Value;
             bool full = Math.Abs(v) == 1f;
-            // Every graft's coast: the stick full one way from its start, y as it was.
             if (e.Kind == Humanizer.Kind.StickX && o == 0 && full) return true;
             switch (kind)
             {
@@ -238,7 +222,6 @@ namespace IGTAP.EngineSim.Cli
             return false;
         }
 
-        /// <summary>A mined window of this contact kind with the same input at the event's offset from the contact (±the graft jitter).</summary>
         static string Mined(Humanizer.Event e, List<InputTick> route, (int tick, Contact kind) c, TechPattern[] patterns)
         {
             InputTick k = route[e.Tick];

@@ -10,11 +10,6 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// probe &lt;trace.json&gt; &lt;probe.json&gt; [--out file]: set up one state (the trace's start, optionally moved or loaded from a
-    /// studio savestate), then run branches of inputs from it and log every physics tick. Optional 1x frame modelling:
-    /// Update frames between ticks and the dash freeze's Update frames, which turbo and the default offline run never have.
-    /// </summary>
     static class Probe
     {
         const BindingFlags Fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -30,7 +25,6 @@ namespace IGTAP.EngineSim.Cli
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(args[1]));
             JsonElement probe = doc.RootElement;
             if (probe.TryGetProperty("start", out JsonElement start)) DemoStart.ApplyStart(sim, start, Path.GetDirectoryName(Path.GetFullPath(args[1])));
-            // base: inputs played once, unlogged, whose end state every branch starts from (a long Full-TAS prefix).
             List<InputTick> baseTicks = Ticks(probe, "base");
             if (baseTicks.Count > 0)
             {
@@ -40,7 +34,6 @@ namespace IGTAP.EngineSim.Cli
 
             List<InputTick> prefix = Ticks(probe, "prefix");
             int extraTicks = probe.TryGetProperty("extraTicks", out JsonElement e) ? e.GetInt32() : 30;
-            // frames: also a row per rendered frame (kind "frame", its blend alpha, still in a freeze or pause), logged before its tick's row.
             bool frames = probe.TryGetProperty("frames", out JsonElement fr) && fr.GetBoolean();
             string[] extraFields = probe.TryGetProperty("fields", out JsonElement fe) ? fe.EnumerateArray().Select(x => x.GetString()).ToArray() : Array.Empty<string>();
             FieldInfo[] extraInfos = extraFields.Select(n => typeof(Movement).GetField(n, Fields)
@@ -77,8 +70,6 @@ namespace IGTAP.EngineSim.Cli
 
         static readonly FieldInfo Dir = typeof(Movement).GetField("dashDirection", Fields);
 
-        /// <summary>One logged physics tick: world position, Velocity, momentum, body velocity, ground/wall, mode, dash, facing, the
-        /// course timer (null while no course is timing), extra fields.</summary>
         internal static Dictionary<string, object> Row(Simulation sim, int step, string[] extraFields, FieldInfo[] extraInfos)
         {
             WorldPos p = sim.PlayerWorld;
@@ -94,7 +85,6 @@ namespace IGTAP.EngineSim.Cli
                 ["dash"] = pl.dashActive, ["f"] = pl.framesSinceLastDash, ["facingRight"] = pl.facingRight,
                 ["dashDir"] = new[] { Round(d.x), Round(d.y) },
                 ["courseTime"] = sim.TimingCourse() is courseScript timing ? (object)Round(Simulation.CourseTime(timing)) : null,
-                // The zone loaded, the RNG's last word and the atom grid's calls so far: a zone load's frame against the 1x probe's zone rows.
                 ["zone"] = sim.World.All<ZoneLoader>().FirstOrDefault()?.activeZone ?? -1, ["random"] = UnityEngine.Random.state.s3,
                 ["gridCalls"] = sim.Shop.Economy?.GridCalls ?? -1,
             };

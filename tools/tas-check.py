@@ -26,7 +26,6 @@ def live():
 
 
 def held(cursor=None, timeout=120):
-    """The session's state once it holds (at `cursor` when given)."""
     end = time.time() + timeout
     while time.time() < end:
         tas = live().get("tas")

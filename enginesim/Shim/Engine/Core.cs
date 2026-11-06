@@ -125,7 +125,6 @@ namespace UnityEngine
         public bool activeInHierarchy { get { return m_ActiveInHierarchy; } }
         public bool CompareTag(string tag) { return this.tag == tag; }
 
-        /// <summary>Components attached anywhere so far: World.All's cache is good while this and its object count stand.</summary>
         public static int Attached;
 
         public void AttachInternal(Component component)

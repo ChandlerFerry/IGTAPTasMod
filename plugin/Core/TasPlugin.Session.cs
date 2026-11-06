@@ -17,7 +17,6 @@ namespace IGTAPTasMod
 {
     public sealed partial class TasPlugin
     {
-        /// <summary>Movement's field <paramref name="name"/> as AccessTools.Field finds it (null: none), cached in MovementFields.</summary>
         static FieldInfo MovementField(string name)
         {
             FieldInfo f;
@@ -332,8 +331,7 @@ namespace IGTAPTasMod
             VmanScript.vmanScore = 0.0;
             VmanScript.vmanTimeLeft = 0.0;
             VmanScript.VmanStatingUpgrades = null;
-            // A fresh install has no PlayerPrefs "OpenA2Door" (a savestate start: the savestate's), so the load's atom box Start
-            // leaves the atom room's door shut as a new player finds it (RULES.md, exception 13).
+            // No PlayerPrefs OpenA2Door on a fresh install, so the atom box Start leaves the door shut (RULES.md exception 13).
             SavestateService.SetAtomDoorKey(state?.openA2Door == true);
             SceneManager.LoadScene("Overworld");
             _newGameStart = null;
@@ -422,7 +420,6 @@ namespace IGTAPTasMod
             _newGamePhase = 3;
         }
 
-        /// <summary>A zip mover's reset (cleared by a Unity-run coroutine two FixedUpdates on): a start taken then holds it half done.</summary>
         static bool MoverResetting()
         {
             foreach (PlatformMover m in FindObjectsByType<PlatformMover>(FindObjectsSortMode.None)) if (MoverReset(m)) return true;
@@ -433,7 +430,6 @@ namespace IGTAPTasMod
         {
             if (_newGameAirStart != null)
             {
-                // Held in the air where the savestate put it (gravity moved it last tick), then counted as a rest.
                 SavestateResult held = SavestateService.Restore(player, _newGameAirStart);
                 if (!held.Success) { FailNewGame(held.Message); return false; }
                 Physics2D.SyncTransforms();
@@ -512,14 +508,11 @@ namespace IGTAPTasMod
                     + (run.savestate == null ? "" : "\"savestate\": \"" + run.savestate + "\"") + "} first.");
             return _newGameStart;
         }
-        /// <summary>A name's category part as unlocks ("WJ_DS" in any case, or an id): throws when it stands for none.</summary>
         internal static Caps CapsOf(string label)
         {
             return Caps.TryParse(label, out Caps caps) ? caps : Caps.Parse(label == null ? "" : label.ToUpperInvariant());
         }
 
-        /// <summary>The largest step of <see cref="Categories.Ladder"/> this unlock set has (RULES.md 18): courses.json's
-        /// minCapabilities/maxCapabilities name these, never anything above the ladder's top.</summary>
         internal static string LadderStepFor(Caps unlocks)
         {
             for (int i = Categories.Ladder.Length - 1; i > 0; i--)
@@ -527,8 +520,6 @@ namespace IGTAPTasMod
             return Categories.Ladder[0];
         }
 
-        /// <summary>The fields a category sets from its own unlocks (RULES.md 10-13): the player's abilities, the refill
-        /// orbs and zip movers it has, and the coloured blocks' start below block swap.</summary>
         internal static IEnumerable<(string field, object value)> CategoryAbilities(string caps)
         {
             Caps unlocks = Caps.Parse(caps);
@@ -536,24 +527,17 @@ namespace IGTAPTasMod
                 ("maxAirDashes", unlocks.Dashes), ("airDashesLeft", unlocks.Dashes),
                 ("doubleJumpUnlocked", unlocks.DoubleJump), ("maxAirJumps", unlocks.AirJumps), ("airJumpsLeft", unlocks.AirJumps),
                 ("blockSwapUnlocked", unlocks.BlockSwap), ("omniDashUnlocked", unlocks.Omni),
-                // ORB has every refill orb (RULES.md 11): the orbs' unlock box and the "more orbs" box (1 each) plus
-                // Area 1's overgrowth (+1 more orbs, upgradeBox.cs:836), so every orb's ActivationSequence (0-2) is under their
-                // sum and dash, jump and full refill orbs are all on. ZIP has the zip movers. Nothing else turns either on.
+                // ORB is the orb unlock box + more-orbs box + Area 1 overgrowth (upgradeBox.cs:836); ZIP the zip movers; nothing else.
                 (GlobalUpgradeField(globalStats.globalUpgradeSet.unlockJiggleDrops), unlocks.Orbs ? 1.0 : 0.0),
                 (GlobalUpgradeField(globalStats.globalUpgradeSet.moreRefreshOrbs), unlocks.Orbs ? 2.0 : 0.0),
                 (GlobalUpgradeField(globalStats.globalUpgradeSet.zipMoversUnlocked), unlocks.Zip ? 1.0 : 0.0) };
-            // Without block swap the blocks start unswapped, as a new game has them (Movement.Start: blue active); with it the
-            // game's own respawn sets them (isBlueActiveOnRespawn).
+            // Without BS the blocks start unswapped (Movement.Start: blue active); with BS the game's respawn sets them (RULES.md 13).
             if (!unlocks.BlockSwap) abilities.Add((BlueActiveField, true));
             return abilities;
         }
 
-        /// <summary>What a run changes on its way: a category sets these at its start but nothing holds them all run, so the
-        /// gate compares the unlocks only (RULES.md 10).</summary>
         internal static readonly string[] CategoryRunState = { "airDashesLeft", "airJumpsLeft", BlueActiveField };
 
-        /// <summary>Sets the category's abilities (the values before, to put back) and the movers' start: <see cref="ResetZipMovers"/>
-        /// for <paramref name="course"/> (null: a start that is no course's, a lab's).</summary>
         internal static List<(string field, object value)> ApplyAbilities(Movement movement, string caps, CourseDef course)
         {
             var saved = new List<(string, object)>();
@@ -571,16 +555,7 @@ namespace IGTAPTasMod
         static readonly FieldInfo MoverBody = AccessTools.Field(typeof(PlatformMover), "body");
         static readonly string[] MoverFlags = { "isPhaseChangeInProgess", "onCooldown", "exitedLastFrame", "reset" };
 
-        /// <summary>
-        /// Every zip mover at its first stop, still, as a game load has it (PlatformMover.Awake: JumpToState(0)). Nothing in the
-        /// game puts a mover back after it moved (a zone load keeps its stop), so a category start sets it: turbo, the offline
-        /// export and playback all begin with the movers in the same place. Not JumpToState itself: its coroutine keeps
-        /// `reset` on for two physics steps, which a turbo snapshot would capture and keep. Then the atom room's door as the
-        /// load's <c>upgradeBox.Start</c> leaves it: open when the save bought the first atom (the box's TimesUsed, PlayerPrefs
-        /// OpenA2Door, only read), and on Courses 6-15 always (RULES.md 21, <see cref="CourseStart.AssumesAtomDoor"/>).
-        /// Nothing is bought and nothing written to PlayerPrefs or the save; the door keeps that stop in the session until the
-        /// next category start or a reload.
-        /// </summary>
+        // Set movers to stop 0 directly, not JumpToState: its coroutine keeps `reset` on two steps, which a snapshot would keep.
         static void ResetZipMovers(CourseDef course)
         {
             foreach (PlatformMover mover in FindObjectsByType<PlatformMover>(FindObjectsInactive.Include, FindObjectsSortMode.None))
@@ -612,8 +587,6 @@ namespace IGTAPTasMod
                 if (!_playbackSavedAbilities.ContainsKey(field)) _playbackSavedAbilities[field] = value;
         }
 
-        /// <summary>The save's own unlocks (the values a playback's start saved first; while a new game holds the world, the
-        /// save's from before it loaded), whatever set: not necessarily a category's.</summary>
         private Caps SaveUnlocks(Movement movement)
         {
             if (_newGameSession && _newGameSaveUnlocks.HasValue) return _newGameSaveUnlocks.Value;

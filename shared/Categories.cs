@@ -5,13 +5,6 @@ using System.Text.RegularExpressions;
 
 namespace IGTAPTasMod
 {
-    /// <summary>
-    /// A category's unlocks (RULES.md 10-12). Its label lists them in a fixed order, each at most once:
-    /// <c>WJ</c> wall jump, <c>DS</c>/<c>DS2</c>.. air dashes, <c>DJ</c>/<c>DJ2</c>.. air jumps, <c>BS</c> block swap on dash,
-    /// <c>ORB</c> every refill orb, <c>ZIP</c> the zip movers, <c>OM</c> the omnidirectional dash; <c>NONE</c> when empty.
-    /// One label per unlock set and back (<c>WJ_DS2_BS_ZIP_OM</c>); the id is the label lowercased without underscores
-    /// (<c>wjds2bszipom</c>), the form file names, forced-paths.json and the HTTP API's "capabilities" use.
-    /// </summary>
     public struct Caps : IEquatable<Caps>
     {
         public bool WallJump;
@@ -25,7 +18,6 @@ namespace IGTAPTasMod
         public bool Dash { get { return Dashes > 0; } }
         public bool DoubleJump { get { return AirJumps > 0; } }
 
-        /// <summary>Route-name category part for regexes; <see cref="TryParse"/> decides whether it is a category.</summary>
         public const string LabelPattern = "[A-Z][A-Z0-9_]*";
 
         static readonly Regex IdGrammar = new Regex(
@@ -49,8 +41,6 @@ namespace IGTAPTasMod
             return parts.Count == 0 ? none : string.Join(sep, parts);
         }
 
-        /// <summary>A canonical label (<c>WJ_DS2_OM</c>) or id (<c>wjds2om</c>); false for anything else, including the tokens
-        /// out of order, <c>DS1</c>, and block swap or the omnidash without a dash.</summary>
         public static bool TryParse(string text, out Caps caps)
         {
             caps = default(Caps);
@@ -85,7 +75,6 @@ namespace IGTAPTasMod
             return caps;
         }
 
-        /// <summary>Every unlock of this one is in <paramref name="other"/> (counts no higher): a narrower category.</summary>
         public bool IsSubsetOf(Caps other)
         {
             return (!WallJump || other.WallJump) && Dashes <= other.Dashes && AirJumps <= other.AirJumps
@@ -103,16 +92,11 @@ namespace IGTAPTasMod
         public static bool operator !=(Caps a, Caps b) { return !a.Equals(b); }
     }
 
-    /// <summary>Where a category is run.</summary>
     public enum CategoryScope
     {
-        /// <summary>A step of <see cref="Categories.Ladder"/>: run where it lies in the target's minCapabilities-maxCapabilities
-        /// range (courses.json).</summary>
         Range,
-        /// <summary>Run on every course, bonus and transition.</summary>
         All,
-        /// <summary>Run only on <see cref="CategoryDef.Targets"/>: where the refill orbs or zip movers it adds are in reach.
-        /// Anywhere else it plays exactly as a category the target already runs, and would only duplicate its record.</summary>
+        // Targets scope: elsewhere it plays as a category the target already runs, duplicating that record (RULES.md 19).
         Targets,
     }
 
@@ -120,15 +104,12 @@ namespace IGTAPTasMod
     {
         public readonly Caps Caps;
         public readonly CategoryScope Scope;
-        /// <summary>A <see cref="CategoryScope.Targets"/> category's targets by courses.json token (a course's id, a bonus's or
-        /// transition's name); empty for the other scopes.</summary>
         public readonly string[] Targets;
         public string Id { get { return Caps.Id; } }
         public string Label { get { return Caps.Label; } }
         public CategoryDef(string label, CategoryScope scope) { Caps = Caps.Parse(label); Scope = scope; Targets = new string[0]; }
         public CategoryDef(string label, params string[] targets) { Caps = Caps.Parse(label); Scope = CategoryScope.Targets; Targets = targets; }
 
-        /// <summary>It is run on the target with this courses.json token and ladder range (RULES.md 17-19, 26).</summary>
         public bool RunsOn(string token, int minStep, int maxStep)
         {
             if (Scope == CategoryScope.All) return true;
@@ -137,28 +118,17 @@ namespace IGTAPTasMod
             return step >= minStep && step <= maxStep;
         }
 
-        /// <summary>The token is in the list; "tree*" stands for every tree transition (tree&lt;L&gt;to&lt;C&gt;).</summary>
         static bool Listed(string[] targets, string token)
         {
             return Array.IndexOf(targets, token) >= 0 || token.StartsWith("tree") && Array.IndexOf(targets, "tree*") >= 0;
         }
     }
 
-    /// <summary>
-    /// The categories that exist, in display order (the batch solver's columns). Only these can be solved, saved or judged;
-    /// any other unlock set is still a valid <see cref="Caps"/> (a Full-TAS window's, a tech's requirement) but no category.
-    /// Adding a category is one line here, plus a capture of its start state (tools/enginesim-capture.py start).
-    /// </summary>
     public static class Categories
     {
-        /// <summary>The unlocks in the order the game sells them: courses.json's minCapabilities/maxCapabilities are steps of it.</summary>
         public static readonly string[] Ladder = { "none", "wj", "wjds", "wjdsdj", "wjdsdjbs" };
 
-        /// <summary>Targets with refill orbs in reach, and with zip movers (RULES.md 19): the game's own grouping (an orb
-        /// or mover under <c>Courses/course N</c>, <c>OvergrowthStuff/cN</c>) or the target's searched runs and routes (enginesim
-        /// <c>map</c>) coming within 150 u of one; a target never searched keeps one only if a straight-line visit at 3000 u/s
-        /// fits inside its ladder record. Courses 11-15 count their base course's maps, with the overgrown objects. The tree
-        /// transitions start at bonus11's checkpoint and count as it does.</summary>
+        // Orb/zip reach (RULES.md 19): game grouping or searched routes within 150 u; 11-15 use base maps; trees as bonus11.
         static readonly string[] OrbTargets =
         {
             "4", "6", "7", "8", "9", "10", "12", "14", "15",
@@ -168,19 +138,14 @@ namespace IGTAPTasMod
         {
             "4", "7", "8", "10", "14", "15", "bonus4", "bonus9", "bonus10", "bonus11", "bonus12", "bonus13", "bonus14", "tree*",
         };
-        /// <summary>Targets whose end needs the zip movers: they run only the categories with them, whatever their ladder range.</summary>
+        // These targets' ends need the zip movers: only categories with ZIP run there, whatever their ladder (RULES.md 19).
         static readonly string[] ZipOnlyTargets = { "bonus4", "bonus12" };
 
-        /// <summary>courses.json bonuses that run no category (the batch solver has no row for them): their end is an unlock
-        /// box, not a bonus stretch (bonus17 refill orbs, bonus18 clone dust, bonus19 buy max, bonus20/21 the 1x and ∞x
-        /// Start a VMAN speedrun boxes, bonus23 block swap on dash, unlockJumpDash the jump and dash refresh orbs at The
-        /// Tree level 10). Full-TAS <c>reward:</c> goals still name them.</summary>
+        // Bonuses ending at an unlock box run no category (RULES.md 19); bonus17-21, 23 and unlockJumpDash.
         static readonly string[] NoCategoryTargets = { "bonus17", "bonus18", "bonus19", "bonus20", "bonus21", "bonus23", "unlockJumpDash" };
 
-        /// <summary>The target with this courses.json token runs categories at all.</summary>
         public static bool IsTarget(string token) { return Array.IndexOf(NoCategoryTargets, token) < 0; }
 
-        /// <summary>The category can finish the target at all (<see cref="ZipOnlyTargets"/>).</summary>
         public static bool CanFinish(string token, Caps caps) { return caps.Zip || Array.IndexOf(ZipOnlyTargets, token) < 0; }
 
         public static readonly CategoryDef[] All =
@@ -190,13 +155,9 @@ namespace IGTAPTasMod
             new CategoryDef("WJ_DS", CategoryScope.Range),
             new CategoryDef("WJ_DS_DJ", CategoryScope.Range),
             new CategoryDef("WJ_DS_DJ_BS", CategoryScope.Range),
-            // Without an orb in reach it plays as WJ_DS_DJ_BS.
             new CategoryDef("WJ_DS_DJ_BS_ORB", OrbTargets),
-            // Without a zip mover in reach it plays as WJ_DS_DJ_BS.
             new CategoryDef("WJ_DS_DJ_BS_ZIP", ZipTargets),
-            // No other category drops the air jump or adds a second dash, so these two differ on every target.
             new CategoryDef("WJ_DS_BS_ZIP_OM", CategoryScope.All),
-            // Without an orb in reach it plays as WJ_DS_DJ_BS_ORB_ZIP_OM.
             new CategoryDef("WJ_DS_DJ_BS_ZIP_OM", OrbTargets),
             new CategoryDef("WJ_DS2_BS_ZIP_OM", CategoryScope.All),
             new CategoryDef("WJ_DS_DJ_BS_ORB_ZIP_OM", CategoryScope.All),
@@ -211,7 +172,6 @@ namespace IGTAPTasMod
             return index;
         }
 
-        /// <summary>The category with this id or label, or null.</summary>
         public static CategoryDef Find(string idOrLabel)
         {
             return Caps.TryParse(idOrLabel, out Caps caps) && ById.TryGetValue(caps.Id, out CategoryDef def) ? def : null;
@@ -219,14 +179,8 @@ namespace IGTAPTasMod
 
         public static bool IsCategory(string idOrLabel) { return Find(idOrLabel) != null; }
 
-        /// <summary>
-        /// A two-way course's directions (a course with both blocks in forced-paths.json, Courses 1-3): a route of a direction
-        /// never cuts that block's boxes. Its best is a direction record, <c>&lt;course&gt;_&lt;CAT&gt; &lt;direction&gt; &lt;time&gt;</c>,
-        /// beside the category record, so a Full-TAS run reaching the course in another state has both to pick from.
-        /// </summary>
         public static readonly (string name, string block)[] Directions = { ("forwards", "avoid-backwards"), ("backwards", "avoid-forwards") };
 
-        /// <summary>The step of <see cref="Ladder"/> (-1 when the id isn't one).</summary>
         public static int LadderStep(string id) { return Array.IndexOf(Ladder, id); }
     }
 }

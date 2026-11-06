@@ -9,28 +9,13 @@ using IGTAPTasMod;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// <c>timeloss floor &lt;trace.json&gt; &lt;route.json&gt; [--json]</c> (enginesim/README.md "Time loss"): per segment of a course route
-    /// (<see cref="Difficulty.Anchors(Simulation, List{InputTick}, SimSnapshot, bool)"/> on its own inputs), a floor on its physics ticks
-    /// as the old <c>fulltas --auto</c>'s per-goal model bounded a goal: the walkable distance
-    /// (<see cref="DistanceField"/>, 8 u cells, through the air as through a corridor) from where the segment starts, or lands after a
-    /// teleport in it (a tick more), to the next anchor's place (the last segment of a finished route: the finish; while a course's timer
-    /// is off, by a start gate and on from where the route crossed it) over the top path speed with the segment's unlocks (the fastest
-    /// <see cref="SpeedWindow"/>-tick mean of the route's path and of the speed probes from every anchor). A model, not a
-    /// proof: a peak above that mean beats it. Slack = the route's ticks - the floor, and the course timer's share of both (the timed
-    /// floor: from where the timer starts in the segment); the timed segments by timed slack first, then the untimed ones by slack.
-    /// </summary>
     static class TimeLossFloor
     {
         const string Usage = "usage: timeloss floor <trace.json> <route.json> [--json]";
-        /// <summary>The field cell (plan's --field-cell default).</summary>
         const float Cell = 8f;
         const int SpeedWindow = 10;
-        // A tick's move longer than twice what the player's speed (|Velocity + momentum|) covers in it, plus this slack, is a quick
-        // restart's or a respawn's teleport, not movement.
         const float TeleportSlack = 20f;
 
-        /// <summary>The player on one physics tick: where (world), |Velocity + momentum| and its unlocks.</summary>
         struct Sample
         {
             public long Tick;
@@ -39,8 +24,6 @@ namespace IGTAP.EngineSim.Cli
             public string Caps;
         }
 
-        /// <summary>The fastest path speed (units per physics tick over SpeedWindow ticks, teleports excluded) per unlock set, into
-        /// <paramref name="top"/> where it beats what is there.</summary>
         static void Sustained(List<Sample> s, float dt, Dictionary<string, (float speed, string how)> top, string how)
         {
             float sum = 0f;
@@ -69,8 +52,6 @@ namespace IGTAP.EngineSim.Cli
             return new InputTick { x = x, y = y, held = held || press, press = press, release = release && !held && !press };
         }
 
-        /// <summary>The moves that build speed, played on their own: a dash each way, dash jumps, and with the omnidash the down-dash
-        /// landing chain of 2-6 links, both sides.</summary>
         static IEnumerable<(List<InputTick> moves, int links)> SpeedMoves(bool omni)
         {
             foreach (float side in new[] { -1f, 1f })
@@ -87,7 +68,6 @@ namespace IGTAP.EngineSim.Cli
                     yield return (super, 0);
                 }
                 if (!omni) continue;
-                // Planner.BounceChain's shape: a dash straight down with a jump frame, the jump out of the landing held 3 ticks, air.
                 foreach (int links in new[] { 2, 3, 4, 5, 6 })
                     foreach (int gap in new[] { 3, 7 })
                         foreach (int jump in new[] { 3, 6 })
@@ -110,9 +90,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>One segment: anchors <see cref="Index"/> and the next, their input ticks and physics ticks, its ticks and the course
-        /// timer's share of them, its floor and the timer's share of that (from where the timer starts in it, else its start), the
-        /// distance and top speed the floor comes from.</summary>
         internal sealed class Row
         {
             public int Index, From, To;
@@ -127,11 +104,9 @@ namespace IGTAP.EngineSim.Cli
         {
             public string Route;
             public bool Finished;
-            /// <summary>The course timer at the finish (0: not finished) and the run's physics ticks.</summary>
             public float Time;
             public long Ticks;
             public Dictionary<string, (float speed, string how)> Speeds;
-            /// <summary>In route order.</summary>
             public List<Row> Rows;
         }
 
@@ -144,7 +119,6 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        /// <summary>The route's segments with their floors, measured on a simulation of its own thread (the game's statics are per thread).</summary>
         internal static Result Measure(string tracePath, string routePath)
         {
             var (header, labels, inputs) = TechsUsed.Load(tracePath, routePath, "timeloss floor");
@@ -170,12 +144,10 @@ namespace IGTAP.EngineSim.Cli
             List<Difficulty.Anchor> anchors = Difficulty.Anchors(sim, inputs, null, true, out TechSteps record, out RunResult run, out _);
             int segments = anchors.Count - 1;
             float dt = sim.World.FixedDeltaTime;
-            // The course timer's ticks up to a physics tick: from the last step it turns on in (a re-crossed start gate restarts it), as split counts them.
             long timerFrom = sim.TimedFromRunStart ? 0 : -1;
             for (int i = 0; i < record.Steps.Count && !sim.TimedFromRunStart; i++)
                 if (record.Steps[i].Timing && (i == 0 || !record.Steps[i - 1].Timing)) timerFrom = record.Steps[i].Physics;
             long Timed(long physics) => timerFrom < 0 ? 0 : Math.Max(0, physics - timerFrom);
-            // Segment i heads for anchor i + 1's place: field waypoint i, the finish itself (past the waypoints) for a finished route's last.
             var via = new List<OfflineSolver.Box>();
             for (int i = 1; i < anchors.Count - (run.Finished ? 1 : 0); i++)
             {
@@ -191,8 +163,6 @@ namespace IGTAP.EngineSim.Cli
                 return i;
             }
 
-            // The field's grid covers every place asked about so far and coarsens as it grows: a first pass grows it over the whole
-            // route, so the measured pass has one grid from start to end.
             bool gates = sim.Goals == null && !sim.TimedFromRunStart;
             Profile(sim, inputs, anchors, field, SegmentAt, gates);
             (List<Sample> path, float[] dist, float[] gate) = Profile(sim, inputs, anchors, field, SegmentAt, gates);
@@ -220,14 +190,11 @@ namespace IGTAP.EngineSim.Cli
                     float dx = path[k].X - target.X, dy = path[k].Y - target.Y;
                     return MathF.Sqrt(dx * dx + dy * dy);
                 }
-                // A course timer that starts in the segment starts at a start gate: the walk before it goes there first, then on from
-                // where the route crossed it.
                 int crossing = timerFrom > from.Physics && timerFrom < to.Physics ? path.FindIndex(x => x.Tick == timerFrom) : -1;
                 float Walk(int k) => k < crossing && !float.IsNaN(gate[k]) ? gate[k] + Dist(crossing) : Dist(k);
                 row.Caps = path[start].Caps;
                 row.VTop = speeds.TryGetValue(row.Caps, out var v) ? Math.Max(1f, v.speed) : 1f;
                 row.Distance = Walk(start);
-                // Where the segment can be started from: its first tick, and after each teleport in it (a quick restart costs a tick).
                 double best = row.Distance / row.VTop;
                 for (int k = start + 1; k < path.Count && path[k].Tick < to.Physics; k++)
                     if (Jumped(path[k - 1], path[k], dt)) best = Math.Min(best, 1 + Walk(k) / row.VTop);
@@ -240,9 +207,6 @@ namespace IGTAP.EngineSim.Cli
             };
         }
 
-        /// <summary>The route replayed: the player at the start and after every physics tick up to its last anchor (world place, speed
-        /// |Velocity + momentum|, unlocks), and each one's walkable distance to its segment's target and, with <paramref name="gates"/>, to
-        /// the course's start gates (NaN where the field has none).</summary>
         static (List<Sample> path, float[] dist, float[] gate) Profile(Simulation sim, List<InputTick> inputs, List<Difficulty.Anchor> anchors,
             DistanceField field, Func<long, int> segmentAt, bool gates)
         {
@@ -272,7 +236,6 @@ namespace IGTAP.EngineSim.Cli
             return (path, dist.ToArray(), gate.ToArray());
         }
 
-        /// <summary>The speed probes (<see cref="SpeedMoves"/>) from the route's state at an anchor, into the top speeds.</summary>
         static void Probe(Simulation sim, List<InputTick> inputs, Difficulty.Anchor at, float dt, Dictionary<string, (float speed, string how)> speeds)
         {
             if (at.State == null) return;
@@ -291,7 +254,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>The timed segments by timed slack, most first, then the untimed ones by slack.</summary>
         internal static IEnumerable<Row> Ranked(Result r) => r.Rows.OrderByDescending(x => x.Timed > 0).ThenByDescending(x => x.Timed > 0 ? x.TimedSlack : x.Slack)
             .ThenBy(x => x.Index);
 

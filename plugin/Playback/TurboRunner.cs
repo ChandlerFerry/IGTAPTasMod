@@ -18,8 +18,6 @@ namespace IGTAPTasMod
         static readonly MethodInfo VmanFixedUpdate = AccessTools.Method(typeof(VmanScript), "FixedUpdate");
         static readonly MethodInfo OrbFixedUpdate = AccessTools.Method(typeof(JiggleDropScript), "FixedUpdate");
         static readonly MethodInfo OrbState = AccessTools.Method(typeof(JiggleDropScript), "SetActiveVisualState");
-        // The per-tick calls as open delegates, made on the first run (after TasPlugin's patches, which they go through as
-        // Unity's own calls do).
         static Action<Movement> _fixedUpdate, _update;
         static Action<courseScript> _courseFixedUpdate;
         static Action<VmanScript> _vmanFixedUpdate;
@@ -27,7 +25,6 @@ namespace IGTAPTasMod
         static Action<FloatingOrigin> _originLateUpdate;
         static Action<globalStats> _statsFixedUpdate;
         static Action<AtomColliderSystem> _atomUpdate;
-        // Invoke(name) targets' methods by type and name, for the pending ones turbo runs itself.
         static readonly Dictionary<(Type, string), MethodInfo> InvokedMethods = new Dictionary<(Type, string), MethodInfo>();
 
         static void MakeCalls()
@@ -52,11 +49,7 @@ namespace IGTAPTasMod
         const uint PeekNoRemove = 0x0000, PeekNoYield = 0x0002;
         const long KeepAliveMs = 250;
 
-        /// <summary>
-        /// A long run (a Full-TAS judge is tens of seconds of one frame) holds the main thread, and Windows calls a window
-        /// that hasn't looked at its message queue for 5 s "Not Responding". Looking without taking a message (PM_NOREMOVE)
-        /// keeps it responsive and runs no frame, Update, FixedUpdate or coroutine, so nothing of the run moves.
-        /// </summary>
+        // Windows flags a window ignoring its message queue for 5 s Not Responding; a PM_NOREMOVE peek keeps it alive.
         internal static void KeepWindowAlive(System.Diagnostics.Stopwatch clock, ref long next)
         {
             if (clock.ElapsedMilliseconds < next) return;
@@ -64,7 +57,6 @@ namespace IGTAPTasMod
             if (Application.platform == RuntimePlatform.WindowsPlayer) PeekMessage(out _, IntPtr.Zero, 0, 0, PeekNoRemove | PeekNoYield);
         }
 
-        /// <summary>What <c>MonoBehaviour.Invoke(method)</c> on the target would run: its type's method of that name, none if it has none.</summary>
         static void CallInvoked(MonoBehaviour target, string method)
         {
             Type type = target.GetType();
@@ -78,37 +70,19 @@ namespace IGTAPTasMod
         static readonly MethodInfo OriginLateUpdate = AccessTools.Method(typeof(FloatingOrigin), "LateUpdate");
         static readonly AccessTools.FieldRef<FloatingOrigin, bool> OriginRebasing = AccessTools.FieldRefAccess<FloatingOrigin, bool>("RebaseInProgress");
         static readonly List<(int due, MonoBehaviour target, string method)> Pending = new List<(int, MonoBehaviour, string)>();
-        /// <summary>
-        /// The teleporters polling the stick (TeleporterScript's InvokeRepeating("manualUpdate", 0, 0.02) from its trigger, until
-        /// its exit's CancelInvoke): the tick each runs next, in the Update phase of that tick's first rendered frame, after the
-        /// Updates, as the atom grid's call; one started in a tick's step runs in that tick's frame. The engine's
-        /// Scheduler.FireInUpdate the same.
-        /// </summary>
         static readonly List<(int due, TeleporterScript target)> Polls = new List<(int, TeleporterScript)>();
         const string PollCall = "manualUpdate";
         static readonly List<Routine> Routines = new List<Routine>();
         static readonly AccessTools.FieldRef<WaitForSeconds, float> WaitSeconds = AccessTools.FieldRefAccess<WaitForSeconds, float>("m_Seconds");
         static readonly Func<object, object> CloneObject = (Func<object, object>)Delegate.CreateDelegate(typeof(Func<object, object>),
             typeof(object).GetMethod("MemberwiseClone", BindingFlags.Instance | BindingFlags.NonPublic));
-        // FloatingOrigin.MoveOrigin, started by its LateUpdate and waiting for the next physics step (WaitForFixedUpdate).
         static IEnumerator _rebase;
         static int _tick;
-        /// <summary>The run's rendered frames so far, a held frame (a freeze's, a pause's) included: the tick's physics step is in
-        /// its first frame. A <c>yield return null</c> resumes in a later frame than the one it yielded in.</summary>
         static int _frame;
-        // Interpolation (MacroEngine.FrameGrid, as enginesim's Simulation): the body's position at the start and end of the
-        // last physics step, the shortest TimeStop the tick asked for (its freeze's Update frames), and the pause menu's
-        // frames a route step opens after the tick (MacroStep.pauseFrames, MacroEngine.TakePause).
         static Vector2 _stepFrom, _stepTo;
         static float _freezeFor = -1f;
         static int _pauseFrames, _pauseAfter;
 
-        /// <summary>
-        /// The route's pause after this tick's FixedUpdate (TasPlugin.AfterMovementFixedUpdate): at 1x the menu stops time
-        /// and Movement.Update runs once per frame it is open, at the blend of the frame it holds (the tick's first, or the
-        /// one <paramref name="afterFrames"/> frames in: MacroEngine.FrameRepeats); the step-up in it lifts a turned dash
-        /// every frame (the pauselift).
-        /// </summary>
         public static void Pause(int frames, int afterFrames)
         {
             if (!Active || frames <= _pauseFrames) return;
@@ -140,8 +114,6 @@ namespace IGTAPTasMod
                 prefix: new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(BeforeTimeStop))));
             var modelDeltaTime = new HarmonyMethod(AccessTools.Method(typeof(TurboRunner), nameof(UseModelDeltaTime)));
             harmony.Patch(AccessTools.EnumeratorMoveNext(AccessTools.Method(typeof(PlatformMover), "IE_AdvanceToNextState")), transpiler: modelDeltaTime);
-            // TreeSegmentActivationComponent.growTreePart's local IE_Grow (TreeSegmentActivationComponent.cs:32-125). Found by the
-            // compiler's local-function name: a build that names it otherwise loses only this patch, not the ones after it.
             MethodInfo grow = AccessTools.FirstMethod(typeof(TreeSegmentActivationComponent), m => m.Name.Contains("IE_Grow"));
             MethodInfo growStep = grow == null ? null : AccessTools.EnumeratorMoveNext(grow);
             if (growStep != null) harmony.Patch(growStep, transpiler: modelDeltaTime);
@@ -157,10 +129,6 @@ namespace IGTAPTasMod
             PatchBlendReads(harmony);
         }
 
-        // RULES.md, exception 14: the game's reads of the player's position during a modelled frame. Every method of the
-        // scripts a turbo frame runs that read it (Movement's, its coroutines' included; courseScript.FixedUpdate's path;
-        // TeleporterScript's teleport) reads Transform.position through BlendRead, as do the plugin's hooks in those calls (a run's
-        // start pin, the TAS editor's trace, the overlay).
         static readonly Type[] BlendReaders = { typeof(Movement), typeof(courseScript), typeof(TeleporterScript) };
 
         static void PatchBlendReads(Harmony harmony)
@@ -189,10 +157,7 @@ namespace IGTAPTasMod
                 yield return instruction.Calls(getPosition) ? new CodeInstruction(System.Reflection.Emit.OpCodes.Call, read).MoveLabelsFrom(instruction).MoveBlocksFrom(instruction) : instruction;
         }
 
-        // The modelled frame's blend (MacroEngine.FrameGrid): while turbo runs a frame's game code, the player's transform
-        // reads there, as 1x's interpolation has it, until the game writes it. The transform itself stays on the body: a write
-        // would be synced into the Rigidbody2D, and any body write recomputes Box2D's sweep centre from the position, a float
-        // step off the one 1x carries from step to step.
+        // exception 14: turbo frames read the player's blend via BlendRead; a transform write moves Box2D's sweep centre.
         static Transform _blendOf, _readBack;
         static Vector3 _blendBase, _blendAt;
 
@@ -212,8 +177,6 @@ namespace IGTAPTasMod
 
         static void EndBlend() { _blendOf = null; }
 
-        /// <summary>What the player's transform would read back with <paramref name="at"/> written (through its parent, as a write
-        /// rounds), from a bare transform beside it: nothing of the player is written.</summary>
         static Vector3 ReadBack(Transform player, Vector2 at)
         {
             if (_readBack == null) _readBack = new GameObject("TurboReadBack") { hideFlags = HideFlags.HideInHierarchy }.transform;
@@ -222,16 +185,10 @@ namespace IGTAPTasMod
             return _readBack.position;
         }
 
-        // RULES.md, exception 12: the Start draws of what a run wakes. Unity runs a woken behaviour's Start before its
-        // first Update, in the rendered frame after the wake (the same frame when woken in the physics step, the next when
-        // woken at a frame's end), but a run is one Unity frame: its Start would draw after the run, at another point of the
-        // RNG's sequence than 1x's. Turbo draws them at the modelled frame (StartPass) and puts UnityEngine.Random's state
-        // back around Unity's later real Start (as TasPlugin.PresentationDraw does for exception 11).
+        // RULES.md exception 12: model Unity's Start draws at their 1x frame; a run is one Unity frame and would draw after it.
         static readonly Type[] StartDrawers = { typeof(LightFlicker), typeof(RandomAnimSpeedComponent), typeof(JiggleDropScript) };
-        /// <summary>The drawers, the atom collider (its Start recomputes NP) and the upgrade boxes (WokenStarts): whose Start a woken one waits for.</summary>
         static readonly Type[] StartWatched = StartDrawers.Concat(new[] { typeof(AtomColliderSystem), typeof(upgradeBox) }).ToArray();
 
-        /// <summary>Every watched behaviour whose Start Unity hasn't run nor a run modelled (the trace start's <c>neverStarted</c>).</summary>
         internal static IEnumerable<Behaviour> NeverStarted()
         {
             foreach (Type type in StartWatched)
@@ -239,24 +196,16 @@ namespace IGTAPTasMod
                     if (o is Behaviour b && !StartsRun.Contains(b) && !_startsModelled.Contains(b)) yield return b;
         }
         static readonly AccessTools.FieldRef<RandomAnimSpeedComponent, bool> AnimIsBroken = AccessTools.FieldRefAccess<RandomAnimSpeedComponent, bool>("isBroken");
-        /// <summary>Behaviours whose Start a run drew and Unity hasn't run yet (in snapshots: a restore before the wake undoes it).</summary>
         static HashSet<Behaviour> _startsModelled = new HashSet<Behaviour>();
-        /// <summary>Behaviours whose real Start Unity ran (it never runs again, whatever a restore puts back).</summary>
         static readonly HashSet<Behaviour> StartsRun = new HashSet<Behaviour>();
-        /// <summary>This run's candidates: drawing behaviours off at its start whose Start hasn't run or been drawn.</summary>
         static readonly List<Behaviour> StartWaiting = new List<Behaviour>();
 
-        /// <summary>StartPass is running a woken box's Start itself: not Unity's real one.</summary>
         static bool _modellingStart;
 
         static readonly AccessTools.FieldRef<upgradeBox, PlatformMover> BoxDoor = AccessTools.FieldRefAccess<upgradeBox, PlatformMover>("doorToOpen");
         static readonly AccessTools.FieldRef<PlatformMover, int> MoverStop = AccessTools.FieldRefAccess<PlatformMover, int>("indexInPositions");
 
-        /// <summary>Unity's real Start of a behaviour a run modelled: the RNG and an upgrade box's fields (cap, base cap, costs) as the
-        /// modelled Start left them, put back after it (RULES.md, exception 12), so it doesn't apply twice. Its door's stop
-        /// too: the Area 2 door box modelled while still for sale and bought later in the run has a real Start that jumps the
-        /// door it opened (upgradeBox.cs:260-263, PlatformMover.JumpToNextState: ZipEscape% from tick 73000, the door mid-opening
-        /// back at its first stop and still, the player landing on it).</summary>
+        // Real Start of a modelled behaviour: restore RNG and box fields, no double apply (exception 12; upgradeBox.cs:260).
         static void BeforeDrawingStart(Behaviour __instance, out (UnityEngine.Random.State rng, object[] box, PlatformMover door, int stop, Vector3 local)? __state)
         {
             __state = null;
@@ -285,14 +234,9 @@ namespace IGTAPTasMod
         static void CollectStartWaiting()
         {
             StartWaiting.Clear();
-            // On ones too: one woken just before the run (a category start's refill orbs, their LightFlicker) starts in the run's
-            // first frame at 1x, as the engine's first Start pass draws it (Economy's neverStarted).
             StartWaiting.AddRange(NeverStarted());
         }
 
-        /// <summary>A modelled frame's Start pass, before its Updates: each waiting behaviour now on draws what its Start draws
-        /// (LightFlicker.cs:26: 1; RandomAnimSpeedComponent.cs:16-21: 2, 3 when broken; JiggleDropScript.cs:41: 1), the atom
-        /// collider recomputes NP and an upgrade box runs the game's own Start (WokenStarts).</summary>
         static void StartPass()
         {
             for (int i = StartWaiting.Count - 1; i >= 0; i--)
@@ -303,13 +247,11 @@ namespace IGTAPTasMod
                 StartWaiting.RemoveAt(i);
                 if (b is upgradeBox box)
                 {
-                    // The game's own Start (upgradeBox.cs:199-298) at the modelled frame; Unity's after the run gets the box's fields put back.
                     if (WokenStarts.Unmodeled(box) is string why) { TasPlugin.AbortRun(why); continue; }
                     _modellingStart = true;
                     try { WokenStarts.Start.Invoke(box, null); }
                     finally { _modellingStart = false; }
                 }
-                // AtomColliderSystem.Start (AtomColliderSystem.cs:106-109) recomputes NP; Unity's own after the run does again.
                 else if (b is AtomColliderSystem) Singleton<globalStats>.Instance?.RecalcNpRewardPerTick();
                 else
                 {
@@ -320,26 +262,14 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>
-        /// Movement.Update's afterimages are presentation only (the offline engine cuts them, enginesim/cuts.txt), but in turbo
-        /// they ran on the real frame's Time.deltaTime, held for the whole run: a fast stretch could take all 21 pooled
-        /// sprites, and the next <c>inactiveAfterimages.Pop()</c> threw "Stack empty." out of the run. Turbo skips them, and
-        /// AtomColliderSystem.HandleMovement too (the atom sprites' easing, AtomColliderSystem.cs:251-262: presentation, which
-        /// the engine skips).
-        /// </summary>
+        // Skip afterimages and HandleMovement in turbo: held deltaTime drained the 21-sprite pool and threw Stack empty.
         static bool BeforeHandleAfterimages() { return !Active; }
 
-        /// <summary>
-        /// Two freezes the same tick run side by side and the shorter ends it (its end puts timeScale back), so the tick's
-        /// freeze is the shortest. The coroutine still runs (it stops time, as before).
-        /// </summary>
         static void BeforeTimeStop(float duration)
         {
             if (Active && (_freezeFor < 0f || duration < _freezeFor)) _freezeFor = duration;
         }
 
-        /// <summary>A zone activator started ZoneLoader.IE_Load and its _LoadZone hasn't run yet (Unity's or a run's): a trace start
-        /// can't carry it (EngineSimExport.WriteSnapshot refuses one).</summary>
         static bool _zoneLoadPending;
 
         static void BeforeLoadZone(ZoneLoader __instance, int zoneToLoad, bool force)
@@ -356,10 +286,7 @@ namespace IGTAPTasMod
             return false;
         }
 
-        // AtomColliderSystem's 0.4 s grid, OnEnable's InvokeRepeating("callAddNewAtom", 0, 0.4) (AtomColliderSystem.cs:111-115).
-        // Unity has no API for an Invoke's time left, so the game time (Time.time, the clock Invokes run on) of the grid's
-        // start and of its last call are kept: the next call is 0.4 s after the last, or at the start before any.
-        // Only Unity's own calls count (outside a run); turbo keeps the grid itself in a run (_atomDue).
+        // Unity has no API for an Invoke's time left, so keep the grid's start and last-call game times.
         static float _atomEnabledAt = float.NegativeInfinity, _atomLastCall = float.NegativeInfinity;
 
         static void AfterAtomEnable()
@@ -377,7 +304,6 @@ namespace IGTAPTasMod
         }
 
         const string AtomCall = "callAddNewAtom";
-        // OnEnable's repeat rate (AtomColliderSystem.cs:114).
         const float AtomRepeat = 0.4f;
 
         static AtomColliderSystem FindAtomCollider()
@@ -385,7 +311,6 @@ namespace IGTAPTasMod
             return UnityEngine.Object.FindAnyObjectByType<AtomColliderSystem>(FindObjectsInactive.Include);
         }
 
-        /// <summary>Seconds until the collider's Unity-run next callAddNewAtom, or null when none is pending (or its start wasn't seen).</summary>
         static float? AtomGridDueIn(AtomColliderSystem collider)
         {
             if (collider == null || float.IsNegativeInfinity(_atomEnabledAt) || !collider.IsInvoking(AtomCall)) return null;
@@ -393,30 +318,14 @@ namespace IGTAPTasMod
             return Mathf.Max(0f, next - Time.time);
         }
 
-        /// <summary>
-        /// The grid in a run, as the engine's Economy has it: the run tick in whose first rendered frame (after its Updates)
-        /// callAddNewAtom comes next (-1: none), then every 0.4 s (20 ticks); one tick before what AtomGridTicks counts. Unity's own InvokeRepeating runs on
-        /// Time.time, which stands still through a run (one Unity frame), so turbo takes the grid over: at the run's start
-        /// from a restore or the last run (<see cref="_atomHeldDue"/>) or else from Unity's (<see cref="AtomGridDueIn"/>),
-        /// and hands it back to Unity at the end (<see cref="HandAtomGrid"/>).
-        /// </summary>
         static int _atomDue = -1;
-        /// <summary>The grid's first call is due in this frame's coroutine pass (<see cref="BeforeInvokeRepeating"/>).</summary>
         static bool _atomNow;
         static int AtomRepeatTicks { get { return Math.Max(1, Mathf.FloorToInt(AtomRepeat / Time.fixedDeltaTime)); } }
-        /// <summary>The run started on a grid Unity ran but whose start wasn't seen (<see cref="AtomGridTicks"/> null) and nothing
-        /// in it has set or cancelled the grid since: a capture or the run's end leaves it Unity's (null), not cancelled (-1).</summary>
         static bool _atomUnseen;
         static AtomColliderSystem _atomCollider;
-        /// <summary>
-        /// The grid a restore or a run's end left, in ticks from the next tick (-1: none, null: Unity's, its start unseen),
-        /// exact while no game time has passed since (<see cref="_atomHeldAt"/>, Time.time then) and Unity hasn't called it.
-        /// </summary>
         static int? _atomHeldDue;
         static float _atomHeldAt = float.NaN;
 
-        /// <summary>The grid now, in ticks from the next tick, as <see cref="_atomHeldDue"/> counts it; outside a run read
-        /// from Unity's as the engine reads a trace start's (floor(dueIn / fixedDeltaTime)).</summary>
         static int? AtomGridTicks(AtomColliderSystem collider, int next, out float? dueIn)
         {
             dueIn = null;
@@ -427,10 +336,6 @@ namespace IGTAPTasMod
             return dueIn is float s ? Mathf.FloorToInt(s / Time.fixedDeltaTime) : (int?)null;
         }
 
-        /// <summary>
-        /// Turbo's grid back to Unity (a restore, a run's end), so 1x goes on from it: CancelInvoke and InvokeRepeating at the
-        /// due tick's game time. A grid whose start wasn't seen (null) stays Unity's.
-        /// </summary>
         static void HandAtomGrid(int? due)
         {
             _atomHeldDue = due;
@@ -445,7 +350,6 @@ namespace IGTAPTasMod
             _atomLastCall = float.NegativeInfinity;
         }
 
-        /// <summary>The collider's OnEnable in a run (AtomColliderSystem.cs:111-115): its InvokeRepeating on the run's ticks, as an Invoke.</summary>
         static bool BeforeInvokeRepeating(MonoBehaviour __instance, string methodName, float time)
         {
             if (Active && __instance is TeleporterScript teleporter && methodName == PollCall)
@@ -456,8 +360,6 @@ namespace IGTAPTasMod
             }
             if (!Active || !(__instance is AtomColliderSystem collider) || methodName != AtomCall) return true;
             _atomCollider = collider;
-            // Its 0 delay calls it in the frame's own pass (a zone load's frame, k = 2), then in the first frame of every 20th
-            // tick after (k = 0): a 1x probe of the zone 1 → 2 crossing.
             _atomNow = time <= 0f;
             _atomDue = _tick + Mathf.FloorToInt(time / Time.fixedDeltaTime) + (_atomNow ? AtomRepeatTicks : 0);
             _atomUnseen = false;
@@ -473,35 +375,22 @@ namespace IGTAPTasMod
             return false;
         }
 
-        /// <summary>
-        /// The TAS editor's seeks go on at 1x after the run: a dash's IE_TimeStop started in it (timeScale 0 until real frames
-        /// pass; the run models the freeze itself, _freezeFor) would freeze 1x again after it. Off for every judged run.
-        /// </summary>
         internal static bool DropTimeStops;
 
-        /// <summary>The last frame's blend a run left for 1x's next FixedUpdate (<see cref="ShowLastFrame"/>).</summary>
         static Vector2? _handoff;
 
-        /// <summary>
-        /// After a run that 1x goes on from: 1x's next FixedUpdate reads the player at the last rendered frame's blend, as a
-        /// run's own ticks do. Not placed now: Unity syncs a script's transform write into the body at the next frame, which
-        /// moved the body back by the blend's lag for good (ZipEscape% from tick 73000, vx -460: 1.25 u behind the engine
-        /// from the first 1x tick on). The run leaves the transform on the body; that FixedUpdate reads the blend (BlendRead)
-        /// (<see cref="BeforeHandoffTick"/>, <see cref="AfterHandoffTick"/>).
-        /// </summary>
+        // Place the player at the last blend only for 1x's next FixedUpdate; a transform write is synced into the body for good.
         internal static void ShowLastFrame(Movement movement)
         {
             _handoff = Vector2.Lerp(_stepFrom, _stepTo, MacroEngine.FrameGrid.Playback.Frames(TasPlugin.GridTicks).LastAlpha);
         }
 
-        /// <summary>1x's first FixedUpdate after a handoff, before anything of it: the player reads at the blend, as in Run.</summary>
         internal static void BeforeHandoffTick(Movement movement)
         {
             if (Active || _handoff == null) return;
             ShowBlend(movement.transform, _handoff.Value);
         }
 
-        /// <summary>After that tick's Movement.FixedUpdate: the blend's reads end.</summary>
         internal static void AfterHandoffTick(Movement movement)
         {
             if (Active || _handoff == null) return;
@@ -519,28 +408,20 @@ namespace IGTAPTasMod
             }
             if (__instance is FloatingOrigin)
             {
-                // MoveOrigin runs to its WaitForFixedUpdate here (RebaseInProgress set); Run resumes it after the next physics step.
                 __result = null;
                 if (routine.MoveNext()) _rebase = routine;
                 return false;
             }
-            // IE_BuyMax yields WaitForFixedUpdate (build 25630570): one level per physics step, from the touch's step on. A tree
-            // segment's IE_Grow (its ground off while its trunks grow, its box falling in) yields WaitForEndOfFrame: once a
-            // modelled frame. A zone activator's ZoneLoader.IE_Load yields null twice, then loads the zone (_LoadZone).
+            // IE_BuyMax yields WaitForFixedUpdate; IE_Grow yields WaitForEndOfFrame; ZoneLoader.IE_Load yields null twice, then loads.
             if (__instance is PlatformMover || __instance is upgradeBox && routine.GetType().Name.Contains("IE_BuyMax")
                 || __instance is TreeSegmentActivationComponent || __instance is ZoneLoader)
             {
-                // Unity refuses a coroutine on an object off in the hierarchy (it logs an error and runs none of it).
                 if (!__instance.gameObject.activeInHierarchy)
                 {
                     __result = null;
                     return false;
                 }
-                // A zip mover's coroutines are gameplay (MakeIntangible's 0.15 s off the Ground layer, PlayerExit's contact
-                // clear, the move itself once unlocked): they step on the run's ticks, as enginesim's Scheduler does.
                 __result = null;
-                // Its first step runs now: outside a resume that is the run's physics step (a buy's trigger callback), whose
-                // Time.deltaTime is the fixed step (IE_Grow's first trunk step reads it), as the engine's Time.deltaTime there.
                 float? deltaTime = _modelDeltaTime;
                 _modelDeltaTime = deltaTime ?? Time.fixedDeltaTime;
                 try { if (routine.MoveNext()) Park(new Routine { target = __instance, body = routine }, routine.Current); }
@@ -550,7 +431,6 @@ namespace IGTAPTasMod
             return true;
         }
 
-        /// <summary>Where a parked coroutine resumes in a tick (Unity's player loop at playback's frame rate).</summary>
         internal enum Wait { Seconds, FixedUpdate, Frame, EndOfFrame }
 
         internal sealed class Routine
@@ -568,15 +448,12 @@ namespace IGTAPTasMod
             switch (yielded)
             {
                 case WaitForSeconds seconds:
-                    // Due at the start of that tick, as an Invoke of the same delay (a rendered frame between two ticks resumes it).
                     r.wait = Wait.Seconds;
                     r.due = _tick + Mathf.FloorToInt(WaitSeconds(seconds) / Time.fixedDeltaTime) + 1;
                     break;
                 case WaitForFixedUpdate _: r.wait = Wait.FixedUpdate; break;
                 case WaitForEndOfFrame _: r.wait = Wait.EndOfFrame; break;
                 case null:
-                    // After the Updates of a later rendered frame than this one (_frame), never this one's: a load started in a
-                    // tick's physics step loads in its third frame (k = 2, a 1x probe).
                     r.wait = Wait.Frame;
                     r.due = _frame;
                     break;
@@ -588,17 +465,11 @@ namespace IGTAPTasMod
             Routines.Add(r);
         }
 
-        /// <param name="frameDeltaTime">An end-of-frame wait's frame's Time.deltaTime (0 in a freeze's or pause's repeats).</param>
         static void Resume(Wait wait, float? frameDeltaTime = null)
         {
             if (Routines.Count == 0) return;
-            // Unity stops a coroutine when its object goes off (a buy-max box deactivated, a zone unloaded: its zip movers mid-move,
-            // a tree growing): one parked on an object off in the hierarchy never resumes.
             Routines.RemoveAll(r => r.target == null || !r.target.gameObject.activeInHierarchy);
             Routine[] parked = Routines.ToArray();
-            // As the game's player loop: a WaitForFixedUpdate resumes in the physics step (deltaTime the fixed step), the
-            // others in the rendered frame that crosses the tick (a zip mover's first tween step after its WaitForSeconds).
-            // Seconds waits resume here before the tick, in the frame that will cross it.
             long ticks = wait == Wait.Seconds ? MacroEngine.FrameGrid.NextTicks(TasPlugin.GridTicks) : TasPlugin.GridTicks;
             _modelDeltaTime = frameDeltaTime ?? (wait == Wait.FixedUpdate ? Time.fixedDeltaTime : MacroEngine.FrameGrid.Playback.Step(ticks, 0));
             try
@@ -607,7 +478,6 @@ namespace IGTAPTasMod
                 {
                     if (r.wait != wait || wait == Wait.Seconds && r.due > _tick || wait == Wait.Frame && r.due >= _frame) continue;
                     Routines.Remove(r);
-                    // One an earlier routine's step switched off (a zone load's) is stopped.
                     if (r.target == null || !r.target.gameObject.activeInHierarchy) continue;
                     if (r.body.MoveNext()) Park(r, r.body.Current);
                 }
@@ -615,9 +485,6 @@ namespace IGTAPTasMod
             finally { _modelDeltaTime = null; }
         }
 
-        // Time.deltaTime inside a parked coroutine's step or a modelled frame's AtomColliderSystem.Update: turbo runs them from
-        // its own loop in one Unity frame, whose real deltaTime is that frame's, not the step the game's player loop would run
-        // them in (a held frame's is 0). The enginesim host does the same (Scheduler.Resume, Time.resumeDeltaTime).
         static float? _modelDeltaTime;
 
         static float ModelDeltaTime() { return _modelDeltaTime ?? Time.deltaTime; }
@@ -633,7 +500,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>A coroutine a run left parked, handed to Unity: it waits out what's left of its yield, then runs on.</summary>
         static IEnumerator Continue(IEnumerator body, object yielded)
         {
             yield return yielded;
@@ -653,10 +519,6 @@ namespace IGTAPTasMod
                 Routines.Add(new Routine { target = target, body = (IEnumerator)CloneObject(body), yielded = yielded, wait = wait, due = due });
         }
 
-        /// <summary>
-        /// FloatingOrigin.LateUpdate, as a rendered frame runs it after Update: past Threshold from scene (0, 0) it starts
-        /// MoveOrigin, which moves every root object back by the player's scene position after the next physics step.
-        /// </summary>
         static void OriginFrame()
         {
             FloatingOrigin origin = TasPlugin.CurrentFloatingOrigin();
@@ -670,17 +532,12 @@ namespace IGTAPTasMod
             routine?.MoveNext();
         }
 
-        /// <summary>A rebase still waiting when the run ends goes back to Unity's loop, which resumes it after the next physics step.</summary>
         static IEnumerator AfterNextFixedStep(IEnumerator routine)
         {
             yield return new WaitForFixedUpdate();
             routine.MoveNext();
         }
 
-        /// <summary>
-        /// Puts the world back at a snapshot's FloatingOrigin: what MoveOrigin does, by the difference (every root object, the
-        /// camera, the background scrollers, particles, trails, lines, currentOrigin).
-        /// </summary>
         static void ShiftOrigin(FloatingOrigin origin, Vector3 offset)
         {
             foreach (string method in new[] { "MoveRootTransforms", "MoveParticles", "MoveTrailRenderers", "MoveLineRenderers" })
@@ -708,45 +565,25 @@ namespace IGTAPTasMod
             public (courseScript course, object[] fields)[] courses;
             public Vector3 position;
             public Vector2 bodyPosition, velocity;
-            /// <summary>Every zip mover's fields, layer (MakeIntangible moves it off Ground) and pose, and the coroutines parked on a yield.</summary>
             public (PlatformMover mover, object[] fields, int layer, Vector3 local, (Vector2 position, Vector2 velocity) body)[] movers;
-            /// <summary>Every refill orb's fields (its cooldown after a use and whether it is usable).</summary>
             public (JiggleDropScript orb, object[] fields)[] orbs;
-            /// <summary>The refill orbs on camera after the last physics step (<see cref="SeeOrbs"/>).</summary>
             public JiggleDropScript[] orbsSeen;
-            /// <summary>
-            /// Every spike's live state (spikeScript <c>counter</c>, <c>playerKilled</c>). A restore mutes the callbacks around the
-            /// player's old position, so a run that ended in a spike never got its OnTriggerExit2D reset: without this the next run
-            /// (and a world exported after it) kept <c>playerKilled</c> on and passed through that spike.
-            /// </summary>
             public (spikeScript spike, int counter, bool killed)[] spikes;
             public (MonoBehaviour target, IEnumerator body, object yielded, Wait wait, int due)[] routines;
             public float rotation, angularVelocity;
             public (Vector2 offset, Vector2 size, int exclude, bool enabled)[] colliders;
             public (int due, MonoBehaviour target, string method)[] pending;
-            /// <summary>The teleporters polling the stick (<see cref="Polls"/>), each's next tick from the snapshot's.</summary>
             public (int due, TeleporterScript target)[] polls;
-            /// <summary>Behaviours whose Start a run drew that Unity hasn't run (<see cref="StartPass"/>).</summary>
             public Behaviour[] startsModelled;
             public Economy economy;
             public Vman vman;
-            /// <summary>
-            /// The cameraMover's fields: a camZoneScript's OnTriggerStay2D points the camera at its zone, and only its
-            /// OnTriggerExit2D gives it back to the player, which a restore mutes. Without this the camera stayed on the last
-            /// zone a run entered (a FalseEnding-Any% turbo left it at the far end of the map, the player back at the start).
-            /// </summary>
+            // Restore mutes OnTriggerExit2D, so a camZoneScript's hold on the camera must be restored or it stays on the last zone.
             public object[] camera;
-            /// <summary>FloatingOrigin.currentOrigin, and whether a MoveOrigin was waiting for the next physics step.</summary>
             public Vector3 origin;
             public bool rebasing;
-            /// <summary>A category start's canonical rebase reference (<see cref="PutCanonicalOrigin"/>): a restore puts the
-            /// world exactly there again instead of shifting it back by the difference (which rounds by what ran since).</summary>
             public Vector3? canonical;
-            /// <summary>The body's position at the start and end of the last physics step (its interpolation's ends).</summary>
             public Vector2 stepFrom, stepTo;
-            /// <summary>A zone load was under way (<see cref="_zoneLoadPending"/>).</summary>
             public bool zoneLoadPending;
-            /// <summary>For the trace start: the watched behaviours whose Start hasn't run (<see cref="NeverStarted"/>).</summary>
             public Behaviour[] neverStarted;
         }
 
@@ -779,27 +616,13 @@ namespace IGTAPTasMod
             public (upgradeBox box, object[] fields)[] boxes;
             public (localUpgrades script, Dictionary<localUpgrades.localUpgradeSet, double> upgrades)[] locals;
             public (clonesScript clones, object[] fields, HashSet<Transform> children)[] clones;
-            /// <summary>Each clonesScript's best path arrays (updateClonePath replaces them, never edits them in place).</summary>
             public (clonesScript clones, Vector2[] path, Sprite[] sprites, Vector2[] scales)[] paths;
             public List<int> visitedTeleporters;
             public Scene scene;
-            /// <summary>
-            /// AtomColliderSystem's state (its atoms per tier, the sprite pool, crafting, waiting atoms, the tier counter) and
-            /// its children then (an atom sprite instantiated after goes back to the pool on a restore).
-            /// </summary>
             public (AtomColliderSystem collider, object[] fields, HashSet<Transform> children) atoms;
-            /// <summary>globalStats' atom counts and NP rates (<see cref="AtomStats"/>).</summary>
             public double[] atomStats;
-            /// <summary>The grid: ticks from the snapshot's next tick to the next callAddNewAtom (-1: none; null: Unity's, its start unseen).</summary>
             public int? atomDue;
-            /// <summary>
-            /// For the trace start: seconds until the next callAddNewAtom, null if none is pending. Read from Unity's grid (with the
-            /// raw game times it came from: the grid's start, its last call, Time.time), or a quarter tick past turbo's due tick
-            /// (floor(dueIn / fixedDeltaTime) is that tick; whole ticks don't all survive the float round trip).
-            /// </summary>
             public float? atomGridDueIn, atomEnabledAt, atomLastCall, atomTimeNow;
-            /// <summary>Whether the machine's PlayerPrefs hold "OpenA2Door", which the atom box's first buy reads (upgradeBox.cs:644)
-            /// and every atom buy writes (:648); the trace start's, and a restore puts it back (SavestateService.SetAtomDoorKey).</summary>
             public bool openA2Door;
         }
 
@@ -811,20 +634,11 @@ namespace IGTAPTasMod
                 Behaviour light, bool lightEnabled, float outer, float inner)[] breakers;
             public (Collider2D collider, bool enabled)[] blocks;
             public bool blueActive;
-            /// <summary>
-            /// Whether each object of the active scene is on. A run turns objects on and off (a purchase's StatuePrestigeText, whose
-            /// ObjectBobber.OnEnable draws UnityEngine.Random): one a run left on skipped that draw in the next run, and every clone
-            /// roll after it shifted.
-            /// </summary>
+            // Restore objects a run switched on: ObjectBobber.OnEnable draws RNG, so a left-on one shifts every later clone roll.
             public (GameObject obj, bool active)[] objects;
-            /// <summary>
-            /// The upgrade trees (TreeController's grown segments and audio cooldown) and what IE_Grow moves of each segment: its
-            /// trunks' and box's local pose and its ground collider (the objects' on/off is in <see cref="objects"/>).
-            /// </summary>
             public (TreeController tree, object[] fields)[] trees;
             public (Transform part, Vector3 local, Vector3 scale)[] treeParts;
             public (Collider2D ground, bool enabled)[] treeGrounds;
-            /// <summary>ZoneLoader.activeZone (the zone roots' on/off is in <see cref="objects"/>).</summary>
             public int activeZone;
         }
 
@@ -878,7 +692,6 @@ namespace IGTAPTasMod
 
         static void RestoreScene(Scene s)
         {
-            // A load Unity runs would turn zones on and off after the snapshot's are put back; a run's own is a parked routine.
             ZoneLoader loader = ZoneLoaderNow();
             if (loader != null)
             {
@@ -906,12 +719,9 @@ namespace IGTAPTasMod
                 light.GetType().GetProperty("pointLightOuterRadius").SetValue(light, outer);
                 light.GetType().GetProperty("pointLightInnerRadius").SetValue(light, inner);
             }
-            // The game's own swap first, for its tilemap visuals (opacity, tint, sorting); then the captured colliders exactly.
             colouredBlockSwapper swapper = UnityEngine.Object.FindAnyObjectByType<colouredBlockSwapper>(FindObjectsInactive.Include);
             if (swapper != null) swapper.swapBlocks(s.blueActive);
             foreach (var (collider, enabled) in s.blocks) if (collider != null) collider.enabled = enabled;
-            // A growth Unity runs (1x, or one a run handed back) would go on changing what the snapshot puts back; turbo's own
-            // are the snapshot's parked routines (RestoreRoutines).
             foreach (TreeSegmentActivationComponent segment in UnityEngine.Object.FindObjectsByType<TreeSegmentActivationComponent>(FindObjectsInactive.Include, FindObjectsSortMode.None))
                 segment.StopAllCoroutines();
             if (s.trees == null) return;
@@ -974,10 +784,6 @@ namespace IGTAPTasMod
 
         static readonly HashSet<Transform> HeldClones = new HashSet<Transform>();
 
-        /// <summary>globalStats' atom counts and NP rates: what AddNewAtom, FinishCrafting and ClearAtoms write
-        /// (AtomColliderSystem.cs:202-209, 300-325, 153-156), the course finishes' NP comp boost (courseScript.cs:307, 447), the
-        /// clone dust multiplier a clone dust payout recomputes (RecalcCloneDustMult, clonesScript.cs:282, courseScript.cs:407)
-        /// and the RP cap its boxes set (UpdateRpCap, upgradeBox.cs:712-716): the engine's snapshots hold all of them.</summary>
         static double[] AtomStats(globalStats g)
         {
             return new[] { g.effectiveAtomCount, g.grossAtomCount, g.AtomCountInTermsOfWhiteAtoms, g.NPrewardPerTick, g.NPrewardCap, g.EffectOfNpCompBoost,
@@ -996,7 +802,6 @@ namespace IGTAPTasMod
             g.rpCap = v[7];
         }
 
-        /// <summary>The collider's per-tier lists of lists (contents, contentsTargetLocs) copied to the inner list: EconomyFields' copy is one level deep.</summary>
         static object[] DeepAtomLists(object[] values)
         {
             for (int i = 0; i < values.Length; i++)
@@ -1076,11 +881,6 @@ namespace IGTAPTasMod
             RestoreAtoms(e);
         }
 
-        /// <summary>
-        /// The collider's state, globalStats' atom counts and the grid as the snapshot had them. The snapshot's sprites are on
-        /// or off as it had them (<see cref="Scene.objects"/>); one AddNewAtom instantiated since goes off into the pool, so
-        /// the sprites stay as many as the most atoms held (presentation: the counts are the lists').
-        /// </summary>
         static void RestoreAtoms(Economy e)
         {
             var (collider, fields, children) = e.atoms;
@@ -1150,7 +950,6 @@ namespace IGTAPTasMod
         static readonly AccessTools.FieldRef<spikeScript, int> SpikeCounter = AccessTools.FieldRefAccess<spikeScript, int>("counter");
         static readonly AccessTools.FieldRef<spikeScript, bool> SpikeKilled = AccessTools.FieldRefAccess<spikeScript, bool>("playerKilled");
 
-        /// <summary>The spikes' counters and kill flags as the snapshot had them (<see cref="Snapshot.spikes"/>).</summary>
         static void RestoreSpikes(Snapshot s)
         {
             if (s.spikes == null) return;
@@ -1162,7 +961,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>The refill orbs as the snapshot had them; their sprites follow (the game's refresh), the usable flag stays the snapshot's.</summary>
         static void RestoreOrbs(Snapshot s)
         {
             OrbsSeen.Clear();
@@ -1180,16 +978,11 @@ namespace IGTAPTasMod
 
         static readonly HashSet<JiggleDropScript> OrbsSeen = new HashSet<JiggleDropScript>();
 
-        /// <summary>The refill orbs on camera with the player's body at <paramref name="player"/> (MacroEngine.OrbOnCamera).</summary>
         static IEnumerable<JiggleDropScript> SeenFrom(Vector2 player) =>
             UnityEngine.Object.FindObjectsByType<JiggleDropScript>(FindObjectsInactive.Exclude, FindObjectsSortMode.None)
                 .Where(o => o.gameObject.activeInHierarchy && MacroEngine.OrbOnCamera(o.transform.position, player));
 
-        /// <summary>
-        /// JiggleDropScript.OnBecameVisible, which no turbo frame renders to call: an orb coming on camera after the physics step reads
-        /// the refill upgrades (SetActiveVisualState(regrow: false)), so one on screen when they change keeps its state until it
-        /// leaves the view and comes back. The offline engine's Simulation.SeeOrbs is the same.
-        /// </summary>
+        // JiggleDropScript.OnBecameVisible never fires in turbo; an orb coming on camera reads the refill upgrades.
         static void SeeOrbs(JiggleDropScript[] orbs, Vector2 player)
         {
             foreach (JiggleDropScript orb in orbs)
@@ -1201,7 +994,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>Every spike as no touch left it (spikeScript.OnTriggerExit2D: <c>counter</c> 0, <c>playerKilled</c> off).</summary>
         public static void ClearSpikes()
         {
             foreach (spikeScript spike in UnityEngine.Object.FindObjectsByType<spikeScript>(FindObjectsInactive.Include, FindObjectsSortMode.None))
@@ -1232,11 +1024,7 @@ namespace IGTAPTasMod
             movement.transform.position = s.position;
             body.position = s.bodyPosition;
             body.rotation = s.rotation;
-            // The scene (coloured block colliders, zone objects) before the settle, so contacts settle against the snapshot's
-            // colliders, not the live game's: a block the last run swapped on under the player would otherwise make a fresh
-            // contact (and its enter callbacks) on the first judged tick. Blocks it turns off were muted above.
             if (s.economy != null) RestoreEconomy(s.economy);
-            // After the economy: a zip mover it turns back on ran PlatformMover.OnEnable (JumpToState and its coroutine).
             RestoreMovers(s);
             _zoneLoadPending = s.zoneLoadPending && Routines.Any(r => r.target is ZoneLoader && r.wait == Wait.Frame);
             Physics2D.SyncTransforms();
@@ -1244,7 +1032,6 @@ namespace IGTAPTasMod
             SettleContacts(body, muted);
             FieldState.Restore(movement, s.movement);
             foreach (var (course, fields) in s.courses) FieldState.Restore(course, fields);
-            // After the economy: the orbs' sprites follow the refill upgrades the snapshot had.
             RestoreOrbs(s);
             RestoreSpikes(s);
             s.vman?.Restore();
@@ -1253,7 +1040,6 @@ namespace IGTAPTasMod
                 FieldState.Restore(movement.cam, s.camera);
                 SavestateService.SnapCamera(s.position, false);
             }
-            // Last: RestoreEconomy's SetActive/enabled on boxes runs their OnEnable (upgradeBox.OnEnable draws twice).
             UnityEngine.Random.state = s.random;
             movement.transform.position = s.position;
             body.position = s.bodyPosition;
@@ -1263,10 +1049,6 @@ namespace IGTAPTasMod
             Physics2D.SyncTransforms();
         }
 
-        /// <summary>
-        /// The zip movers as the snapshot had them: fields, layer, and the coroutines a turbo run had parked. Unity-run ones
-        /// (a run's leftovers handed back, real-time play) stop: the snapshot's state replaces what they would still change.
-        /// </summary>
         static void RestoreMovers(Snapshot s)
         {
             if (s.movers == null) return;
@@ -1276,7 +1058,6 @@ namespace IGTAPTasMod
                 mover.StopAllCoroutines();
                 FieldState.Restore(mover, fields);
                 if (mover.gameObject.layer != layer) mover.gameObject.layer = layer;
-                // Where a zip mover stood: once unlocked a run moves it (IE_AdvanceToNextState), and nothing puts it back.
                 mover.transform.localPosition = local;
                 Rigidbody2D body = MoverBody(mover);
                 if (body != null)
@@ -1294,11 +1075,6 @@ namespace IGTAPTasMod
             return body == null ? default : (body.position, body.linearVelocity);
         }
 
-        /// <summary>
-        /// The world at a FloatingOrigin a turbo run started from (a run may rebase it on the way), with no MoveOrigin waiting
-        /// (a Unity-scheduled one from real frames included). A snapshot taken while one waited gets it back when its run
-        /// starts (Run's resume).
-        /// </summary>
         public static void PutOrigin(Vector3 target)
         {
             _rebase = null;
@@ -1309,15 +1085,9 @@ namespace IGTAPTasMod
             if (origin.currentOrigin != target) ShiftOrigin(origin, origin.currentOrigin - target);
         }
 
-        /// <summary>Every scene root's position at FloatingOrigin (0, 0), as the scene loaded them (<see cref="RecordPristineRoots"/>).</summary>
         static readonly Dictionary<Transform, Vector3> PristineRoots = new Dictionary<Transform, Vector3>();
         static bool _pristineWarned;
 
-        /// <summary>
-        /// The scene roots FloatingOrigin moves (MoveRootTransforms' own set), recorded while currentOrigin is still (0, 0): the
-        /// scene as loaded, before its first rebase (TasPlugin's MoveRootTransforms prefix, or the first canonical origin).
-        /// A reloaded scene (the recorded roots destroyed) is recorded again.
-        /// </summary>
         internal static void RecordPristineRoots(FloatingOrigin origin)
         {
             if (origin == null || origin.currentOrigin.x != 0f || origin.currentOrigin.y != 0f || origin.currentOrigin.z != 0f) return;
@@ -1332,15 +1102,9 @@ namespace IGTAPTasMod
             RecordPristineStatics();
         }
 
-        /// <summary>Every static body under a recorded root at its local position as loaded (<see cref="RecordPristineRoots"/>).</summary>
         static readonly Dictionary<Transform, Vector3> PristineStatics = new Dictionary<Transform, Vector3>();
 
-        /// <summary>
-        /// A static body's transform drifts by a float step now and then (the moss tilemaps under biggerGrid: local x -16184,
-        /// -16183.998, -16183.9961 as the session ran), though nothing in the game moves it: the start of a later run then
-        /// differs by that step, and a bonus13 route that grazed the moss finished from one start and hit it from another.
-        /// Recorded with the roots, put back with them (<see cref="PutCanonicalOrigin"/>).
-        /// </summary>
+        // Static body transforms drift by float steps at times (moss tilemaps); record pristine locals so starts are identical.
         static void RecordPristineStatics()
         {
             PristineStatics.Clear();
@@ -1349,14 +1113,6 @@ namespace IGTAPTasMod
                     if (body.bodyType == RigidbodyType2D.Static && body.transform != root) PristineStatics[body.transform] = body.transform.localPosition;
         }
 
-        /// <summary>
-        /// A category start's world, whatever ran before: FloatingOrigin as its own MoveOrigin leaves it after a rebase on the
-        /// player standing at the start's quick restart point, from the scene as loaded. Every scene root at its loaded position
-        /// minus <paramref name="reference"/> (MoveRootTransforms' <c>position -= offset</c> from origin (0, 0)), currentOrigin
-        /// <c>-reference</c>. PutOrigin alone shifts by the difference from wherever the last target left the world, and that
-        /// rounds differently for each origin it comes from (a Course 4 route died at tick 274 from one and finished from two others).
-        /// A root the game moved itself (the camera, HUD) only shifts.
-        /// </summary>
         public static void PutCanonicalOrigin(Vector3 reference)
         {
             FloatingOrigin origin = TasPlugin.CurrentFloatingOrigin();
@@ -1364,7 +1120,6 @@ namespace IGTAPTasMod
             RecordPristineRoots(origin);
             if (PristineRoots.Count == 0 || PristineRoots.Keys.Any(t => t == null))
             {
-                // Not recorded at (0, 0) (a scene loaded before the plugin saw it): the loaded positions as the shifts left them.
                 if (!_pristineWarned) TasPlugin.Log?.LogWarning("FloatingOrigin: scene roots not recorded at (0, 0); taking them from origin " + origin.currentOrigin + ".");
                 _pristineWarned = true;
                 PristineRoots.Clear();
@@ -1386,8 +1141,6 @@ namespace IGTAPTasMod
             origin.currentOrigin = target;
         }
 
-        /// <summary>The rebase reference of a category start: the player where <c>Movement.respawn</c> puts it at the quick
-        /// restart point (world frame, from origin (0, 0): the reset point, 12 down).</summary>
         public static Vector3 CanonicalReference(Vector2 resetPoint) { return new Vector3(resetPoint.x, resetPoint.y - 12f, 0f); }
 
         static readonly List<Collider2D> Overlaps = new List<Collider2D>();
@@ -1439,13 +1192,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>
-        /// A rendered frame's start, as Unity's Physics2DEarlyUpdate syncs it before the frame's FixedUpdate and Update: what
-        /// scripts moved since (a tree box falling onto its spot, IE_Grow at each frame's end) is where its transform is for the
-        /// frame's queries (the engine's PhysicsWorld.FrameStart). Turbo runs its frames inside one Unity frame, so it syncs
-        /// them itself. A write to the player not on its body yet (the tick's last frame's, which _stepTo takes to the step's
-        /// sync, as at 1x) is put back on the body first.
-        /// </summary>
         static void FrameStart(Transform player, Rigidbody2D body)
         {
             EndBlend();
@@ -1460,23 +1206,16 @@ namespace IGTAPTasMod
             KeepBody(body, at);
         }
 
-        /// <summary>
-        /// The body back at its exact pose after a sync of turbo's own transform write onto it: the transform reads back through
-        /// the player's parent (PlayerObject, which every rebase and category start moves) rounded to the local position's float
-        /// steps, and the sync took that rounding into the body. 1x never writes the body so (Unity's interpolation writes
-        /// aren't synced back): a 1x probe's body sits off the parent's grid, turbo's sat on it, a float step apart a tick.
-        /// </summary>
+        // Restore the body's exact pose after a transform sync: it reads back rounded through the parent, which 1x never writes.
         static void KeepBody(Rigidbody2D body, Vector2 at)
         {
             if (!Same(body.position, at)) body.position = at;
         }
 
-        /// <summary>Exactly equal: Unity's Vector ==/!= call anything within 1e-5 equal, which kept a read-back rounding under it in the
-        /// body (Course 1's start: 9e-6) and missed writes as small.</summary>
+        // Exact equality: Unity's Vector ==/!= treat anything within 1e-5 as equal and would miss small writes.
         static bool Same(Vector2 a, Vector2 b) { return a.x == b.x && a.y == b.y; }
         static bool Same(Vector3 a, Vector3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
 
-        /// <summary>Puts the player's transform at a position (its z kept) and returns what it reads back, to tell a game write from it.</summary>
         static Vector3 Place(Transform t, Vector2 at)
         {
             t.position = new Vector3(at.x, at.y, t.position.z);
@@ -1491,10 +1230,7 @@ namespace IGTAPTasMod
             courseScript[] courses = UnityEngine.Object.FindObjectsByType<courseScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             upgradeBox[] boxes = UnityEngine.Object.FindObjectsByType<upgradeBox>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             clonesScript[] clones = UnityEngine.Object.FindObjectsByType<clonesScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            // Off ones too: a zone the run loads turns its orbs on.
             JiggleDropScript[] orbs = UnityEngine.Object.FindObjectsByType<JiggleDropScript>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            // Steps in 1x's Update order (instance id, lowest first; a probe: Course 2's clones before Course 3's in one frame), as
-            // the engine does: two courses spawning in one frame take their fast/big rolls in that order.
             Array.Sort(clones, (a, b) => a.GetInstanceID().CompareTo(b.GetInstanceID()));
             float dt = Time.fixedDeltaTime;
             FloatingNumberScript numbers = Singleton<FloatingNumberScript>.Instance;
@@ -1517,8 +1253,7 @@ namespace IGTAPTasMod
             MacroEngine.FrameGrid frames = MacroEngine.FrameGrid.Playback;
             _stepFrom = resume != null ? resume.stepFrom : body.position;
             _stepTo = resume != null ? resume.stepTo : body.position;
-            // globalStats.FixedUpdate pays NP (DoConstantCurrency, globalStats.cs:1100-1124) before every other FixedUpdate:
-            // Singleton<T>'s DefaultExecutionOrder(-50) (the engine's Economy.FixedStep, Simulation.Run).
+            // globalStats.FixedUpdate pays NP before every other FixedUpdate (Singleton DefaultExecutionOrder -50).
             globalStats stats = Singleton<globalStats>.Instance;
             _atomCollider = FindAtomCollider();
             int? atomStart = AtomGridTicks(_atomCollider, 0, out _);
@@ -1539,8 +1274,7 @@ namespace IGTAPTasMod
                     KeepWindowAlive(clock, ref keepAliveAt);
                     _frame++;
                     FrameStart(player, body);
-                    // The tick's frame starts with the Start of what the last frame's end woke (IE_Grow's box), before its
-                    // FixedUpdates, as Unity runs it (RULES.md, exception 12); what the step wakes starts at the frame's pass.
+                    // A tick's frame starts with the Start of what the last frame's end woke, before its FixedUpdates (RULES.md exception 12).
                     if (StartWaiting.Count > 0) StartPass();
                     for (int i = 0; i < Pending.Count; i++)
                     {
@@ -1551,7 +1285,6 @@ namespace IGTAPTasMod
                     }
                     Resume(Wait.Seconds);
                     if (stats != null && stats.isActiveAndEnabled) _statsFixedUpdate(stats);
-                    // FixedUpdate reads the last rendered frame's interpolation blend; its writes move the body from there.
                     ShowBlend(player, Vector2.Lerp(_stepFrom, _stepTo, frames.Frames(TasPlugin.GridTicks).LastAlpha));
                     Vector3 lag = _blendBase;
                     _freezeFor = -1f;
@@ -1567,19 +1300,15 @@ namespace IGTAPTasMod
                         ref float cooldown = ref BoxCooldown(box);
                         if (cooldown >= 0f) cooldown -= dt;
                     }
-                    // A used refill orb counts its cooldown down and grows back at its end (JiggleDropScript.FixedUpdate).
                     foreach (JiggleDropScript orb in orbs)
                         if (orb != null && orb.isActiveAndEnabled && OrbCooldown(orb) > 0f) _orbFixedUpdate(orb);
-                    // No write: the body stays where it is (a frame's write still pending, _stepTo off the body, moves it as at 1x).
                     EndBlend();
                     bool wrote = !Same(player.position, lag);
                     if (!wrote && !Same(_stepTo, body.position)) Place(player, _stepTo);
                     Physics2D.SyncTransforms();
                     _stepFrom = body.position;
                     Physics2D.Simulate(dt);
-                    // A physics callback's write (a sideways spring's push, Movement.hitSpring) moves the body there at once and
-                    // drops the interpolation, as at 1x: the tick's frames show the written position, and the next tick blends from it.
-                    // Unity's own pose write reads back through the parent a few 1e-5 off the body, so only a real move counts.
+                    // A physics callback's write (hitSpring) moves the body at once and drops the interpolation, as at 1x.
                     if (((Vector2)player.position - body.position).sqrMagnitude > 1e-4f)
                     {
                         Physics2D.SyncTransforms();
@@ -1597,20 +1326,12 @@ namespace IGTAPTasMod
                         _stepTo += by;
                     }
                     SeeOrbs(orbs, _stepTo);
-                    // The tick's rendered frames, the dash freeze's first: Update at each blend. A step-up write moves the body
-                    // there and drops the interpolation, so the frames after show it. A pause holds its frame's time as a
-                    // freeze does (MacroEngine.FrameRepeats).
                     long ticks = TasPlugin.GridTicks;
                     float[] alphas = frames.Frames(ticks).Alphas;
                     int frozen = _freezeFor >= 0f ? frames.FrozenFrames(ticks, _freezeFor) : 0;
-                    // clonesScript.Update and AtomColliderSystem.Update run in every frame too, on that frame's Time.deltaTime (0 in a
-                    // freeze's or pause's repeats), then the frame's WaitForEndOfFrame resumes (a tree's IE_Grow), as the engine's
-                    // Simulation.InterpolatedFrames.
                     for (int k = 0; k < alphas.Length; k++)
                     {
                         int repeats = MacroEngine.FrameRepeats(k, alphas.Length, frozen, _pauseFrames, _pauseAfter);
-                        // The repeats are frames the run stands still in: its live time (MacroEngine.HeldFrames), counted as the
-                        // offline engine and 1x count them.
                         TasPlugin.CountHeldFrames(repeats);
                         for (int repeat = repeats; repeat >= 0; repeat--)
                         {
@@ -1619,15 +1340,13 @@ namespace IGTAPTasMod
                                 _frame++;
                                 FrameStart(player, body);
                             }
-                            // Every frame's Start pass, before its Updates, as the engine's (RULES.md, exception 12).
                             if (StartWaiting.Count > 0) StartPass();
                             ShowBlend(player, Vector2.Lerp(_stepFrom, _stepTo, alphas[k]));
                             Vector3 at = _blendBase;
                             _update(movement);
                             if (!Same(player.position, at))
                             {
-                                // The tick's last frame: the write reaches the body at the next step's sync, as at 1x, so the
-                                // next FixedUpdate's squish check (Collider2D.Distance) still sees the body where it was.
+                                // The last frame's write reaches the body at the next step's sync, so the next squish check sees the old body position.
                                 if (k < alphas.Length - 1 || repeat > 0) Physics2D.SyncTransforms();
                                 _stepFrom = _stepTo = player.position;
                             }
@@ -1640,8 +1359,6 @@ namespace IGTAPTasMod
                                 try { _atomUpdate(_atomCollider); }
                                 finally { _modelDeltaTime = null; }
                             }
-                            // The grid's call in the first rendered frame after the step of the tick before its due one, after
-                            // the frame's Updates, as Unity runs it (the engine's Economy.GridFrame).
                             if (k == 0 && repeat == repeats && _atomDue >= 0 && _atomDue <= _tick)
                             {
                                 _atomDue += atomRepeat;
@@ -1657,15 +1374,12 @@ namespace IGTAPTasMod
                                     if (i >= 0) Polls[i] = (_tick + 1, teleporter);
                                     if (teleporter != null) CallInvoked(teleporter, PollCall);
                                 }
-                                // A teleport's write, as an Update's.
                                 if (!Same(player.position, before))
                                 {
                                     if (k < alphas.Length - 1 || repeat > 0) Physics2D.SyncTransforms();
                                     _stepFrom = _stepTo = player.position;
                                 }
                             }
-                            // The frame's yield-null resumes after its Updates (a zone load, ZoneLoader.IE_Load), then the grid's
-                            // first call when the load's OnEnable started it: InvokeRepeating's 0 delay runs in that same pass.
                             Resume(Wait.Frame, frameDt);
                             if (_atomNow)
                             {
@@ -1702,7 +1416,6 @@ namespace IGTAPTasMod
                 }
                 Routines.Clear();
                 HandAtomGrid(_atomDue >= 0 ? _atomDue + 1 - _tick : _atomUnseen ? (int?)null : -1);
-                // The teleporters' polls back to Unity, on the same ticks.
                 foreach (var (due, teleporter) in Polls)
                     if (teleporter != null) teleporter.InvokeRepeating(PollCall, Mathf.Max(0f, (due - _tick) * Time.fixedDeltaTime), Time.fixedDeltaTime);
                 Polls.Clear();

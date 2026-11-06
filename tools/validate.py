@@ -10,7 +10,6 @@ def check(route, body, label):
     saved = "".join(f", saved as {kind}" for kind, key in (("record", "saved"), ("farm", "farmSaved")) if r.get(key))
     loop = r.get("loop")
     if loop:
-        # A farm route is a loop (RULES.md 30): the gate replays its lead and the loop four times.
         result = (f"OK  {loop['lap']:.4f}s a lap, loop of {loop['laps']}: {loop['ticks']} ticks, {loop['held']} held frames{saved}"
                   if ok else "FAIL no steady loop: " + json.dumps(loop))
     else:
@@ -26,7 +25,6 @@ if __name__ == "__main__":
             print(f"{m['name']:34} {'Full-TAS':16} skipped")
             continue
         match = ROUTE_NAME.match(m["name"])
-        # A category the registry doesn't know is skipped.
         caps = category_id(match[2]) if match else None
         if match and match[1] in ids and caps in known:
             check(m, {"course": ids[match[1]], "capabilities": caps}, f"C{ids[match[1]]} {caps}")

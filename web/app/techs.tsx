@@ -6,8 +6,6 @@ import { SPRING_COLOR } from "./ultra-level";
 
 export type TechCategory = "glitchless" | "nmg" | "major";
 export type TechRequires = "NONE" | "WJ" | "WJ_DS" | "WJ_DS_DJ" | "WJ_DS_DJ_BS" | "DS_OM";
-// One of a tech's labs: the lab map's id, the demo the tech plays there (labmaps/<id>.<demo>.demo.json; none: <id>.demo.json)
-// and that demo's length (physics ticks to the finish, input ticks); no inputTicks: the demo isn't there yet.
 export type TechLabRef = { id: string; demo?: string | null; ticks?: number | null; inputTicks?: number | null };
 export type Tech = { id: string; name: string; category: TechCategory; requires: TechRequires; floatingOrigin?: boolean;
   description: string; note?: string | null; detector?: string | null; related: string[]; labmap?: string | null; labDemo?: string | null; graft?: string | null;
@@ -45,8 +43,6 @@ export function TechPanel({techs, running, onCommand}: {techs?: TechState; runni
     <p className="lede">The game plugin reports no techs: older version, or not connected.</p></div>;
 
   const byId = new Map(techs.list.map(t => [t.id, t]));
-  // A tech is its lab demos: one with a lab is a card; the rest (graft "todo": known real, no lab yet; or no lab at all) are
-  // named in one line at the bottom, so none silently disappears.
   const reproduced = techs.list.filter(t => t.labs.length > 0);
   const missing = techs.list.filter(t => t.labs.length === 0);
   const byDetector = new Map(reproduced.filter(t => t.detector).map(t => [t.detector as string, t]));
@@ -113,7 +109,6 @@ function TechCard({tech, byId, techs, running, editing, focused, onEdit, onFocus
   const detectorLabel = tech.detector ? techs.detectors.find(d => d.id === tech.detector)?.label ?? tech.detector : null;
   const related = tech.related.map(id => byId.get(id)).filter((t): t is Tech => !!t);
   const relatedBy = techs.list.filter(t => t.id !== tech.id && t.related.includes(tech.id) && !tech.related.includes(t.id));
-  // First sentence stays visible; the rest of the description folds under More.
   const [lead, rest] = /^([\s\S]+?[.!?])\s+([\s\S]+)$/.exec(tech.description ?? "")?.slice(1) ?? [tech.description ?? "", ""];
   return <article id={`tech-${tech.id}`} className={`techCard ${tech.category} ${focused ? "focused" : ""}`}
     title={CATEGORIES.find(c => c[0] === tech.category)?.[1]}>
@@ -170,13 +165,9 @@ function TechLab({tech, lab, info, techs, running, onCommand}: {tech: Tech; lab:
   </div>;
 }
 
-// The lab ghosts' colours in their `ghosts` order, as the game tints them: cyan, green, magenta, yellow, orange.
 const GHOST_COLORS = ["#59d9ff", "#4cf266", "#ff59d9", "#fff233", "#ff9926"];
 
 function LabPreview({lab}: {lab: LabInfo}) {
-  // The lab drawn in its own frame: shapes relative to the anchor, the start's dot and arrow, the finish box dashed; the
-  // hand-play floor (only there when you play it) outlined, and where you stand for it in green; every ghost's path dashed
-  // in its colour, with a legend when they're labelled.
   const parts: {x: number; y: number; w: number; h: number; fill: string; hand: boolean}[] = [];
   const lines: {points: string; stroke: string}[] = [];
   const polys: {points: number[][]; fill: string}[] = [];
@@ -188,7 +179,6 @@ function LabPreview({lab}: {lab: LabInfo}) {
       const turn = (x: number, y: number) => [cx + x * cos - y * sin, cy + x * sin + y * cos];
       if (a) polys.push({points: [turn(w / 2, -h / 2), turn(w / 2, h / 2), turn(-w / 2, h / 2), turn(-w / 2, -h / 2)], fill});
       else parts.push({x: cx - w / 2, y: cy - h / 2, w, h, fill, hand});
-      // A spring's launch (its transform.up): an arrow out of its far side.
       if (s.spring) lines.push({points: [turn(0, h / 2), turn(0, h / 2 + 60), turn(-20, h / 2 + 40), turn(0, h / 2 + 60), turn(20, h / 2 + 40)].map(p => `${p[0]},${p[1]}`).join(" "), stroke: SPRING_COLOR});
     }
     else if (s.points && s.points.length > 1) lines.push({points: s.points.map(p => `${p[0]},${p[1]}`).join(" "), stroke: fill});

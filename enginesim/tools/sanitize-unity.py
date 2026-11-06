@@ -1,6 +1,4 @@
-"""Strips a decompiled UnityEngine type (ILSpy) down to compilable managed code for enginesim/Shim/Unity. The Shim files
-were generated with it and then trimmed by hand to the members the game and the engine call: take a member you need
-from this script's output; regenerating a whole file brings the unused ones back."""
+"""Usage: sanitize-unity.py <src> <dst>. The Shim files were trimmed by hand: copy only the members you need."""
 import re
 import sys
 

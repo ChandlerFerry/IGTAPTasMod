@@ -101,9 +101,6 @@ static class Prep
         return 0;
     }
 
-    // static-allow.txt: one `Type::field  # reason` per line. Listing a mutable static keeps it shared between solver
-    // threads, so the reason says why that is safe; StaticAudit.Check names every mutable static that is neither listed
-    // nor per thread.
     static Dictionary<string, string> Allowed(string path)
     {
         var allowed = new Dictionary<string, string>();
@@ -120,11 +117,7 @@ static class Prep
         return allowed;
     }
 
-    // The game's mutable statics (Singleton<T>.instance, VmanScript's flags, globalStats' dictionaries) hold one world's
-    // state, and every solver thread runs its own world: shared, the last world loaded wins, and a thread's game code
-    // reads another world's objects (a respawn adds another world's FloatingOrigin.currentOrigin). Per thread, each
-    // thread's World.Load sets its own. Constants, readonly fields and RVA data stay shared, and static-allow.txt names
-    // the mutable statics that stay shared on purpose (StaticAudit.Check fails the build on any other).
+    // Each solver thread runs its own world, so mutable game statics must be per thread or listed in static-allow.txt.
     static int ThreadStaticFields(ModuleDefinition module, Dictionary<string, string> allowed, StaticAudit.Report statics)
     {
         var attribute = new MethodReference(".ctor", module.TypeSystem.Void,
@@ -136,10 +129,7 @@ static class Prep
             {
                 if (!f.IsStatic || f.IsLiteral || f.HasFieldRVA) continue;
                 if (allowed.ContainsKey(StaticAudit.Key(f))) continue;
-                // A readonly field is only assigned in its static constructor, whose initializer fills one thread's copy
-                // alone, so the plain readonly fields stay shared. A readonly field whose contents the game mutates (a
-                // StaticAudit offense) is per-world state like any other: per thread, with the readonly mark dropped so
-                // World.Load can set each thread's copy.
+                // A readonly static the game mutates is per-world state: per thread, readonly dropped so World.Load can set it.
                 if (f.IsInitOnly && !offenses.Contains(f)) continue;
                 f.IsInitOnly = false;
                 if (f.CustomAttributes.Any(a => a.AttributeType.FullName == "System.ThreadStaticAttribute")) continue;

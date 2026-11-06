@@ -37,7 +37,6 @@ namespace IGTAPTasMod
                 try
                 {
                     FullTasRunDef run = JsonConvert.DeserializeObject<FullTasRunDef>(File.ReadAllText(file));
-                    // The file is named for its run, so a save never makes a second file for one.
                     if (run == null || !string.Equals(run.name + ".json", Path.GetFileName(file), StringComparison.OrdinalIgnoreCase))
                         throw new InvalidDataException("its \"name\" is \"" + run?.name + "\", not its file's");
                     runs.Add(run);
@@ -51,7 +50,6 @@ namespace IGTAPTasMod
                     && FullTasRunChanged(previous.Find(r => string.Equals(r.name, run.name, StringComparison.OrdinalIgnoreCase)), run));
         }
 
-        /// <summary>A run's definition to its file (data\runs\&lt;run&gt;.json; LF line ends, as the repo keeps its JSON).</summary>
         void SaveFullTasRun(FullTasRunDef run)
         {
             BumpWebState();
@@ -66,7 +64,6 @@ namespace IGTAPTasMod
             _fullTasWritten = FullTasRunsStamp();
         }
 
-        /// <summary>The run files' names and write times hashed (0: none): a file edited, added or removed changes it.</summary>
         static long FullTasRunsStamp()
         {
             if (!Directory.Exists(FullTasRunsDir)) return 0;
@@ -137,7 +134,6 @@ namespace IGTAPTasMod
             }).ToArray();
         }
 
-        /// <summary>A goal tracker for the run under its buy rule (strict, or loose: <see cref="FullTasTracker.LooseBuys"/>).</summary>
         FullTasTracker NewFullTasTracker(FullTasRunDef run)
         {
             var tracker = new FullTasTracker(ResolveFullTasGoals(run));
@@ -204,11 +200,6 @@ namespace IGTAPTasMod
             return goal;
         }
 
-        /// <summary>
-        /// The run's goals become <paramref name="tokens"/> (made if new). With <paramref name="ids"/> (a route's adopted goals, a goal
-        /// moved in place) those are their ids; without, a goal the old list shares keeps its id and a new one gets a new id
-        /// (<see cref="FullTasGoalIds.Carry"/>). A goal keeps its own avoid boxes by its id.
-        /// </summary>
         FullTasRunDef SetFullTasGoals(string name, IEnumerable<string> tokens, string start, IList<string> ids = null)
         {
             string trimmed = (name ?? "").Trim();
@@ -272,7 +263,6 @@ namespace IGTAPTasMod
         static Rect PlayerBounds(Movement player)
         {
             float x0 = float.PositiveInfinity, y0 = float.PositiveInfinity, x1 = float.NegativeInfinity, y1 = float.NegativeInfinity;
-            // Every physics tick (FullTasAreaGoal): the colliders into the one shared list, not a new array each tick.
             player.GetComponents(TouchBoxes);
             foreach (BoxCollider2D box in TouchBoxes)
             {
@@ -311,8 +301,6 @@ namespace IGTAPTasMod
         {
             loaded = true;
             if (_bonusRewardBoxes.TryGetValue(bonus.name, out upgradeBox known) && known != null) return known;
-            // A bonus with no box near its end stays without one until the scenes change (the studio's course hints ask again
-            // on every static state).
             int scenes = SceneManager.GetActiveScene().handle * 31 + SceneManager.sceneCount;
             if (scenes != _bonusRewardMissScenes)
             {
@@ -356,7 +344,7 @@ namespace IGTAPTasMod
                 && !_recorder.IsRecording && FreshGameFor(run) && FullTasStartReady(run);
         }
 
-        /// <summary>A savestate start's respawnPoint is no checkpoint: a quick restart to it ends the run.</summary>
+        // A savestate start's respawnPoint is no checkpoint: a quick restart to it ends the run (RULES.md exception 6).
         static void GuardSavestateRestarts(FullTasRunDef run, FullTasTracker tracker, Movement player)
         {
             if (run.savestate != null) tracker.NoCheckpointAt(player.respawnPoint.x, player.respawnPoint.y);
@@ -393,7 +381,7 @@ namespace IGTAPTasMod
             }
             finally
             {
-                // Also when the run throws: a resumed engine left running would play the route's inputs on in real time.
+                // Also on a throw: a resumed engine left running would play the route's inputs on in real time.
                 if (_engine.IsRunning) _engine.Abort("Full-TAS run ended");
                 _fullTas = null;
                 _silentEvaluation = false;
@@ -432,10 +420,6 @@ namespace IGTAPTasMod
             return audit.Count == 0 ? null : string.Join("; ", audit);
         }
 
-        /// <summary>
-        /// A route's own goals (`goals`, with `goalsFrom`: the goal lists they were derived from), as `fulltas --auto`'s goals part
-        /// sends and writes them with a route of goals it adopted; null when the route is of the run's goals.
-        /// </summary>
         static (List<FullTasRunGoal> goals, List<List<FullTasRunGoal>> from) FullTasRouteGoals(JObject body)
         {
             if (!(body["goals"] is JArray goals)) return (null, null);
@@ -444,21 +428,13 @@ namespace IGTAPTasMod
             return (List(goals), from);
         }
 
-        /// <summary>Two goal lists are one: the same goals (ids) with the same labels, in order.</summary>
         static bool SameGoals(IList<FullTasRunGoal> a, IList<FullTasRunGoal> b)
         {
             return a.Count == b.Count && a.Zip(b, (x, y) => x.id == y.id && x.goal == y.goal).All(s => s);
         }
 
-        /// <summary>
-        /// The gate's check of a route of the run for a class (RULES.md 54; major: today's record): saved as that class's
-        /// best when it holds up and beats it, live time for major and nmg, score for a human class.
-        /// </summary>
         FullTasVerdict FullTasJudge(FullTasRunDef run, List<SolverTick> inputs, List<FullTasRunGoal> goals = null, List<List<FullTasRunGoal>> goalsFrom = null, string cls = MajorClass)
         {
-            // A route of other goals (the engine's goals part dropped or added economy laps): judged under its own goals, and when
-            // it's saved as the record those become the run's. Only when they were derived from the run's goals as they are now, and
-            // keep its end, area, reward and unlock goals (FullTasGoal.EditRefused).
             FullTasRunDef judged = run;
             string[] current = FullTasLabels(run);
             if (goals != null && !SameGoals(goals, run.goals))
@@ -497,7 +473,7 @@ namespace IGTAPTasMod
                 FullTasGoal next = tracker.Current;
                 verdict.reason = "reached " + tracker.Next + " of " + tracker.Goals.Length + " goals" + (next == null ? "" : ", not " + next.label) + " (" + tracker.Explain(status) + ")";
             }
-            // A human score is the live time and more: a time that isn't under the best score can't make a lower one.
+            // A human score is live time and more: a time not under the best score can't make a lower one.
             else if (!(time < best - .0001f))
                 verdict.reason = (human ? "live time not under " + category + "'s score " : "not faster than " + category + " ") + best.ToString("0.00", CultureInfo.InvariantCulture);
             else
@@ -529,11 +505,6 @@ namespace IGTAPTasMod
             return verdict;
         }
 
-        /// <summary>
-        /// A record of other goals was saved: they become the run's in data\runs\&lt;run&gt;.json (kept first as the config folder's
-        /// runs-backup\&lt;run&gt;.&lt;yyyyMMdd-HHmmss&gt;.json), which retires the routes of the old goals as a goals edit does; the
-        /// next Improve captures the start again with them.
-        /// </summary>
         string AdoptFullTasGoals(FullTasRunDef run, List<FullTasRunGoal> goals)
         {
             int was = run.goals.Count;

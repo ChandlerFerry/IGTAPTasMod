@@ -1,15 +1,4 @@
-"""Every tech demo, turbo against the offline engine.
-
-For each tech with a lab demo (the studio's Tech tab), the running game captures the demo in turbo from the start its playback
-uses (`POST /api/enginesim/trace {tech}` -> enginesim/tech-<id>.json + world), then `IGTAP.EngineSim replay` runs the same
-inputs offline and reports the first tick where they differ.
-
-  tech-check.py                 every tech with a lab demo
-  tech-check.py ID [ID ...]     just these
-  --exe PATH                    the offline engine to use (default: enginesim/Cli/bin/Release/net10.0/IGTAP.EngineSim.exe)
-
-Exit code 1 when any demo differs or fails.
-"""
+"""Usage: tech-check.py [ID ...] [--exe PATH]"""
 import subprocess
 import sys
 from pathlib import Path

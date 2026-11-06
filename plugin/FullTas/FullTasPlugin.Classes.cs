@@ -12,14 +12,10 @@ namespace IGTAPTasMod
 {
     public sealed partial class TasPlugin
     {
-        /// <summary>How far the engine's live time of a route may sit from the gate's and still be the same run: under a held
-        /// frame (1/280 s), above the rounding of its JSON.</summary>
+        // Engine vs gate live time tolerance: under a held frame (1/280 s), above the JSON rounding.
         const float FullTasTechsLiveSlack = .0005f;
         const int FullTasTechsTimeoutMs = 300000;
 
-        /// <summary>A human candidate file's summary (`fulltas/candidates/&lt;run&gt;/*.json`, the run file's shape); its inputs are
-        /// read only when it plays. It carries its difficulty counts when the engine measured them with it (a file from before the
-        /// counts reads as none).</summary>
         sealed class FullTasCandidate
         {
             public string cls;
@@ -30,10 +26,8 @@ namespace IGTAPTasMod
             public FullTasDifficulty difficulty;
         }
         readonly CachedFiles<FullTasCandidate> _fullTasCandidates = new CachedFiles<FullTasCandidate>(StringComparer.OrdinalIgnoreCase);
-        /// <summary>The candidates' difficulty maps (`fulltas/candidates/&lt;run&gt;/difficulty/&lt;file&gt;`), as the engine wrote them.</summary>
         readonly CachedFiles<JObject> _fullTasDifficulties = new CachedFiles<JObject>(StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>A route name's Full-TAS run, class and live time, when it's a saved Full-TAS route (not stale).</summary>
         static bool FullTasRouteOf(string name, out string run, out string cls, out float time)
         {
             Match m = FullTasClassRoute.Match(name ?? "");
@@ -43,13 +37,6 @@ namespace IGTAPTasMod
             return m.Success;
         }
 
-        /// <summary>
-        /// A run's saved best of a class and what ranks it: live time for major and nmg, the score (fulltas-classes.json) for a
-        /// human class. A human route with no class result ranks at its live time, its score's floor, so a route beating less
-        /// never replaces it. The live time is the route's exact one from its splits (fulltas-splits.json: its last split's ticks
-        /// and held frames) when it has them, not its name's, which rounds: a re-judge of the same route (704.665 against the
-        /// name's 704.67) is not faster (RULES.md 52).
-        /// </summary>
         MacroDefinition FullTasClassBest(string run, string cls, out float rank)
         {
             rank = float.PositiveInfinity;
@@ -65,7 +52,6 @@ namespace IGTAPTasMod
             return best;
         }
 
-        /// <summary>A class best was saved: the run's other routes of that class go, as PruneSlowerRoutes keeps one major record.</summary>
         void PruneFullTasClass(string run, string cls, MacroDefinition kept)
         {
             int removed = _library.macros.RemoveAll(m => m != kept && FullTasRouteOf(m.name, out string r, out string c, out _) && c == cls
@@ -93,12 +79,6 @@ namespace IGTAPTasMod
             catch (Exception ex) { Logger.LogWarning("fulltas-classes.json rejected: " + ex.Message); }
         }
 
-        /// <summary>
-        /// The class half of the gate (RULES.md 54): the engine's tech checks replay the route from the run's trace, an
-        /// nmg class refuses any major span, and a human class's score (with its difficulty counts) has to be strictly lower than its
-        /// best's. The class result goes to <c>judge.record</c>. A major route is ranked by live time alone: when the checks can't
-        /// class it, it is judged as before and saved without a class result.
-        /// </summary>
         string FullTasClassViolation(FullTasClassJudge judge, IList<string> goals, List<SolverTick> inputs, float time)
         {
             FullTasHumanWeights weights = judge.run.Human;
@@ -124,12 +104,6 @@ namespace IGTAPTasMod
             return null;
         }
 
-        /// <summary>
-        /// A route's class result from the engine's `techs-used --json` line, timed by the gate's own live time; null, with why
-        /// (<paramref name="error"/>), when the engine's replay isn't the run the gate judged: short of its goals, or another
-        /// live time, or a human class's route with no difficulty while the weights price it. Score: live time plus the weights'
-        /// seconds for each spike-grace tick, frame-perfect input and forced back-to-back pair.
-        /// </summary>
         static FullTasClassRecord FullTasClassRecordOf(JObject used, string cls, float time, FullTasHumanWeights weights, out string error)
         {
             error = null;
@@ -156,14 +130,11 @@ namespace IGTAPTasMod
             return record;
         }
 
-        /// <summary>A record's score: its live time, the weights' seconds for its spike-grace ticks and its difficulty's counts.</summary>
         static float FullTasScoreOf(FullTasClassRecord r, FullTasHumanWeights w)
         {
             return r.live + w.grace * r.graceTicks + FullTasDifficultySeconds(r.difficulty, w);
         }
 
-        /// <summary>The seconds a route's difficulty adds to its score: the weights' seconds per frame-perfect input and per forced
-        /// back-to-back pair (none unmeasured).</summary>
         static float FullTasDifficultySeconds(FullTasDifficulty d, FullTasHumanWeights w)
         {
             return d == null ? 0f : w.framePerfect * d.framePerfect + w.backToBack * d.backToBack;
@@ -178,12 +149,6 @@ namespace IGTAPTasMod
                 + (r.difficulty != null && r.difficulty.backToBack > 0 ? " + " + r.difficulty.backToBack + " back-to-back x " + F(w.backToBack) : "") + ")";
         }
 
-        /// <summary>
-        /// A human class's best whose record isn't scored as the run's weights score it is scored again by the engine, so a new
-        /// route is judged against its whole score, not a floor or a stale one: a record with no difficulty while the weights price
-        /// it (saved before the counts: its old-shape difficulty reads as none), or whose score isn't its counts' (it still holds
-        /// the span seconds the score once had). Left as it was (said in the log) when the engine can't.
-        /// </summary>
         void RescoreFullTasClassBest(FullTasRunDef run, string cls)
         {
             if (!HumanClass(cls)) return;
@@ -202,11 +167,6 @@ namespace IGTAPTasMod
             FullTasLog("Full-TAS " + run.name + " " + cls + ": " + best.name + " scored again: " + FullTasScoreText(record, weights));
         }
 
-        /// <summary>
-        /// The engine's `techs-used &lt;trace&gt; &lt;route&gt; --json` on a route of the run, replayed from the run's trace, with the goals
-        /// it is judged under: its one JSON line; its difficulty measured only for a human class whose weights price it
-        /// (<paramref name="difficulty"/>). Null, with why (<paramref name="error"/>), with no current trace or when the engine fails.
-        /// </summary>
         JObject FullTasTechsUsed(FullTasRunDef run, IList<string> goals, List<SolverTick> inputs, bool difficulty, out string error)
         {
             error = null;
@@ -217,8 +177,6 @@ namespace IGTAPTasMod
             return TechsUsedJson(trace, file, difficulty && run.Human.PricesDifficulty() ? "" : " --no-difficulty", out error);
         }
 
-        /// <summary>The engine's `techs-used --json` line for the route in <paramref name="file"/> on <paramref name="trace"/>
-        /// (<paramref name="options"/> appended); null, with why, when it fails or gives no answer within FullTasTechsTimeoutMs.</summary>
         JObject TechsUsedJson(string trace, string file, string options, out string error)
         {
             error = null;
@@ -247,9 +205,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>The run's best of each class (studio static state `classes`, every key, null with no route): its route, live
-        /// time and class result (null fields for a route never classed). Its score is the result's counts under the run's
-        /// weights now (a result saved under other weights scores as they stand).</summary>
         Dictionary<string, object> FullTasClassesWebState(FullTasRunDef run)
         {
             var classes = new Dictionary<string, object>();
@@ -265,11 +220,6 @@ namespace IGTAPTasMod
             return classes;
         }
 
-        /// <summary>The human candidates of the run's current goals (studio static state `candidates`), by score. A candidate's
-        /// `difficulty` is its counts: its own (the solve measured them), else its map's; `difficultyMap` is its map (the engine's
-        /// `difficulty` JSON, null until measured). Its score is its live time and spike-grace ticks plus its difficulty term
-        /// (`difficultySeconds`, the counts under the run's weights); null `difficultySeconds`: no counts while the weights price
-        /// them, and the score is without the term, a floor.</summary>
         object[] FullTasCandidatesWebState(FullTasRunDef run, string[] labels)
         {
             string dir = FullTasCandidatesDir(run.name);
@@ -293,8 +243,6 @@ namespace IGTAPTasMod
                 .ToArray();
         }
 
-        /// <summary>A candidate's difficulty map (the engine's `difficulty` JSON); null with none, when it can't be read, or when it
-        /// isn't a map of the counts (an old-shape sidecar is unmeasured until Measure difficulty again).</summary>
         JObject ReadFullTasDifficulty(string path)
         {
             if (!File.Exists(path)) return null;
@@ -310,11 +258,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>
-        /// Measure difficulty (`/api/fulltas/difficulty {name}`): the engine's `difficulty &lt;trace&gt; --candidates &lt;dir&gt;` over
-        /// the run's candidate folder, on cores - 4 threads, from its current trace (the routes replay from it, as techs-used's
-        /// do). It writes each candidate's sidecar to the folder's `difficulty\` and skips those already measured alike.
-        /// </summary>
         object StartFullTasDifficulty(JObject body)
         {
             if (_fullTasDifficultyProcess != null) throw new InvalidOperationException("A difficulty batch is already running (" + _fullTasDifficultyRun + ").");
@@ -335,8 +278,6 @@ namespace IGTAPTasMod
             return new { ok = true, command = exe + " " + args };
         }
 
-        /// <summary>A line of the batch: `@difficulty {"type": "progress", "done", "of", "file"?}` moves the count, the rest goes to
-        /// the log.</summary>
         void FullTasDifficultyLine(string line)
         {
             if (line.StartsWith("@difficulty ", StringComparison.Ordinal))
@@ -361,7 +302,7 @@ namespace IGTAPTasMod
             {
                 while (_fullTasDifficultyOutput.TryDequeue(out string line)) FullTasDifficultyLine(line);
                 if (!_fullTasDifficultyProcess.HasExited) return;
-                // WaitForExit waits for the last stdout and stderr lines: EndFullTasDifficulty reads them.
+                // WaitForExit waits for the last stdout/stderr lines, which EndFullTasDifficulty reads.
                 _fullTasDifficultyProcess.WaitForExit();
                 int code = _fullTasDifficultyProcess.ExitCode;
                 if (code == 0) EndFullTasDifficulty("Measured the difficulty of " + _fullTasDifficultyRun + "'s candidates (" + FullTasDifficultyCount() + ")");
@@ -370,7 +311,6 @@ namespace IGTAPTasMod
             catch (Exception ex) { Logger.LogError(ex); EndFullTasDifficulty("Difficulty batch error: " + ex.Message, true); }
         }
 
-        /// <summary>Stops the batch (any Full-TAS Stop): killed, the sidecars it wrote stay.</summary>
         void StopFullTasDifficulty()
         {
             if (_fullTasDifficultyProcess != null) EndFullTasDifficulty("Stopped measuring the difficulty of " + _fullTasDifficultyRun + "'s candidates (" + FullTasDifficultyCount() + ")");
@@ -385,7 +325,6 @@ namespace IGTAPTasMod
 
         string FullTasDifficultyCount() { return _fullTasDifficultyDone + " of " + (_fullTasDifficultyOf?.ToString(CultureInfo.InvariantCulture) ?? "?") + " done"; }
 
-        /// <summary>A candidate file's summary, its inputs skipped (a whole run's each); null when it can't be read.</summary>
         FullTasCandidate ReadFullTasCandidate(string path)
         {
             try

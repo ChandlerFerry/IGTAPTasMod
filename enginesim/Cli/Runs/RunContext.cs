@@ -17,7 +17,6 @@ namespace IGTAP.EngineSim.Cli.Runs
         public Dictionary<string, FullTasGoal> Known;
         public bool Loose;
         public RunClass Class;
-        // A course's own timing (its game timer, a farm loop's steady lap), lower is better; null: live time.
         public Func<List<InputTick>, long> Score;
 
         public static RunContext Open(string trace, RunClass cls = RunClass.Major)
@@ -32,8 +31,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             Func<Simulation> make = Solve.Creator(trace, header);
             bool human = Glitches.Human(cls);
             Func<Simulation> strict = () => { Simulation sim = make(); sim.StrictBuys = true; sim.Engine.HumanClass = human; return sim; };
-            // The goals as the engine resolves them (a reward goal's box found near its rect): read on a thread of its own, since
-            // a Simulation owns its thread's engine hooks.
+            // Read on a thread of its own: a Simulation owns its thread's engine hooks.
             (FullTasGoal[] goals, bool loose) = Solve.OnThread(() => { Simulation sim = strict(); return (sim.Goals.Goals, sim.Goals.Loose); });
             var known = new Dictionary<string, FullTasGoal>();
             foreach (FullTasGoal g in goals) known.TryAdd(g.label, g);
@@ -46,7 +44,6 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         public FullTasGoal[] GoalsOf(RunPlan plan) => plan.Labels.Select(l => RunGoals.Goal(l, Known)).ToArray();
 
-        // A class's own files beside the run's (fulltas/<run>.<class>.json), as the plugin keeps class bests.
         public string Key => Class == RunClass.Major ? Name : Name + "." + Glitches.Key(Class);
 
         public string RunFile => Path.Combine(Dir, "fulltas", Key + ".json");

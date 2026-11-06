@@ -33,7 +33,6 @@ namespace IGTAPTasMod
 
         void FullTasEvent(bool reached)
         {
-            // A Full-TAS run's time is live time: its ticks and the frames it stood still in (RULES.md 31).
             if (reached && _fullTas.Done && _engine.IsRunning)
                 _engine.CompleteFromGame(MacroEngine.FullTasFinishReason, MacroEngine.LiveSeconds(_engine.PhysicsTicks, _engine.HeldFrames));
         }
@@ -163,8 +162,6 @@ namespace IGTAPTasMod
                         StartFullTasPlayback(run, best, null, Number(body, "fromTick", 0));
                         return new { ok = true };
                     }
-                    // "stretch": a stretch's best (its goal's id): the run's best up to the stretch, then the stretch's inputs, from a few
-                    // seconds before it (turbo before, 1x from there), stopping at its goal.
                     string stretchId = Text(body, "stretch");
                     if (stretchId.Length > 0)
                     {
@@ -222,7 +219,6 @@ namespace IGTAPTasMod
                     if (!(body["ticks"] is JArray)) throw new InvalidOperationException("ticks: the run's inputs.");
                     List<SolverTick> inputs = body["ticks"].ToObject<List<SolverTick>>();
                     string cls = FullTasClassOf(Text(body, "class"));
-                    // A route of goals `fulltas --auto` adopted (its goals part) carries them and the goal lists they came from.
                     var (goals, from) = FullTasRouteGoals(body);
                     return FullTasWhenReady(request, run, "Judging a " + run.name + (cls == MajorClass ? "" : " " + cls) + " route", () => FullTasJudge(run, inputs, goals, from, cls));
                 }
@@ -233,14 +229,11 @@ namespace IGTAPTasMod
                     List<FullTasRunDef> defs = (body["runs"] is JArray list ? list.Select(r => (string)r) : new[] { Text(body, "name") })
                         .Select(FindFullTasRun).GroupBy(r => r.name).Select(g => g.First()).ToList();
                     if (defs.Count == 0) throw new InvalidOperationException("runs: the Full-TAS runs the box is for.");
-                    // "goal": the box cuts only while the run heads for that goal (its id: the goal's "avoid"); "after": once the run has
-                    // reached it (the goal's "avoidAfter"). A goal is one run's: a box for several runs is run-wide.
                     string goal = Text(body, "goal").Trim(), after = Text(body, "after").Trim();
                     if (goal.Length > 0 && after.Length > 0) throw new InvalidOperationException("goal or after, not both.");
                     if ((goal.Length > 0 || after.Length > 0) && defs.Count != 1) throw new InvalidOperationException("goal, after: one run's goal (its id).");
                     if (goal.Length > 0) FullTasGoalAt(defs[0], goal);
                     if (after.Length > 0) FullTasGoalAt(defs[0], after);
-                    // "from": the sides ("left+bottom") the box cuts a move into it across (the block's "from"); none: any tick inside.
                     string from = Text(body, "from").Trim();
                     if (from.Split('+').Any(s => s.Length > 0 && !FullTasGoal.SideNames.Contains(s)))
                         throw new InvalidOperationException($"from: sides {string.Join(", ", FullTasGoal.SideNames)} joined with +, not {from}.");
@@ -260,7 +253,6 @@ namespace IGTAPTasMod
                     parts[1] = Math.Round(FloatNumber(body, "y", 0f), 1).ToString(CultureInfo.InvariantCulture);
                     List<string> goals = run.Labels;
                     goals[index] = "at:" + string.Join(",", parts);
-                    // Moved in place: the same goal, its id (and its avoid boxes) kept.
                     FullTasRunDef moved = SetFullTasGoals(run.name, goals, null, run.Ids);
                     FullTasLog("Moved " + run.name + " goal " + index + " from " + label + " to " + moved.goals[index].goal);
                     return new { ok = true, goal = moved.goals[index].id, from = label, to = moved.goals[index].goal };
@@ -276,12 +268,10 @@ namespace IGTAPTasMod
                         request.StatusCode = 404;
                         return new { ok = false, error = "No trace for " + run.name + " yet: capture its start or improve it once first." };
                     }
-                    // "stretch": one goal's stretch alone (its id): the best's path to it from the goal before, its avoid boxes.
                     string stretch = Text(body, "stretch");
                     if (stretch.Length > 0) FullTasGoalAt(run, stretch);
                     string output = Path.Combine(EngineSimDir, "map-fulltas-" + run.name + (stretch.Length > 0 ? "-" + stretch : "") + ".json");
                     if (MapInFlight(output, body)) return RunEngineSimMap(request, null, output, true);
-                    // The run's goals as they are now: the trace holds the goals it was captured with, older after a goals edit.
                     string goalsFile = Path.Combine(EngineSimDir, "map-fulltas-" + run.name + ".goals.json");
                     ResolveFullTasGoals(run);
                     File.WriteAllText(goalsFile, JsonConvert.SerializeObject(new { goals = run.goals.Select(g => new { g.id, g.goal }) }));
@@ -293,10 +283,6 @@ namespace IGTAPTasMod
             return new { ok = false, error = "Unknown Full-TAS endpoint." };
         }
 
-        /// <summary>The runs (studio static state): goals, bests (the record and each class's), offline bests, closest attempts,
-        /// human candidates; they change with files and routes.</summary>
-        /// <summary>A run's stretch bests (fulltas/&lt;run&gt;.stretches.json, the engine's --stretch): { goal id: { label, prefix,
-        /// prefixLength, startTick, runTick, bestTick, inputs, ... } }; empty with none or unreadable.</summary>
         JObject FullTasStretchBests(string run)
         {
             string file = Path.Combine(EngineSimDir, "fulltas", run + ".stretches.json");
@@ -304,7 +290,6 @@ namespace IGTAPTasMod
             catch (Exception ex) when (ex is IOException || ex is JsonException) { return new JObject(); }
         }
 
-        /// <summary>The run's stretch bests for the studio: each stretch's goal (its id), its best ticks and the run's.</summary>
         object[] FullTasStretches(string run)
         {
             var list = new List<object>();
@@ -317,7 +302,6 @@ namespace IGTAPTasMod
             return list.ToArray();
         }
 
-        /// <summary>A goal's place in the run's list by its id (a request's); throws for an id the run doesn't have.</summary>
         static int FullTasGoalAt(FullTasRunDef run, string id)
         {
             int i = run.goals.FindIndex(g => g.id == id);
@@ -353,7 +337,6 @@ namespace IGTAPTasMod
             }).ToArray();
         }
 
-        /// <summary>The solve, the last result, the playback, the candidate queue and the difficulty batch (studio live state).</summary>
         object BuildFullTasLiveWebState()
         {
             FullTasPlay play = _fullTasPlay;
@@ -373,10 +356,6 @@ namespace IGTAPTasMod
                     cash = globalStats.currencyLookup != null && globalStats.currencyLookup.TryGetValue(globalStats.Currencies.Cash, out double cash) ? cash : 0.0 } };
         }
 
-        /// <summary>
-        /// A solve list (events, log) as the raw JSON the serialiser would write for it, serialised again only when its
-        /// <paramref name="version"/> moved: the live state is checked every 33 ms and the lists stay full after a solve.
-        /// </summary>
         static JRaw FullTasListJson(object list, int version, ref string json, ref int jsonAt)
         {
             if (json == null || jsonAt != version)

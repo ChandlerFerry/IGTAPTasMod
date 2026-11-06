@@ -11,36 +11,19 @@ using IGTAPTasMod;
 
 namespace IGTAP.EngineSim
 {
-    /// <summary>Route-corpus grafts: the saved category, farm, bonus and transition routes (routes.json, <see cref="RouteName"/>)
-    /// mined like the tech demos. Each route replays offline from its category start (<see cref="CategoryStart"/>: start-c&lt;target&gt;-&lt;caps&gt;.json,
-    /// else optimize-c&lt;target&gt;-&lt;caps&gt;.json) with the solver's contact detection, and the
-    /// window around each contact (<see cref="WindowBefore"/>..<see cref="WindowAfter"/>, travel without a button dropped, as
-    /// <see cref="Cut"/>) is scored by what it did: its net displacement per physics tick from the contact to its end. Windows
-    /// are keyed by what the run brings to the contact (the unlocks the window spends, the contact kind, the facing, the
-    /// speed's bucket, the dashes and air jumps left); per key only those at or above the key's median and the fastest
-    /// <see cref="RouteKeep"/> stay, after identical windows are merged (the faster kept). A window needs what it spends (a
-    /// dash, an air jump, a wall jump, the omnidash's aim), never more than its route's category, and the category's refill
-    /// orbs and zip movers. Its tech is "route &lt;target&gt;_&lt;CAT&gt;": one pick weight per route family, like one lab demo.
-    /// Cached in route-grafts.cache.json beside the tech cache, keyed by the routes' inputs and the files they replay over.</summary>
     public sealed partial class TechGrafts
     {
-        /// <summary>The route corpus merged into <see cref="Patterns"/> (<see cref="WithRoutes"/>); null before.</summary>
         [JsonIgnore] public TechGrafts Routes;
-        /// <summary>A route corpus's mining time (its cache keeps the first mining's).</summary>
         public double MineSeconds;
 
-        /// <summary>The route patterns' <see cref="TechPattern.Category"/> (<c>--no-route-grafts</c> drops them).</summary>
         public const string RouteCategory = "route";
-        /// <summary>Windows kept per start key.</summary>
         public const int RouteKeep = 3;
-        /// <summary>What the route miner cuts, versioned (bump it when the cut or the scoring changes).</summary>
+        // Bump when the route miner's cut or scoring changes: it versions the cache.
         const int RouteMinerVersion = 1;
 
-        /// <summary>A saved route's name: <c>&lt;target&gt;_&lt;CAT&gt;[ farm] &lt;time&gt;</c> (stale, tech/ and fulltas/ routes don't match).</summary>
         static readonly Regex RouteName = new Regex(@"^(?<target>[0-9a-z]+)_(?<cat>" + Caps.LabelPattern + @")(?<farm> farm)? (?<time>\d+\.\d+)$",
             RegexOptions.CultureInvariant);
 
-        /// <summary>The hook's half: the route corpus (<see cref="LoadRoutes"/>) added to these patterns.</summary>
         TechGrafts WithRoutes(string tracesDir, bool refresh, string techCache)
         {
             Routes = LoadRoutes(tracesDir, refresh, Path.Combine(Path.GetDirectoryName(techCache), "route-grafts.cache.json"));
@@ -97,7 +80,6 @@ namespace IGTAP.EngineSim
             return mined;
         }
 
-        /// <summary>One window of a route: its pattern, its start key and its speed (u per physics tick, contact to end).</summary>
         sealed class RouteCut
         {
             public TechPattern Pattern;
@@ -106,7 +88,6 @@ namespace IGTAP.EngineSim
             public float Speed;
         }
 
-        /// <summary>The route replayed from its start trace (canonical, as a solve starts), every contact's window cut.</summary>
         static TechDemo MineRoute(DemoSource source, List<RouteCut> cuts)
         {
             Match name = RouteName.Match(source.Tech.id);
@@ -142,7 +123,6 @@ namespace IGTAP.EngineSim
                     (physics[tick], dashes[tick], jumps[tick], right[tick], wall[tick]) = (sim.Engine.RunTicks, p.airDashesLeft, p.airJumpsLeft, p.facingRight, p.OnWall);
                 }
                 Record(0);
-                // Run's budget counts physics ticks, a dash's too: the route plays to its finish.
                 RunResult run = sim.Run(inputs, afterTick: tick =>
                 {
                     last = tick;
@@ -159,7 +139,6 @@ namespace IGTAP.EngineSim
                 demo.Died = run.EndReason != null && run.EndReason.StartsWith("Player death", StringComparison.Ordinal);
                 demo.Notes.Add(run.Finished ? "finished: record " + run.Time.ToString("0.00", CultureInfo.InvariantCulture) + "s, "
                     + run.PhysicsTicks + " physics ticks" : "no finish: " + run.EndReason);
-                // A route that doesn't replay to its finish here isn't the route that was judged: none of its windows.
                 if (!run.Finished) return demo;
                 Caps category = Caps.Parse(demo.Requires);
                 int end = Math.Min(last, inputs.Count);
@@ -172,9 +151,6 @@ namespace IGTAP.EngineSim
                     if (spent <= 0 || to - tick < 5) continue;
                     var window = inputs.GetRange(lo, hi - lo + 1);
                     if (!TouchContact(kind) && !window.Any(k => k.press || k.release || k.dash || k.reset)) continue;
-                    // What the window spends, within its category: its dashes and air jumps (the most it goes below its start's,
-                    // at least one for a dash pressed), a wall jump (a press on a wall), the omnidash's aim (a dash or freeze turn
-                    // with a vertical); block swap with a dash; the category's orbs and zip movers as they were.
                     int lowDash = dashes[lo], lowJump = jumps[lo];
                     bool wallJump = false, aim = false, dash = false;
                     for (int i = lo; i <= hi; i++)
@@ -203,7 +179,6 @@ namespace IGTAP.EngineSim
                         Dir = DirOf(kind, window, tick - lo), Resets = window.Any(k => k.reset),
                     };
                     float speed = (float)Math.Sqrt((x[to] - x[tick]) * (x[to] - x[tick]) + (y[to] - y[tick]) * (y[to] - y[tick])) / spent;
-                    // The start key: what the run brings to the contact (the speed in 200 u/s bands, rising, level or falling).
                     string startKey = needs.Id + "|" + kind + "|" + (right[tick] ? "R" : "L") + "|" + Math.Min(5, (int)(Math.Abs(vx[tick]) / 200f))
                         + (vy[tick] > 100f ? "u" : vy[tick] < -100f ? "d" : "l") + "|" + dashes[tick] + "|" + jumps[tick];
                     cuts.Add(new RouteCut { Pattern = pattern, Route = demo, Key = startKey, Speed = speed });
@@ -216,8 +191,6 @@ namespace IGTAP.EngineSim
             return demo;
         }
 
-        /// <summary>Per start key the windows at or above its median speed, the fastest <see cref="RouteKeep"/>, identical windows
-        /// merged first (the faster kept); each with its twin for a sided contact, listed under its route.</summary>
         static List<TechPattern> KeepFastest(List<RouteCut> cuts, List<TechDemo> routes)
         {
             var seen = new HashSet<TechPattern>(SameWindow.Instance);
@@ -228,15 +201,10 @@ namespace IGTAP.EngineSim
                 float median = speeds[speeds.Length / 2];
                 foreach (RouteCut c in key.Where(c => c.Speed >= median).Take(RouteKeep)) AddWithTwin(c.Route, c.Pattern);
             }
-            // The twins can repeat another route's window mirrored: one of each.
             seen.Clear();
             return routes.SelectMany(r => r.Patterns).Where(p => seen.Add(p)).ToList();
         }
 
-        // ---- the CLI listing ----
-
-        /// <summary>routegrafts &lt;traces dir or trace&gt; [--refresh] [--tech-dir &lt;dir&gt;] [--tech-cache &lt;file&gt;]: the saved
-        /// routes replayed and mined, with the pattern counts per unlock set and contact kind.</summary>
         public static int RouteCommand(string[] args)
         {
             if (args.Length == 0)

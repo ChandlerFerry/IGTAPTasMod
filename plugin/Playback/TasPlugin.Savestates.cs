@@ -62,7 +62,6 @@ namespace IGTAPTasMod
             if (result.Success) RebaseForSavestate(movement, savestate);
         }
 
-        /// <summary>A placed savestate's rebaseAt, after its restore (floating-origin tests).</summary>
         void RebaseForSavestate(Movement movement, Savestate savestate)
         {
             if (!savestate.hasRebaseAt) return;
@@ -125,7 +124,7 @@ namespace IGTAPTasMod
                 }
                 if (_runCourse == null && _hasPreservedCourseResetPoint)
                     _runCourse = _courses.Find(c => c.x == _preservedCourseResetPoint.x && c.y == _preservedCourseResetPoint.y);
-                // A course, bonus or transition start is judged at one FloatingOrigin, whatever ran before (TurboRunner.PutCanonicalOrigin).
+                // A course, bonus or transition start is judged at one FloatingOrigin, whatever ran before (RULES.md 51).
                 Vector2 reset = _preservedCourseResetPoint;
                 _canonicalReference = _hasPreservedCourseResetPoint && _courses.Exists(c => c.x == reset.x && c.y == reset.y)
                     ? TurboRunner.CanonicalReference(reset) : (Vector3?)null;
@@ -153,19 +152,14 @@ namespace IGTAPTasMod
                     body.angularVelocity = 0f;
                     Physics2D.SyncTransforms();
                 }
-                // The quick restart keeps the last run's history (facing, dash direction, RNG, clone timers): a category start
-                // has fixed ones (CourseStart), as its captured start state does.
+                // The quick restart keeps the last run's history (facing, dash direction, RNG, clone timers); a category start fixes it.
                 CourseStart.Apply(movement, FindObjectsByType<clonesScript>(FindObjectsInactive.Include, FindObjectsSortMode.None));
             }
             else Logger.LogWarning("No savestate or quick restart was available.");
             return false;
         }
 
-        /// <summary>
-        /// A savestate holds only the player, so a course the last run left tracking would keep writing its reset point into
-        /// courseResetPoint every tick, and a quick restart would land there instead of at the checkpoint. The game's own
-        /// off-course state (stopTracking without its rewards): no course tracking, courseResetPoint zero.
-        /// </summary>
+        // A savestate holds only the player; a course left tracking would rewrite courseResetPoint every tick, so leave courses.
         static void LeaveCourses(Movement movement)
         {
             foreach (courseScript course in FindObjectsByType<courseScript>(FindObjectsSortMode.None)) CourseTracking(course) = false;
@@ -181,10 +175,6 @@ namespace IGTAPTasMod
                 : _courses.Find(c => string.Equals(c.name, token, StringComparison.OrdinalIgnoreCase));
         }
 
-        /// <summary>
-        /// The player body's interpolation stays on, as the game ships it (RULES.md): playback, turbo and the offline
-        /// engine all model it (MacroEngine.FrameGrid).
-        /// </summary>
         private void KeepInterpolation(Movement movement)
         {
             if (_playerBody == null || !ReferenceEquals(_playerBodyOwner, movement))

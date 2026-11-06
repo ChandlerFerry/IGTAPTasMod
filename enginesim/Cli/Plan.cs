@@ -11,12 +11,6 @@ using System.Threading;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// plan &lt;trace&gt; [--threads N] [--width W] [--max-width W] [--minutes M] [--cell C] [--cap K] [--labels L] [--first]
-    /// [--out file] [--no-polish] [--no-tech-grafts] [--via/--avoid/--optional as solve]: the contact-node planner
-    /// (<see cref="Planner"/>) from the trace's start, then the timing polish (<see cref="Polish"/>) on its best; the route is
-    /// written as a best file `solve --seed` takes (default &lt;traces&gt;\plan\&lt;label&gt;-&lt;time&gt;.json).
-    /// </summary>
     static class Plan
     {
         public static int Run(string[] args)
@@ -51,7 +45,6 @@ namespace IGTAP.EngineSim.Cli
 
             TechGrafts mined = args.Contains("--no-tech-grafts") ? null : TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(trace)),
                 techDir: Solve.Option(args, "--tech-dir", (string)null), cacheFile: Solve.Option(args, "--tech-cache", (string)null));
-            // A Full-TAS trace plans windows of its run's goals (Windows).
             if (header.TryGetProperty("fulltas", out _))
             {
                 if (Solve.Option(args, "--profile", (string)null) is string fprofile)
@@ -102,22 +95,12 @@ namespace IGTAP.EngineSim.Cli
             }));
         }
 
-        /// <summary>
-        /// A Full-TAS plan: goals --from-goal+1..--to-goal of --route planned from the route's state at goal --from-goal (the
-        /// route's window its exact guide unless --no-guide; --guide-probe files and, past the first window, the route itself
-        /// as trails), and the route's rest after its goal --to-goal spliced on after each window finish (fastest first). The
-        /// first splice that finishes faster than the route is polished (the window's inputs) and written. Where none follows
-        /// on, --chain K plans on: the best window finish kept, the next goal planned from there (the route as a trail), up to K
-        /// more windows. Without a faster whole run, the best window is written with the prefix alone.
-        /// </summary>
         static int Windows(string trace, JsonElement header, string[] args, Planner.Options options, TechGrafts mined, int threads, Action<string> log, Stopwatch clock)
         {
             var userGuides = options.Guides.ToList();
             var trails = new List<Planner.Trail>();
             trails.AddRange(Solve.Args(args, "--guide-probe").Select(ReadProbe));
             options.TrailFollowSpeed = Solve.Option(args, "--trail-follow-speed", options.TrailFollowSpeed);
-            // --drop-reset N: the route's quick restart at input N dropped, the window planned from there (the momentum kept) to the
-            // route's next goal (or --to-goal), the route itself a trail.
             int drop = Solve.Option(args, "--drop-reset", -1);
             Window w;
             List<InputTick> original;
@@ -173,8 +156,6 @@ namespace IGTAP.EngineSim.Cli
                     log($"No finish: {planner.Ticks} ticks simulated, {planner.Expanded} nodes, {clock.Elapsed.TotalSeconds:0.0}s");
                     return 1;
                 }
-                // The route's rest after its goal w.To, on each window finish cut at its own goal w.To: by arrival less the momentum
-                // it carries (--momentum-worth u/s per physics tick), so a later arrival with more speed is tried before a first touch.
                 List<InputTick> tail = original.Skip((int)originalGoals[w.To - 1]).ToList();
                 List<InputTick> best = null;
                 List<InputTick> faster = null;
@@ -185,7 +166,6 @@ namespace IGTAP.EngineSim.Cli
                     List<InputTick> through = w.Through(f.Inputs);
                     if (through == null) continue;
                     RunResult whole = w.Evaluate(through.Concat(tail).ToList());
-                    // A chain goes on only from a finish the player lives through (not one reached while dying).
                     if (whole.Progress > w.To || !(whole.EndReason ?? "").StartsWith("Player death", StringComparison.Ordinal)) best ??= through;
                     if (!whole.Finished || whole.PhysicsTicks >= (fasterRun?.PhysicsTicks ?? originalPhysics)) continue;
                     log($"window finish {f.RunTicks - w.StartPhysics} physics ticks (speed {f.Speed:0} at its goal): the route's rest follows on, whole run "
@@ -207,13 +187,10 @@ namespace IGTAP.EngineSim.Cli
                     log($"Planned no faster whole run: the prefix and best window ({alone.Count} inputs) -> {file}, planner {plannerTicks} ticks, wall {clock.Elapsed.TotalSeconds:0.0}s");
                     return 1;
                 }
-                // Chain: the best window kept, the next goal planned from there.
                 w = Window.Build(trace, header, best.Concat(tail).ToList(), w.To, w.To + 1, partial: true);
             }
         }
 
-        /// <summary>Polishes the planned part (input ticks <paramref name="start"/> to <paramref name="planned"/>) of a whole run
-        /// that finishes faster, and writes it.</summary>
         static int Finish(string trace, string[] args, Window w, List<InputTick> inputs, int from, int start, int planned, long plannerTicks, int threads, Action<string> log, Stopwatch clock)
         {
             RunResult r = w.Evaluate(inputs);
@@ -232,8 +209,6 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        /// <summary>A 1x probe (tools/probe.py, probes/&lt;name&gt;.json): its inputs ("ticks") and per physics tick ("rows" of kind
-        /// "tick") its place in the world frame, Velocity + momentum and the input tick it had played.</summary>
         internal static Planner.Trail ReadProbe(string file)
         {
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(file), new JsonDocumentOptions { MaxDepth = 256 });
@@ -264,21 +239,13 @@ namespace IGTAP.EngineSim.Cli
                 ? ticks.EnumerateArray().Select(InputTick.FromJson).ToList() : Solve.ReadInputs(doc.RootElement);
         }
 
-        /// <summary>
-        /// A Full-TAS trace's run (its header's goals) and a route of it (--route, a run file's "inputs" or a best's "ticks"),
-        /// cut at goal --from-goal (0: the start) and --to-goal (default the next): the route's prefix, its window, its rest,
-        /// and simulations from the start (<see cref="Full"/>) and from the window's start (<see cref="Create"/>, the prefix
-        /// replayed on each, the goals limited to the window's last), with the run's avoid boxes for the window's goals.
-        /// </summary>
         internal sealed class Window
         {
             public string Name, Caps;
             public string[] Labels, Ids;
             public int From, To;
-            /// <summary>The whole route and its goals' input ticks (the input count when each was reached).</summary>
             public List<InputTick> Route;
             public long[] RouteGoalInputs;
-            /// <summary>OldWindow and Tail are null for a route that doesn't reach goal To (a chained window).</summary>
             public List<InputTick> Prefix, OldWindow, Tail;
             public long StartPhysics, OldWindowPhysics, RoutePhysics;
             public Func<Simulation> Full, Create;
@@ -291,9 +258,6 @@ namespace IGTAP.EngineSim.Cli
                 return Build(trace, header, ReadRoute(routeFile), from, Solve.Option(args, "--to-goal", from + 1), partial: false);
             }
 
-            /// <param name="partial">The route may stop short of goal <paramref name="to"/> (it must reach goal <paramref name="from"/>).</param>
-            /// <param name="startInput">The window starts at this input tick (goal <paramref name="from"/> reached before it) instead of
-            /// at goal <paramref name="from"/>'s.</param>
             public static Window Build(string trace, JsonElement header, List<InputTick> route, int from, int to, bool partial, int startInput = -1)
             {
                 JsonElement fulltas = header.GetProperty("fulltas");
@@ -354,14 +318,11 @@ namespace IGTAP.EngineSim.Cli
                 return w;
             }
 
-            /// <summary>The whole run from the start (its own thread and world).</summary>
             public RunResult Evaluate(List<InputTick> inputs)
             {
                 return Solve.OnThread(() => Full().Run(inputs, null, null, 1000000));
             }
 
-            /// <summary>The prefix and a window's inputs (from the window's start) cut where they reach goal To: the inputs a
-            /// route's rest after its own goal To follows; null when they don't reach it from the start.</summary>
             public List<InputTick> Through(List<InputTick> window)
             {
                 List<InputTick> all = Prefix.Concat(window).ToList();
@@ -369,7 +330,6 @@ namespace IGTAP.EngineSim.Cli
                 return r.Progress >= To ? all.Take((int)r.GoalInputTicks[To - 1]).ToList() : null;
             }
 
-            /// <summary>A route of this run as a trail (<see cref="Planner.Trail"/>): its replay from the start, per physics tick.</summary>
             public Planner.Trail TrailOf(List<InputTick> route, string name)
             {
                 var at = new List<WorldPos>();
@@ -391,9 +351,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>The field the planner's nodes rank by without guide routes: a fine one (--field-cell, default 8) that can keep
-        /// the hitbox's room (--clearance x,y; default 0: none; 18,32 keeps a 41x72 hitbox), so a gap the player can't pass isn't
-        /// a way to the target.</summary>
         internal static void Field(string[] args)
         {
             DistanceField.CellSize = Solve.Option(args, "--field-cell", 8f);
@@ -402,8 +359,6 @@ namespace IGTAP.EngineSim.Cli
                 ? new Vector2(float.Parse(c[0], CultureInfo.InvariantCulture), float.Parse(c[1], CultureInfo.InvariantCulture)) : Vector2.zero;
         }
 
-        /// <summary>--profile &lt;route.json&gt;: the guide's distance along a route every 10 input ticks (the start gate's until the
-        /// timer runs), to see where it misleads.</summary>
         static int Profile(Func<Simulation> create, OfflineSolver.ForcedPath forced, string routePath)
         {
             List<InputTick> route = ReadRoute(routePath);
@@ -425,7 +380,6 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        /// <summary>Runs the planner and checks its best replays from the start as found; null: no finish.</summary>
         internal static Planner.Route Plan1(Func<Simulation> create, string caps, OfflineSolver.ForcedPath forced, TechGrafts mined, Planner.Options options,
             Action<string> log, out Planner planner)
         {

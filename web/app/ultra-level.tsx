@@ -1,46 +1,22 @@
-// The level under the Ultra map: solids (springs among them), both colours of coloured blocks, the trees' ground with
-// its purchase order, and markers (gates, checkpoints, teleporters, refill orbs, secrets), in the world state picked
-// (Area 1 normal or overgrown).
-// The same file is the public viewer's src/level.tsx (github.com/ChandlerFerry/igtap-ultra-map) but for `fy`,
-// which that one imports from its shifts.ts; keep the two in step.
-
 import { memo, useEffect, useState } from "react";
 
-// Map y up (world) to SVG y down.
 const fy = (y: number) => -y;
 
-// `spring`: a spring's trigger box, launching along this unit vector (its transform.up). `when`: the world state it's
-// only in ("<state>:<option>", WorldState), none: every one. An "area" is ground off in the capture: its outline
-// rings end to end in `p`, `rings` the length of each, filled even-odd (islands and their holes).
 export type Solid = { k: "poly" | "line" | "circle" | "capsule" | "area"; spike: boolean; p: number[]; r: number; tone?: "blue" | "orange" | null; spring?: number[] | null; when?: string | null; rings?: number[] | null };
-// `area`: a checkpoint's trigger (touching it sets where a death or quick restart respawns) or a box's trigger box
-// (touching it buys it; a bonus's finish), polygons of x, y pairs. `spawn`: the player's box where a death or quick
-// restart puts it at a checkpoint (x0, y0, x1, y1; x, y is its centre).
 export type Marker = { kind: string; name: string; x: number; y: number; area?: number[][]; spawn?: number[]; when?: string | null; box?: BoxInfo };
-// kind "box": an upgrade box at its trigger box. `upgrade`: the enum names as tools/upgrade-boxes.py prints them
-// ("GLOBAL:cashPerLoop", "Movement:doubleJump", "cashPerLoop"); `gives` the same worded. `cap`: how often it can be
-// bought (1: one-off). `category` why you'd want one (BOX_KINDS); `number` / `ach`: a secret's achievement digits /
-// the achievement id it triggers. `fresh`: on in the fresh world, else only later (grown, another zone); `tree`: one
-// of a tree's upgrades.
 export type BoxInfo = { upgrade: string; gives: string; cost: number; currency: string; cap: number; category: BoxCategory;
   fresh: boolean; secret: boolean; tree: boolean; number?: string | null; ach?: string | null };
 export type BoxCategory = "secret" | "bonusUnique" | "bonusBoost" | "achievement" | "movement" | "tree" | "unlock" | "course";
-// A world state the map switches between (Area 1: normal or overgrown); `current`: the capture's, the one its floors,
-// ultras and routes are from.
 export type WorldState = { id: string; label: string; options: string[]; current: string };
-// The option picked per world state.
 export type StatePick = Record<string, string>;
 
 export const capturedStates = (states: WorldState[] | undefined): StatePick => Object.fromEntries((states ?? []).map(s => [s.id, s.current]));
-// Whether something only in `when` is in the picked world.
 export function inState(when: string | null | undefined, pick: StatePick) {
   if (!when) return true;
-  // "<state>:<option>|<option>...": in each option listed (Area 1 normal is a Vman run's too).
   const [id, options] = when.split(":");
   return pick[id] === undefined || options.split("|").includes(pick[id]);
 }
 
-// One picker per world state, its options by name ("Area 1: Normal / Overgrown").
 export function StatePicker({ states, pick, onPick, className }: { states: WorldState[]; pick: StatePick; onPick: (p: StatePick) => void; className?: string }) {
   return <>{states.map(s => <label key={s.id} className={className} title={`The level with ${s.label} in that state`}>
     <select aria-label={s.label} value={pick[s.id] ?? s.current} onChange={e => onPick({ ...pick, [s.id]: e.target.value })}>
@@ -48,12 +24,6 @@ export function StatePicker({ states, pick, onPick, className }: { states: World
     </select></label>)}</>;
 }
 
-// The game's own art (igtap-ultra-map/tools/render-art.py): its tilemaps and sprites as an image tile pyramid per world
-// state. Level 0 has `scale` pixels per world unit and each next level half that; tile "i,j" of a level covers world x
-// from i to i + 1 and y from j to j + 1 tile spans (`tile` / its scale units). `states`: per artKey, per level, tile → image file name.
-// The trees are off until their upgrades are bought, so they have their own tile set under the key with `tree:grown`
-// added to the pick (e.g. "area1:overgrown,tree:grown"), drawn over the level.
-// `icons`: per refill kind, its orb sprite (file, world size, middle from the orb's position), drawn at its marker.
 export type ArtIndex = { tile: number; scale: number; states: Record<string, Record<string, string>[]>;
   icons?: Record<string, { file: string; w: number; h: number; dx: number; dy: number }> };
 export type MarkIcon = { href: string; w: number; h: number; dx: number; dy: number };
@@ -62,15 +32,10 @@ export const artIcons = (art: ArtIndex | null, base: string): Record<string, Mar
 export type ArtTile = { href: string; x: number; y: number; size: number };
 export const artKey = (pick: StatePick) => Object.keys(pick).sort().map(k => `${k}:${pick[k]}`).join(",");
 
-// One tile list per (state, level, tile range): a pan inside the same tiles keeps the list's identity, so the memoized
-// Art below doesn't rebuild on every pointer move.
 const ART_CACHE = new Map<string, ArtTile[]>();
 
-// The art tiles covering world x0..x1, y0..y1 at `px` world units per screen pixel: the coarsest level still at least
-// one image pixel per screen pixel.
 export function artTiles(art: ArtIndex | null, base: string, pick: StatePick, x0: number, y0: number, x1: number, y1: number, px: number): ArtTile[] {
   if (!art) return [];
-  // A pick missing a state id (the data has no `states`) draws the first option the art has for it.
   let key = artKey(pick), levels = art.states[key];
   if (!levels) {
     const full = { ...pick };
@@ -98,8 +63,6 @@ export function artTiles(art: ArtIndex | null, base: string, pick: StatePick, x0
   return out;
 }
 
-// The art under the level (SVG, y down). A new tile list (a zoom to another level, a pan onto new tiles) draws over
-// the last list that finished loading, which stays until the new one has: no blank frames while tiles load.
 export const Art = memo(function Art({ tiles }: { tiles: ArtTile[] }) {
   const [back, setBack] = useState<ArtTile[]>([]);
   useEffect(() => {
@@ -114,13 +77,9 @@ export const Art = memo(function Art({ tiles }: { tiles: ArtTile[] }) {
   return <g style={{ pointerEvents: "none" }}>{all.map(t => <image key={key(t)} href={t.href} x={t.x} y={fy(t.y + t.size)} width={t.size} height={t.size} preserveAspectRatio="none"/>)}</g>;
 });
 
-// A zip mover or moving platform: its box where it rests, its box's middle at each stop in travel order (from where it
-// rests, back there), and per leg the ground its box sweeps.
 export type Zip = { name: string; zip: boolean; box: number[]; path: number[][]; corridor: number[][]; when?: string | null };
 export const ZIP_COLOR = "#ffb74d";
 
-// Zips as their boxes; hovering (or tapping) one draws where it goes: the corridor it sweeps, its path with arrows and
-// its box at each stop.
 export const Zips = memo(function Zips({ zips, px }: { zips: Zip[]; px: number }) {
   const [hot, setHot] = useState(-1);
   const head = 14 * px;
@@ -144,7 +103,6 @@ export const Zips = memo(function Zips({ zips, px }: { zips: Zip[]; px: number }
   </g>;
 });
 
-// Where the level hurts (spikes, overgrowth spikes and vines, coloured spikes), outlined and tinted red over the art.
 export const Hazards = memo(function Hazards({ paths, show }: { paths: LevelPaths; show: LevelShow }) {
   return <g style={{ pointerEvents: "none" }}>
     <path d={paths.spikes} fill={SPIKE_COLOR} fillOpacity={.3} stroke={SPIKE_COLOR} strokeWidth={1.5} vectorEffect="non-scaling-stroke"/>
@@ -154,17 +112,13 @@ export const Hazards = memo(function Hazards({ paths, show }: { paths: LevelPath
   </g>;
 });
 
-// One tree segment: the fewest tree purchases that grow it (Plant Tree is 1; 0: no box grows it), the box whose
-// purchase does, and the box it carries.
 export type TreeStep = { tree: number; step: number; via: string | null; box: string | null; x: number; y: number };
 
-// Coloured blocks and spikes: only the active colour collides; a dash swaps them once block swap is bought.
 export const TONE_COLORS: Record<"blue" | "orange", string> = { blue: "#42a5f5", orange: "#ffa726" };
 export const GROWN_COLOR = "#c5a26b";
 export const SPRING_COLOR = "#ffd54f";
 export const SPIKE_COLOR = "#e5484d";
 export const LEVEL_COLOR = "#8193ab";
-// Upgrade boxes (ground-layer triggers: the ground rays land on them).
 export const BOX_COLOR = "#bcaaa4";
 export type MarkerShape = "square" | "small" | "diamond" | "circle" | "star";
 export const MARKERS: Record<string, { color: string; text: string; shape: MarkerShape }> = {
@@ -179,8 +133,6 @@ export const MARKERS: Record<string, { color: string; text: string; shape: Marke
   jumpRefill: { color: "#80cbc4", text: "Jump refill", shape: "circle" },
   fullRefill: { color: "#fff59d", text: "Full refill", shape: "circle" },
 };
-// Buy boxes (Marker.box) by category: a glance says which kind it is. bonusUnique vs bonusBoost is what the free
-// reward gives — something unique (an ability, a mechanic unlock) or just cash or a stat.
 export const BOX_KINDS: Record<BoxCategory, { color: string; text: string; shape: MarkerShape }> = {
   secret: { color: "#ffd740", text: "Secret", shape: "star" },
   bonusUnique: { color: "#66bb6a", text: "Unlock bonus", shape: "diamond" },
@@ -192,10 +144,8 @@ export const BOX_KINDS: Record<BoxCategory, { color: string; text: string; shape
   course: { color: "#90caf9", text: "Course upgrade", shape: "small" },
 };
 
-// A box's cost as its label shows it ("300 W", "free"); big numbers in exponent form.
 export const boxCost = (b: BoxInfo) => b.cost <= 0 ? "free"
   : `${b.cost >= 1e6 ? b.cost.toExponential(2).replace(/(\.\d*?)0+e/, "$1e").replace(/\.e/, "e").replace("e+", "e") : String(b.cost)} ${b.currency}`;
-// What a box is, gives and costs, in one line (the desktop hover title; the tap card says the same).
 export function boxTitle(m: Marker) {
   const b = m.box!;
   return `${BOX_KINDS[b.category].text}: ${m.name} · gives ${b.gives} · ${b.upgrade} · ${boxCost(b)} · ${b.cap === 1 ? "one-off" : `repeatable ×${b.cap}`}`
@@ -204,20 +154,16 @@ export function boxTitle(m: Marker) {
 
 const polyPath = (p: number[]) => p.reduce((d, v, i) => i % 2 ? `${d} ${fy(v)}` : `${d}${i ? "L" : "M"}${v}`, "") + "Z";
 
-// `springDirs`: each spring's middle, launch direction and how far its box reaches that way, for its arrow.
-// `areas` / `spikeAreas`: each area solid's own path, filled even-odd.
 export type LevelPaths = { ground: string; lines: string; spikes: string; spikeLines: string; boxes: string; grown: string; springs: string;
   springDirs: { cx: number; cy: number; ux: number; uy: number; reach: number }[];
   tone: Record<"blue" | "orange", { ground: string; spikes: string }>; areas: string[]; spikeAreas: string[] };
 
-// An area's rings, each closed.
 function ringPaths(s: Solid) {
   let d = "", at = 0;
   for (const n of s.rings ?? [s.p.length]) { d += polyPath(s.p.slice(at, at + n)); at += n; }
   return d;
 }
 
-// The level in the world state `pick`.
 export function levelPaths(solids: Solid[], boxes: number[][], grown: Solid[], pick: StatePick): LevelPaths {
   const out: LevelPaths = { ground: "", lines: "", spikes: "", spikeLines: "", boxes: boxes.map(polyPath).join(""), grown: grown.map(s => polyPath(s.p)).join(""),
     springs: "", springDirs: [], tone: { blue: { ground: "", spikes: "" }, orange: { ground: "", spikes: "" } }, areas: [], spikeAreas: [] };
@@ -246,12 +192,8 @@ export function levelPaths(solids: Solid[], boxes: number[][], grown: Solid[], p
   return out;
 }
 
-// Which level layers draw; the level's own ground and walls always do.
 export type LevelShow = { spikes: boolean; boxes: boolean; blue: boolean; orange: boolean; grown: boolean; springs: boolean };
 
-// Memoized: a pan changes no prop, so the level isn't rebuilt on every pointer move; a zoom (`px`: world units per
-// screen pixel) redraws only for the spring arrows. A spring's arrow (from its box's middle out past its far side, the
-// way it launches) shows once zoomed in to ARROW_PX or closer; zoomed out a spring is its box alone.
 const ARROW_PX = 6;
 export const Level = memo(function Level({ paths, show, px }: { paths: LevelPaths; show: LevelShow; px: number }) {
   const arrows = !show.springs || px > ARROW_PX ? "" : paths.springDirs.map(({ cx, cy, ux, uy, reach }) => {
@@ -278,11 +220,6 @@ export const Level = memo(function Level({ paths, show, px }: { paths: LevelPath
   </g>;
 });
 
-// Markers and tree purchase numbers, a constant size on screen (`px`: world units per screen pixel), over each
-// checkpoint's spawn box and trigger area and a buy box's trigger (world size; no pointer events, so floors under it
-// stay tappable). `kinds`: the marker kinds drawn, a buy box's under "box:<category>"; `areas` the boxes' triggers,
-// `checkpointAreas` a checkpoint's own (defaulting to `areas` where one toggle covers both). Zoomed in to LABEL_PX or
-// closer a box carries its name and cost. Memoized: a pan keeps px, so only a zoom redraws them.
 const LABEL_PX = 3;
 export const Marks = memo(function Marks({ markers, steps, px, kinds, areas, checkpointAreas, showSteps, icons }: { markers: Marker[]; steps: TreeStep[]; px: number; kinds: Record<string, boolean>; areas: boolean; checkpointAreas?: boolean; showSteps: boolean; icons?: Record<string, MarkIcon> }) {
   const triggers = checkpointAreas ?? areas;
@@ -299,17 +236,13 @@ export const Marks = memo(function Marks({ markers, steps, px, kinds, areas, che
         : look.shape === "circle" ? `M${x - s} ${y}a${s} ${s} 0 1 0 ${2 * s} 0a${s} ${s} 0 1 0 ${-2 * s} 0Z`
         : look.shape === "star" ? starPath(x, y, s)
         : `M${x - s} ${y - s}h${2 * s}v${2 * s}h${-2 * s}Z`;
-      // A checkpoint with its spawn box is that box alone (hover its outline for the name).
       if (m.spawn) return <rect key={i} x={m.spawn[0]} y={fy(m.spawn[3])} width={m.spawn[2] - m.spawn[0]} height={m.spawn[3] - m.spawn[1]} fill="none"
         stroke={look.color} strokeWidth={2} vectorEffect="non-scaling-stroke" style={{ pointerEvents: "stroke" }}><title>{`${look.text}: ${m.name}`}</title></rect>;
-      // A gate is its trigger box (where touching it starts or ends the timer, or leaves the course).
-      // A refill orb is the game's own orb sprite (its marker toggle shows and hides it).
       const icon = icons?.[m.kind];
       if (icon) return <image key={i} href={icon.href} x={m.x + icon.dx - icon.w / 2} y={fy(m.y + icon.dy + icon.h / 2)} width={icon.w} height={icon.h}>
         <title>{`${look.text}: ${m.name}`}</title></image>;
       if ((m.kind === "start" || m.kind === "end" || m.kind === "exit" || m.kind === "falseEnding" || m.kind === "trueEnding") && m.area?.length) return <path key={i} d={m.area.map(polyPath).join("")} fill={look.color} fillOpacity={.15}
         stroke={look.color} strokeWidth={2} vectorEffect="non-scaling-stroke"><title>{`${look.text}: ${m.name}`}</title></path>;
-      // A buy box is its trigger box (where touching it buys it) in its category's colour, with its name and cost.
       if (m.kind === "box" && m.area) return <g key={i}>
         <path d={m.area.map(polyPath).join("")} fill={look.color} fillOpacity={.12} stroke={look.color} strokeWidth={2} vectorEffect="non-scaling-stroke">
           <title>{boxTitle(m)}</title></path>
@@ -329,7 +262,6 @@ export const Marks = memo(function Marks({ markers, steps, px, kinds, areas, che
   </g>;
 });
 
-// A five-pointed star of outer radius `r` at (x, y), SVG coordinates.
 function starPath(x: number, y: number, r: number) {
   let d = "";
   for (let i = 0; i < 10; i++) {

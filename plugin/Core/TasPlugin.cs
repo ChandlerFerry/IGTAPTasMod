@@ -41,20 +41,16 @@ namespace IGTAPTasMod
         private bool _pendingCourseWasTracking;
         private MacroDefinition _pendingReplay;
         private int _pendingReplayStartDelayTicks;
-        // Run route from a tick: playback runs fast (no wall-clock wait, the same frames) until the run has played this many ticks.
         private int _fastUntilTick;
         private Rigidbody2D _playerBody;
-        // The Movement _playerBody was fetched for (KeepInterpolation): a reference check per tick instead of two gameObject lookups.
         private Movement _playerBodyOwner;
         private bool _hasPreservedCourseResetPoint;
         private Vector2 _preservedCourseResetPoint;
-        /// <summary>The canonical FloatingOrigin reference the last quick restart onto a course, bonus or transition start put the world at; null otherwise.</summary>
         private Vector3? _canonicalReference;
         private CourseDef _runCourse;
         private int _brakeTicks = -1;
         private float _brakeAxis;
         const int MaxBrakeTicks = 150;
-        // Read by the studio's live state (every push) and the course hooks: typed refs, as FieldInfo.GetValue boxes.
         private static readonly AccessTools.FieldRef<courseScript, float> CourseCurrentPathTime = AccessTools.FieldRefAccess<courseScript, float>("currentPathTime");
         private static readonly AccessTools.FieldRef<courseScript, bool> CourseTracking = AccessTools.FieldRefAccess<courseScript, bool>("tracking");
 
@@ -69,7 +65,6 @@ namespace IGTAPTasMod
         {
             Instance = this;
             Log = Logger;
-            // The overlay draws on Repaint only and uses no GUILayout: no Layout event, one OnGUI call per frame fewer.
             useGUILayout = false;
             _libraryPath = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "routes.json");
             _recordingsPath = Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "recordings");
@@ -146,26 +141,17 @@ namespace IGTAPTasMod
 
         internal bool CheckpointRespawns { get { return _settings.checkpointRespawns; } }
 
-        // Turbo (TurboRunner.Run) and the offline engine step a tick as Movement.FixedUpdate, then every courseScript's, then
-        // VmanScript's. Unity's own order between them isn't fixed: after a new game it can run a course's first, which sets
-        // courseResetPoint to its resetPoint before the player's quick restart reads it (a route whose quick restart falls on
-        // the tick its start gate starts tracking then respawns elsewhere at 1x and dies). While a route plays at 1x, a course's
-        // or Vman's FixedUpdate that comes before the player's this tick waits and runs right after it, in turbo's order.
+        // Turbo/engine step Movement.FixedUpdate then courses then Vman; Unity can run a course first, so 1x defers it to match.
         static readonly MethodInfo CourseFixedUpdateMethod = AccessTools.Method(typeof(courseScript), "FixedUpdate");
         static readonly MethodInfo VmanFixedUpdateMethod = AccessTools.Method(typeof(VmanScript), "FixedUpdate");
         static readonly List<MonoBehaviour> DeferredFixedUpdates = new List<MonoBehaviour>();
-        // The same scripts, for the membership check each deferred FixedUpdate makes (List.Contains was a scan of every course
-        // already waiting). The same comparer as the list's (UnityEngine.Object.Equals, GetHashCode: the instance id).
         static readonly HashSet<MonoBehaviour> DeferredQueued = new HashSet<MonoBehaviour>();
-        // Their FixedUpdate as open delegates (made on first use, after the patches: a call goes through
-        // BeforeOrderedFixedUpdate as Unity's does), and a reused copy of the list to run them from.
         static Action<courseScript> _courseFixedUpdate;
         static Action<VmanScript> _vmanFixedUpdate;
         static readonly List<MonoBehaviour> DeferredRunning = new List<MonoBehaviour>();
         static float _playerFixedTime = -1f;
         static bool _runningDeferred;
 
-        // The studio's static state version (TasPlugin.Http.cs WebStateVersion) and what it was last checked against.
         long _webStateVersion;
         long _webStateStamp;
         float _webStateCheckAt = float.NegativeInfinity;
@@ -212,17 +198,12 @@ namespace IGTAPTasMod
             return fallback ?? all[0];
         }
 
-        /// <summary>Why the world can't be used (null: it can): at the main menu there is no world player, only the menu's.</summary>
         static string WorldNotLoaded()
         {
             Movement m = FindWorldMovement();
             return m != null && !IsMenuPlayer(m) ? null : "The world scene isn't loaded (the game is at its main menu): POST /api/oracle/bootstrap loads it.";
         }
 
-        // The studio's live state reads the world player on every push (every 33 ms or more), and FindWorldMovement is a full
-        // FindObjectsByType scan. The push keeps the last world player it found while that one lives and is still the world
-        // one (a scene load destroys it, the bootstrap's flip makes a menu player the world one). It can only differ from a
-        // scan while two world players are loaded at once, when the scan's pick is arbitrary anyway; display only.
         Movement _livePlayer;
 
         private Movement LiveWorldMovement()
@@ -233,24 +214,14 @@ namespace IGTAPTasMod
             return found;
         }
 
-        // The coloured blocks' state (colouredBlockSwapper.isBlueActive) as a pseudo field of the player, so a category start
-        // saves and puts it back with the unlocks: without block swap nothing resets it (Movement.respawn swaps only when
-        // blockSwapUnlocked), so a save's swapped blocks (Course 4's SwapBlocksOnce box, dashes with block swap) would carry in.
+        // Pseudo field: without BS nothing resets the blocks (respawn swaps only with blockSwapUnlocked), so a swap carries in.
         internal const string BlueActiveField = "blockSwapper.isBlueActive";
         static readonly FieldInfo BlockSwapperField = AccessTools.Field(typeof(Movement), "blockSwapper");
 
-        // A global upgrade (globalStats.globalUpgradeDict) as a pseudo field of the player, saved and put back with the
-        // unlocks: ORB has every refill orb on and ZIP the zip movers (RULES.md 11); every category sets them from
-        // its own unlocks and nothing else turns either on.
         internal const string GlobalUpgradePrefix = "globalUpgradeDict.";
         internal static string GlobalUpgradeField(globalStats.globalUpgradeSet upgrade) { return GlobalUpgradePrefix + upgrade; }
         static readonly MethodInfo RefillOrbState = AccessTools.Method(typeof(JiggleDropScript), "SetActiveVisualState");
 
-        /// <summary>
-        /// Each refill orb's usable flag and sprites from the refill upgrades now (JiggleDropScript.SetActiveVisualState, the
-        /// game's own refresh): the game runs it only on an orb's use, cooldown end or coming on camera, so one on screen
-        /// would keep the state from before the upgrades changed.
-        /// </summary>
         internal static void RefreshRefillOrbs()
         {
             foreach (JiggleDropScript orb in FindObjectsByType<JiggleDropScript>(FindObjectsInactive.Include, FindObjectsSortMode.None))
@@ -274,7 +245,6 @@ namespace IGTAPTasMod
         }
 
         bool _newGameSession;
-        // The save's unlocks when a new game replaced its world (SaveUnlocks reports these until the save is loaded again).
         Caps? _newGameSaveUnlocks;
         int _newGamePhase;
         int _newGameFrame;
@@ -283,10 +253,6 @@ namespace IGTAPTasMod
         TurboRunner.Snapshot _newGameStart;
         Movement _newGamePlayer;
         bool _newGameVman;
-        // A Full-TAS savestate start: the savestate (id) restored once the new game (or Vman world) is at rest; the start is
-        // captured when the player is at rest again from there, with the unlocks the savestate carries. A savestate in the air
-        // (its onGround false) can't rest: it is held there instead (_newGameAirStart, restored every tick) and the start is
-        // taken on the same count of ticks, exactly at the savestate.
         string _newGameSavestate;
         bool _newGameSavestateApplied;
         Savestate _newGameAirStart;
@@ -297,26 +263,14 @@ namespace IGTAPTasMod
         Movement _vmanSetupPlayer;
         bool _vmanSetupQuiet;
         int _newGameRestTicks;
-        // Physics ticks the player must stand still on the ground before the start is captured. A Vman world's player spawns
-        // in the air and lands on a frame-rate-dependent tick; capturing mid-fall gave every load a different start. Past
-        // this many grounded ticks every tick-driven threshold (dash boost window 6 × 1.4, platform momentum history 7) is
-        // passed, so each load's start plays the same.
+        // Wait 10 grounded ticks so tick-driven thresholds (dash boost 6x1.4, momentum history 7) pass; a Vman spawn lands late.
         const int NewGameRestTicks = 10;
-        // Where the loading player first stood (world position, facing) and whether it still stands so when the start is taken.
-        // Real input reaches the player while a new game loads unless NewGameLoading neutralises it, and a start taken after it
-        // walked is another start: FalseEnding2-Any%'s stood 95.6 units left of the spawn, facing left, and its best replayed
-        // to goal 1 only. Reset whenever the start moves the player on purpose (a savestate, a rebase, the Vman world).
         Vector2? _newGameSpawn;
         bool _newGameSpawnFacing;
         const float NewGameSpawnDrift = 0.5f;
-        /// <summary>The new game's world player is loading and settling: no input of the player's reaches it (patches).</summary>
         bool NewGameLoading { get { return _newGamePhase == 2 || _newGamePhase == 3; } }
-        // The FloatingOrigin the start was captured at. Real-time play far from it rebases the world (FloatingOrigin.LateUpdate),
-        // and a restore puts back only the player's scene position, which then lies somewhere else in the world: such a game
-        // is no longer fresh, and the next Full-TAS run loads a new one.
         Vector2 _newGameOrigin;
         bool FreshGame { get { return _newGameStart != null && _newGamePlayer != null; } }
-        // The origin first: it is a field read, the world player a scan of every Movement.
         bool FreshGameInWorld { get { return FreshGame && CurrentOrigin() == _newGameOrigin && _newGamePlayer == FindWorldMovement(); } }
 
         static readonly FieldInfo SaveloaderIsSaving = AccessTools.Field(typeof(Saveloader), "IsSaving");
@@ -339,7 +293,6 @@ namespace IGTAPTasMod
         double _clockTotal;
         readonly System.Diagnostics.Stopwatch _paceClock = new System.Diagnostics.Stopwatch();
         double _paceDue;
-        /// <summary>The last paced frame's game time (Time.timeAsDouble), NaN at a playback's start: a frame that doesn't move it stood still.</summary>
         double _pacedTime;
 
         private void Update()
@@ -350,8 +303,6 @@ namespace IGTAPTasMod
 
         void UpdateFrame()
         {
-            // Paced from the moment a playback is asked for, so its first ticks already run on the fixed clock: before, a hitch
-            // at the start (the savestate restore) could run several ticks in one frame, with no frames between them.
             PacePlayback((PlaybackActive || _pendingReplay != null) && !TurboRunner.Active);
             PaceWalk();
             OverlayFrame();
@@ -383,20 +334,13 @@ namespace IGTAPTasMod
 
         private readonly Dictionary<string, object> _playbackSavedAbilities = new Dictionary<string, object>();
 
-        /// <summary>The open TAS editor session (TasPlugin.Editor.cs), or null.</summary>
         TasSession _tas;
-        // TasBoundary's clock (TasPlugin.Editor.cs), restarted at every tick boundary it checks: one Stopwatch, not one a tick.
         readonly System.Diagnostics.Stopwatch _tasHoldClock = new System.Diagnostics.Stopwatch();
-        // DrawTechPaths' hovered tech's variants in draw order (TasTechVariants, TasPlugin.Techs.cs), kept while the tech and its
-        // grouping stay.
         List<TasTechVariant> _techsDrawn;
         TasTechs _techsDrawnFrom;
         string _techsDrawnTech;
         int _techsDrawnGrouping;
 
-        // Movement's fields by name, as AccessTools.Field finds them (null: none), looked up once (MovementField,
-        // TasPlugin.Session.cs): the studio's live state and the solver's per-tick audit read some every push or tick. Main
-        // thread only, as every caller is.
         static readonly Dictionary<string, FieldInfo> MovementFields = new Dictionary<string, FieldInfo>();
 
         private MacroDefinition SelectedMacro { get { ClampSelections(); return _library.macros.Count == 0 ? null : _library.macros[_library.selectedIndex]; } }

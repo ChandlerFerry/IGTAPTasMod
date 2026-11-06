@@ -3,10 +3,9 @@ import sys
 from pathlib import Path
 
 from gamepaths import TRACES
-# The gate's windows (Solver.cs AuditTick), in physics ticks: the game's buffer windows +2 slack.
+# The gate's buffer windows (Solver.cs AuditTick): the game's windows +2 slack.
 JUMP_WINDOW, DASH_WINDOW, CUT_WINDOW = 12, 8, 15
-# Movement.getPlayerControlledInput holds a buffered dash through a wall jump's first 5 lock ticks (re-arming
-# cancelDashBuffer at 0.06 s): after the last hold the buffer lives 3 ticks, +1 (the hold runs on the next tick) +2 slack.
+# The game holds a buffered dash through a wall jump's first 5 lock ticks; then 3 ticks +1 +2 slack.
 DASH_HOLD_WINDOW = 6
 NEVER = -1000000
 
@@ -14,10 +13,6 @@ def dash_held(m):
     return m["dashCooldown"] < 0 and m["dashUnlocked"] and not m["wallJumpMovementLockRemaining"] < m["wallJumpMovementLockFrames"] - 5
 
 def press_stamps(trace):
-    """Per physics tick: MacroEngine.Clock and its last jump press, dash press and jump release, as AuditTick reads them.
-
-    Traces from before the stamps map each physics tick to the input tick it ran (the tick's `tick`, MacroEngine.RunTicks:
-    a dash's lock ticks run no input) and stamp each input's press or release at the physics tick that ran it."""
     ticks, inputs = trace["ticks"], trace["inputs"]
     engine = [{e[1]: e[2] for e in t["engine"]} for t in ticks]
     if all("Clock" in e for e in engine):
@@ -34,7 +29,7 @@ def press_stamps(trace):
             if k["dash"]:
                 dash = p
             held = k["held"]
-        # A dash's jump (dashJump) presses on a lock tick: MacroEngine clears _dashJumpFrame as it does.
+        # A dashJump presses on a lock tick, where MacroEngine clears _dashJumpFrame.
         if p and engine[p - 1].get("_dashJumpFrame", 0) > 0 and engine[p].get("_dashJumpFrame", 0) == 0 and dash != p:
             jump, held = p, True
         stamps.append((p, jump, dash, release))

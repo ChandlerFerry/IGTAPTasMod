@@ -8,18 +8,6 @@ using IGTAPTasMod;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// <c>techs-used &lt;trace.json&gt; &lt;route.json&gt; [--json [--out F]] [--no-difficulty] [--threads T] [--tech-weight &lt;tech&gt;=&lt;s&gt;]</c>: the nmg and major techs a route uses
-    /// (<see cref="Glitches"/>), every occurrence, its spike-grace ticks, its difficulty (<see cref="Difficulty.Meter"/>, a finished
-    /// route's, unless <c>--no-difficulty</c>) and its human scores (docs/fulltas.md "Classes"). The route replays from the
-    /// trace's start as the searches play it: a course trace's to its finish, a Full-TAS trace's under its goals with strict buys
-    /// (as <c>fulltas --check</c>), or under the route's own "goals" when it carries them (an adopted goal list); a Full-TAS
-    /// route's spans count up to its last goal. The route file's "inputs" (a run file) or "ticks" (an offline best, a submit
-    /// body). A finished course route is replayed again as a human class plays it (<c>humanBlock</c>: what ends that replay, its
-    /// human scores none then). <c>--json</c>: one line, what the plugin's gate reads (<c>--out F</c>: to F instead).
-    /// <c>techs-used --demos [tech ...] [--tech-dir D]</c>: the same on every tech's demos (<c>techs --demos</c>' runs): an nmg or
-    /// major tech's demo must show its own tech, a glitchless tech's no nmg or major span.
-    /// </summary>
     static class TechsUsed
     {
         public static int Run(string[] args)
@@ -36,7 +24,6 @@ namespace IGTAP.EngineSim.Cli
             var record = new TechSteps(sim);
             record.Attach();
             record.Clear();
-            // A Full-TAS run ends a few ticks after its last goal (fulltas --check's replay); a course run at its finish.
             RunResult run = sim.Run(inputs, null, null, fullTas ? 1000000 : 400, _ => record.Step());
             record.End(run);
             record.Detach();
@@ -48,14 +35,11 @@ namespace IGTAP.EngineSim.Cli
                 : progress == 0 ? 0f : MacroEngine.LiveSeconds(run.GoalPhysicsTicks[progress - 1], run.GoalHeldFrames[progress - 1]);
             // Nothing after a Full-TAS route's last goal is part of it (RULES.md 32).
             if (fullTas && finished) report = report.Within(-1, run.GoalPhysicsTicks[progress - 1]);
-            // A finished route's difficulty, measured as `difficulty` measures it with its defaults (deterministic).
             Difficulty.Tally? tally = null;
             if (finished && !args.Contains("--no-difficulty"))
                 using (var meter = new Difficulty.Meter(tracePath, header, labels, Solve.Option(args, "--threads", Environment.ProcessorCount)))
                     tally = meter.Measure(Path.GetFileName(routePath), inputs);
             float difficultySeconds = tally is Difficulty.Tally t ? weights.DifficultySeconds(t.FramePerfect, t.BackToBack) : 0f;
-            // A course route's human inputs (a Full-TAS run's gate replays under them already): replayed again as a human class
-            // plays it, digital stick and two jump buttons (MacroEngine.HumanClass); what ends that replay, null when it finishes.
             string humanBlock = null;
             if (!fullTas && finished)
             {
@@ -101,9 +85,6 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        /// <summary>A route as techs-used judges it: its inputs (a run file's "inputs", an offline best's "ticks"), the trace's
-        /// header, under the route's own "goals" when they are made of the trace's goals (an adopted goal list; a stale list is
-        /// judged under the trace's, said on stderr by <paramref name="tool"/>), and the goal labels (null on a course trace).</summary>
         internal static (JsonElement header, string[] labels, List<InputTick> inputs) Load(string tracePath, string routePath, string tool)
         {
             JsonElement header = Solve.ReadHeader(tracePath);
@@ -122,8 +103,6 @@ namespace IGTAP.EngineSim.Cli
             return (header, labels, inputs);
         }
 
-        /// <summary>The simulation a route of <see cref="Load"/> replays on: a Full-TAS run's under its goals with strict buys (as
-        /// <c>fulltas --check</c>).</summary>
         internal static Simulation Create(string tracePath, JsonElement header, string[] labels)
         {
             Simulation sim = Solve.Creator(tracePath, header)();
@@ -152,7 +131,6 @@ namespace IGTAP.EngineSim.Cli
                         var record = new TechSteps(sim);
                         record.Attach();
                         record.Clear();
-                        // Past a lab's finish box, as techs --demos plays it.
                         sim.TargetFinish = default;
                         RunResult run = sim.Run(inputs, extraTicks: 200, onStep: _ => record.Step());
                         record.End(run);

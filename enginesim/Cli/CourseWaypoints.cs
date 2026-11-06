@@ -11,19 +11,11 @@ using FullTasTracker = IGTAPTasMod.FullTasTracker;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>How <see cref="CourseWaypoints.Build"/> places a course's waypoints.</summary>
     sealed class WaypointOptions
     {
-        /// <summary>Goal-to-goal stretches per course (--waypoints N): N - 1 area waypoints spread over the record, whatever its
-        /// length. 1 or less: none (only the checkpoints, via boxes and the finish).</summary>
         public int Stretches = 6;
-        /// <summary>The course's own checkpoints (checkpointScript triggers) the record touches (--no-checkpoint-waypoints).</summary>
         public bool Checkpoints = true;
-        /// <summary>Record timing: a start:&lt;course&gt; goal at the record's last start-gate crossing (where the game timer starts),
-        /// after every waypoint touched before it. Farm timing (--farm): none.</summary>
         public bool Record = true;
-        /// <summary>Keeps every Kth waypoint in route order, checkpoints and automatic ones alike (the 1st, K+1th, ...; via boxes
-        /// always stay; --waypoint-stride K): the ablation that checks the waypoints don't force a slower line.</summary>
         public int Stride = 1;
         public Action<string> Log;
 
@@ -40,29 +32,12 @@ namespace IGTAP.EngineSim.Cli
         }
     }
 
-    /// <summary>
-    /// A course as a multi-goal problem: area goals (at:) along the record's path, then the finish, so the Full-TAS --auto parts
-    /// search it goal to goal. The waypoints are checkpoints, not cut points: a run carries its momentum through them. Placed
-    /// where the record changes phase (a landing after a long airtime, a wall contact, a reversal, a spring or a zip's hand-off,
-    /// a dash) in preference to even spacing, about <see cref="WaypointOptions.Stretches"/> stretches per course with a floor of
-    /// <see cref="MinTicks"/> ticks between waypoints; the course's own checkpoints and via boxes always. Each
-    /// area waypoint is a band across the record's motion: thick enough that no tick can step over it, as wide as the corridor
-    /// (to the first solid, <see cref="Reach"/> at most). A band the record's path also enters at another time (a
-    /// course that comes back past it) gets from= sides that only the intended entry has. Rects are in the capture frame (what
-    /// the offline goal check reads). The record is replayed under the goals before they are returned: a waypoint it doesn't
-    /// reach in order is dropped.
-    /// </summary>
     static class CourseWaypoints
     {
-        /// <summary>The floor: never two waypoints (or a waypoint and the start, the timer's start or the finish) closer than
-        /// this many physics ticks along the record.</summary>
         const int MinTicks = 16;
-        /// <summary>How far an area waypoint reaches across the record's motion each way, at most, up to the first solid the ray
-        /// from the player meets: alternate lines through the same corridor count, the next corridor doesn't.</summary>
         const float Reach = 360f;
 
 
-        /// <summary>One waypoint: its goal, why it is there and the record's tick at it (the tick it was placed at).</summary>
         public sealed class Waypoint
         {
             public FullTasGoal Goal;
@@ -75,13 +50,10 @@ namespace IGTAP.EngineSim.Cli
         {
             public List<FullTasGoal> Goals;
             public List<Waypoint> Waypoints;
-            /// <summary>The record's physics tick at each goal under the returned goals (-1: missed), and its finish tick.</summary>
             public long[] Reached;
             public int FinishTick, GateTick;
             public List<string> Notes = new List<string>();
         }
-
-        // ---- the record's path ----
 
         sealed class Path
         {
@@ -149,9 +121,6 @@ namespace IGTAP.EngineSim.Cli
             };
         }
 
-        // ---- phase changes ----
-
-        /// <summary>A place the record changes phase: a waypoint prefers these to even spacing, the higher priority first.</summary>
         readonly struct Phase
         {
             public readonly int Tick, Priority;
@@ -176,7 +145,6 @@ namespace IGTAP.EngineSim.Cli
                 if (dash) list.Add(new Phase(i, 2, "dash"));
                 float jump = (float)Math.Sqrt((p.VX[i] - p.VX[i - 1]) * (p.VX[i] - p.VX[i - 1]) + (p.VY[i] - p.VY[i - 1]) * (p.VY[i] - p.VY[i - 1]));
                 if (jump > HandOff && !land && !wall && !dash && !p.Spring[i]) list.Add(new Phase(i, 2, "hand-off"));
-                // A reversal: the path Smooth ticks on turns back on the path Smooth ticks before (both real moves).
                 if (i >= Smooth && i + Smooth < p.N && i - lastReversal > Smooth)
                 {
                     float ax = p.X[i] - p.X[i - Smooth], ay = p.Y[i] - p.Y[i - Smooth], bx = p.X[i + Smooth] - p.X[i], by = p.Y[i + Smooth] - p.Y[i];
@@ -191,18 +159,9 @@ namespace IGTAP.EngineSim.Cli
             return list;
         }
 
-        /// <summary>The longest out-and-back <see cref="Detours"/> looks for, in physics ticks.</summary>
         const int DetourTicks = 150;
-        /// <summary>How far sideways an out-and-back has to go to be a detour.</summary>
         const float DetourReach = 300f;
 
-        /// <summary>
-        /// The ticks inside the record's sideways out-and-backs: within <see cref="DetourTicks"/> it goes at least
-        /// <see cref="DetourReach"/> one way and comes back within a quarter of that, turning off any wall (a bounce between two
-        /// walls is a climb). A waypoint there would make every window keep the detour (Course 9 WJ_DS_DJ_BS 32.58: the checkpoint
-        /// at x 22101-23144 touched in a dash past the wall it comes back to at 21780, a landing waypoint where its fall drifts
-        /// left to 11593 and back), so none goes there. A respawn's jump ends the look.
-        /// </summary>
         static bool[] Detours(Path p)
         {
             var inside = new bool[p.N];
@@ -225,8 +184,6 @@ namespace IGTAP.EngineSim.Cli
             return inside;
         }
 
-        // ---- rects ----
-
         struct Rect
         {
             public float X0, X1, Y0, Y1;
@@ -237,7 +194,6 @@ namespace IGTAP.EngineSim.Cli
 
         static bool Overlaps(Path p, int i, Rect r) { return p.X1[i] > r.X0 && p.X0[i] < r.X1 && p.Y1[i] > r.Y0 && p.Y0[i] < r.Y1; }
 
-        /// <summary>The sides the player's box at tick i - 1 was wholly outside of the rect on (FullTasGoal.EnteredFrom's test).</summary>
         static int Outside(Path p, int i, Rect r)
         {
             if (i <= 0) return 0;
@@ -249,10 +205,6 @@ namespace IGTAP.EngineSim.Cli
             return s;
         }
 
-        /// <summary>
-        /// The rect's from= sides: 0 when the record's path enters it only on the pass at tick t (a gap under minTicks between
-        /// touches is the same pass); else the sides that pass enters from and no other pass does. -1: no side tells them apart.
-        /// </summary>
         static int Sides(Path p, Rect r, int t, int minTicks)
         {
             var entries = new List<(int start, int end)>();
@@ -270,15 +222,12 @@ namespace IGTAP.EngineSim.Cli
             int sides = Outside(p, entries[mine].start, r), others = 0;
             for (int k = 0; k < entries.Count; k++)
                 if (k != mine) others |= Outside(p, entries[k].start, r);
-            // Entries merged into one pass re-enter inside it; any re-entry could count too, so its sides are out.
             for (int i = entries[mine].start + 1; i <= entries[mine].end; i++)
                 if (Overlaps(p, i, r) && !Overlaps(p, i - 1, r)) others |= Outside(p, i, r);
             int allowed = sides & ~others;
             return allowed == 0 ? -1 : allowed;
         }
 
-        /// <summary>A band across the record's motion at tick t, or null when it can't be told from the record's other passes
-        /// (or the player stands still there).</summary>
         static Rect? Band(Path p, int t, WaypointOptions o)
         {
             int a = Math.Max(0, t - 4), b = Math.Min(p.N - 1, t + 4);
@@ -286,7 +235,6 @@ namespace IGTAP.EngineSim.Cli
             if (dx * dx + dy * dy < 64f) { dx = p.VX[t]; dy = p.VY[t]; }
             if (dx * dx + dy * dy < 1f) return null;
             bool across = Math.Abs(dx) >= Math.Abs(dy);
-            // Thick enough that the fastest tick near t can't step over it (the goal is checked once a tick).
             float step = 0f;
             for (int i = Math.Max(1, t - 3); i <= Math.Min(p.N - 1, t + 3); i++)
                 step = Math.Max(step, across ? Math.Abs(p.X[i] - p.X[i - 1]) : Math.Abs(p.Y[i] - p.Y[i - 1]));
@@ -308,7 +256,6 @@ namespace IGTAP.EngineSim.Cli
             return null;
         }
 
-        /// <summary>A fixed rect (a checkpoint's trigger, a via box) with the from= sides its pass at t needs, or null.</summary>
         static Rect? Fixed(Path p, Rect r, int t, int minTicks)
         {
             r = Rounded(r);
@@ -318,7 +265,6 @@ namespace IGTAP.EngineSim.Cli
             return r;
         }
 
-        /// <summary>The rect as its label writes it (centre and size to 0.1), so the goal checked is the goal labelled.</summary>
         static Rect Rounded(Rect r)
         {
             float cx = R((r.X0 + r.X1) / 2f), cy = R((r.Y0 + r.Y1) / 2f), w = R(r.W), h = R(r.H);
@@ -340,9 +286,6 @@ namespace IGTAP.EngineSim.Cli
             return g;
         }
 
-        // ---- the course's own checkpoints and via boxes ----
-
-        /// <summary>The checkpoint triggers the record touches (the ticks its respawn point moves), with their trigger boxes.</summary>
         static List<(int tick, Rect rect, string name)> Checkpoints(string trace, Path p)
         {
             var found = new List<(int, Rect, string)>();
@@ -354,7 +297,6 @@ namespace IGTAP.EngineSim.Cli
             for (int i = 0; i < p.N; i++)
             {
                 if (!p.Respawned[i]) continue;
-                // The trigger the player's box overlaps now (grown by a tick's worth: the trigger fired inside the step).
                 const float slack = 24f;
                 foreach (Map.Marker m in markers)
                 {
@@ -383,7 +325,6 @@ namespace IGTAP.EngineSim.Cli
             foreach (OfflineSolver.Box box in Solve.ForcedPaths(Array.Empty<string>(), course, caps).Via)
             {
                 var r = new Rect { X0 = box.X0 + o.x, X1 = box.X1 + o.x, Y0 = box.Y0 + o.y, Y1 = box.Y1 + o.y };
-                // Passed as the solver passes it: the player's position inside the box, in order.
                 int at = -1;
                 for (int i = from; i < p.N && at < 0; i++)
                     if (p.X[i] >= r.X0 && p.X[i] <= r.X1 && p.Y[i] >= r.Y0 && p.Y[i] <= r.Y1) at = i;
@@ -394,19 +335,12 @@ namespace IGTAP.EngineSim.Cli
             return found;
         }
 
-        // ---- the goals ----
-
         public static Result Build(string trace, IReadOnlyList<InputTick> route, WaypointOptions o)
         {
             JsonElement header = Solve.ReadHeader(trace);
             return Build(trace, header, Solve.Creator(trace, header)(), route, o, goals => Check(trace, route, goals));
         }
 
-        /// <summary>
-        /// The waypoints of the route as <paramref name="sim"/> plays it from its start (a course's start, or a farm loop's lap
-        /// from the lead's finish, CourseLoop.cs) to the course's finish there, each goal list replayed by
-        /// <paramref name="check"/> (each goal's physics tick, -1 where it isn't reached).
-        /// </summary>
         internal static Result Build(string trace, JsonElement header, Simulation sim, IReadOnlyList<InputTick> route, WaypointOptions o,
             Func<List<FullTasGoal>, long[]> check)
         {
@@ -415,7 +349,6 @@ namespace IGTAP.EngineSim.Cli
             var result = new Result { FinishTick = p.N - 1 };
             int n = p.N - 1;
 
-            // The record's last start-gate crossing: where the game timer starts (record timing's start goal).
             int gate = -1, gateCourse = 0;
             for (int i = 1; i < p.N; i++)
                 if (p.Timing[i] && !p.Timing[i - 1]) { gate = i; gateCourse = p.TimingCourse[i]; }
@@ -425,8 +358,7 @@ namespace IGTAP.EngineSim.Cli
 
             var chosen = new List<Waypoint>();
             bool[] detour = Detours(p);
-            // Kept apart from each other, from the start and the finish and, with a start goal, from the gate crossing (a goal
-            // touched on the crossing's tick would leave the start goal current after the course has started).
+            // Keep goals off the gate-crossing tick, or the start goal stays current after the course has started.
             var marks = new List<int> { 0, n };
             if (startGoal) marks.Add(gate);
             bool Clear(int t, int ticks) => marks.All(m => Math.Abs(m - t) >= ticks);
@@ -443,8 +375,6 @@ namespace IGTAP.EngineSim.Cli
                 {
                     if (!Clear(tick, 2)) { result.Notes.Add($"checkpoint {name} at tick {tick} is next to another goal: left out"); continue; }
                     if (detour[tick]) { result.Notes.Add($"checkpoint {name} at tick {tick} is inside a detour: left out"); continue; }
-                    // The trigger widened by the band across the motion there (a line past the checkpoint that misses its small
-                    // trigger still counts), else the trigger alone.
                     Rect? band = Band(p, tick, o);
                     Rect? r = band == null ? null : Fixed(p, Union(rect, band.Value), tick, MinTicks);
                     r ??= Fixed(p, rect, tick, MinTicks);
@@ -453,8 +383,6 @@ namespace IGTAP.EngineSim.Cli
                     marks.Add(tick);
                 }
 
-            // The automatic waypoints: a slot per stretch boundary, each taking the best phase change near it, else the path
-            // where the slot falls.
             int stretches = Math.Min(o.Stretches, n / MinTicks);
             List<Phase> phases = Phases(p);
             var auto = new List<Waypoint>();
@@ -464,16 +392,12 @@ namespace IGTAP.EngineSim.Cli
                 for (int j = 1; j < stretches; j++)
                 {
                     double ideal = j * slot;
-                    // A forced waypoint in the slot's reach serves it.
                     if (chosen.Any(w => Math.Abs(w.Tick - ideal) < slot / 2)) continue;
                     int lo = Math.Max(1, (int)Math.Ceiling(ideal - slot / 2)), hi = Math.Min(n - 1, (int)Math.Floor(ideal + slot / 2));
                     var picks = new List<(double score, int tick, string why)>();
                     foreach (Phase ph in phases)
                         if (ph.Tick >= lo && ph.Tick <= hi) picks.Add((ph.Priority - 3 * Math.Abs(ph.Tick - ideal) / slot, ph.Tick, ph.Kind));
                     for (int t = lo; t <= hi; t++) picks.Add((-3 * Math.Abs(t - ideal) / slot, t, "spacing"));
-                    // A band the record passes once (no from=) before one it passes again: a from= side also turns away every
-                    // other line that comes in another way (Course 7 ZIP's 8.12 line entered the record's revisited band from the
-                    // right).
                     Waypoint pick = null, sided = null;
                     foreach (var (score, tick, why) in picks.OrderByDescending(q => q.score).Take(80))
                     {
@@ -501,7 +425,6 @@ namespace IGTAP.EngineSim.Cli
             FullTasGoal finish = Finish(sim, header);
             FullTasGoal start = startGoal ? new FullTasGoal { kind = FullTasGoal.Start, course = gateCourse, label = "start:" + gateCourse } : null;
 
-            // The record replayed under the goals: a waypoint it misses (or reaches on the previous goal's heels) is dropped.
             for (int attempt = 0; ; attempt++)
             {
                 List<FullTasGoal> goals = Assemble(chosen, start, gate, finish, out int startIndex);
@@ -527,7 +450,6 @@ namespace IGTAP.EngineSim.Cli
                 Waypoint drop = chosen.FirstOrDefault(w => w.Goal == goals[bad]);
                 if (drop == null)
                 {
-                    // The start or finish goal missed: the waypoint before it spoils it (a touch on the gate's tick).
                     drop = chosen.LastOrDefault(w => goals.IndexOf(w.Goal) < bad);
                     if (drop == null) { attempt = chosen.Count + 3; continue; }
                 }
@@ -550,8 +472,6 @@ namespace IGTAP.EngineSim.Cli
             return goals;
         }
 
-        /// <summary>The course's finish as a goal: a transition's next course start, a bonus's finish rect (an area goal), else
-        /// the course's finish.</summary>
         internal static FullTasGoal Finish(Simulation sim, JsonElement header)
         {
             if (header.TryGetProperty("finishStart", out JsonElement next))
@@ -564,8 +484,7 @@ namespace IGTAP.EngineSim.Cli
             return new FullTasGoal { kind = FullTasGoal.Farm, course = sim.TargetCourse, label = "farm:" + sim.TargetCourse };
         }
 
-        /// <summary>The trace's header without its own finish (a bonus's finish rect, a transition's next start): with goals, the
-        /// last goal is the finish, and the header's would end the run on that tick before the goal check.</summary>
+        // Drop the header's own finish: with goals the last goal is the finish, and the header's would end the run early.
         internal static JsonElement GoalHeader(JsonElement header)
         {
             JsonObject copy = JsonNode.Parse(header.GetRawText()).AsObject();
@@ -576,7 +495,6 @@ namespace IGTAP.EngineSim.Cli
             return doc.RootElement.Clone();
         }
 
-        /// <summary>The route replayed under the goals from the trace's start: each goal's physics tick, -1 where it isn't reached.</summary>
         internal static long[] Check(string trace, IReadOnlyList<InputTick> route, IReadOnlyList<FullTasGoal> goals)
         {
             Simulation sim = Solve.Creator(trace, GoalHeader(Solve.ReadHeader(trace)))();

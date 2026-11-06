@@ -7,8 +7,6 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim
 {
-    /// <summary>Marks a <see cref="TechChecks"/> method as the check of these techs (techs.json ids): <c>static int M(TechSteps run,
-    /// int from, int to)</c>, the step in [from, to] (indices into <see cref="TechSteps.Steps"/>) where the tech happened, else -1.</summary>
     [AttributeUsage(AttributeTargets.Method)]
     sealed class TechCheckAttribute : Attribute
     {
@@ -16,15 +14,8 @@ namespace IGTAP.EngineSim
         public TechCheckAttribute(params string[] techs) { Techs = techs; }
     }
 
-    /// <summary>
-    /// Whether a tech happened in a recorded run (<see cref="TechSteps"/>), and where: the TAS overlay's detectors
-    /// (TasOverlayTechs.cs) ported to the recorded steps for a tech with a techs.json "detector", else the tech's own check
-    /// (a <see cref="TechCheckAttribute"/> method). Techs here lists a variant only when its tech happens in its window; a tech
-    /// with neither is never listed.
-    /// </summary>
     public static partial class TechChecks
     {
-        /// <summary>One detection: the overlay's Tech name, the step its span starts on and the step it was seen on.</summary>
         public readonly struct Span
         {
             public readonly string Tech;
@@ -35,7 +26,6 @@ namespace IGTAP.EngineSim
 
         static Dictionary<string, Func<TechSteps, int, int, int>> _own;
 
-        /// <summary>The techs with a check of their own, by techs.json id.</summary>
         static Dictionary<string, Func<TechSteps, int, int, int>> Own
         {
             get
@@ -53,11 +43,8 @@ namespace IGTAP.EngineSim
             }
         }
 
-        /// <summary>Whether the tech can be checked: it has a detector, or a check of its own.</summary>
         public static bool Checkable(string tech, string detector) => !string.IsNullOrEmpty(detector) && Detectors.Contains(detector) || Own.ContainsKey(tech);
 
-        /// <summary>The step (index into <see cref="TechSteps.Steps"/>) where the tech happened between steps
-        /// <paramref name="from"/> and <paramref name="to"/> (inclusive), else -1. A tech's own check wins over its detector.</summary>
         public static int Find(string tech, string detector, TechSteps run, int from, int to)
         {
             if (run.Steps.Count == 0) return -1;
@@ -71,14 +58,11 @@ namespace IGTAP.EngineSim
             return -1;
         }
 
-        /// <summary>The first step of input tick <paramref name="tick"/> or later (its count when none).</summary>
         public static int StepAt(TechSteps run, int tick)
         {
             for (int i = 0; i < run.Steps.Count; i++) if (run.Steps[i].Tick >= tick) return i;
             return run.Steps.Count;
         }
-
-        // ---- the overlay's detectors (TasOverlayTechs.cs), on recorded steps ----
 
         static readonly HashSet<string> Detectors = new HashSet<string>(StringComparer.Ordinal)
         {
@@ -91,12 +75,7 @@ namespace IGTAP.EngineSim
         const int FlipWindowTicks = 4, InwallChainTicks = 6, MaxSpan = 60;
         const int NoTick = int.MinValue / 2;
 
-        /// <summary>
-        /// The overlay's detectors over the run (TasOverlayTechs.cs, line for line on the recorded calls; ticks there are physics
-        /// ticks counted from 1, here step t is tick t + 1). The overlay's per-tick order: a respawn, then FixedUpdate's calls
-        /// (the wall branch's kick, the input or the dash branch's super check), then its after-tick, then the frames' step-ups.
-        /// Spike grace: a step whose hurtbox touches a spike the run lives through (the overlay's graze counter, not killed).
-        /// </summary>
+        // Overlay detectors port: ticks there count from 1, here step t is tick t + 1.
         internal static List<Span> Detect(TechSteps run)
         {
             IReadOnlyList<TechStep> steps = run.Steps;
@@ -124,7 +103,6 @@ namespace IGTAP.EngineSim
                 MoveState input = default, super = default;
                 bool inputOpen = false, superOpen = false, wallKick = false;
                 bool superBuffer = false, superHyper = false, superUltra = false, superFloat = false;
-                // A respawn (a quick restart, before FixedUpdate) puts the player on the ground.
                 bool preGround = pre.Ground, preDashing = pre.Dash, preSpring = pre.Cutscene == Movement.cutsceneModes.spring;
                 foreach (TechEvent e in step.Calls)
                 {
@@ -150,8 +128,6 @@ namespace IGTAP.EngineSim
                             superHyper = m.CanHyper;
                             float lifted = m.SceneY + 2f;
                             superUltra = Math.Sign(m.PreDashX) == Math.Sign(m.DashX) && lifted < m.LastHyperY - 4f;
-                            // A float ultra: the check passes only because a rebase moved the dot since the first hyper wrote
-                            // lastHyperY: in the world frame it is not 4 lower.
                             superFloat = superUltra && dashInWave && lifted - (m.SceneY - m.Y) >= m.LastHyperY - lastHyperOriginY - 4f;
                             break;
                         case TechCall.Kick:
@@ -239,7 +215,6 @@ namespace IGTAP.EngineSim
                     }
                 }
 
-                // TechAfterTick.
                 MoveState after = step.After;
                 pauselifted = false;
                 if (preSpring && !wasSpring) springStart = tick;
@@ -275,13 +250,12 @@ namespace IGTAP.EngineSim
                         backwardsStart = flipStart;
                     }
                 }
-                // An omnidash the stick aimed in its freeze: steeper than the 8 ways (|x| under the diagonal's 0.707).
                 if (after.Dash && after.SinceDash == 1f && tick - dashStart == 1 && after.DashX != 0f && after.DashY != 0f && Math.Abs(after.DashX) < 0.7f)
                     Add("FreezeAim", dashStart, tick);
                 if (after.Ground && !after.Dash) waveAir = superAir = false;
                 foreach ((string tech, int start) in pending) Add(tech, start, tick);
                 pending.Clear();
-                // The graze: touching a spike and living on (a spike kills on its second stay; the run ends at a death).
+                // A spike kills on its second stay: a graze is touching and living on.
                 if (step.Spike && !Dies(steps, i, 3)) Add("SpikeGrace", tick, tick);
                 endVy = after.Vy;
                 if (after.LastHyperY != lastHyperY)
@@ -290,7 +264,6 @@ namespace IGTAP.EngineSim
                     lastHyperOriginY = after.SceneY - after.Y;
                 }
 
-                // The frames' step-ups (TechSteppedUp): an inwall climb's rays look against the facing.
                 foreach (TechEvent e in step.Calls)
                 {
                     if (e.Call != TechCall.StepUp) continue;
@@ -308,7 +281,6 @@ namespace IGTAP.EngineSim
             return spans;
         }
 
-        /// <summary>The run dies within <paramref name="ahead"/> steps after step <paramref name="i"/> (or on it).</summary>
         internal static bool Dies(IReadOnlyList<TechStep> steps, int i, int ahead)
         {
             for (int k = i; k < steps.Count && k <= i + ahead; k++) if (steps[k].Died) return true;

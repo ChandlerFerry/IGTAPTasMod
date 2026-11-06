@@ -1,12 +1,3 @@
-"""One-time migration of Full-TAS goal lists to lap goals: each `start:N` right before `finish:N` becomes `record:N` (one goal,
-reached at the finish), each other `finish:N` becomes `farm:N`; a lone `start:N` stays. Everything indexed by goal is moved to
-the new numbering: the run files (data/runs/), the traces' header goals (spliced, the rest byte for byte), the offline bests and their
-copies (goals, goal ticks, idles, goalsFrom), the --auto references, the stretch bests (renamed to their new number), the
-studio's splits, the piece library's finish pieces (`farm:N`), the buy tables' from/until and forced-paths.json's goal-numbered
-avoid blocks. Close the game and stop every solve first.
-
-    python tools/migrate-lap-goals.py [--dry-run]
-"""
 import glob
 import json
 import os
@@ -14,7 +5,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import gamepaths  # noqa: E402
+import gamepaths
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DRY = "--dry-run" in sys.argv
@@ -22,7 +13,6 @@ START, FINISH = re.compile(r"^start:(\d+)$"), re.compile(r"^finish:(\d+)$")
 
 
 def collapse(labels):
-    """The new labels and, per old goal, its new index (None: a lap's gate, now part of its record: goal)."""
     new, where, i = [], [], 0
     while i < len(labels):
         s = START.match(labels[i])
@@ -61,12 +51,11 @@ def load(path):
 
 
 def dump(obj, like):
-    """JSON as the file had it: indented when it was."""
     return json.dumps(obj, indent=2 if "\n  " in like[:4096] else None, separators=None if "\n  " in like[:4096] else (",", ":"),
                       ensure_ascii=False)
 
 
-maps = {}  # run name -> (old labels, new labels, where)
+maps = {}
 
 
 def runs():
@@ -82,7 +71,6 @@ def runs():
 
 
 def splice_goals(path):
-    """A trace's header goals collapsed, spliced in as EconomyPlan.SpliceHeaderGoals does (the rest byte for byte)."""
     with open(path, "rb") as f:
         data = f.read()
     run = data.find(b'"fulltas":{')
@@ -130,7 +118,6 @@ def splice_goals(path):
 
 
 def best(path, obj):
-    """An offline best or a copy: goals, the per-goal ticks, idles, goalsFrom."""
     labels = obj["goals"]
     new, where = collapse(labels)
     obj["goals"] = new
@@ -168,7 +155,7 @@ def engine_dir():
     for path in sorted(glob.glob(os.path.join(traces, "fulltas", "*.json"))):
         name = os.path.basename(path)
         if name.endswith(".auto-memory.json") or name.endswith(".report.json") or name.endswith(".auto-speeds.json"):
-            continue  # memory and reports: dropped by the engine on a goal-list change, rewritten by the next solve
+            continue
         text = open(path, encoding="utf-8").read()
         try:
             obj = json.loads(text)
@@ -246,7 +233,6 @@ def splits():
 
 
 def forced_paths():
-    """Each goal-numbered or goal-labelled avoid block of a migrated run, edited in the file's own text (its layout kept)."""
     path = os.path.join(REPO, "enginesim", "Cli", "forced-paths.json")
     text = open(path, encoding="utf-8").read()
     edits = []
@@ -275,7 +261,6 @@ def forced_paths():
                         hit = hits.pop()
                         edits += [(f'"{key}": "{label}"', f'"{key}": "{hit}"')]
                         edits += [(json.dumps(block[k]), json.dumps(block[k].replace(label, hit))) for k in ("name", "note") if isinstance(block.get(k), str)]
-    # Every edit matched in the file as it was (a block renumbered onto another's old number isn't edited twice).
     for a, _ in edits:
         if text.count(a) != 1:
             sys.exit(f"forced-paths: {text.count(a)} matches for {a}: fix it by hand")

@@ -27,8 +27,6 @@ namespace IGTAP.EngineSim
         public float Friction, Bounciness;
         public ColliderData Composite;
         public ShapeData[] SourceShapes;
-        /// <summary>A CompositeCollider2D's generated paths (GetPath, the collider's local space): its geometry even while it
-        /// is off, when the export's shapes are empty.</summary>
         public Vector2[][] Paths;
     }
 
@@ -41,10 +39,7 @@ namespace IGTAP.EngineSim
         public readonly Dictionary<string, JsonElement> Physics2DSettings = new Dictionary<string, JsonElement>();
         public readonly int[] LayerCollisionMasks = new int[32];
         public readonly Dictionary<Transform, int> SiblingIndex = new Dictionary<Transform, int>();
-        /// <summary>The root transforms of the scene FloatingOrigin moves (UpdateAllScenes off: the active scene; the export's `activeScene`).</summary>
         public readonly List<Transform> MovedRoots = new List<Transform>();
-        /// <summary>A lab map's coloured shapes (LabMap.Inject): each collider is on while its colour is the active one, and
-        /// colouredBlockSwapper.swapBlocks toggles them with the scene's coloured tilemaps (Simulation's SwapBlocks hook).</summary>
         public readonly List<(Collider2D collider, bool blue)> LabColours = new List<(Collider2D, bool)>();
         public float FixedDeltaTime;
         public Assembly Game { get; } = typeof(Movement).Assembly;
@@ -53,9 +48,7 @@ namespace IGTAP.EngineSim
         readonly List<(Rigidbody2D body, JsonElement props)> _pendingBodies = new List<(Rigidbody2D, JsonElement)>();
         readonly List<(ColliderData data, JsonElement props)> _pendingColliders = new List<(ColliderData, JsonElement)>();
 
-        // Each world file is read once a process: every simulation a run creates (a thread's, a later phase's) builds from the
-        // same bytes even when the plugin publishes a new capture under the name meanwhile, and the file is open only for that
-        // one read, shared so the plugin's replace (TasPlugin.ReplaceAtomic) never meets a sharing violation.
+        // Each world file is read once per process so every simulation builds from the same bytes if the plugin republishes it.
         static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte[]> Files =
             new System.Collections.Concurrent.ConcurrentDictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
 
@@ -208,8 +201,7 @@ namespace IGTAP.EngineSim
             data.Bounciness = props.GetProperty("bounciness").GetSingle();
             c.friction = data.Friction;
             c.bounciness = data.Bounciness;
-            // Off at the export, a source's `composite` reads null: it is the CompositeCollider2D on its Rigidbody2D's object (a
-            // tree segment's ground).
+            // With composite off at the export, a source's composite reads null: the CompositeCollider2D on the Rigidbody2D's object.
             if (props.TryGetProperty("compositeOperation", out JsonElement operation) && operation.ValueKind == JsonValueKind.Number && operation.GetInt32() != 0
                 && (Ref(props, "composite") as Collider2D ?? c.attachedRigidbody?.gameObject.GetComponent<CompositeCollider2D>()) is Collider2D composite)
                 data.Composite = composite.BackendData as ColliderData;
@@ -376,8 +368,6 @@ namespace IGTAP.EngineSim
 
         readonly Dictionary<Type, (int objects, int attached, Array all)> _all = new Dictionary<Type, (int, int, Array)>();
 
-        /// <summary>Every component of type T in the world, in object order (a copy: callers may keep or reorder it). Cached per
-        /// type while no object or component has been added: the economy asks every few ticks (MacroEngine.RefreshRewards' courses).</summary>
         public T[] All<T>() where T : class
         {
             if (!_all.TryGetValue(typeof(T), out var hit) || hit.objects != GameObjects.Count || hit.attached != GameObject.Attached)

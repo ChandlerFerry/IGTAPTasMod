@@ -7,20 +7,9 @@ namespace IGTAPTasMod
 {
     public sealed partial class TasPlugin
     {
-        /// <summary>
-        /// The input trainer of a lab map with <c>"trainer": "final-cling-float"</c> (labmaps/final-cling-float.json), shown while
-        /// the lab is injected, in hand play and in its demo's playback alike, as the pauselift's (<see cref="PauseliftTrainer"/>).
-        /// It follows the attempt in physics ticks from the final cling: the cling on the moss with no wall jumps left
-        /// (Movement.outOfWallJumpsCling: isFinalWallClingActive on for finalWallClingTime, gravity off), the turn toward the
-        /// metal wall and the refill it gives (wallJumpsLeft back above 0 with the flag still on), the jump (its launch speed held
-        /// while the flag lasts), and the finish box. The windows are the offline lab's (docs/human-input.md): the refill within
-        /// 15 ticks of the cling, the jump on the turn's tick or up to 8 after it, never before it (a press on the moss is spent
-        /// there: no wall jumps and no double jump).
-        /// </summary>
         sealed class FloatTrainer
         {
             public Movement Player;
-            /// <summary>The moss's side: -1 on the left, +1 on the right (the sprite faces the wall while it clings).</summary>
             public int MossSide = -1;
             public bool Active, Done, WasFlag, EarlyPress, Reached;
             public int ClingTick = -1, TurnTick = -1, RefillTick = -1, JumpTick = -1, FlagEndTick = -1, LastTick = -1;
@@ -28,13 +17,11 @@ namespace IGTAPTasMod
             public int Attempts, Successes;
         }
 
-        /// <summary>The refill's window from the cling and the jump's from the turn, in ticks (offline, labmaps/final-cling-float.json).</summary>
         const int FloatTurnWindow = 15, FloatJumpWindow = 8;
 
         static readonly FieldInfo TrainerFinalClingField = AccessTools.Field(typeof(Movement), "isFinalWallClingActive");
         static readonly FieldInfo TrainerFinalClingTimeField = AccessTools.Field(typeof(Movement), "finalWallClingTime");
         static readonly FieldInfo TrainerJumpBufferField = AccessTools.Field(typeof(Movement), "jumpBuffer");
-        // Read on every physics tick while the trainer is shown: by reference, not FieldInfo.GetValue's boxed copy.
         static readonly AccessTools.FieldRef<Movement, bool> TrainerFinalCling = TrainerFinalClingField == null ? null
             : AccessTools.FieldRefAccess<Movement, bool>(TrainerFinalClingField);
         static readonly AccessTools.FieldRef<Movement, bool> TrainerJumpBuffer = TrainerJumpBufferField == null ? null
@@ -44,14 +31,12 @@ namespace IGTAPTasMod
 
         FloatTrainer _floatTrainer;
 
-        /// <summary>The float's length in ticks: finalWallClingTime (0.7 s) over the physics step.</summary>
         static int FloatTicks(Movement p)
         {
             float time = TrainerFinalClingTime != null ? TrainerFinalClingTime(p) : 0.7f;
             return Mathf.RoundToInt(time / Time.fixedDeltaTime);
         }
 
-        /// <summary>Every rendered frame (plugin Update); the attempt advances once per physics tick (Time.fixedTime).</summary>
         void PumpFloatTrainer()
         {
             if (_floatTrainer == null) _floatTrainer = new FloatTrainer();
@@ -84,7 +69,6 @@ namespace IGTAPTasMod
                     tr.JumpTick = tick;
                     tr.JumpSpeed = p.Velocity.y;
                 }
-                // A press while still facing the moss: no wall jump (none left) and no double jump take it, so it is spent there.
                 if (flag && tr.TurnTick < 0 && TrainerJumpBuffer != null && TrainerJumpBuffer(p)) tr.EarlyPress = true;
                 if (!flag && tr.WasFlag) tr.FlagEndTick = tick;
                 float y = p.transform.position.y - CurrentOrigin().y - (_lab.Lab.anchor != null ? _lab.Lab.anchor[1] : 0f);
@@ -100,10 +84,6 @@ namespace IGTAPTasMod
             tr.WasFlag = flag;
         }
 
-        /// <summary>
-        /// The trainer panel, top centre, as the pauselift's: one chip per step in order (grey to do, green done, red failed),
-        /// the one message that matters, and the attempt's timeline in ticks from the cling.
-        /// </summary>
         void DrawFloatTrainer()
         {
             FloatTrainer tr = _floatTrainer;
@@ -155,11 +135,6 @@ namespace IGTAPTasMod
             DrawFloatTimeline(new Rect(x, y, w, 40f * scale), tr, floatTicks, now);
         }
 
-        /// <summary>
-        /// Ticks from the cling: the float's 0.7 s (blue), the turn's window (faint gold, from the cling), the jump's (gold, from
-        /// this attempt's turn to 8 ticks after it, else from tick 1), the turn, refill and jump as they came, the float itself
-        /// (cyan, from the jump to the flag's end), and a cursor while the attempt runs.
-        /// </summary>
         void DrawFloatTimeline(Rect r, FloatTrainer tr, int floatTicks, int now)
         {
             float span = floatTicks + 10f;

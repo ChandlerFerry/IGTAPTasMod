@@ -10,35 +10,11 @@ using IGTAPTasMod;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// <c>ease &lt;course-trace.json&gt; [route.json] [--seed route.json ...] [--minutes M] [--search-minutes S] [--slack S] [--max-time S]
-    /// [--class human-nmg|human-major] [--threads T]</c>: easier routes for a human class than the fastest, slower ones included, to
-    /// pick from; a human class's Improve (<c>solve --auto --class</c>) runs it with the studio's seeds. Two parts, one clock
-    /// (<c>--minutes</c>, 10):
-    /// <list type="bullet">
-    /// <item>Breadth (<c>--search-minutes</c>, 40 %): the offline solver searches the course unseeded, so any way, not only the known
-    /// route's, with only inputs a player spaces out (<see cref="HumanSpaced"/>), keeping every finish up to <c>--slack</c> (1.5) s
-    /// behind its best. The finishes are grouped by their way (<see cref="Way"/>: the walls and floors they settle on, by side) and
-    /// each way's fastest is measured.</item>
-    /// <item>Depth: from every seed that finishes as a human class plays it (each also with its part tilts snapped) and every way
-    /// measured, edits near the inputs that make a route hard (its frame-perfect
-    /// inputs and back-to-back pairs: <see cref="Mutate"/>), each child that still finishes as a human class plays it, under the time
-    /// limit (<c>--max-time</c>, else the best plus the slack), measured. Spacing is no longer required: the measure judges.</item>
-    /// </list>
-    /// The search measures quickly (its own inputs, a radius of 3: a window it cuts short only counts against a route); the routes
-    /// no other beats on time, frame-perfect inputs and back-to-back pairs at once are measured again as the gate's techs-used does
-    /// (humanize's version, spike grace, spans), listed and written to traces\human-finds\&lt;course&gt;_&lt;caps&gt;-&lt;class&gt;\. The lowest
-    /// score, when it beats every seed's, is written to offline-best for the plugin's gate (the class's record: a strictly lower
-    /// score, RULES.md 54); any other pick copied there under the name the list gives is judged the same way.
-    /// </summary>
     static partial class Difficulty
     {
         const string EaseUsage = "usage: ease <course-trace.json> [route.json] [--minutes M] [--search-minutes S] [--slack S] [--max-time S] [--class human-nmg|human-major] [--threads T]";
-        /// <summary>Finishes kept per 0.02 s of course time (a reservoir: a way found often doesn't crowd out one found once).</summary>
         const int PerBucket = 40;
-        /// <summary>The ways measured at most, fastest first.</summary>
         const int Ways = 300;
-        /// <summary>The routes kept as parents besides those no other beats: the least back-to-back, then frame-perfect, then time.</summary>
         const int Elite = 24;
 
         sealed class Find
@@ -48,7 +24,6 @@ namespace IGTAP.EngineSim.Cli
             public float Time;
             public long RunTicks;
             public int FramePerfect, BackToBack, Grace, Major;
-            /// <summary>The input ticks of its frame-perfect inputs and forced back-to-back pairs (every input's when none): where edits go.</summary>
             public int[] Hot;
             public double Score;
 
@@ -76,7 +51,6 @@ namespace IGTAP.EngineSim.Cli
             var clock = Stopwatch.StartNew();
             void Log(string line) => Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {line}");
 
-            // Breadth: the solver, unseeded, human inputs only, every finish kept.
             var kept = new Dictionary<int, List<List<InputTick>>>();
             var seen = new Dictionary<int, int>();
             var hashes = new HashSet<ulong>();
@@ -113,8 +87,7 @@ namespace IGTAP.EngineSim.Cli
             {
                 Thread.Sleep((int)Math.Min(10000, Math.Max(100, (searchMinutes - clock.Elapsed.TotalMinutes) * 60000)));
                 lock (gate) Log($"{Interlocked.Read(ref solver.Runs)} runs, {Interlocked.Read(ref solver.Finishes)} finishes, {hashes.Count} distinct, best {best:0.00}s");
-                // ponytail: unseeded, the solver stopped finishing Course 2 WJ after the first run (2026-10-06, cause not found):
-                // a quarter of the breadth with no finish gives the rest to the depth, which works from the seeds.
+                // shortcut: unseeded runs stopped finishing Course 2 WJ (cause not found); no finish by 1/4 time hands over to depth.
                 if (Interlocked.Read(ref solver.Finishes) == 0 && clock.Elapsed.TotalMinutes >= searchMinutes / 4)
                 {
                     Log("no finish yet: the rest of the minutes go to the seeds");
@@ -125,8 +98,6 @@ namespace IGTAP.EngineSim.Cli
             foreach (Thread t in workers) t.Join(60000);
 
             using var pool = new Pool(tracePath, header, null, threads);
-            // The seeds (the route given, every --seed, the trace's own), each also with its part tilts snapped (CourseAuto.Digital):
-            // the ones that finish as a human class plays them are parents, and the best of them by score the one to beat.
             var seeds = new List<(string name, List<InputTick> inputs)> { (Path.GetFileName(tracePath), Solve.ReadInputs(header)) };
             foreach (string path in (routePath == null ? new string[0] : new[] { routePath }).Concat(Solve.Args(args, "--seed")))
                 seeds.Add((Path.GetFileName(path), Plan.ReadRoute(path)));
@@ -149,7 +120,6 @@ namespace IGTAP.EngineSim.Cli
                 return f;
             }
 
-            // Each way's fastest, measured.
             List<List<InputTick>> routes;
             lock (gate) routes = kept.Where(kv => kv.Key * .02f <= cap + 1e-4f).OrderBy(kv => kv.Key).SelectMany(kv => kv.Value).ToList();
             RunResult[] played = pool.Play(routes, true);
@@ -172,7 +142,6 @@ namespace IGTAP.EngineSim.Cli
             }
             Log($"{seedFinds.Count} of {seeds.Count} seeds finish as a {cls} plays them under {cap:0.00} s");
 
-            // Depth: edits near each parent's hard inputs, every child that finishes under the limit measured.
             List<Find> Front() => archive.Values.Where(f => f.Time <= cap + 1e-4f).Where(f => !archive.Values.Any(o => o.Time <= cap + 1e-4f && o.Dominates(f)))
                 .GroupBy(f => (MathF.Round(f.Time, 2), f.FramePerfect, f.BackToBack)).Select(g => g.First()).OrderBy(f => f.Time).ToList();
             var tried = new HashSet<ulong>(archive.Keys);
@@ -205,7 +174,6 @@ namespace IGTAP.EngineSim.Cli
                 }
             }
 
-            // The unbeaten, as the gate scores them: humanize's version measured, spike grace and spans from a replay.
             HumanWeights weights = HumanWeights.Of(default);
             void Gate(Find f)
             {
@@ -244,7 +212,6 @@ namespace IGTAP.EngineSim.Cli
             }
             Console.WriteLine($"in {dir}");
             Console.WriteLine($@"to judge a pick: copy it to offline-best\{course}_{caps}-{cls}-<score>.json (the gate saves it under a strictly lower score)");
-            // The lowest score, when it beats every seed's, goes to the plugin's gate (offline-best\<course>_<caps>-<class>-<score>.json).
             Find lowest = list.OrderBy(f => f.Score).FirstOrDefault();
             if (lowest != null && (yours == null || lowest.Score < yours.Score))
             {
@@ -258,19 +225,12 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        /// <summary>A route's way: the walls and floors it settles on (its wall and land anchors), each by its kind and x to 150 u.</summary>
         static string Way(List<Anchor> anchors)
         {
             return string.Join(" ", anchors.Where(a => a.Kind == "wall" || a.Kind == "land")
                 .Select(a => a.Kind[0] + ((int)MathF.Round(a.Move.X / 150f)).ToString(CultureInfo.InvariantCulture)));
         }
 
-        /// <summary>
-        /// One to three edits near the route's hard inputs (<paramref name="hot"/>), each within 4 ticks of one: an input moved 1-4
-        /// ticks, a stick change dropped (the stick before it held on) or made another digital value, a jump press dropped, or the
-        /// rest of the route held 1-6 ticks later or brought 1-3 ticks sooner (ticks with no press, release or dash cut), as a player
-        /// who comes in late or early plays the rest alike. Null when nothing changed.
-        /// </summary>
         static List<InputTick> Mutate(List<InputTick> route, int[] hot, Random rng)
         {
             List<InputTick> c = route;
@@ -316,11 +276,6 @@ namespace IGTAP.EngineSim.Cli
             return ReferenceEquals(c, route) ? null : c;
         }
 
-        /// <summary>
-        /// Inputs a human class plays and a player spaces out: every stick (lock and turn too) at rest or full, and each input (a
-        /// stick change, a jump press or release, a dash, its jump on a dash frame) at least <see cref="Apart"/> ticks after the one
-        /// before (inputs on one tick are one; a stick held from the start is none).
-        /// </summary>
         internal static bool HumanSpaced(List<InputTick> inputs)
         {
             static bool Digital(float? v) => v is not float f || f == 0f || f == 1f || f == -1f;

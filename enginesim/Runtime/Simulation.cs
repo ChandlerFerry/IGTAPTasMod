@@ -9,26 +9,16 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim
 {
-    /// <summary>What the player did in one physics step (its FixedUpdate, physics callbacks and rendered frames), from the game's
-    /// own calls: the tech contacts <see cref="ContactLog.Step"/> files (Runtime\TechGrafts.cs).</summary>
     [Flags]
     public enum StepEvents
     {
         None = 0,
-        /// <summary>An air jump spent (playSFX "airJump").</summary>
         DoubleJump = 1,
-        /// <summary>A jump out of a dash: CheckForSuperJump's super or hyper (playSFX "bigJump" with dashActive still up), or a
-        /// ground bounce's jump (DashBounceFrames up).</summary>
         DashJump = 2,
-        /// <summary>Movement.hitSpring (<see cref="Simulation.SpringUp"/>: the spring's up).</summary>
         SpringHit = 4,
-        /// <summary>Movement.SpecialWallJump: a wallbounce, a dash into a wall with the jump buffered, a dash-boosted wall jump.</summary>
         WallBoost = 8,
-        /// <summary>The ground rays touched ground while onGround was off (touchedSolidGround/touchedMossyGround(true)).</summary>
         Landed = 16,
-        /// <summary>The pause menu held open after this step (a route's pause: MacroStep.pauseFrames).</summary>
         Paused = 32,
-        /// <summary>Movement.Update's step-up lifted the player onto a step in one of the step's rendered frames.</summary>
         SteppedUp = 64,
     }
 
@@ -39,17 +29,12 @@ namespace IGTAP.EngineSim
         public int dashJump;
         public int springDash;
         public float? lockX, lockY;
-        /// <summary>On a dash tick: the stick held in the dash's freeze, before the next tick (MacroStep.dashTurnX/dashTurnY; y
-        /// only turns an omnidash).</summary>
         public float? turnX, turnY;
         public bool reset;
-        /// <summary>The pause menu held open for this many frames after the tick's <see cref="pauseTick"/>-th physics tick and
-        /// <see cref="pauseFrame"/> Update frames of it (MacroStep.pauseFrames/pauseTick/pauseFrame): the pauselift.</summary>
         public int pause, pauseTick, pauseFrame;
 
         public bool ArmsLock { get { return springDash != 0 || lockX.HasValue || lockY.HasValue; } }
 
-        /// <summary>The tick after this one with the same stick and button, no new edge.</summary>
         public InputTick Coast() { return new InputTick { x = x, y = y, held = held && !release }; }
 
         public bool Equals(InputTick o) { return x == o.x && y == o.y && held == o.held && press == o.press && release == o.release && dash == o.dash && dashJump == o.dashJump && springDash == o.springDash && lockX == o.lockX && lockY == o.lockY && turnX == o.turnX && turnY == o.turnY && reset == o.reset && pause == o.pause && pauseTick == o.pauseTick && pauseFrame == o.pauseFrame; }
@@ -87,7 +72,6 @@ namespace IGTAP.EngineSim
         public float Time;
         public int FinishTick;
         public long PhysicsTicks;
-        /// <summary>Frames the run stood still in (dash freezes, pauses): its live time is PhysicsTicks and these (MacroEngine.LiveSeconds).</summary>
         public long HeldFrames;
         public int Stepped;
         public string EndReason;
@@ -108,9 +92,7 @@ namespace IGTAP.EngineSim
         public (MonoBehaviour target, object[] fields)[] Touched;
         public (GameObject target, bool active)[] Active;
         public (Behaviour target, bool enabled)[] Enabled;
-        /// <summary>Layers changed since load (PlatformMover.MakeIntangible), and the coroutines parked on a yield.</summary>
         public (GameObject target, int layer)[] Layers;
-        /// <summary>Transforms a script moved since load (a tree segment's trunks and box, IE_Grow), their pose now.</summary>
         internal (Transform target, PhysicsWorld.Pose pose)[] Transforms;
         public (MonoBehaviour target, System.Collections.IEnumerator body, Coroutine handle, Scheduler.Wait wait, int due)[] Routines;
         internal Shop.State Economy;
@@ -118,18 +100,13 @@ namespace IGTAP.EngineSim
         public UnityEngine.Random.State Random;
         public int Waypoints;
         public double VmanTimeLeft;
-        /// <summary>The FloatingOrigin rebases so far (each MoveOrigin's reference position, in order), and one waiting for the next physics step.</summary>
         public Vector3[] Rebases;
         public Vector3 RebasePending;
         public bool RebaseDue;
-        /// <summary>The player body's position at the start and end of the last physics step (its interpolation's ends).</summary>
         public Vector3 StepFrom, StepTo;
-        /// <summary>The player animator's "Animation": Movement.FixedUpdate plays a sound (an RNG draw) leaving a wall cling (3).</summary>
         public int Animation;
-        /// <summary>Each refill orb on camera after the last physics step (Simulation.SeeOrbs), in the world's orb order.</summary>
         public bool[] OrbSeen;
 
-        /// <summary>This state with another goal tracker's progress (a search for goals the run doesn't list: <see cref="Simulation.UseGoals"/>).</summary>
         internal SimSnapshot WithGoal(FullTasTracker.State goal)
         {
             var s = (SimSnapshot)MemberwiseClone();
@@ -140,7 +117,6 @@ namespace IGTAP.EngineSim
 
     public sealed partial class Simulation
     {
-        // Read every tick: field references, as FieldInfo.GetValue boxes each read.
         static readonly AccessTools.FieldRef<courseScript, bool> Tracking = AccessTools.FieldRefAccess<courseScript, bool>("tracking");
         static readonly AccessTools.FieldRef<courseScript, float> PathTime = AccessTools.FieldRefAccess<courseScript, float>("currentPathTime");
         static readonly MethodInfo FixedUpdateMethod = typeof(Movement).GetMethod("FixedUpdate", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -183,8 +159,7 @@ namespace IGTAP.EngineSim
             return ShareBoxes(target, FieldState.Capture(target));
         }
 
-        // A capture's boxed value fields that are bit for bit the target's last capture's become that capture's boxes: a
-        // state holds ~160 boxed Movement fields and few change between captures. Bits, not Equals: -0 isn't 0.
+        // Share boxed fields only when bit-identical: -0 isn't 0, so compare bits, not Equals.
         object[] ShareBoxes(object target, object[] values)
         {
             if (_captured.TryGetValue(target, out object[] last))
@@ -197,8 +172,6 @@ namespace IGTAP.EngineSim
             return _captured[target] = values;
         }
 
-        /// <summary>The bytes of the boxes <see cref="ShareBoxes"/> dropped for the last capture's, since the simulation was made: a
-        /// capture allocated them, but no state keeps them.</summary>
         public long SharedBytes;
 
         sealed class RawBox { public byte Data; }
@@ -213,9 +186,6 @@ namespace IGTAP.EngineSim
         readonly Dictionary<GameObject, bool> _activeAsLoaded = new Dictionary<GameObject, bool>();
         readonly Dictionary<Behaviour, bool> _enabledAsLoaded = new Dictionary<Behaviour, bool>();
         readonly Dictionary<GameObject, int> _layerAsLoaded = new Dictionary<GameObject, int>();
-        // Transforms a script moved since load, each with its pose as loaded and its index in _moved (-1: a rebase doesn't move
-        // it). The player's is RestorePose's, a body's the physics snapshot's, and a root's position is the rebases' (no script
-        // the engine runs moves a root), so none of those is tracked.
         readonly Dictionary<Transform, (PhysicsWorld.Pose loaded, int moved)> _poseAsLoaded = new Dictionary<Transform, (PhysicsWorld.Pose, int)>();
         double _vmanTimeLeft;
         bool _vmanBlockEnding;
@@ -255,8 +225,6 @@ namespace IGTAP.EngineSim
                 if (Physics.Suspended) return;
                 Economy.Activate(g, Goals != null);
                 Shop.Economy?.Woken(g);
-                // The other OnEnables with an effect: a zip mover's JumpToState (its pose and its reset coroutine,
-                // PlatformMover.cs:221-233) and the atom collider's grid (AtomColliderSystem.cs:111-115).
                 foreach (PlatformMover m in g.GetComponentsInChildren<PlatformMover>(false))
                     if (m.enabled)
                     {
@@ -271,11 +239,6 @@ namespace IGTAP.EngineSim
                 foreach (courseScript c in (courseScript[])OvergrowthCourses.GetValue(script) ?? Array.Empty<courseScript>())
                     if ((object)c != null) foreach (upgradeBox b in c.transform.GetComponentsInChildren<upgradeBox>(true)) Touch(b);
             };
-            // PlatformMover's coroutines are gameplay: MakeIntangible's 0.15 s off the Ground layer after a jump off a zip mover,
-            // PlayerExit's contact clear two physics steps after the player leaves it, a zip mover's move once unlocked.
-            // TreeSegmentActivationComponent.IE_Grow (Shop.GrowTree): the segment's ground off until its trunks have grown, its box
-            // falling into place.
-            // ZoneLoader.IE_Load: a zone activator's load, two yields after its trigger (zoneChanger.OnTriggerEnter2D).
             Scheduler.Continues = t => t is PlatformMover || t is TreeSegmentActivationComponent || t is ZoneLoader || t is TeleporterScript;
             Scheduler.InUpdate = t => t is TeleporterScript;
             Hooks.Teleporter = teleporter =>
@@ -370,21 +333,11 @@ namespace IGTAP.EngineSim
         internal FullTasTracker Goals { get; private set; }
         public long InputBase;
         public int Progress { get { return Goals == null ? 0 : Goals.Next; } }
-        /// <summary>The course timer of the last course finish (courseScript.stopTracking's currentPathTime): the lap's own time,
-        /// whether or not it beat the course's best time.</summary>
         public float LastCourseTime;
 
-        /// <summary>
-        /// Tracks these goals from now on (an extra lap the run doesn't list, searched as its own goals). Snapshots restored after
-        /// this must carry this tracker's state (<see cref="SimSnapshot.WithGoal"/>).
-        /// </summary>
         internal void UseGoals(FullTasTracker goals) { Goals = goals; }
 
-        /// <summary>
-        /// A strict run's last goal was reached: it finishes this many ticks later (at a tick's end), so a box bought meanwhile (a
-        /// trigger after the goal's, the frame's end, or a box the player still stands in once its 0.2 s cooldown is over) still
-        /// ends it. Stopping at the goal would hide that purchase from the search, and the next piece would make it.
-        /// </summary>
+        // A strict run finishes 12 ticks after its last goal so a purchase made meanwhile (box cooldown, frame end) still ends it.
         internal const int StrictFinishTicks = 12;
         int _finishIn = -1;
         float _finishTimeAtGoal;
@@ -392,7 +345,7 @@ namespace IGTAP.EngineSim
         void GoalEvent(bool reached)
         {
             if (!reached || !Goals.Done || !Engine.IsRunning) return;
-            // A Full-TAS run's time is live time: its ticks and the frames it stood still in (RULES.md 31).
+            // Full-TAS time is live time: ticks plus held frames (RULES.md 31).
             long held = TickTimed ? 0 : Engine.HeldFrames;
             if (!StrictBuys) Engine.CompleteFromGame(MacroEngine.FullTasFinishReason, MacroEngine.LiveSeconds(Engine.PhysicsTicks, held));
             else if (_finishIn < 0)
@@ -402,21 +355,11 @@ namespace IGTAP.EngineSim
             }
         }
 
-        /// <summary>
-        /// A purchase that isn't the next goal's box ends the run (the Full-TAS loop builder's pieces: a walk that also buys another
-        /// box spends Cash and levels the plan counted on, and can cap a box a later goal buys). Not on a loose-buys run
-        /// (data/runs/&lt;run&gt;.json "buys": "loose", <see cref="FullTasTracker.LooseBuys"/>): there any purchase stands.
-        /// </summary>
         internal bool StrictBuys;
-        /// <summary>A course run's goals timed in physics ticks, as its record (`solve --auto`, FullTas.TickTiming): the frames it
-        /// stood still in don't count in its finish time, which a search ranks its finds by.</summary>
         internal bool TickTimed;
-        /// <summary>Every purchase of a Full-TAS run (the box's path), goal or not: `fulltas --check` lists them.</summary>
         internal Action<string> Purchased;
 
-        /// <param name="continuing">A buy-max box's later levels, one per physics step from the touch's own (a prestige-boosted
-        /// course's boxes): they are the touch's own purchase, so they neither reach a goal nor count as a stray buy. One buy goal
-        /// per touch of such a box.</param>
+        // Buy-max later levels (one per physics step) belong to the touch's purchase: not a goal, not a stray buy.
         internal void Bought(string path, string id, bool continuing)
         {
             if (Goals == null || Driving || !Engine.IsRunning || continuing) return;
@@ -445,16 +388,6 @@ namespace IGTAP.EngineSim
             return at;
         }
 
-        /// <summary>
-        /// The state where goal <paramref name="goal"/> (1-based) is reached replaying <paramref name="inputs"/> from the start: the end
-        /// of the physics tick that reaches it, or, reached in a tick that takes no input (a dash's, a spring's), of the next tick
-        /// that takes one. Those ticks read that input already (the stick's y a lock holds, MacroEngine.BeforeTick; a wall touch's
-        /// early press, MacroEngine.WallTouch), so a state cut among them plays on as the straight replay only before that same
-        /// input: the builder's goal-to-goal replay put TouchGrass-ANY%'s goals a tick off. <paramref name="inLock"/> cuts there
-        /// anyway (a course lead whose finish comes in a lock, its next input the lap's first). Rebased as Advance's: from it the next
-        /// input played is inputs[<paramref name="consumed"/>]. The goals never end the run here (the tracker's Limit is past them
-        /// while it plays), so a run's last goal is a start too. Null when the run stops or its inputs end first.
-        /// </summary>
         public SimSnapshot AdvanceToGoal(IReadOnlyList<InputTick> inputs, int goal, out int consumed, bool inLock = false)
         {
             consumed = 0;
@@ -467,7 +400,6 @@ namespace IGTAP.EngineSim
                 Run(inputs, null, null, 1000000, _ =>
                 {
                     if (at != null || !Engine.IsRunning || Goals.Next < goal) return;
-                    // Goals reached on the way to that tick don't end the run either (a strict run's finish clears once not Done).
                     if (Engine.TickLocked && !inLock) { Goals.Limit = int.MaxValue; return; }
                     used = (int)Engine.RunTicks;
                     Engine.RebaseInputs();
@@ -509,8 +441,6 @@ namespace IGTAP.EngineSim
                 Engine.CompleteFromGame("Course finish detected", time);
         }
 
-        /// <summary>The bonus's reward box (the box nearest its end rect, TasPlugin.BonusRewardBox): it finishes on the box's hit,
-        /// not the rect's touch (TasPlugin.RewardHit). Null for a transition or a bonus without one.</summary>
         string _rewardBox;
 
         internal bool RewardHit(upgradeBox box, Collider2D collision)
@@ -526,15 +456,7 @@ namespace IGTAP.EngineSim
             return Touches(at.x, at.y, TargetFinish.W, TargetFinish.H, pose);
         }
 
-        /// <summary>
-        /// The pose the plugin's box tests read (<c>TasPlugin.TouchesBox</c>, at the start of the next tick's Movement.FixedUpdate:
-        /// an end box, a Full-TAS area goal), <c>Collider2D.bounds</c>: the body, not the transform. A step-up written in a tick's
-        /// last frame is still pending then (<see cref="InterpolatedFrames"/>): the transform stands on the ledge, the body where
-        /// the step left it, so a touch of the raised pose counts a tick later. The body's pose while one is pending, else null
-        /// (the transform, which is the body's step end). Turbo measured it: a 60x6 goal only a last-frame step-up's 56 u lift
-        /// reaches fired a tick after the offline engine's (docs/fidelity-log.md, *Area goals and end boxes were tested at a
-        /// pending step-up's pose*).
-        /// </summary>
+        // Box tests read Collider2D.bounds (the body, not the transform); a step-up in a tick's last frame is still pending.
         Vector3? BoundsPose() { return Physics.PlayerTransformDirty ? BodyPosition() : (Vector3?)null; }
 
         bool Touches(float x, float y, float w, float h, Vector3? pose = null)
@@ -546,7 +468,6 @@ namespace IGTAP.EngineSim
             return false;
         }
 
-        /// <summary>An enabled player box's extents in the scene frame (around the transform, or <paramref name="pose"/>); false for a disabled one.</summary>
         bool Extents(BoxCollider2D box, out float x0, out float x1, out float y0, out float y1, Vector3? pose = null)
         {
             x0 = x1 = y0 = y1 = 0f;
@@ -573,15 +494,12 @@ namespace IGTAP.EngineSim
             return (x0, x1, y0, y1);
         }
 
-        /// <summary>Keeps the script's fields in snapshots from now on (the player and the active courses always are: <see cref="Courses"/>).</summary>
         internal void Touch(MonoBehaviour script)
         {
             if (script == Player || script is courseScript course && Array.IndexOf(Courses, course) >= 0 || !_touched.Add(script)) return;
             if (!_pristine.ContainsKey(script)) _pristine[script] = FieldState.Capture(script);
         }
 
-        /// <summary>A lab map's coloured shapes (<see cref="World.LabColours"/>) on for the active colour, off for the other, as
-        /// swapBlocks sets the scene's coloured tilemaps (a toggle is tracked: snapshots put it back).</summary>
         public void SetLabColours(bool blueActive)
         {
             foreach (var (collider, blue) in World.LabColours)
@@ -600,22 +518,16 @@ namespace IGTAP.EngineSim
 
         public bool CheckpointRespawns;
 
-        /// <summary>FloatingOrigin.currentOrigin when the world was captured: the frame of the trace's rects and goals.</summary>
         readonly Vector3 Origin;
 
-        /// <summary>FloatingOrigin.currentOrigin now: each rebase lowers it by the position it moved the world back by.</summary>
         Vector3 CurrentOrigin { get { return _floating?.currentOrigin ?? Vector3.zero; } }
 
-        /// <summary>The world frame's origin in the scene frame now: FloatingOrigin.currentOrigin.</summary>
         public ScenePos WorldOriginInScene { get { Vector3 o = CurrentOrigin; return new ScenePos(o.x, o.y); } }
 
-        /// <summary>The world frame's origin in the capture's frame: FloatingOrigin.currentOrigin at the capture (<see cref="Origin"/>).</summary>
         public CapturePos WorldOriginInCapture { get { return new CapturePos(Origin.x, Origin.y); } }
 
-        /// <summary>The player's position in the world frame (the scene position minus FloatingOrigin.currentOrigin).</summary>
         public WorldPos PlayerWorld { get { Vector3 p = Player.transform.m_Position - CurrentOrigin; return new WorldPos(p.x, p.y); } }
 
-        /// <summary>Where a quick restart now puts the player (world frame): the course reset point while one is set, else the respawn point.</summary>
         public Vector2 RestartPoint
         {
             get
@@ -625,11 +537,8 @@ namespace IGTAP.EngineSim
             }
         }
 
-        /// <summary>Where the player was before this tick (after a quick restart's respawn), for a one-way avoid box
-        /// (<see cref="OfflineSolver.Box.From"/>).</summary>
         public WorldPos PlayerStepFrom { get; private set; }
 
-        /// <summary>The player's position in the capture's scene frame (the trace's rects, goals and map cells).</summary>
         public CapturePos PlayerAtCapture
         {
             get
@@ -640,19 +549,14 @@ namespace IGTAP.EngineSim
             }
         }
 
-        /// <summary>A world point in the scene frame now (scene = world + FloatingOrigin.currentOrigin).</summary>
         public ScenePos ToScene(WorldPos w) { Vector3 o = CurrentOrigin; return new ScenePos(w.x + o.x, w.y + o.y); }
 
-        /// <summary>A scene point now in the world frame (world = scene - FloatingOrigin.currentOrigin).</summary>
         public WorldPos ToWorld(ScenePos s) { Vector3 o = CurrentOrigin; return new WorldPos(s.x - o.x, s.y - o.y); }
 
-        /// <summary>A capture point in the world frame (world = capture - the capture's origin).</summary>
         public WorldPos ToWorld(CapturePos c) { return new WorldPos(c.x - Origin.x, c.y - Origin.y); }
 
-        /// <summary>A world point in the capture's frame (capture = world + the capture's origin).</summary>
         public CapturePos ToCapture(WorldPos w) { return new CapturePos(w.x + Origin.x, w.y + Origin.y); }
 
-        /// <summary>A scene point now in the capture's frame (what <see cref="PlayerAtCapture"/> does).</summary>
         public CapturePos ToCapture(ScenePos s)
         {
             if (_rebases.Length == 0) return new CapturePos(s.x, s.y);
@@ -660,7 +564,6 @@ namespace IGTAP.EngineSim
             return new CapturePos(s.x - o.x + Origin.x, s.y - o.y + Origin.y);
         }
 
-        /// <summary>A capture point in the scene frame now (the trace's goal and finish rects are given in it).</summary>
         public ScenePos FromCapture(CapturePos c)
         {
             if (_rebases.Length == 0) return new ScenePos(c.x, c.y);
@@ -668,10 +571,6 @@ namespace IGTAP.EngineSim
             return new ScenePos(c.x - Origin.x + o.x, c.y - Origin.y + o.y);
         }
 
-        /// <summary>
-        /// FloatingOrigin's rebase, as turbo and 1x run it (on by default). `ultras` turns it off: it models the rebase itself
-        /// on starts placed anywhere.
-        /// </summary>
         public bool Rebases = true;
 
         internal bool Rebased { get { return _rebases.Length > 0; } }
@@ -691,10 +590,7 @@ namespace IGTAP.EngineSim
             foreach (Transform child in t.m_Children) CollectTree(child, into);
         }
 
-        /// <summary>
-        /// FloatingOrigin.LateUpdate, after the tick's Update: past Threshold from scene (0, 0), the reference (the player)
-        /// starts MoveOrigin, which waits for the next physics step (WaitForFixedUpdate).
-        /// </summary>
+        // FloatingOrigin.LateUpdate: past Threshold from scene (0,0) MoveOrigin starts, waiting for the next physics step.
         void FloatingOriginFrame()
         {
             if (!Rebases || _rebaseDue || _floating == null || !_floating.isActiveAndEnabled) return;
@@ -705,7 +601,6 @@ namespace IGTAP.EngineSim
             _rebaseDue = true;
         }
 
-        /// <summary>MoveOrigin after the next physics step: every root object of the active scene moves back by the reference.</summary>
         void ResumeRebase()
         {
             if (!_rebaseDue) return;
@@ -716,12 +611,6 @@ namespace IGTAP.EngineSim
             Physics.WorldMoved();
         }
 
-        /// <summary>
-        /// MoveRootTransforms (`transform.position -= offset` on each root) and `currentOrigin -= offset`. A child keeps its
-        /// local position and its world position moves by the same offset. Camera, background, particles and trails are
-        /// presentation (cut).
-        /// </summary>
-        /// <summary>One more rebase: the world moved back by <paramref name="by"/>.</summary>
         void AddRebase(Vector3 by)
         {
             _rebases = [.. _rebases, by];
@@ -738,10 +627,6 @@ namespace IGTAP.EngineSim
             _floating.currentOrigin -= by;
         }
 
-        /// <summary>
-        /// Labs only (clip): the world rebased around a world point as FloatingOrigin would have done when the player stood
-        /// there, and synced, so the next rebase measures from it.
-        /// </summary>
         public void LabRebase(WorldPos world)
         {
             AddRebase(new Vector3(world.x + CurrentOrigin.x, world.y + CurrentOrigin.y, 0f));
@@ -749,7 +634,6 @@ namespace IGTAP.EngineSim
             Physics.SyncTransforms();
         }
 
-        /// <summary>The world as a snapshot's rebases left it: from the capture's poses, each rebase again in order.</summary>
         void MaterializeRebases(Vector3[] rebases)
         {
             if (rebases.AsSpan().SequenceEqual(_rebases)) return;
@@ -760,15 +644,8 @@ namespace IGTAP.EngineSim
             Physics.WorldMoved();
         }
 
-        /// <summary>A persisted snapshot's restore (SnapshotStore) re-materializes its rebases before its physics rebuilds.</summary>
         internal void PutRebases(Vector3[] rebases) { MaterializeRebases(rebases); }
 
-        /// <summary>
-        /// A persisted snapshot (SnapshotStore) comes from another simulation: its toggles can name objects this one never
-        /// changed, which Restore would leave as they are (a blue block swap stored while the blue colliders were on loaded
-        /// with them off, and the composite's shapes couldn't be rebuilt to the snapshot's). Tracks each such object from its
-        /// value now, which is its loaded one, as the change hooks would have.
-        /// </summary>
         internal void TrackToggles(SimSnapshot s)
         {
             foreach (var (g, _) in s.Active) _activeAsLoaded.TryAdd(g, g.activeSelf);
@@ -809,15 +686,12 @@ namespace IGTAP.EngineSim
                 _savestateStart = fulltas.TryGetProperty("savestate", out JsonElement savestate) && savestate.ValueKind == JsonValueKind.String;
             }
             CheckpointRespawns = header.TryGetProperty("checkpointRespawns", out JsonElement checkpoints) && checkpoints.GetBoolean();
-            // Course --auto's synthetic trace is a course's header with goals added ("courseAuto"): its start is the course's.
             _categoryTrace = !header.TryGetProperty("tech", out _) && (!header.TryGetProperty("fulltas", out _)
                 || header.TryGetProperty("courseAuto", out JsonElement courseAuto) && courseAuto.ValueKind == JsonValueKind.True);
         }
 
-        /// <summary>A category trace's start (a course, bonus or transition from its quick restart): not a Full-TAS run's or a tech demo's.</summary>
         bool _categoryTrace;
 
-        /// <summary>The trace header's course id (courses.json's: 11-15 are Courses 1-5 overgrown), for the atom door rule.</summary>
         int _traceCourse;
 
         bool _savestateStart;
@@ -869,7 +743,6 @@ namespace IGTAP.EngineSim
             return null;
         }
 
-        /// <summary>The active course numbered <paramref name="number"/> (a loop: Run looks one up every tick).</summary>
         courseScript Course(int number)
         {
             foreach (courseScript c in Courses) if (c.courseNumber == number) return c;
@@ -878,11 +751,6 @@ namespace IGTAP.EngineSim
 
         public static float CourseTime(courseScript course) { return PathTime(course); }
 
-        /// <summary>
-        /// Loads a trace's start. <paramref name="canonical"/> (the searches) gives a category trace's start the history every
-        /// category start has in the game now (<see cref="IGTAPTasMod.CourseStart"/>), so a trace captured before that searches
-        /// from the start the game judges; a replay of what the game recorded (replay, path) loads it as captured.
-        /// </summary>
         public void LoadStart(JsonElement start, bool canonical = false)
         {
             ApplyFields(Player, start.GetProperty("movement"));
@@ -923,7 +791,6 @@ namespace IGTAP.EngineSim
             if (start.TryGetProperty("economy", out JsonElement economy))
             {
                 Shop.LoadStart(economy, ApplyFields);
-                // The zone loaded at the start (the world export can come some ticks after it): what a zone activator compares.
                 if (economy.TryGetProperty("activeZone", out JsonElement zone) && World.All<ZoneLoader>().FirstOrDefault() is ZoneLoader loader)
                     loader.activeZone = zone.GetInt32();
             }
@@ -942,17 +809,13 @@ namespace IGTAP.EngineSim
                 };
             else UnityEngine.Random.InitState(0);
             if (canonical && _categoryTrace) IGTAPTasMod.CourseStart.Apply(Player, World.All<clonesScript>());
-            // Courses 6-15 and bonus 11 start with the atom room's door open (RULES.md 21), as the plugin's category start sets it:
-            // a trace captured before that rule searches from the start the game now judges.
+            // Courses 6-15 and bonus 11 start with the atom room door open (RULES.md 21), as the plugin's category start.
             if (_categoryTrace && IGTAPTasMod.CourseStart.AssumesAtomDoor(_traceCourse)) IGTAPTasMod.CourseStart.OpenAtomDoor(World.All<upgradeBox>());
             MaterializeRebases(Array.Empty<Vector3>());
             _rebasePending = Vector3.zero;
             _rebaseDue = false;
-            // A start captured with FloatingOrigin's MoveOrigin waiting (a lab or savestate placed past its Threshold) has it
-            // armed again from where the player stands, as turbo's resume runs FloatingOrigin.LateUpdate: it moves the world
-            // back after the first physics step.
+            // A start captured with MoveOrigin waiting re-arms it where the player stands, as turbo's resume does.
             if (start.TryGetProperty("rebasing", out JsonElement rebasing) && rebasing.GetBoolean()) FloatingOriginFrame();
-            // The start's interpolation ends (older traces have none: at rest where it stands).
             _loadedStepAt = new Vector3(float.NaN, float.NaN, float.NaN);
             if (start.TryGetProperty("stepFrom", out JsonElement stepFrom) && start.TryGetProperty("stepTo", out JsonElement stepTo))
             {
@@ -963,8 +826,6 @@ namespace IGTAP.EngineSim
                 _loadedStepAt = at;
             }
             if (canonical && _categoryTrace) PutCanonicalOrigin(start);
-            // A tech demo's trace starts after its first input tick (the demo starts inside a tick, as its playback does).
-            // The start's pending Invokes are due counted from its next tick, which Capture counts from Tick + 1.
             Scheduler.Tick = -1;
             _start = Capture(start.TryGetProperty("tick", out JsonElement startTick) ? startTick.GetInt32() : 0);
         }
@@ -972,14 +833,7 @@ namespace IGTAP.EngineSim
         static readonly AccessTools.FieldRef<Movement, float> LastHyperY = AccessTools.FieldRefAccess<Movement, float>("lastHyperY"),
             JumpStartHeight = AccessTools.FieldRefAccess<Movement, float>("heightOfLastJumpStart");
 
-        /// <summary>
-        /// A category start at the FloatingOrigin the plugin judges it at (TurboRunner.PutCanonicalOrigin): as the game's rebase
-        /// on the player at the quick restart point leaves it, currentOrigin minus that point (12 under the reset point). A trace
-        /// captured at another origin (whatever ran before it in the game) is rebased there from its capture, as a rebase of its
-        /// own (restores and the capture frame follow). The game's own values then differ at most by the rounding of the shifts
-        /// it came through. A trace captured there is left as it is. The scene-frame fields the start writes move with the world:
-        /// <c>courseResetPoint</c>, the interpolation ends, and standing, <c>lastHyperY</c> and <c>heightOfLastJumpStart</c>.
-        /// </summary>
+        // Category starts are judged at the canonical FloatingOrigin (the game's rebase on the restart point), not the trace's.
         void PutCanonicalOrigin(JsonElement start)
         {
             if (_floating == null) return;
@@ -994,8 +848,7 @@ namespace IGTAP.EngineSim
             _rebasePending = Vector3.zero;
             _rebaseDue = false;
             if (Player.courseResetPoint != Vector2.zero) Player.courseResetPoint -= new Vector2(by.x, by.y);
-            // Standing, the game writes both every tick; in the air CourseStart set the jump height from the player's y and
-            // lastHyperY to its no-hyper value.
+            // In the air CourseStart set jump height from the player's y and lastHyperY to its no-hyper value.
             JumpStartHeight(Player) -= by.y;
             if (Player.onGround) LastHyperY(Player) -= by.y;
             if (!float.IsNaN(_loadedStepAt.x))
@@ -1024,27 +877,16 @@ namespace IGTAP.EngineSim
 
         public SimSnapshot Start { get { return _start; } }
 
-        /// <summary>
-        /// The player body's interpolation is on, as the game ships it, and 1x playback runs on the plugin's fixed clock
-        /// (MacroEngine.PlaybackFrameRate, TasPlugin.FixedClockStep). Unity shows the body blended between its position at
-        /// the start of the last physics step and its end (alpha = frame time since the step / 0.02), and Movement reads that:
-        /// FixedUpdate the last frame's blend, so its position writes (jump +2/+5, wall jump +1, dash −20) pull the body back
-        /// by the lag; Update (the step-up) every frame's. A write drops the interpolation: the body moves there and the
-        /// frames after show it. Turbo (TurboRunner) models the same frames.
-        /// </summary>
+        // Interpolation stays on (RULES.md 7): FixedUpdate reads the last blend; position writes pull the body back by the lag.
         static readonly MacroEngine.FrameGrid Frames = MacroEngine.FrameGrid.Playback;
         Vector3 _stepFrom, _stepTo;
         float _freezeFor = -1f;
         int _pauseFrames, _pauseAfter;
-        /// <summary>The last physics step's <see cref="StepEvents"/> (cleared at each step's start), the spring's up at its last
-        /// hit, and the side (-1: -x) of the wall at its last special wall jump and of the step at its last step-up.</summary>
         public StepEvents Events;
         public Vector2 SpringUp;
         public float WallBoostSide, StepUpSide;
         static readonly AccessTools.FieldRef<Movement, int> DashBounceFrames = AccessTools.FieldRefAccess<Movement, int>("DashBounceFrames");
         bool _inRun;
-        /// <summary>The trace start's interpolation ends (its last physics step's start and end, turbo's _stepFrom/_stepTo) and
-        /// where it put the player; a start moved from there (a lab or probe placement) is at rest instead.</summary>
         Vector3 _loadedStepFrom, _loadedStepTo, _loadedStepAt = new Vector3(float.NaN, float.NaN, float.NaN);
         bool AtLoadedStart { get { return Player.transform.m_Position == _loadedStepAt; } }
 
@@ -1054,52 +896,25 @@ namespace IGTAP.EngineSim
             return new Vector3(body.px, body.py, Player.transform.m_Position.z);
         }
 
-        /// <summary>Before FixedUpdate: the transform holds the last rendered frame's blend (not a write, so the body stays).</summary>
+        // Before FixedUpdate the transform holds the last frame's blend; it is not a write, so the body stays.
         Vector3 LagForFixedUpdate()
         {
             Player.transform.StoreWorldPosition(Vector3.Lerp(_stepFrom, _stepTo, Frames.Frames(Engine.GridTicks).LastAlpha));
-            // As stored: the world position reads back through the player's parent, rounded.
             return Player.transform.m_Position;
         }
 
-        /// <summary>After each rendered frame's Movement.Update (probe's per-frame rows, as the plugin's 1x probe logs them):
-        /// the frame's blend, and whether time stood still in it (a freeze or a pause).</summary>
         public Action<float, bool> OnFrame;
 
-        /// <summary>At Movement.getPlayerControlledInput's start, once the tick's input is in (lab solve's wall control): the
-        /// contact branch has run, so OnWall and wallCoyoteFrames say whether the wall rays hit on this tick.</summary>
         public Action<Movement> BeforeInput;
 
-        /// <summary>The tech observers (<see cref="TechSteps"/>; null when nothing watches): CheckForSuperJump's entry (its state
-        /// before it runs), determineSpriteDirection's (right after getPlayerControlledInput, also in the dash branch and the
-        /// wall jump lock), a respawn, a step-up (in a rendered frame), a special wall jump's directionMagnitudeMod (1: a
-        /// wallbounce, 0.6: a dash boost), a block swap (to blue or not), a zip mover made intangible and an upgrade box's
-        /// trigger stay.</summary>
         public Action<Movement> SuperJumpCheck, AfterInput, Respawned, SteppedUp;
         public Action<float> WallKick;
         public Action<bool> Swapped;
         public Action<PlatformMover> Intangible;
         public Action<upgradeBox, Collider2D> BoxTouched;
 
-        /// <summary>
-        /// The run from the start snapshot begins inside its first tick, as an in-game lab demo or probe from a placed start
-        /// does (TasPlugin starts the engine in Movement.FixedUpdate's prefix after MacroEngine.BeforeTick ran idle): that tick
-        /// skips BeforeTick, so Movement's pre-hook stick read is at rest and the first step is pressed at the input hook.
-        /// A trace's start is already the state after that tick.
-        /// </summary>
         public bool StartsInsideTick;
 
-        /// <summary>
-        /// The tick's rendered frames: one Movement.Update and one clonesScript.Update per frame (on the frame's Time.deltaTime,
-        /// 0 in a freeze's or pause's repeats) at its blend, then the frame's WaitForEndOfFrame resumes (on the same
-        /// deltaTime: TreeSegmentActivationComponent.IE_Grow), the first frame repeated for a dash freeze's
-        /// frames (time stands still, TimeStop), and a route's pause (the menu held open for MacroStep.pauseFrames frames)
-        /// repeating the frame it holds (MacroEngine.FrameRepeats). A step-up write moves the body at once and later frames
-        /// show it. The transform goes back to the body for the rest of the tick (goals, rebases, snapshots): the step's end,
-        /// which a rebase this tick has moved with the world (the body itself follows at the next sync), as turbo's
-        /// Place(player, _stepTo). Without the <paramref name="player"/> (the economy drive, EconomyDrive.cs) only the frames'
-        /// economy runs: the Start pass, the clone and atom steps, the atom grid and the frame and end-of-frame resumes.
-        /// </summary>
         void InterpolatedFrames(bool player = true)
         {
             long ticks = Engine.GridTicks;
@@ -1108,8 +923,6 @@ namespace IGTAP.EngineSim
             for (int k = 0; k < alphas.Length; k++)
             {
                 int repeats = MacroEngine.FrameRepeats(k, alphas.Length, frozen, _pauseFrames, _pauseAfter);
-                // The repeats are frames the run stands still in: its live time (turbo counts its loop's the same way; at 1x
-                // the plugin counts the frames whose Update ran at timeScale 0).
                 Engine.CountHeldFrames(repeats);
                 for (int repeat = repeats; repeat >= 0; repeat--)
                 {
@@ -1118,7 +931,7 @@ namespace IGTAP.EngineSim
                         Scheduler.Frame++;
                         Physics.FrameStart();
                     }
-                    // The frame's Start pass comes before its Updates (RULES.md, exception 12).
+                    // The frame's Start pass comes before its Updates (RULES.md exception 12).
                     Shop.Economy?.StartPass();
                     if (player)
                     {
@@ -1128,9 +941,7 @@ namespace IGTAP.EngineSim
                     void TakeWrite()
                     {
                         if (!player || !Physics.PlayerTransformDirty) return;
-                        // At 1x the write reaches the body at the next frame's start. After the tick's last frame that is the
-                        // next tick's step, so its FixedUpdate still queries the body where it was (the squish check's
-                        // Collider2D.Distance) and the sync before the step moves it.
+                        // At 1x the write reaches the body at the next frame's start; after a tick's last frame, the next step's FixedUpdate.
                         if (k < alphas.Length - 1 || repeat > 0) Physics.SyncTransforms();
                         _stepFrom = _stepTo = Player.transform.m_Position;
                     }
@@ -1140,15 +951,12 @@ namespace IGTAP.EngineSim
                     if (k == 0 && repeat == repeats)
                     {
                         Shop.Economy?.GridFrame();
-                        // A teleporter's poll (TeleporterScript.manualUpdate), an Invoke as the grid's: its teleport writes the
-                        // player's transform. Turbo's TurboRunner.Polls the same.
                         Scheduler.FireInUpdate();
                         TakeWrite();
                     }
                     if (player) OnFrame?.Invoke(alphas[k], repeat > 0);
                     Scheduler.FrameDeltaTime = dt;
-                    // The frame's yield-null resumes after its Updates (a zone load, ZoneLoader.IE_Load, in its third frame), then
-                    // the atom grid's first call when the load woke the collider (Economy.GridStart): turbo's order.
+                    // Frame-yield resumes after the Updates (zone load in its third frame), then the atom grid's first call: turbo's order.
                     Scheduler.Resume(Scheduler.Wait.Frame);
                     Shop.Economy?.GridNow();
                     Scheduler.Resume(Scheduler.Wait.EndOfFrame);
@@ -1190,8 +998,6 @@ namespace IGTAP.EngineSim
                 Rebases = _rebases,
                 RebasePending = _rebasePending,
                 RebaseDue = _rebaseDue,
-                // Outside a run the player is at rest where it stands (a probe's moved start), unless it still stands where a
-                // trace's start put it: that start's own interpolation ends (turbo resumes from them).
                 StepFrom = _inRun ? _stepFrom : AtLoadedStart ? _loadedStepFrom : Player.transform.m_Position,
                 StepTo = _inRun ? _stepTo : AtLoadedStart ? _loadedStepTo : Player.transform.m_Position,
                 Animation = Animation,
@@ -1226,7 +1032,6 @@ namespace IGTAP.EngineSim
             return touched;
         }
 
-        /// <summary>Each object tracked since load with its value now, in the tracking dictionary's order.</summary>
         static (TKey, TValue)[] Now<TKey, TLoaded, TValue>(Dictionary<TKey, TLoaded> tracked, Func<TKey, TValue> now)
         {
             if (tracked.Count == 0) return Array.Empty<(TKey, TValue)>();
@@ -1271,11 +1076,9 @@ namespace IGTAP.EngineSim
             }
             h.Add(touched);
             int toggled = 0;
-            // Only what differs from the load: an object back at its loaded value hashes as one never toggled, whatever ran before.
             foreach (var (g, loaded) in _activeAsLoaded) if (g.activeSelf != loaded) toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(g), g.activeSelf);
             foreach (var (b, loaded) in _enabledAsLoaded) if (b.enabled != loaded) toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(b), b.enabled);
             foreach (var (g, loaded) in _layerAsLoaded) if (g.layer != loaded) toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(g), g.layer);
-            // Local poses: a rebase moves none of these (none is a root).
             foreach (var (t, (loaded, _)) in _poseAsLoaded)
                 if (t.m_LocalPosition != loaded.LocalPosition || t.m_LocalRotation != loaded.LocalRotation || t.m_LocalScale != loaded.LocalScale)
                     toggled ^= HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(t), t.m_LocalPosition, t.m_LocalRotation, t.m_LocalScale);
@@ -1284,7 +1087,6 @@ namespace IGTAP.EngineSim
             {
                 h.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(r.Target)); h.Add(r.Wait);
                 h.Add(r.Wait == Scheduler.Wait.Seconds ? r.Due - Scheduler.Tick : 0);
-                // The iterator's state and locals; its current yield object is a fresh instance each run.
                 FieldInfo[] fields = FieldState.For(r.Body.GetType());
                 object[] values = FieldValues(r.Body);
                 for (int i = 0; i < fields.Length; i++)
@@ -1306,10 +1108,8 @@ namespace IGTAP.EngineSim
             for (int i = 0; i < count; i++) AddValue(ref h, values[i], false);
         }
 
-        // The fingerprints' field reads (FieldState.Read), reused.
         object[] _fieldValues = Array.Empty<object>();
 
-        /// <summary>The target's fields in <see cref="FieldState.For"/> order, in a buffer the next call overwrites.</summary>
         object[] FieldValues(object target)
         {
             int count = FieldState.For(target.GetType()).Length;
@@ -1318,7 +1118,6 @@ namespace IGTAP.EngineSim
             return _fieldValues;
         }
 
-        /// <summary>The player's transform, box colliders, body and interpolation ends.</summary>
         void AddPlayer(ref HashCode h)
         {
             Transform t = Player.transform;
@@ -1328,7 +1127,7 @@ namespace IGTAP.EngineSim
             h.Add(_stepFrom); h.Add(_stepTo);
         }
 
-        /// <param name="portable">The same in every process: objects by instance id and type name, not identity.</param>
+        // Hash must be identical in every process: objects by instance id and type name, never identity.
         static void AddValue(ref HashCode h, object value, bool portable)
         {
             switch (value)
@@ -1352,7 +1151,6 @@ namespace IGTAP.EngineSim
             MaterializeRebases(s.Rebases);
             RestoreToggles(s);
             RestoreTransforms(s);
-            // A script the snapshot lists is written whole below: its pristine write would be overwritten field for field.
             foreach (var (target, _) in s.Touched) _restoring.Add(target);
             foreach (MonoBehaviour script in _touched)
                 if (!_restoring.Contains(script))
@@ -1364,8 +1162,6 @@ namespace IGTAP.EngineSim
             _touched.Clear();
             foreach (var (target, fields) in s.Touched)
             {
-                // A snapshot from another simulation (a saved goal state) can hold objects this one never touched: its
-                // pristine copy is the object as it is now, as Touch would have taken it.
                 if (!_pristine.ContainsKey(target)) _pristine[target] = FieldState.Capture(target);
                 FieldState.Restore(target, fields);
                 _captured[target] = fields;
@@ -1401,8 +1197,6 @@ namespace IGTAP.EngineSim
             for (int i = 0; i < _orbs.Length; i++) _orbSeen[i] = s.OrbSeen != null ? s.OrbSeen[i] : OnCamera(_orbs[i], s.StepTo);
         }
 
-        /// <summary>The objects toggled since load (active, enabled, layer) as the snapshot has them, the physics suspended meanwhile
-        /// (a persisted snapshot's load pre-applies them too: SnapshotStore).</summary>
         internal void RestoreToggles(SimSnapshot s)
         {
             Physics.Suspended = true;
@@ -1423,8 +1217,6 @@ namespace IGTAP.EngineSim
             Physics.Suspended = false;
         }
 
-        /// <summary>The player's transform and box colliders as the snapshot has them (the colliders' enabled written directly:
-        /// <see cref="PhysicsWorld.Generation"/> counts it).</summary>
         internal void RestorePose(SimSnapshot s)
         {
             Transform t = Player.transform;
@@ -1442,10 +1234,6 @@ namespace IGTAP.EngineSim
             Physics.Generation++;
         }
 
-        /// <summary>
-        /// The value a snapshot saved for the <paramref name="index"/>-th object tracked since load, or its loaded value if it
-        /// was tracked later. A snapshot lists them in the tracking dictionary's order then, which only grows (insertion order).
-        /// </summary>
         static TValue Saved<TKey, TValue>((TKey target, TValue value)[] saved, int index, TKey key, TValue loaded) where TKey : class
         {
             return TrySaved(saved, index, key, out TValue value) ? value : loaded;
@@ -1468,9 +1256,6 @@ namespace IGTAP.EngineSim
             _poseAsLoaded.Add(t, (loaded, moved));
         }
 
-        /// <summary>The transforms moved since load as the snapshot has them, written without the change hooks (the physics
-        /// restore puts back what their colliders were built at). One the snapshot doesn't list wasn't moved yet: its loaded
-        /// pose, moved by the snapshot's rebases as MoveWorld moves it. Runs after MaterializeRebases.</summary>
         internal void RestoreTransforms(SimSnapshot s)
         {
             var saved = s.Transforms ?? Array.Empty<(Transform, PhysicsWorld.Pose)>();
@@ -1492,8 +1277,7 @@ namespace IGTAP.EngineSim
         public RunResult Run(IReadOnlyList<InputTick> inputs, SimSnapshot from = null, Func<int, bool> afterTick = null, int extraTicks = 400,
             Action<int> onStep = null)
         {
-            // The engine hooks and the game's statics are per thread, and the last Simulation built on it owns them: an older one
-            // would play nothing ("Solver run ended" at input 0). Build a throwaway Simulation on its own thread (Solve.OnThread).
+            // Engine hooks and game statics are per thread; the last Simulation built owns them, build throwaways on own thread.
             if (IGTAP.EngineSim.Engine.Scheduler != Scheduler)
                 throw new InvalidOperationException("Another Simulation was built on this thread since this one; it owns the thread's engine hooks now");
             from ??= _start;
@@ -1502,14 +1286,11 @@ namespace IGTAP.EngineSim
             _inRun = true;
             int step = from.Tick;
             while (step > 0 && Merges(inputs[step - 1], inputs[step])) step--;
-            // ResumeOwned: ToSteps already emits only enabled RawInput steps (Expand's filter would pass them all), so
-            // Expand's Copy is redundant work here; the engine never reads the copied step ids.
             Engine.ResumeOwned(from.Engine, ToSteps(inputs, step), from.Tick - step);
             _finished = false;
             _finishTime = 0f;
             _endReason = null;
             _finishIn = -1;
-            // Dash and spring ticks take no input (a farm loop's laps run well past one tick an input), as turbo's cap (Solver.Evaluate).
             int maxTicks = (inputs.Count - from.Tick) * 4 + extraTicks;
             int idleTicks = 0, lastTick = from.Tick > 0 ? from.Tick : -1, stepped = 0;
             bool stop = false;
@@ -1538,17 +1319,12 @@ namespace IGTAP.EngineSim
                     Goals?.QuickRestarted();
                 }
                 PlayerStepFrom = PlayerWorld;
-                // A start inside a tick: the game started the engine in Movement.FixedUpdate's prefix after BeforeTick had run
-                // idle, so that tick's pre-hook stick read is at rest and its step is pressed at the input hook (FixedTick).
-                // globalStats.FixedUpdate's NP (Economy.FixedStep) runs before every other FixedUpdate: globalStats inherits
-                // [DefaultExecutionOrder(-50)] from Singleton<T> (Singleton.cs:3), Movement and courseScript run at 0. A start
-                // inside a tick comes after it: that tick's NP was paid before the start.
+                // Start inside a tick: BeforeTick ran idle (stick at rest); globalStats.FixedUpdate's NP runs before other FixedUpdates.
                 if (!(StartsInsideTick && from.Tick == 0 && Scheduler.Tick == 0))
                 {
                     Shop.Economy?.FixedStep();
                     Engine.BeforeTick(Player);
                 }
-                // The tick's frame starts here at 1x (its FixedUpdate runs inside a rendered frame).
                 Physics.FrameStart();
                 _fixedUpdate();
                 Engine.CountPhysicsTick();
@@ -1556,15 +1332,12 @@ namespace IGTAP.EngineSim
                 _pauseFrames = Engine.TakePause(out _pauseAfter);
                 if (_pauseFrames > 0) Events |= StepEvents.Paused;
                 EconomyFixedUpdates();
-                // No write: the blend was never the body's, so the sync leaves the body where the step put it, exactly: 1x never
-                // syncs its transform's read-back through the moved parent into the body (turbo keeps it too, TurboRunner.KeepBody).
-                // After a rebase every body syncs to its transform, and the blend there pulled the player back by the frame's lag.
+                // No write-back of the blend: 1x never syncs the transform read-back into the body (TurboRunner.KeepBody).
                 if (Player.transform.m_Position == lag) Player.transform.StoreWorldPosition(_stepTo);
                 Physics.SyncTransforms();
                 _stepFrom = BodyPosition();
                 Physics.Simulate(World.FixedDeltaTime);
-                // A physics callback's write (a sideways spring's push, Movement.hitSpring) moves the body there at once and drops
-                // the interpolation, as at 1x (turbo's post-step sync): the tick's frames show it, the next tick blends from it.
+                // A physics callback's write (sideways spring push) moves the body at once and drops interpolation, as at 1x.
                 if (Physics.PlayerTransformDirty)
                 {
                     Physics.SyncTransforms();
@@ -1583,7 +1356,6 @@ namespace IGTAP.EngineSim
                 SeeOrbs();
                 InterpolatedFrames();
                 FloatingOriginFrame();
-                // The plugin's box tests read the body (BoundsPose); a rebase this tick has moved the transform's world, not the body.
                 Vector3? boundsPose = _rebases.Length == rebasesBefore ? BoundsPose() : null;
                 if (Engine.IsRunning && TargetFinish.W > 0f && _rewardBox == null && TouchesReward(boundsPose))
                     Engine.CompleteFromGame(Transition ? MacroEngine.TransitionFinishReason : MacroEngine.RewardFinishReason,
@@ -1605,8 +1377,7 @@ namespace IGTAP.EngineSim
                         && now.EnteredFrom(goalAt.x - now.w / 2f, goalAt.x + now.w / 2f, goalAt.y - now.h / 2f, goalAt.y + now.h / 2f, px0, px1, py0, py1))
                         GoalEvent(Goals.Touched(InputBase + Engine.RunTicks, Engine.PhysicsTicks, Engine.HeldFrames));
                 }
-                // A quick restart in the strict finish's ticks after an area goal takes that goal back (FullTasTracker): the run
-                // then hasn't reached its goals, and finishing anyway handed the solver windows that missed them on replay.
+                // A quick restart in the strict finish ticks takes the area goal back (FullTasTracker); finishing anyway misses on replay.
                 if (_finishIn >= 0 && Goals != null && !Goals.Done) _finishIn = -1;
                 if (_finishIn >= 0 && _finishIn-- == 0 && Engine.IsRunning)
                 {
@@ -1616,8 +1387,7 @@ namespace IGTAP.EngineSim
                 stepped++;
                 onStep?.Invoke(stepped - 1);
                 if (!Engine.IsRunning) continue;
-                // A run ends 20 ticks after its inputs, not counting ticks that take none: a finish in a stretch of them after the
-                // last input (Course 7 WJ_DS_DJ_BS's record and farm laps, 64 ticks on) still comes. As the gate's (Solver.cs).
+                // A run ends 20 ticks after its inputs, not counting input-less ticks; matches the gate (Solver.cs).
                 if (Engine.InputsExhausted && !Engine.TickLocked) idleTicks++;
                 int tick = (int)Engine.RunTicks;
                 if (tick == lastTick) continue;
@@ -1642,10 +1412,6 @@ namespace IGTAP.EngineSim
             };
         }
 
-        /// <summary>
-        /// A used refill orb counts its cooldown down (JiggleDropScript.FixedUpdate, while the orbs are unlocked) and grows
-        /// back at its end (onCooldownEnd, the refresh <see cref="RefillOrbState"/> keeps).
-        /// </summary>
         void StepOrbs()
         {
             for (int i = 0; i < _orbs.Length; i++)
@@ -1657,11 +1423,6 @@ namespace IGTAP.EngineSim
             }
         }
 
-        /// <summary>
-        /// JiggleDropScript.SetActiveVisualState without the sprites: the orb is usable when its cooldown is over and the refill
-        /// upgrades (unlockJiggleDrops + moreRefreshOrbs) are above its ActivationSequence. The run's own global upgrades when
-        /// it has the native economy (the Omni Dash box's first buy adds a refresh orb: Economy.OmniDashFirstBuy).
-        /// </summary>
         void RefillOrbState(object target)
         {
             var orb = (JiggleDropScript)target;
@@ -1678,12 +1439,7 @@ namespace IGTAP.EngineSim
             OrbUsable(orb) = OrbCooldown(orb) <= 0f && orbs > OrbSequence(orb);
         }
 
-        /// <summary>
-        /// JiggleDropScript.OnBecameVisible: an orb coming on camera reads the refill upgrades (SetActiveVisualState(regrow: false)),
-        /// its only refresh but a use and a cooldown's end, so one on screen when they change stays as it was until it leaves the view
-        /// and comes back (bonus17's pit: the orbs its box unlocks are off screen, and come on as the player walks to them). On camera
-        /// is MacroEngine.OrbOnCamera after the physics step, as turbo's TurboRunner.SeeOrbs.
-        /// </summary>
+        // JiggleDropScript.OnBecameVisible: an orb reads refill upgrades only on coming on camera, so off-screen orbs stay stale.
         void SeeOrbs()
         {
             for (int i = 0; i < _orbs.Length; i++)
@@ -1729,8 +1485,6 @@ namespace IGTAP.EngineSim
                 && previous.x == k.x && previous.y == k.y && previous.held == k.held;
         }
 
-        // ToSteps' list and steps, reused run to run: the engine plays them only inside the Run that made them (Run ends it),
-        // and a capture leaves them out (FieldState.For skips MacroEngine._steps).
         readonly List<MacroStep> _runSteps = new List<MacroStep>();
         readonly List<MacroStep> _stepPool = new List<MacroStep>();
         static readonly object[] FreshStep = FieldState.Capture(new MacroStep(false));
@@ -1767,8 +1521,6 @@ namespace IGTAP.EngineSim
             return steps;
         }
 
-        /// <summary>The pooled step for the next slot of <paramref name="steps"/>, every field as a new MacroStep(false) has it
-        /// (the merge above and MacroEngine's NormalizeFrameTiming rewrite some).</summary>
         MacroStep NextStep(List<MacroStep> steps)
         {
             if (steps.Count == _stepPool.Count) _stepPool.Add(new MacroStep(false));
@@ -1788,7 +1540,6 @@ namespace IGTAP.EngineSim
         }
 
         internal static readonly HashSet<string> MovementPresentationFields = new HashSet<string> { "timeSinceLastAfterimage", "afterimageTimeAlive", "activeAfterimages", "inactiveAfterimages" };
-        /// <summary>Per player field (<see cref="FieldState.For"/> order): one of <see cref="MovementPresentationFields"/>.</summary>
         bool[] Presentation => _presentation ??= FieldState.For(Player.GetType()).Select(f => MovementPresentationFields.Contains(f.Name)).ToArray();
         bool[] _presentation;
     }

@@ -5,10 +5,7 @@ namespace IGTAPTasMod
 {
     internal sealed class FullTasGoal
     {
-        // Course N's goals: start:N its start gate crossed; record:N a lap, its start gate crossed while it's the next goal, then
-        // its finish; farm:N its finish (a lap from a quick restart or the end gate's drop, its gate crossed before the goal before).
         public const string Start = "start", Record = "record", Farm = "farm", Buy = "buy", Reward = "reward", At = "at";
-        /// <summary>The goal's id in its run (<see cref="FullTasGoalIds"/>); the plugin sets it, the engine keeps its own list.</summary>
         public string id;
         public string label;
         public string kind;
@@ -20,16 +17,13 @@ namespace IGTAPTasMod
         public static readonly string[] SideNames = { "left", "right", "bottom", "top" };
         public const float RewardBoxRange = 400f;
 
-        /// <summary>A course goal: start:, record: or farm: (its course's gates).</summary>
         public bool IsCourse { get { return kind == Start || kind == Record || kind == Farm; } }
 
-        /// <summary>Whether a goal label is a lap (record:N or farm:N): one that finishes a course.</summary>
         public static bool IsLap(string label)
         {
             return label.StartsWith(Record + ":", StringComparison.Ordinal) || label.StartsWith(Farm + ":", StringComparison.Ordinal);
         }
 
-        /// <summary>The course a start:, record: or farm: label names; 0 for any other label.</summary>
         public static int CourseOf(string label)
         {
             int colon = label.IndexOf(':');
@@ -39,8 +33,6 @@ namespace IGTAPTasMod
                 System.Globalization.CultureInfo.InvariantCulture, out int n) ? n : 0;
         }
 
-        // Every box a Full-TAS goal can buy (buy:<token>), by hierarchy path and sibling index (BoxId). Shared with enginesim, whose
-        // economy planner names its purchases with these tokens.
         public static readonly (string token, string path, int sibling)[] Boxes = {
             ("buyreward", "Courses/course 1/localUpgrades/CashPerLoop", 0),
             ("buyclone", "Courses/course 1/localUpgrades/Clone", 1),
@@ -81,8 +73,6 @@ namespace IGTAPTasMod
             ("buyprestige5", "Courses/course 5/localUpgrades/prestige upgrade box", 6),
             ("buyblockswap5", "Courses/course 5/localUpgrades/SwapBlocksOnDash", 7),
             ("buyfree5", "Courses/course 5/localUpgrades/GLOBALCash", 8),
-            // Area 2: Courses 6-10, the atom collider's box and the upgrade tree (zone 2/TreeArea/The Tree, buytree<N> is TreePart<N>'s
-            // box: buytree16 activates the zip movers).
             ("buyreward6", "Courses/Course 6/localUpgrades/Base reward", 0),
             ("buygreen6", "Courses/Course 6/localUpgrades/Green reward (1)", 1),
             ("buyclone6", "Courses/Course 6/localUpgrades/Clones", 2),
@@ -103,12 +93,9 @@ namespace IGTAPTasMod
             ("buyclone9", "Courses/course 9/localUpgrades/Clones (1)", 1),
             ("buygreen9", "Courses/course 9/localUpgrades/GP", 2),
             ("buycd9", "Courses/course 9/localUpgrades/Clone Dust", 3),
-            // The teleporters' unlock (unlockTeleporters, TeleporterScript); its neighbour "(1)" is an atom-level box.
             ("buyteleporters", "Courses/course 9/localUpgrades/EnableTeleporters", 4),
             ("buyatomlevel9", "Courses/course 9/localUpgrades/EnableTeleporters (1)", 5),
             ("buyclonemult9", "Courses/course 9/localUpgrades/CloneMult", 6),
-            // Course 7's free box enabling the jump and dash refresh orbs (unlockJiggleDrops); the orb by the zip movers' box also
-            // needs a refresh orb level (buytree20's MoreOrbs): JiggleDropScript.SetActiveVisualState.
             ("buyorbs7", "Courses/course 7/localUpgrades/UnlockJiggleDrop", 3),
             ("buyreward10", "Courses/course 10/localUpgrades/Cash", 0),
             ("buyfree10a", "Courses/course 10/localUpgrades/Cash (1)", 1),
@@ -143,14 +130,12 @@ namespace IGTAPTasMod
             ("buytree20", "zone 2/TreeArea/The Tree/TreePart20/MoreOrbs", 3),
             ("buytree21", "zone 2/TreeArea/The Tree/TreePart21/5xIncWatts", 2),
             ("buytree22", "zone 2/TreeArea/The Tree/TreePart22/exempt c8 from prestige", 0),
-            // The OmniDash box: its first buy turns Area 1 overgrown and opens the Zone 2→1 path (Economy.OmniDashFirstBuy).
             ("buytree23", "zone 2/TreeArea/The Tree/TreePart23/OmniDash", 2),
             ("buytree24", "zone 2/TreeArea/The Tree/TreePart24/5xGP", 2),
             ("buytree25", "zone 2/TreeArea/The Tree/TreePart25/BuyMaxC6", 0),
             ("buytree26", "zone 2/TreeArea/The Tree/TreePart26/BuyMaxBox", 0),
             ("buytree27", "zone 2/TreeArea/The Tree/TreePart27/MoreOrbs", 2),
-            // Despite its object name, Tree 2's PlantTreeBox is Course 10's buy max (makeCourseBuyMax), as TreePart27's
-            // "MoreOrbs" is Course 9's (TreePart20's is the refresh orbs one).
+            // Tree 2's PlantTreeBox is Course 10's buy max despite its name; TreePart27's MoreOrbs is Course 9's.
             ("buyplant2", "Zone 1/The Tree 2/PlantTreeBox", 0) };
 
         public static string BoxId(string path, int sibling)
@@ -158,7 +143,6 @@ namespace IGTAPTasMod
             return path + "#" + sibling.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
-        /// <summary>The goal token (buy:token) of a box id, null for a box no token names.</summary>
         public static string TokenOf(string id)
         {
             foreach (var (token, path, sibling) in Boxes)
@@ -166,12 +150,6 @@ namespace IGTAPTasMod
             return null;
         }
 
-        /// <summary>
-        /// The economy boxes: every box whose effect is income only (a course's repeatable boxes, Area 2's atoms, clone dust and
-        /// atom levels, the free Cash boxes, the statue, buytree0's green chance). A plan may drop, add, regroup or reorder these buy
-        /// goals and the laps and gates (`record:N`, `farm:N`, `start:N`) around them; unlocks, tree growth and doors are the run's
-        /// skeleton.
-        /// </summary>
         public static readonly HashSet<string> EconomyBoxes = new HashSet<string> {
             "buyreward", "buyclone", "buyreward2", "buyclone2", "buyclonemult2", "buyglobalreward2",
             "buyreward3", "buyclone3", "buyclonemult3", "buyfast3", "buyglobalreward3",
@@ -183,7 +161,6 @@ namespace IGTAPTasMod
             "buyfree3", "buyfree4a", "buyfree4b", "buyfree4c", "buyfree5", "buyfree6a", "buyfree6b", "buyfree6c", "buyfree6d", "buyfree6e",
             "buyfree10a", "buyfree10b", "buyclonespeed", "buystatue", "buytree0" };
 
-        /// <summary>A goal label the goals part may edit: a lap or a start gate, or a buy of economy boxes only.</summary>
         public static bool IsEconomy(string label)
         {
             if (CourseOf(label) > 0) return true;
@@ -193,11 +170,6 @@ namespace IGTAPTasMod
             return true;
         }
 
-        /// <summary>
-        /// Why a goal list may not replace another (null: it may): the run's end goal, its area and reward goals and every buy of
-        /// an unlock (anything but economy boxes) stay, in their order; only the economy goals between them change (docs/fulltas.md,
-        /// "Parts": goals). The engine's goals part proposes only such edits, and the game adopts a judged route's goals only then.
-        /// </summary>
         public static string EditRefused(IList<string> from, IList<string> to)
         {
             if (to == null || to.Count == 0) return "the new goal list is empty";
@@ -221,14 +193,9 @@ namespace IGTAPTasMod
                 || (from & FromBottom) != 0 && py1 <= ry0 || (from & FromTop) != 0 && py0 >= ry1;
         }
 
-        /// <summary>A move longer than this in one physics tick is a respawn, not a move (<see cref="CrossesInto"/>).</summary>
+        // A move longer than this in one physics tick is a respawn, not a move; a respawn's jump crosses no avoid edge.
         public const float TeleportStep = 400f;
 
-        /// <summary>
-        /// A one-way avoid box's cut (forced-paths.json's block "from"; the engine's OfflineSolver.Box, the gate's direction records):
-        /// the move from (ax, ay) to (px, py) crosses one of the box's <paramref name="sides"/> edges inwards, a fast move through a
-        /// thin box included. A respawn's jump crosses nothing.
-        /// </summary>
         public static bool CrossesInto(int sides, float x0, float y0, float x1, float y1, float ax, float ay, float px, float py)
         {
             if ((px - ax) * (px - ax) + (py - ay) * (py - ay) > TeleportStep * TeleportStep) return false;
@@ -238,7 +205,6 @@ namespace IGTAPTasMod
                 || (sides & FromTop) != 0 && Crosses(-ay, -py, -y1, ax, px, x0, x1);
         }
 
-        /// <summary>A move from u0 to u1 crosses the edge at u = e going up, at a v (interpolated) within [v0, v1].</summary>
         static bool Crosses(float u0, float u1, float e, float va, float vb, float v0, float v1)
         {
             if (!(u0 < e && u1 >= e)) return false;
@@ -247,16 +213,11 @@ namespace IGTAPTasMod
         }
     }
 
-    /// <summary>
-    /// A run's goal ids (data/runs/&lt;run&gt;.json "goals"[].id): what a file, a flag, the HTTP API or an event names a goal by, never its
-    /// place in the list, which a goals edit moves. A goal keeps its id across edits; a goal an edit makes gets a new one.
-    /// </summary>
     internal static class FullTasGoalIds
     {
         static readonly Random Rng = new Random();
         const string Letters = "abcdefghijklmnopqrstuvwxyz0123456789";
 
-        /// <summary>A new id: 6 letters and digits, a letter first, not one of <paramref name="taken"/>.</summary>
         public static string New(ICollection<string> taken)
         {
             lock (Rng)
@@ -270,17 +231,13 @@ namespace IGTAPTasMod
                 }
         }
 
-        /// <summary>
-        /// The ids of <paramref name="labels"/>, a goal list made from (<paramref name="oldIds"/>, <paramref name="oldLabels"/>): the
-        /// goals the two lists share (their longest common subsequence of labels) keep their ids, every other goal gets a new one.
-        /// </summary>
         public static string[] Carry(IList<string> oldIds, IList<string> oldLabels, IList<string> labels)
         {
             int n = oldLabels?.Count ?? 0, m = labels.Count;
             var ids = new string[m];
             if (n > 0)
             {
-                // ponytail: an O(n·m) table (2.2M cells for 1,500 goals a side); a diff with a linear space if runs get far longer.
+                // shortcut: O(n*m) LCS table (2.2M cells for 1,500 goals a side), switch to a linear-space diff if runs grow.
                 var lcs = new int[n + 1, m + 1];
                 for (int i = n - 1; i >= 0; i--)
                     for (int j = m - 1; j >= 0; j--)
@@ -296,10 +253,6 @@ namespace IGTAPTasMod
             return ids;
         }
 
-        /// <summary>
-        /// Ids made from the labels alone (a label's n-th goal gets the same id every time): for a goal list made afresh each time
-        /// from something else (a course solve's waypoints), never edited, whose files must still find their goals again.
-        /// </summary>
         public static string[] Derived(IList<string> labels)
         {
             var ids = new string[labels.Count];
@@ -326,7 +279,6 @@ namespace IGTAPTasMod
             return ids;
         }
 
-        /// <summary>Why a run's ids can't be its goals' (null: they can): one per goal, each set and unique.</summary>
         public static string Invalid(IList<string> ids, int goals)
         {
             if (ids == null || ids.Count != goals) return "its goals have " + (ids?.Count ?? 0) + " ids for " + goals + " goals";
@@ -342,15 +294,10 @@ namespace IGTAPTasMod
         public readonly FullTasGoal[] Goals;
         public int Next;
         public int Limit;
-        // The next goal's boxes bought, a bit each; a record: goal's (it has no boxes) 1 once its gate is crossed (Armed).
         int _bought;
-        // Loose buys (data/runs/<run>.json "buys": "loose"; null when strict): every box a buy or reward goal names, the last goal that
-        // names it, and the boxes bought before their goal came up (bit per box), which count toward it once it's current.
         string[] _named;
         int[] _lastNaming;
         ulong _banked;
-        // Per goal reached: the input tick, the physics tick (its game frames) and the frames the run had stood still in by
-        // then (dash freezes, pauses: MacroEngine.HeldFrames), the last two its live time (MacroEngine.LiveSeconds).
         public readonly long[] InputTicks, PhysicsTicks, HeldFrames;
 
         public FullTasTracker(FullTasGoal[] goals)
@@ -374,9 +321,7 @@ namespace IGTAPTasMod
 
         public bool Done { get { return Next >= Limit; } }
 
-        // A savestate start holds no checkpoint: its respawnPoint is the new game's, a place the run never reached. Until a real
-        // checkpoint (checkpointScript) moves it or a start gate sets a course reset point, a quick restart there would teleport,
-        // so it ends the run. Set for savestate starts only (NoCheckpointAt); a new game's respawnPoint is the game's own.
+        // Savestate starts have no checkpoint (RULES.md exception 6): a restart before a real one would teleport, ending the run.
         bool _noCheckpoint;
         float _startRespawnX, _startRespawnY;
 
@@ -387,11 +332,7 @@ namespace IGTAPTasMod
             _startRespawnY = respawnY;
         }
 
-        /// <summary>
-        /// Loose buys: a purchase that isn't the current goal's is kept when a later goal names its box, and a buy goal is reached
-        /// as soon as it's current and every box it names is owned (bought for it, or kept from before). Strict (the default):
-        /// only a purchase of the current goal's boxes counts.
-        /// </summary>
+        // Loose buys (RULES.md 38): a purchase kept for a later goal naming its box; strict counts only the current goal's boxes.
         public void LooseBuys()
         {
             var named = new List<string>();
@@ -413,7 +354,6 @@ namespace IGTAPTasMod
 
         public bool Loose { get { return _named != null; } }
 
-        /// <summary>A tracker for other goals with this one's checkpoint guard and buy rule (the loop builder's extra laps).</summary>
         public FullTasTracker For(FullTasGoal[] goals)
         {
             var t = new FullTasTracker(goals);
@@ -424,7 +364,6 @@ namespace IGTAPTasMod
             return t;
         }
 
-        /// <summary>Why a quick restart now would leave the game's checkpoints (null when it respawns at a real one).</summary>
         public string RestartRefused(float respawnX, float respawnY, bool courseReset)
         {
             if (!_noCheckpoint || courseReset || respawnX != _startRespawnX || respawnY != _startRespawnY) return null;
@@ -433,7 +372,6 @@ namespace IGTAPTasMod
 
         public FullTasGoal Current { get { return Next < Goals.Length && Next < Limit ? Goals[Next] : null; } }
 
-        /// <summary>A course's start gate crossed: reaches a start: goal, arms a record: goal (its finish reaches it then).</summary>
         public bool CourseStarted(int course, long input, long physics, long held)
         {
             FullTasGoal g = Current;
@@ -448,7 +386,6 @@ namespace IGTAPTasMod
             return g != null && g.course == course && (g.kind == FullTasGoal.Farm || Armed) && Reach(input, physics, held);
         }
 
-        /// <summary>The next goal is a record: lap whose start gate is crossed.</summary>
         public bool Armed { get { FullTasGoal g = Current; return g != null && g.kind == FullTasGoal.Record && _bought != 0; } }
 
         public bool Touched(long input, long physics, long held)
@@ -482,7 +419,6 @@ namespace IGTAPTasMod
             return false;
         }
 
-        /// <summary>Whether every box goal g names is bought for it or kept (loose buys).</summary>
         bool Owned(FullTasGoal g)
         {
             for (int i = 0; i < g.boxes.Length; i++)
@@ -501,7 +437,6 @@ namespace IGTAPTasMod
             HeldFrames[Next] = held;
             Next++;
             _bought = 0;
-            // Loose buys: a buy goal whose boxes were all bought before it came up is reached on the same tick.
             FullTasGoal then = Current;
             if (Loose && then != null && (then.kind == FullTasGoal.Buy || then.kind == FullTasGoal.Reward) && then.boxes != null && Owned(then))
                 Reach(input, physics, held);
@@ -521,15 +456,11 @@ namespace IGTAPTasMod
                 HeldFrames = (long[])HeldFrames.Clone() };
         }
 
-        // The current buy goal's box touched without the game buying it (upgradeBox.OnTriggerStay2D past its cooldown, with less
-        // held than upgradeCost or the box inactive): the goal, the touches, and the active one with the most held. For the end
-        // reason only (Why): not in State, and a restore clears it (snapshots sit at goal boundaries).
         int _shortGoal = -1, _shortTouches;
         long _shortInput;
         double _shortHeld, _shortCost;
         string _shortBox, _shortCurrency;
 
-        /// <summary>The game refused a purchase at a touch of this box: less held than its cost, or the box inactive.</summary>
         public void TouchedShort(string path, string id, long input, double held, double cost, string currency, bool active)
         {
             FullTasGoal g = Current;
@@ -540,15 +471,9 @@ namespace IGTAPTasMod
             (_shortBox, _shortInput, _shortHeld, _shortCost, _shortCurrency) = (path, input, held, cost, currency);
         }
 
-        /// <summary>Between an end reason and its <see cref="Why"/>: <see cref="Unexplained"/> cuts there.</summary>
         public const string WhyMark = "; why: ";
         const string StrayTail = ", which isn't the next goal's box";
 
-        /// <summary>
-        /// Why a run of these goals ended where it did (null: nothing to add). A strict run's stray buy names the goal it expected
-        /// and, from <paramref name="boxes"/> (null: unknown), what that goal's boxes cost against what the run held. A death or
-        /// stop at a buy goal says whether its box was touched, the most held at a touch against its cost, and the shortfall.
-        /// </summary>
         public string Why(string reason, Func<string[], string> boxes)
         {
             FullTasGoal g = Current;
@@ -568,14 +493,12 @@ namespace IGTAPTasMod
 
         static string Num(double v) => v.ToString("G6", System.Globalization.CultureInfo.InvariantCulture);
 
-        /// <summary>The end reason with its <see cref="Why"/> after <see cref="WhyMark"/>.</summary>
         public string Explain(string reason, Func<string[], string> boxes = null)
         {
             string why = Why(reason, boxes);
             return why == null ? reason : reason + WhyMark + why;
         }
 
-        /// <summary>An end reason without its <see cref="Why"/> (to compare ends).</summary>
         public static string Unexplained(string reason)
         {
             int at = reason?.IndexOf(WhyMark, StringComparison.Ordinal) ?? -1;
@@ -588,8 +511,7 @@ namespace IGTAPTasMod
             Next = s.Next;
             _bought = s.Bought;
             _banked = s.Banked;
-            // A goal list can grow after a snapshot (the economy planner's plan, realize, a goals edit): a snapshot taken with fewer
-            // goals leaves the rest unreached.
+            // A goal list can grow after a snapshot (planner, goals edit): a snapshot with fewer goals leaves the rest unreached.
             int n = Math.Min(s.InputTicks.Length, InputTicks.Length);
             Array.Copy(s.InputTicks, InputTicks, n);
             Array.Copy(s.PhysicsTicks, PhysicsTicks, n);

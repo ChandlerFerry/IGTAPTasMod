@@ -12,17 +12,10 @@ using UnityEngine.Rendering;
 
 namespace IGTAPTasMod
 {
-    /// <summary>
-    /// The TAS editor's Techs here (enginesim/README.md "Techs"): once a course or category
-    /// session has held an input tick for a second, <c>enginesim techs</c> lists the techs whose key window works from there,
-    /// each direction with its inputs and path. Hovering one in the studio draws its paths in game (the held tick is seeked
-    /// again so its last tick renders them); trying one puts its inputs in at the held tick and plays them.
-    /// </summary>
     public sealed partial class TasPlugin
     {
         const long TechsAfterMs = 1000;
 
-        /// <summary>One direction of a tech from the held tick: its inputs from there and the player's world positions.</summary>
         sealed class TasTechVariant
         {
             public string tech, name, dir;
@@ -32,29 +25,22 @@ namespace IGTAPTasMod
             public bool died;
             public List<SolverTick> ticks;
             public Vector2[] path;
-            /// <summary>Shown variants only: the other directions that play this very path (TasGroupTechs).</summary>
             public List<TasTechVariant> same;
-            /// <summary>Its shapes as DrawTechPaths draws them (world positions: the path plus <see cref="shapesOrigin"/>), built
-            /// again only when the origin moves; and its label there, for the tick length <see cref="labelStep"/>.</summary>
             public SpikeShape leadShape, pathShape, startShape;
             public Vector2 shapesOrigin;
             public string label;
             public float labelStep;
         }
 
-        /// <summary>The techs found for one held input tick: the best variant per tech, direction and angle, and those shown
-        /// (one per distinct path).</summary>
         sealed class TasTechs
         {
             public readonly List<TasTechVariant> variants = new List<TasTechVariant>(), shown = new List<TasTechVariant>();
             public bool done;
             public int tried;
-            /// <summary>Counts TasGroupTechs' rebuilds of <see cref="shown"/>: DrawTechPaths' order of it is kept until this changes.</summary>
             public int grouping;
             public string error;
         }
 
-        /// <summary>Why this session gets no techs (null: it does): a course and category session, its start trace, the engine.</summary>
         string TasTechsUnavailable(TasSession s, out string trace, out string caps)
         {
             trace = caps = null;
@@ -65,13 +51,10 @@ namespace IGTAPTasMod
             trace = CourseTrace(course, caps);
             if (trace == null) return "No start trace for " + course.Token + "_" + CapsOf(caps).Label + " yet: run Improve once in the Optimize tab.";
             if (string.IsNullOrEmpty(EngineSimExe) || !File.Exists(EngineSimExe)) return "The offline engine isn't built.";
-            // A run that ended (a death, the finish) has no player to try techs from: the held tick is past its end.
             if (s.ended != null) return "The run ended here (" + s.ended + "): hold a tick before it.";
             return null;
         }
 
-        /// <summary>Every poll (hold loop and Update): drops results the inputs outdated, reads what the search found so far, and
-        /// starts one for an input tick held a second. Only a held session starts or stops one (a seek passes other ticks).</summary>
         void TasPollTechs()
         {
             TasSession s = _tas;
@@ -111,15 +94,11 @@ namespace IGTAPTasMod
             s.techs = null;
         }
 
-        /// <summary>The search's new lines: each variant replaces its direction's (same tech, dir and angle) when it starts sooner,
-        /// or as soon and faster. At the process's exit, a result without its done line is an error.</summary>
         void TasReadTechs(TasSession s)
         {
             TasTechs found;
             if (!s.techsCache.TryGetValue(s.techsAt, out found)) { TasStopTechs(s); return; }
             bool exited = s.techs.HasExited;
-            // The search's file grows a few lines a second: read at most every 33 ms (the studio's push), not every frame and
-            // hold poll, and at once when the search ends.
             long now = Stopwatch.GetTimestamp();
             if (!exited && now - s.techsPolled < Stopwatch.Frequency / 30) return;
             s.techsPolled = now;
@@ -161,7 +140,6 @@ namespace IGTAPTasMod
             {
                 if (!found.done)
                 {
-                    // The message, not the stack: an exception's "   at" frames and "--- End of" lines are noise in the studio.
                     string[] lines = (s.techsOutput?.ToArray() ?? new string[0])
                         .Where(l => !l.TrimStart().StartsWith("at ", StringComparison.Ordinal) && !l.TrimStart().StartsWith("--- ", StringComparison.Ordinal)).ToArray();
                     string output = string.Join("\n", lines.Skip(Math.Max(0, lines.Length - 2))).Trim();
@@ -171,18 +149,13 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>A tech's variants in the studio's order: its compass's (dir, then the 45° aim, then steeper).</summary>
         static readonly string[] TechDirOrder = { "", "U", "UR", "R", "DR", "D", "DL", "L", "UL" };
 
-        /// <summary>A tech's shown variants, in compass order.</summary>
         List<TasTechVariant> TasTechVariants(TasTechs found, string tech)
         {
             return found.shown.Where(v => v.tech == tech).OrderBy(v => Array.IndexOf(TechDirOrder, v.dir)).ThenBy(v => v.angle == null ? 0f : 90f - v.angle.Value).ToList();
         }
 
-        /// <summary>A tech's directions that play the same path (within 0.5 u every step) are one move: the simplest input shows
-        /// it (a cardinal before a diagonal before a steep aim), the rest are listed as the same. A ground dash aimed down-right
-        /// plays as one aimed right: a quarter of the omnidash's variants were such repeats.</summary>
         static void TasGroupTechs(TasTechs found)
         {
             found.shown.Clear();
@@ -203,7 +176,6 @@ namespace IGTAPTasMod
             return true;
         }
 
-        /// <summary>The input tick the session holds (through a redraw re-seek, the tick it is rebuilding).</summary>
         int TasHeldAt(TasSession s) { return s.redrawAt >= 0 ? s.redrawAt : (int)_engine.RunTicks; }
 
         TasTechs TasTechsHere(TasSession s)
@@ -228,7 +200,6 @@ namespace IGTAPTasMod
             };
         }
 
-        /// <summary>A variant by tech, direction and angle (a search still running adds variants, so no index is stable).</summary>
         TasTechVariant TasFindTech(TasTechs found, JObject body)
         {
             string tech = Text(body, "tech"), dir = (string)body["dir"] ?? "";
@@ -236,9 +207,6 @@ namespace IGTAPTasMod
             return found?.variants.FirstOrDefault(v => v.tech == tech && v.dir == dir && v.angle == angle);
         }
 
-        /// <summary>POST /api/tas/techs/hover {tech, dir?, angle?}: draw that tech's paths, the one in that direction bright ({}
-        /// clears). A held session renders no frames, so the held physics tick is seeked again: its last tick plays at 1x and
-        /// draws them.</summary>
         void TasTechsHover(TasSession s, JObject body)
         {
             string tech = Text(body, "tech");
@@ -253,7 +221,6 @@ namespace IGTAPTasMod
             else if (s.held) TasRedraw(s);
         }
 
-        /// <summary>Rebuilds the held physics tick (its last tick at 1x), so its frames draw the hovered paths.</summary>
         void TasRedraw(TasSession s)
         {
             s.redrawAgain = false;
@@ -262,8 +229,6 @@ namespace IGTAPTasMod
             s.redrawAt = (int)_engine.RunTicks;
         }
 
-        /// <summary>POST /api/tas/techs/apply {tech, dir, angle, slowdown}: the inputs from the held tick become the variant's
-        /// (undoable), played from the held tick to their end, then held.</summary>
         void TasTechsApply(TasSession s, JObject body)
         {
             if (!s.held) throw new InvalidOperationException("Hold first: a tech is tried from the held tick.");
@@ -275,8 +240,6 @@ namespace IGTAPTasMod
             TasSetTicks(s, ticks);
             TasPlay(s, FloatNumber(body, "slowdown", s.slowdown), ticks.Count, at);
         }
-
-        // ---- drawing ----
 
         static readonly Color TechPathColor = new Color(.78f, .49f, 1f, .7f), TechPathHovered = new Color(.28f, .85f, 1f, 1f), TechPathDied = new Color(1f, .36f, .43f, 1f);
 
@@ -294,8 +257,6 @@ namespace IGTAPTasMod
             return _techsDrawn;
         }
 
-        /// <summary>A variant's shapes at <paramref name="origin"/>: its lead-in (none when it has no lead), its path from the
-        /// lead on, and the box where the tech starts. Built once per origin (a rebase moves it), not every frame.</summary>
         static void TechShapes(TasTechVariant v, Vector2 origin)
         {
             if (v.pathShape != null && v.shapesOrigin.x == origin.x && v.shapesOrigin.y == origin.y) return;
@@ -310,9 +271,6 @@ namespace IGTAPTasMod
             v.shapesOrigin = origin;
         }
 
-        /// <summary>The hovered tech's paths in world space (the engine's origin-free positions plus the current origin): its
-        /// other directions faint, the hovered one bright (red when it dies in its coast); the lead-in (the continuation before
-        /// the tech's inputs) thin, and a box where the tech starts.</summary>
         void DrawTechPaths(float scale)
         {
             TasSession s = _tas;
@@ -328,7 +286,6 @@ namespace IGTAPTasMod
             GL.Viewport(pixels);
             GL.LoadPixelMatrix(pixels.xMin, pixels.xMax, Screen.height - pixels.yMin, Screen.height - pixels.yMax);
             GL.Begin(GL.QUADS);
-            // The hovered one named below: the first hovered in draw order.
             TasTechVariant named = null;
             for (int pass = 0; pass < 2; pass++)
                 for (int i = 0; i < variants.Count; i++)
@@ -347,7 +304,6 @@ namespace IGTAPTasMod
             GL.End();
             GL.PopMatrix();
             GL.Viewport(new Rect(0, 0, Screen.width, Screen.height));
-            // The hovered one's name by its start box, for a player looking at the game rather than the studio.
             if (named == null || _overlayText == null) return;
             Vector3 box = cam.WorldToScreenPoint(named.path[Mathf.Clamp(named.lead, 0, named.path.Length - 1)] + origin);
             string text = named.label;

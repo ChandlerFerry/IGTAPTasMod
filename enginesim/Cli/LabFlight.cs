@@ -8,52 +8,21 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// The free-flight bound of <c>lab solve</c>: the highest the player can be on each of the next ticks, for a state that has
-    /// spent its dash, off ground and wall. It is an admissible cutoff: it only ever over-estimates the height, so a state it
-    /// cuts could not have touched the finish box by the search's last tick (Lab.Solve's <c>prunedFlight</c>).
-    /// <para>Why it holds (Movement.cs line numbers). In free flight (cutsceneMode none, not onGround, not OnWall,
-    /// wallCoyoteFrames 0 or less, no final cling, no dash left: airDashesLeft 0, and only a landing, a wall cling, a spring or
-    /// an orb refills it) only these change Velocity.y: gravity (1109-1116: at least <c>gravity</c> a tick, 1.4x with the stick
-    /// down while the body's y speed is under 300, <c>fastFallMod</c> below -75), the apex anti-gravity (1129-1133: +a while
-    /// -50 &lt; Velocity.y &lt; 200), endDash (2016-2027: x0.35 at an up dash's end, 10 if under 10; its tick is fixed by
-    /// dashFramesRemaining), the jump cut (1668-1675: to 50, after a normal jump) and the double jump (1757-1779: 745 + half of
-    /// a Velocity.y under 200 with the boost control, under 700 without). momentum only decays (1263-1295), and Velocity.x only
-    /// moves toward the stick, clamped to runSpeed (1788-1841), so the body's velocity (Velocity + momentum + Box2D gravity,
-    /// 1303) bounds the step both ways. Every other source of height or of a refill needs a contact, and each is ruled out in
-    /// the reach of the remaining ticks: the ground branch (962) and the +10 pop (958) need a ground ray to find a surface top
-    /// 18-40 u under the transform (their origins at x +-15 / +-6 lie inside the player's own collider, so they cannot start
-    /// inside a solid: Box2D keeps a dynamic body out of the static ones it collides with, checked on the contact masks and the collider's current overlap), Update's step-up (806-816) a top in [y-33, y+20]
-    /// (a ray start inside a solid there is blocked by its own ray4 unless the top is in that band too), OnCollisionStay's
-    /// zeroing (2516-2531) a top or bottom face on the collider; so no static box may have its top or bottom face in the
-    /// vertical reach. The wall branch (1006: Velocity.y 200 or less, or dashActive) and ray3 (x +-25, Velocity.y under 200)
-    /// are ruled out on each tick where their gate can open by no solid being within their reach then. Triggers (springs,
-    /// orbs, zones) and moving bodies anywhere in reach, and colliders that are not axis-aligned boxes, end the bound: only a
-    /// spike trigger is allowed (spikeScript only kills). Box2D friction on a side contact only slows the body's rise; it
-    /// opens the fast-fall gate, which is modelled. Every threshold and range is widened by <see cref="Margin"/>.</para>
-    /// </summary>
+    // Bound must only ever over-estimate height (admissible prune); every threshold widens by Margin.
     static class LabFlight
     {
         const BindingFlags Fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
 
-        /// <summary>Slack on every threshold and range (u, u/s): float rounding, Box2D's 0.01 contact skin, a rebase's rounding.</summary>
         public const float Margin = 2f;
 
-        /// <summary>How deep the player's collider may sit in a static solid: Box2D's steady penetration is its 0.005 linear slop
-        /// plus the 0.01 polygon skin; a ray origin this far inside the collider can't be inside a solid.</summary>
         const float FootprintSlack = 0.25f;
 
         static readonly FieldInfo B2Field = typeof(PhysicsWorld).GetField("_b2", Fields);
         static readonly System.Collections.Concurrent.ConcurrentDictionary<string, FieldInfo> MovementFields = new System.Collections.Concurrent.ConcurrentDictionary<string, FieldInfo>();
 
-        /// <summary>Movement's pending Invokes that change no position, velocity or unlock (the buffers, the jump grace; the wall
-        /// jump's collider re-enable is not among them: it ends a Ground exclusion, which a free-flight state must not have).</summary>
         static readonly HashSet<string> HarmlessInvokes = new HashSet<string> { "cancelJumpBuffer", "cancelDashBuffer", "cancelJumpCutBuffer", "endRecentJump" };
-        /// <summary>Movement's coroutines that only scale the sprite (jump and landing squash) or stop time (TimeStop: no physics
-        /// tick runs while it holds, so it moves nothing).</summary>
         static readonly string[] HarmlessRoutines = { "IE_Jump", "IE_Land", "IE_TimeStop" };
 
-        /// <summary>A private Movement field's value.</summary>
         static object Get(Movement m, string name)
         {
             return MovementFields.GetOrAdd(name, n => typeof(Movement).GetField(n, Fields) ?? throw new MissingFieldException("Movement." + n)).GetValue(m);
@@ -65,11 +34,8 @@ namespace IGTAP.EngineSim.Cli
 
         struct Box { public float X0, Y0, X1, Y1, Friction; }
 
-        /// <summary>The player's colliders as the bound needs them, relative to the transform (every collider config the normal
-        /// collider can switch to: default, dash, current).</summary>
         struct Shape { public float Top, BottomLow, BottomHigh, HalfX, ReachX; }
 
-        /// <summary>One line of the search's header: the constants the bound reads and the player's collider.</summary>
         public static string Describe(Simulation sim)
         {
             Movement m = sim.Player;
@@ -81,11 +47,6 @@ namespace IGTAP.EngineSim.Cli
                 + $"bottom {s.BottomLow:0.#}..{s.BottomHigh:0.#}, half width {s.HalfX:0.#}{(bad == null ? "" : " (" + bad + ")")}";
         }
 
-        /// <summary>
-        /// The highest the player's transform can be (world frame) at the end of each of the next <paramref name="horizon"/>
-        /// ticks (index t = 1..horizon; index 0 is now), or null with <paramref name="why"/> when the state isn't in free flight
-        /// or something in reach could end it.
-        /// </summary>
         public static float[] Bound(Simulation sim, int horizon, bool boostControl, out string why)
         {
             Movement m = sim.Player;
@@ -120,10 +81,6 @@ namespace IGTAP.EngineSim.Cli
             }
             c.JumpsLeft = m.doubleJumpUnlocked ? System.Math.Max(0, m.airJumpsLeft) : 0;
 
-            // Horizontal reach: Velocity.x after the first tick's MoveLeftAndRight is within runSpeed (x wallJumpDirection
-            // under a wall jump's lock) unless a buffered dash press skips it (getPlayerControlledInput returns early only with
-            // dashCooldown under 0, and endDash sets it to 0.02 or more); momentum.x only decays or, against the stick, crosses 0
-            // by at most MovingOppositeMomentumDecay.
             float run = m.runSpeed * 10f * MathF.Max(1f, MathF.Abs(m.wallJumpDirection));
             float vx = m.dashCooldown - dt >= 0f ? run : MathF.Max(MathF.Abs(v.x), run);
             c.StepX = (vx + MathF.Max(MathF.Abs(mom.x), F(m, "MovingOppositeMomentumDecay")) + MathF.Abs(c.Body.x)) * dt;
@@ -134,14 +91,12 @@ namespace IGTAP.EngineSim.Cli
             var start = new Branch { Vlo = v.y, Vhi = v.y, Ylo = y0, Yhi = y0, CumLo = y0, CumHi = y0, BodyLo = rb.linearVelocity.y,
                 Normal = B(m, "MostRecentUpwardsMoveWasNormalJump"), Jumps = c.JumpsLeft };
 
-            // Pass 1, every gate open and no geometry: the reach any branch can have, for the one query of the world.
             var reach = new Reach { Lo = y0, Hi = y0 };
             Walk(c, start, 0, horizon, null, null, ref reach);
             float xLo = x0 - horizon * c.StepX - Margin, xHi = x0 + horizon * c.StepX + Margin;
             float px = MathF.Max(45f, shape.ReachX) + Margin, py = 45f + MathF.Max(MathF.Abs(shape.BottomLow), MathF.Abs(shape.Top)) + Margin;
             List<Box> boxes = Solids(sim, m, xLo - px, reach.Lo - py, xHi + px, reach.Hi + py, PlayerFriction(sim, m), out why);
             if (why != null) return null;
-            // The rays' argument needs the collider out of every solid now (free flight writes no position, so Box2D keeps it out).
             foreach (BoxCollider2D own in m.GetComponents<BoxCollider2D>())
             {
                 if (own.isTrigger || !own.enabled) continue;
@@ -151,8 +106,6 @@ namespace IGTAP.EngineSim.Cli
                 foreach (Box b in boxes)
                     if (b.X0 < cx + hx && b.X1 > cx - hx && b.Y0 < cy + hy && b.Y1 > cy - hy) { why = "the collider overlaps a solid"; return null; }
             }
-            // A top face where a ground ray, a pop ray, the step-up ray or the collider's bottom can meet it; a bottom face near
-            // the collider's top or the step-up rays.
             float topLo = reach.Lo + MathF.Min(-40f, shape.BottomLow) - Margin, topHi = reach.Hi + MathF.Max(20f, shape.BottomHigh) + Margin;
             float botLo = reach.Lo - 45f - Margin, botHi = reach.Hi + MathF.Max(45f, shape.Top) + Margin;
             float probeX = MathF.Max(29f, shape.ReachX) + Margin;
@@ -163,7 +116,6 @@ namespace IGTAP.EngineSim.Cli
                 if (b.Y0 >= botLo && b.Y0 <= botHi) { why = $"a bottom face at y {b.Y0 - sim.WorldOriginInScene.y:0.#} in reach"; return null; }
             }
 
-            // Pass 2: the gates as the state allows them, the gated contacts checked tick by tick against the boxes.
             var geo = new Geometry { Boxes = boxes, X0 = x0, Shape = shape };
             var best = new float[horizon + 1];
             for (int t = 0; t <= horizon; t++) best[t] = float.NegativeInfinity;
@@ -177,8 +129,6 @@ namespace IGTAP.EngineSim.Cli
             return best;
         }
 
-        /// <summary>The player's collider around the transform over every collider config (the finish box is a touch of any player
-        /// BoxCollider2D: Simulation.Touches): its highest top, lowest bottom and widest reach either side.</summary>
         public static (float top, float bottom, float reachX) Extents(Movement m)
         {
             Shape s = PlayerShape(m, out _);
@@ -196,10 +146,7 @@ namespace IGTAP.EngineSim.Cli
 
         struct Branch
         {
-            /// <summary>Velocity.y at the end of the tick (both bounds), the transform's y, its lowest and highest so far, the
-            /// body's lowest y speed after the step (the next tick's fast-fall gate reads it).</summary>
             public float Vlo, Vhi, Ylo, Yhi, CumLo, CumHi, BodyLo;
-            /// <summary>MostRecentUpwardsMoveWasNormalJump may be on (the jump cut can fire); double jumps left.</summary>
             public bool Normal;
             public int Jumps;
             public bool Friction;
@@ -214,21 +161,13 @@ namespace IGTAP.EngineSim.Cli
             public Shape Shape;
         }
 
-        /// <summary>
-        /// Walks one branch from tick <paramref name="from"/> to <paramref name="horizon"/>, forking at every tick a double jump
-        /// can happen; <paramref name="best"/> takes each tick's highest transform y. With <paramref name="geo"/> null (pass 1)
-        /// no contact is checked, a side contact's friction is assumed wherever friction exists, and <paramref name="reach"/>
-        /// takes the lowest and highest y of any branch.
-        /// </summary>
         static string Walk(Consts c, Branch b, int from, int horizon, Geometry geo, float[] best, ref Reach reach)
         {
             for (int t = from + 1; t <= horizon; t++)
             {
                 float xLo = geo == null ? 0f : geo.X0 - t * c.StepX - Margin, xHi = geo == null ? 0f : geo.X0 + t * c.StepX + Margin;
-                // Fast fall: the stick down with the body's y speed under 300 (1104), or a side contact's friction slowed it.
                 bool fastFall = b.BodyLo < 300f + Margin || (geo == null ? c.AnyFriction : b.Friction);
                 bool dashOn = c.DashEnd > 0 && t <= c.DashEnd;
-                // The wall branch and ray3 read Velocity.y before gravity: last tick's end.
                 bool wallGate = b.Vlo <= 200f + Margin || dashOn, rayGate = b.Vlo < 200f + Margin;
 
                 float hi = b.Vhi - c.G * c.SlowFall;
@@ -245,7 +184,6 @@ namespace IGTAP.EngineSim.Cli
 
                 if (b.Jumps > 0 && lo < c.JumpGate + Margin)
                 {
-                    // The double jump: Velocity.y = airJumpForce + max(v, 0) / 2 for a v under the gate.
                     Branch jump = b;
                     jump.Vlo = c.AirJump + MathF.Max(lo, 0f) / 2f;
                     jump.Vhi = c.AirJump + MathF.Max(MathF.Min(hi, c.JumpGate + Margin), 0f) / 2f;
@@ -265,8 +203,6 @@ namespace IGTAP.EngineSim.Cli
             return null;
         }
 
-        /// <summary>Tick <paramref name="t"/>'s step with the branch's Velocity.y bounds set: the body's velocity, the position, and
-        /// the gated contacts of the tick.</summary>
         static string Advance(Consts c, ref Branch b, int t, float xLo, float xHi, bool wallGate, bool rayGate, Geometry geo, float[] best, ref Reach reach)
         {
             float bodyHi = b.Vhi + c.MomHi + c.Body.y, bodyLo = b.Vlo + c.MomLo + c.Body.y;
@@ -286,7 +222,6 @@ namespace IGTAP.EngineSim.Cli
             Shape s = geo.Shape;
             foreach (Box box in geo.Boxes)
             {
-                // The wall rays (x +-15, 12 + 3 u sideways, at y - 18 and y + 19) and ray3 (x +-25, y - 18 down 22).
                 if (wallGate && box.X1 >= xLo - 30f - Margin && box.X0 <= xHi + 30f + Margin
                     && box.Y1 >= b.CumLo - 18f - Margin && box.Y0 <= b.CumHi + 19f + Margin)
                     return $"a wall contact possible on tick {t} (x {box.X0:0.#}..{box.X1:0.#})";
@@ -310,8 +245,6 @@ namespace IGTAP.EngineSim.Cli
             if (F(m, "wallCoyoteFrames") > 0f) return "wall coyote frames left";
             if (B(m, "isFinalWallClingActive")) return "final wall cling";
             if (m.pauseMenu != null && m.pauseMenu.menuOpen) return "pause menu open";
-            // A squish (848-866) sets the body's velocity to 0 for the tick; on static geometry the collider's distance is the
-            // contact skin at most, so only a squish distance above that could fire.
             if (F(m, "squishDistance") > -Margin) return "squishDistance " + F(m, "squishDistance").ToString("0.##") + " could fire on a side contact";
             if (m.dashUnlocked && m.airDashesLeft > 0) return "a dash left";
             if (m.currentlyTouchedMovingPlatform != null) return "on a moving platform";
@@ -352,7 +285,6 @@ namespace IGTAP.EngineSim.Cli
                     s.HalfX = MathF.Min(s.HalfX, hx - ox);
                 }
             }
-            // The ground and pop rays' origins (x +-15 and +-6 at y - 18) must lie inside the normal collider in every config.
             if (normal == null || !(s.HalfX > 15f + FootprintSlack) || !(s.BottomHigh < -18f - FootprintSlack))
                 bad = "the ground rays' origins aren't inside the player's collider";
             return s;
@@ -373,15 +305,10 @@ namespace IGTAP.EngineSim.Cli
             return friction;
         }
 
-        /// <summary>
-        /// Every collider of the live physics world in the rectangle (scene frame), as axis-aligned boxes; why is set when one
-        /// could end free flight wherever it is (a trigger other than a spike, a moving body, a collider that isn't an
-        /// axis-aligned box).
-        /// </summary>
         static List<Box> Solids(Simulation sim, Movement m, float x0, float y0, float x1, float y1, float playerFriction, out string why)
         {
             why = null;
-            // Brings the Box2D world up to date (a rebase moves static bodies lazily): a zero-length ray changes nothing.
+            // Zero-length raycast brings the Box2D world up to date (a rebase moves static bodies lazily).
             sim.Physics.Raycast(new Vector2(x0, y0), Vector2.down, 0f, 0);
             var world = (b2World)B2Field.GetValue(sim.Physics);
             var area = new b2AABB { lowerBound = new b2Vec2(x0, y0), upperBound = new b2Vec2(x1, y1) };
@@ -423,8 +350,6 @@ namespace IGTAP.EngineSim.Cli
                     masks.Add((Mask(f, "ContactMask"), Mask(f, "Layer"), name));
                 }
             }
-            // Box2D keeps the collider out of a solid only if the two collide (the layer matrix and the collider's
-            // excludeLayers: a wall jump's Ground exclusion, PhysicsWorld's contact filter).
             if (playerMask == null) { why = "the player's collider isn't in the physics world"; return null; }
             for (int i = 0; i < masks.Count; i++)
                 if ((playerMask.Value.mask & (1 << masks[i].layer)) == 0 || (masks[i].mask & (1 << playerMask.Value.layer)) == 0)
@@ -452,8 +377,6 @@ namespace IGTAP.EngineSim.Cli
             return field?.GetValue(state) as Collider2D;
         }
 
-        /// <summary>A 4-vertex polygon, axis-aligned in the body's frame, on a body turned by a multiple of 90 degrees: its AABB is
-        /// the shape (plus its skin).</summary>
         static bool AxisAlignedBox(b2Shape shape, b2Body body)
         {
             if (!(shape is b2PolygonShape poly) || poly.m_count != 4) return false;

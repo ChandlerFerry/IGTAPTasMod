@@ -1,12 +1,4 @@
-"""Checks the tree transitions against the running game (RULES.md 21): each
-level's start world (what the offline engine loads) has The Tree's segments, the Area 2 door and the Zone 2->1 path as
-the level leaves them, a normal course start after them has the save's tree back, and the engine replays a random run
-from tree starts as turbo played it (a Course 6 run captured alongside is the baseline).
-
-  tree-check.py [engine.exe]
-  tree-check.py --door      right after a game launch: 1x probes of tree13to10 (the Area 2 door box's first Start in the
-                            session) and tree3to7 hold the door open and shut on every tick
-"""
+"""Usage: tree-check.py [engine.exe] | tree-check.py --door"""
 import json, random, subprocess, sys
 from pathlib import Path
 
@@ -14,7 +6,6 @@ from gamepaths import TRACES, call_retry, course_ids
 
 IDS = course_ids()
 CAPS = "wjdsdjbs"
-# The Tree's segments grown at each checked level (the spec's table).
 GROWN = {0: 1, 13: 17, 22: 28, 27: 28}
 
 
@@ -26,7 +17,6 @@ def capture(token, name, ticks=()):
 
 
 def tree_state(trace):
-    """(The Tree's active segments, the Area 2 door's local position, the Zone 2->1 path open) in a trace's world."""
     objs = json.load(open(trace.with_suffix(".world.json"), encoding="utf-8"))["objects"]
     by_id = {o["id"]: o for o in objs}
     owner = {c["id"]: o for o in objs for c in o.get("components", [])}
@@ -60,7 +50,6 @@ def replay(exe, traces):
 
 
 def door(name, route):
-    """The Area 2 door's distance from its box on each tick of an idle 1x probe (ProbeRunner's econ.doorArea2)."""
     ticks = TRACES.parent / "probes" / "treecheck-idle.json"
     ticks.parent.mkdir(exist_ok=True)
     json.dump([dict(x=0, y=0, held=False, press=False, release=False, dash=False, dashJump=0)] * 15, open(ticks, "w"))
@@ -83,7 +72,7 @@ def main():
     before = tree_state(capture("6", "treecheck-c6-before"))
     print("save", before)
     seen = {}
-    # Course 6 keeps only tree0to6 and Course 10 levels 13 up; the door shut checks at level 0 (RULES.md 21).
+    # Only the kept tree targets exist (RULES.md 21).
     for level, token in ((27, "tree27to10"), (22, "tree22to10"), (13, "tree13to10"), (0, "tree0to6")):
         seen[level] = tree_state(capture(token, f"treecheck-tree{level}"))
         print(level, seen[level])

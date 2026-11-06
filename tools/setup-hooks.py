@@ -1,4 +1,3 @@
-"""Turns on the repo's git hooks (.githooks/): the engine check before engine commits (AGENTS.md "Using the game")."""
 import subprocess
 import sys
 from pathlib import Path

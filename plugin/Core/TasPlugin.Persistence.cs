@@ -155,8 +155,6 @@ namespace IGTAPTasMod
             return changed;
         }
 
-        /// <summary>Old routes timed a step in milliseconds (<see cref="ActionEndCondition.Duration"/>, durationMs, timeoutMs):
-        /// MacroEngine counts physics ticks only, so they become ticks once, at load.</summary>
         private static bool NormalizeStepFrameTiming(MacroStep step, int tickMs)
         {
             if (step == null) return false;
@@ -190,7 +188,6 @@ namespace IGTAPTasMod
             if (_settings.selectedRouteId != (SelectedMacro?.id ?? "")) SaveSelection();
         }
 
-        /// <summary>The open TAS session's route (TasPlugin.Editor.cs TasJournal): written on every edit instead of routes.json.</summary>
         private string TasJournalPath { get { return Path.Combine(Path.GetDirectoryName(_libraryPath), "tas-session.json"); } }
 
         private void WriteTasJournal(MacroDefinition route)
@@ -210,7 +207,6 @@ namespace IGTAPTasMod
             catch (Exception ex) { Logger.LogError("Could not delete the TAS session journal: " + ex); }
         }
 
-        /// <summary>A session the game stopped before closing: its journaled route replaces the library's copy (by id).</summary>
         private bool RecoverTasJournal()
         {
             if (!File.Exists(TasJournalPath)) return false;
@@ -232,10 +228,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>
-        /// The selected route alone goes to settings.json (routes.json is the whole library, many megabytes): LoadLibrary
-        /// selects it over the library's selectedIndex, and SaveLibrary keeps the two the same.
-        /// </summary>
         private void SaveSelection()
         {
             _settings.selectedRouteId = SelectedMacro?.id ?? "";
@@ -256,9 +248,7 @@ namespace IGTAPTasMod
             catch (Exception ex) { Logger.LogError("Could not save " + path + ": " + ex); }
         }
 
-        /// <summary>A file written aside (<paramref name="temporary"/>) moved over <paramref name="path"/>: a crash mid-write
-        /// never leaves it half written, and a reader (an engine process loading a trace or world) never sees it so. A reader
-        /// that holds it open without delete sharing blocks the replace: it is tried again for up to 2 s.</summary>
+        // Write aside then move: readers never see a half file; a reader holding it open blocks the replace, so retry up to 2 s.
         internal static void ReplaceAtomic(string temporary, string path, string backup = null)
         {
             for (int attempt = 1; ; attempt++)
@@ -281,8 +271,6 @@ namespace IGTAPTasMod
         }
     }
 
-    /// <summary>Files parsed once per version, by path: <see cref="Get"/> parses a file again only when its write time
-    /// changed. What it returns is shared, for reading only.</summary>
     internal sealed class CachedFiles<T> : Dictionary<string, (DateTime written, T value)>
     {
         public CachedFiles() { }

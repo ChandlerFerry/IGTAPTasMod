@@ -7,8 +7,6 @@ namespace IGTAPTasMod
 {
     internal sealed class MacroEngine
     {
-        // Movement's private fields the engine reads and writes every tick, as typed refs (FieldInfo.GetValue/SetValue box);
-        // its public ones it uses directly.
         private static readonly AccessTools.FieldRef<Movement, bool> JumpBuffer = AccessTools.FieldRefAccess<Movement, bool>("jumpBuffer");
         private static readonly AccessTools.FieldRef<Movement, bool> JumpCutBuffer = AccessTools.FieldRefAccess<Movement, bool>("jumpCutBuffer");
         private static readonly AccessTools.FieldRef<Movement, bool> DashBuffer = AccessTools.FieldRefAccess<Movement, bool>("dashBuffer");
@@ -20,7 +18,7 @@ namespace IGTAPTasMod
         private static readonly AccessTools.FieldRef<Movement, float> DashFramesRemaining = AccessTools.FieldRefAccess<Movement, float>("dashFramesRemaining");
         private static readonly AccessTools.FieldRef<Movement, float> LastAppliedMomentum = AccessTools.FieldRefAccess<Movement, float>("lastAppliedMomentum");
 
-        // Left out of CaptureState (FieldState.For): a resume always brings the steps it plays.
+        // Left out of CaptureState: a resume always brings the steps it plays.
         private List<MacroStep> _steps;
         private string _macroName;
         private int _stepIndex = -1;
@@ -37,8 +35,6 @@ namespace IGTAPTasMod
         private bool _turnArmed;
         private float? _turnX, _turnY;
         private int _pressedStep = -1;
-        // A step's pause (MacroStep.pauseFrames): physics ticks still to run before it opens, its length in frames, and the
-        // Update frames of its tick before it opens.
         private int _pauseTicksLeft, _pauseFrames, _pauseFrame;
         private bool _tickLocked;
         private Vector2 _tickStick;
@@ -61,7 +57,6 @@ namespace IGTAPTasMod
         public int StepIndex { get { return _stepIndex; } }
         public long RunTicks { get { return _runTicks; } }
         public long PhysicsTicks { get { return _physicsTicks; } }
-        /// <summary>Rendered frames the run stood still in so far (a dash freeze's, a pause's), each 1/<see cref="PlaybackFrameRate"/> s of real time at 1x.</summary>
         public long HeldFrames { get { return _heldFrames; } }
         public MacroDefinition ActiveMacro { get; private set; }
         public string ActiveMacroName { get { return _macroName; } }
@@ -69,26 +64,15 @@ namespace IGTAPTasMod
         public float AuthoritativeCompletionTime { get { return _authoritativeCompletionTime; } }
         public event Action<bool, string> AttemptEnded;
         public bool Quiet;
-        /// <summary>A human class's replay (RULES.md 54): a jump press while both jump buttons are down
-        /// (<see cref="JumpButtonsDown"/> 2), or a stick at a part tilt (anything but 0 or full: a keyboard's, so the KB wall
-        /// clip stands and the GC one doesn't), ends the run instead of pressing. A setting of the replay, not engine state: FieldState
-        /// skips it, so a restore keeps it.</summary>
+        // Human class replay (RULES.md 54): jump press with both buttons down or a part-tilt stick ends the run.
         public bool HumanClass;
         public bool InputsExhausted { get { return _steps != null && _stepIndex >= _steps.Count; } }
-        /// <summary>This tick takes no input (a dash's, a spring's: the player's cutscene, Movement 1596-1599): a run's inputs
-        /// wait through it, and its run-out (20 ticks past the last input) doesn't count it.</summary>
+        // Dash/spring ticks take no input (Movement 1596-1599): inputs wait through them; the 20-tick run-out excludes them.
         public bool TickLocked { get { return _tickLocked; } }
         public Vector2 TickStick { get { return IsRunning ? _tickStick : Vector2.zero; } }
-        /// <summary>This tick takes no input and a lock's y holds the stick's y, not the next input's.</summary>
         public bool TickStickFromLockY { get { return _tickLocked && _lockArmed && _lockY.HasValue; } }
 
-        /// <summary>
-        /// The stick the game reads (Movement.NormaliseInput). Between a dash's start and the next FixedUpdate — at 1x the
-        /// dash's TimeStop frames — a dash started with the stick at rest (no sideways stick without the omnidash) waits for one
-        /// (<c>WaitingForDashInput</c>, Movement.Update 817-834): a step's <c>dashTurnX</c>/<c>dashTurnY</c> is the stick a
-        /// player holds then, so the dash turns to it. The omnidash takes its vertical too, unsnapped: a sideways 0.3-0.4 aims it
-        /// 17-22° off vertical, which no dash pressed on a tick can (getPlayerControlledInput sets x to 0 there).
-        /// </summary>
+        // A dash at rest waits for a stick in its freeze (Movement.Update 817-834); dashTurnX/Y is it (RULES.md exception 1).
         public Vector2 StickFor(Movement movement)
         {
             Vector2 stick = TickStick;
@@ -100,16 +84,11 @@ namespace IGTAPTasMod
             return stick;
         }
 
-        /// <summary>The stick held in this tick's dash freeze (a turn armed by <see cref="AfterFixedTick"/>), else null.</summary>
         public Vector2? FreezeStick
         {
             get { return _turnArmed ? new Vector2(_turnX ?? TickStick.x, _turnY ?? TickStick.y) : (Vector2?)null; }
         }
 
-        /// <summary>
-        /// After Movement.FixedUpdate: a pressed dash's turn arms once the dash has started this tick waiting for a stick, for
-        /// the frames up to the next tick (<see cref="BeforeTick"/> disarms it).
-        /// </summary>
         public void AfterFixedTick(Movement movement)
         {
             if (!IsRunning || (!_pendingTurnX.HasValue && !_pendingTurnY.HasValue)) return;
@@ -120,35 +99,14 @@ namespace IGTAPTasMod
             _pendingTurnX = _pendingTurnY = null;
         }
 
-        /// <summary>
-        /// 1x playback's frame rate. The player body's interpolation stays on, as the game ships it, and playback runs on a
-        /// fixed clock at this rate (TasPlugin.FixedClockStep); turbo and the offline engine model the same frames
-        /// (<see cref="FrameGrid"/>): each tick's Movement.Update frames at their interpolation blends, a dash freeze's frames,
-        /// and FixedUpdate reading the last frame's blend.
-        /// </summary>
         public const int PlaybackFrameRate = 280;
 
-        /// <summary>
-        /// The fixed clock's frames between two physics ticks (TasPlugin.FixedClockStep), by the run's physics ticks so far
-        /// (<c>ticks</c>: <see cref="PhysicsTicks"/> while it runs, else 0; see <see cref="GridTicks"/>). Through a run's first
-        /// physics tick (and off a run) the grid starts again at each tick: half a frame after it, then one every 1/fps
-        /// inside it, as every trace and savestate start has it. From the run's second tick it runs on as a player's frames
-        /// at the game's frame cap do: one frame every 1/fps across the ticks, so at 280 fps five ticks hold 28 frames
-        /// (6, 5, 6, 5, 6) and the last frame before a tick lags it 0.36, 2.50, 1.07, 3.21 and 1.79 ms in turn. Alphas are the
-        /// interpolation blends (frame time since the tick / 0.02). FrozenFrames counts a TimeStop's frames as its loop counts
-        /// the fixed clock's steps (TasPlugin.PatchWallClock): the frame before the tick's, then the crossing, then a frame each.
-        /// </summary>
+        // Fixed-clock frames between ticks: restart each tick through the first, then run on across ticks (RULES.md 8).
         public sealed class FrameGrid
         {
             public static readonly FrameGrid Playback = new FrameGrid(PlaybackFrameRate);
 
-            /// <summary>
-            /// 1x on the fixed clock, as a 280 fps probe measured it: its ticks come 0.0199999929 s apart, not 0.02f, and each
-            /// frame's Time.deltaTime is 7e-9 s short of the step the clock set (captureDeltaTime), so the clock sets the frames
-            /// after a crossing 0x3b6a0ebf (Time.deltaTime 1/280f) and a crossing on the cycle 0x3b6a0e9d (0x3b6a0e82). A
-            /// TimeStop adds up the clock's steps, and a 0.05 s freeze lands on 14 of them: these steps give 1x's 13 held frames.
-            /// Other rates keep 0.02f and the steps the grid asks for.
-            /// </summary>
+            // 1x measured: ticks 0.0199999929 s apart, deltaTime 7e-9 s short; these steps make a 0.05 s freeze hold 13 frames.
             const double TickOnClock = 0.0199999929;
             const int ClockFrame280 = 0x3b6a0ebf, ClockCross280 = 0x3b6a0e9d, ClockRestart280 = 0x3b0c6f2a;
 
@@ -156,7 +114,6 @@ namespace IGTAPTasMod
             {
                 public readonly float[] Alphas;
                 public float LastAlpha { get { return Alphas[Alphas.Length - 1]; } }
-                // Game time since the span's tick.
                 public readonly double First, Last;
 
                 internal Span(double first, double frame, double tick)
@@ -171,25 +128,19 @@ namespace IGTAPTasMod
 
             public readonly double Frame;
             readonly Span[] _cycle;
-            // Time.deltaTime (frames after the crossing, crossings) and the clock's steps (TasPlugin.FixedFrameStep).
             readonly float _frameStep, _restartCross, _clockFrame, _clockRestart, _clockRestartFrozen;
             readonly float[] _cross, _clockCross, _clockFrozen;
 
-            /// <summary>The frames after the tick that left <paramref name="ticks"/>.</summary>
             public Span Frames(long ticks) { return _cycle[Phase(ticks)]; }
 
-            /// <summary>The ticks after the next tick: off a run, or before its first tick, the grid starts again.</summary>
             public static long NextTicks(long ticks) { return ticks >= 1 ? ticks + 1 : 0; }
 
             int Phase(long ticks) { return ticks <= 1 ? 0 : (int)((ticks - 1) % _cycle.Length); }
 
-            /// <summary>Frame k's Time.deltaTime as 1x reads it (k 0: the crossing, which coroutines resumed after the tick read
-            /// too); a freeze's or pause's repeats run at 0.</summary>
             public float Step(long ticks, int k) { return k > 0 ? _frameStep : ticks <= 1 ? _restartCross : _cross[Phase(ticks)]; }
 
             public FrameGrid(int fps)
             {
-                // In units of 1/(100 fps) s: a frame is 100, a tick 2 fps, the frames at 50 + 100 j from the cycle's start.
                 Frame = 1.0 / fps;
                 bool measured = fps == PlaybackFrameRate;
                 double tick = 0.02f, clock = measured ? TickOnClock : tick;
@@ -288,12 +239,7 @@ namespace IGTAPTasMod
             ResumeOwned(state, Expand(remaining), elapsedTicks);
         }
 
-        /// <summary>Resume on a caller-owned, already-filtered step list: skips Expand's per-step Copy (its
-        /// Guid.NewGuid id is never read by the engine). Exact where the list holds only enabled non-Bundle steps
-        /// already, so Expand's filter is a no-op and Copy's clone carries no state beyond the id.
-        /// Resumed at a step's start (<paramref name="elapsedTicks"/> 0), a press or quick restart the state already made for
-        /// that step (a wall touch in a dash lock presses the next step early, <see cref="WallTouch"/>) stays made instead of
-        /// happening twice: a state captured inside the dash (a Full-TAS goal reached there) plays on as the straight run does.</summary>
+        // Caller-owned list skips Expand's Copy: exact only if it holds enabled non-Bundle steps already (the id is never read).
         public void ResumeOwned(object[] state, List<MacroStep> steps, int elapsedTicks)
         {
             FieldState.Restore(this, state);
@@ -308,10 +254,8 @@ namespace IGTAPTasMod
             _quickRestartStep = restarted ? 0 : -1;
         }
 
-        /// <summary>Resume on <paramref name="steps"/>, the inputs from the next input tick on, at a tick boundary (the TAS editor).</summary>
         public void ResumeAt(object[] state, List<MacroStep> steps) { ResumeOwned(state, steps, 0); }
 
-        /// <summary>The next physics tick plays input tick 0 (the start's last stable tick is that tick).</summary>
         public bool StartsInputNextTick
         {
             get { return IsRunning && _runTicks == 0 && _preRollTicksRemaining == 0 && (!_waitingForStable || _stableTicks >= 2); }
@@ -388,12 +332,7 @@ namespace IGTAPTasMod
             _rawJumpHeld = step.rawJumpHeld;
         }
 
-        /// <summary>
-        /// After each physics tick: the frames to hold the pause menu open when a step's pause falls due on this tick, else 0,
-        /// and in <paramref name="afterFrames"/> the tick's Update frames that run before it opens (MacroStep.pauseFrame).
-        /// 1x playback opens the menu for them; turbo and the offline engine run that many Update frames at the blend the
-        /// pause holds (TurboRunner.Pause, Simulation's InterpolatedFrames).
-        /// </summary>
+        // A pause opens after the tick: 1x holds the menu; turbo and the engine run the same Update frames at the held blend.
         public int TakePause(out int afterFrames)
         {
             afterFrames = 0;
@@ -405,26 +344,14 @@ namespace IGTAPTasMod
             return frames;
         }
 
-        /// <summary>
-        /// Whether a refill orb at <paramref name="orb"/> is on camera with the player's body at <paramref name="player"/> after a
-        /// physics step, for JiggleDropScript.OnBecameVisible (its refresh from the refill upgrades on coming into view), which turbo
-        /// and the offline engine render no frame to get: the follow camera centred on the player, cameraMover.camSize (550) high
-        /// and 16:9 wide, widened by the orb's sprite (64).
-        /// </summary>
-        // ponytail: no camera lag, lookahead, zone or real screen aspect; run cameraMover.LateUpdate per frame if an edge ever decides a route.
+        // Stands in for JiggleDropScript.OnBecameVisible (no rendered frame offline): camera on player, camSize 550, 16:9, orb 64.
         public static bool OrbOnCamera(Vector2 orb, Vector2 player)
         {
             const float halfHeight = 550f, halfWidth = halfHeight * 16f / 9f, reach = 64f;
             return Math.Abs(orb.x - player.x) <= halfWidth + reach && Math.Abs(orb.y - player.y) <= halfHeight + reach;
         }
 
-        /// <summary>
-        /// The Update frames of a tick's frame grid (<paramref name="frameCount"/> of them) each one runs again: the dash
-        /// freeze's <paramref name="frozen"/> on the first frame, and a pause of <paramref name="pauseFrames"/> after
-        /// <paramref name="pauseAfter"/> frames. Opened in the tick (0) it holds the first frame, whose Update it is, so that
-        /// frame runs pauseFrames times in all (a freeze there overlaps it: the longer counts). Opened after frame k's Update
-        /// it holds frame k's blend for pauseFrames more Updates (past the tick's last frame: the last).
-        /// </summary>
+        // Frame repeats: a dash freeze repeats the first frame, a pause the frame it opens on; overlapping holds count the longer.
         public static int FrameRepeats(int k, int frameCount, int frozen, int pauseFrames, int pauseAfter)
         {
             int repeats = k == 0 ? frozen : 0;
@@ -480,12 +407,7 @@ namespace IGTAPTasMod
                 || reason == FullTasFinishReason;
         }
 
-        /// <summary>
-        /// Every <see cref="RewardRefreshTicks"/> physics ticks of a run: the courses' UpdateReward. The game repeats it every 5 s
-        /// from a random phase (courseScript.Start's InvokeRepeating), and a course's clones pay its reward as last updated; a
-        /// Full-TAS run cancels that timer and its host (the plugin, the offline engine) runs it here, on one phase for 1x, turbo
-        /// and the engine.
-        /// </summary>
+        // Full-TAS reward refresh (RULES.md exception 10): the 5 s UpdateReward timer is off, hosts run it here on one phase.
         public Action RefreshRewards;
         public const int RewardRefreshTicks = 250;
 
@@ -496,27 +418,18 @@ namespace IGTAPTasMod
             if (_physicsTicks % RewardRefreshTicks == 0) RefreshRewards?.Invoke();
         }
 
-        /// <summary>
-        /// Frames time stood still in (a dash freeze's repeats of a tick's first frame, a pause's of the frame it holds:
-        /// <see cref="FrameRepeats"/>; at 1x the rendered frames whose game time stood still), counted on the ticks
-        /// <see cref="CountPhysicsTick"/> counts. A Full-TAS run's time is its ticks and these (<see cref="LiveSeconds"/>).
-        /// </summary>
         public void CountHeldFrames(int frames)
         {
             if (frames <= 0 || !IsRunning || !(_runTicks > 0 || _countEveryPhysicsTick)) return;
             _heldFrames += frames;
         }
 
-        /// <summary>
-        /// Live time: what a run takes at 1x, its physics ticks (0.02 s each) plus the frames it stood still in (a dash
-        /// freeze's, a pause's: 1/<see cref="PlaybackFrameRate"/> s each). The game frames are the ticks alone.
-        /// </summary>
         public static float LiveSeconds(long ticks, long heldFrames)
         {
             return (float)(ticks * 0.02 + heldFrames / (double)PlaybackFrameRate);
         }
 
-        /// <summary>Live time as an integer, in 1/1400 s (a tick 28, a held frame 5): exact ordering of two runs' live times.</summary>
+        // Live time in 1/1400 s (a tick 28, a held frame 5) for exact ordering.
         public static long LiveUnits(long ticks, long heldFrames)
         {
             return ticks * (1400 / 50) + heldFrames * (1400 / PlaybackFrameRate);
@@ -696,12 +609,8 @@ namespace IGTAPTasMod
         public int LastJumpPress = Never, LastJumpRelease = Never, LastDashPress = Never;
         const int Never = -1000000;
         public int JumpPresses, DashPresses;
-        /// <summary>Every release the engine makes, as <see cref="JumpPresses"/> counts presses (<see cref="LastJumpRelease"/> is
-        /// <see cref="Clock"/>'s, which only the gate's audit moves).</summary>
         public int JumpReleases;
         public bool JumpHeld;
-        /// <summary>The game's two jump buttons (Jump, Jump2) down: a press takes the next one, a release lifts both
-        /// (docs/human-input.md).</summary>
         public int JumpButtonsDown;
 
         private void PressJump(Movement movement)
@@ -792,12 +701,7 @@ namespace IGTAPTasMod
             Physics2D.SyncTransforms();
         }
 
-        /// <summary>
-        /// FloatingOrigin moved every root object back by <paramref name="by"/> (MoveRootTransforms): the start pin is a scene
-        /// position, so it moves with the world. Left in place, a rebase during the stable-tick wait (a route whose course
-        /// start lies past Threshold from the origin the replay left) pins the player where the course was, over nothing: it
-        /// never lands, and each frame rebases again.
-        /// </summary>
+        // FloatingOrigin moves the start pin with the world; left put, a rebase in the stable-tick wait repeats every frame.
         public void WorldMoved(Vector2 by)
         {
             if (_hasSynchronizationPosition) _synchronizationPosition -= by;

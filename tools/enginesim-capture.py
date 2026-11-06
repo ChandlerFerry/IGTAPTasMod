@@ -73,7 +73,6 @@ def main():
             for k in range(count):
                 rng = random.Random(course * 1000 + k * 7 + len(caps))
                 name = f"rand-c{course}-{caps}-{k}"
-                # "ds" is the dashes token; no other one holds it.
                 r = trace({"course": course, "capabilities": caps, "ticks": random_inputs(rng, 300, "ds" in caps), "name": name})
                 print(name, {k2: v for k2, v in r.items() if k2 != "path"})
     elif mode == "start":

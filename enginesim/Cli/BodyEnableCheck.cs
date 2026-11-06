@@ -3,12 +3,6 @@ using Box2D;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// body-selftest: b2Body.SetEnabled (v2.4.1) on a toy world, without the game. A box built disabled above a static floor
-    /// neither falls nor has proxies; enabled it falls and lands on the floor (a touching contact); disabled again it has no
-    /// proxies or contacts and nothing finds it; a snapshot taken disabled and loaded after the enable is disabled again.
-    /// Prints each PASS or FAIL; exits 1 on a FAIL.
-    /// </summary>
     static class BodyEnableCheck
     {
         internal static int Run()

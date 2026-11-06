@@ -30,7 +30,6 @@ namespace IGTAP.EngineSim
 
             public sealed class Source
             {
-                /// <summary>Run-length stored: a saved archive's 36 M ticks were 3 GB as lists (Course 9 WJ_DS_DJ_BS).</summary>
                 public InputRuns Inputs;
                 public List<SavedCell> Cells = new List<SavedCell>();
             }
@@ -46,20 +45,11 @@ namespace IGTAP.EngineSim
         public sealed class ForcedPath
         {
             public readonly List<Box> Via = new List<Box>(), Avoid = new List<Box>();
-            /// <summary>Boxes the search is steered away from without cutting a run: an explore cell filed inside one is picked
-            /// <see cref="DiscouragedWeight"/> as often (the known routes' corridors, CourseAuto's OtherWays).</summary>
             public readonly List<Box> Discourage = new List<Box>();
-            /// <summary>A standing rule's "guide": true turns the guide on for every solve it covers, as --guide does.</summary>
             public bool Guide;
             public bool IsEmpty => Via.Count == 0 && Avoid.Count == 0;
-            /// <summary>A farm's rules: the avoid boxes cut only while a course times the run (from a start gate to the finish), not
-            /// the way back from a lap's restart to the start (Course 9 WJ_DS_DJ_BS's cut beside its start stood across the only
-            /// one). Set before the search starts.</summary>
             public bool OnCourseOnly;
 
-            /// <summary>A run's step from <paramref name="prev"/> (<see cref="Simulation.PlayerStepFrom"/>) to <paramref name="p"/>: past
-            /// the next via box it counts it; true when an avoid box cuts it (one cutting only after a goal once
-            /// <paramref name="progress"/> has reached it). <paramref name="timing"/>: a course times the run (<see cref="OnCourseOnly"/>).</summary>
             public bool Step(WorldPos prev, WorldPos p, int progress, ref int waypoints, bool timing = true)
             {
                 if (waypoints < Via.Count && Via[waypoints].Contains(p)) waypoints++;
@@ -72,21 +62,13 @@ namespace IGTAP.EngineSim
         public readonly struct Box
         {
             public readonly float X0, Y0, X1, Y1;
-            /// <summary>Goal mode: the box cuts a run only once it has reached this many goals (0: always).</summary>
             public readonly int After;
-            /// <summary>One-way (forced-paths.json's block "from", <see cref="FullTasGoal.SideNames"/>): the box cuts only a move across
-            /// that edge into it, so a direction gate cuts leaving the start its way and not a farm lap's drop back through it (0: any tick inside).</summary>
             public readonly int From;
-            /// <summary>Goal mode: the box cuts a run only until it has reached this many goals (0: no end). With After, a box for
-            /// one goal (forced-paths.json's block "for"): After its goals before it, Until one more.</summary>
             public readonly int Until;
             public Box(WorldPos a, WorldPos b, int after = 0, int from = 0, int until = 0) { X0 = Math.Min(a.x, b.x); Y0 = Math.Min(a.y, b.y); X1 = Math.Max(a.x, b.x); Y1 = Math.Max(a.y, b.y); After = after; From = from; Until = until; }
-            /// <summary>The box cuts at <paramref name="progress"/> goals reached (After, Until).</summary>
             public bool Live(int progress) { return (After == 0 || progress >= After) && (Until == 0 || progress < Until); }
             public bool Contains(WorldPos p) { return p.x >= X0 && p.x <= X1 && p.y >= Y0 && p.y <= Y1; }
 
-            /// <summary>The step from <paramref name="prev"/> to <paramref name="p"/> is cut: it ends inside, or for a one-way box it
-            /// crosses the entry edge inwards (<see cref="FullTasGoal.CrossesInto"/>).</summary>
             public bool Cuts(WorldPos prev, WorldPos p)
             {
                 return From == 0 ? Contains(p) : FullTasGoal.CrossesInto(From, X0, Y0, X1, Y1, prev.x, prev.y, p.x, p.y);
@@ -103,24 +85,15 @@ namespace IGTAP.EngineSim
         public readonly string Capabilities;
         readonly Func<Simulation> _createSimulation;
         readonly List<List<InputTick>> _seeds;
-        // No route yet: a plain solve's cells also key the air dashes, air jumps and wall jumps left, so an arrival that kept
-        // them (a super off a ledge, its dash and air jump still to come) isn't replaced by an earlier one that spent them.
         readonly bool _fresh;
-        // The loaded archive (Memory) is not kept: its runs count and plateau routes are, and its sources only until each
-        // worker has restored its share (a resident 150k-cell archive held 3 GB of inputs after its cells were replaced).
         readonly long _priorRuns;
         readonly List<List<InputTick>> _plateaus;
         List<Memory.Source> _loaded;
         readonly ForcedPath _path;
         public readonly Best Shared = new Best();
         public long Runs, Ticks, Finishes, Drifts, Splices, BranchChecks, BranchMatches, StateHits, StateReplays, ReplayTicks;
-        /// <summary>Grafts made from mined tech demos (0 with --no-tech-grafts), and those at a per-step tech contact
-        /// (ContactLog.Step's kinds: a spring hit, an air jump, a dash jump, a wall boost, a pause, a step-up, a spike, a slant).</summary>
         public long TechGrafted, TechGraftedAtStep;
-        /// <summary>Mined grafts made by a chain (PatternChain), and the chain grafts whose run was checked for / showed the
-        /// contact the demo showed after it (a wall clip's landing).</summary>
         public long ChainGrafts, ExpectChecks, ExpectsMet;
-        /// <summary>The tech demos mined into graft patterns (null: --no-tech-grafts), offered at the same contact kinds.</summary>
         public readonly TechGrafts Mined;
         public int MostWaypoints;
         public event Action<float, long, List<InputTick>, string> Improved;
@@ -133,65 +106,34 @@ namespace IGTAP.EngineSim
         float _maxTimedRank;
         int _minProgress = int.MaxValue, _maxProgress = -1;
         float[] _near;
-        // The memory the solver keeps is half of AvailableMemory: each worker's share of half of that for its states, divided
-        // by what its captures allocate (measured: a state after a FloatingOrigin rebase or in a big economy is several times a
-        // plain course's), and a quarter for the archive. The rest of the heap is the worlds, the replays and the GC's room.
         long _stateBudget;
         public int StatesPerWorker { get; private set; }
         int _cells;
-        // The archive's bytes, counted as cells are filed, replaced and evicted (Count), its budget, what a cell costs beyond
-        // its inputs, and the eviction passes made (a worker rebuilds its draw pools after one).
         long _archiveBytes, _archiveBudget, _cellBytes;
         int _evictions;
         public long EvictedCells;
         readonly object _evicting = new object();
-        /// <summary>A Full-TAS run's stored goal-boundary states, resumed instead of replaying a cell's prefix over them (null: none).</summary>
         public SnapshotIndex Resume;
-        /// <summary>No quick restarts: no mutation adds or moves one (a Full-TAS reset study: the way on that keeps the momentum).
-        /// The seeds must carry none either. Set before the search starts.</summary>
         public bool NoResets;
-        /// <summary>The archive's byte budget (0: a quarter of the machine's memory). Fixed, the eviction is the same on any machine.</summary>
         public long ArchiveBudget;
-        /// <summary>The cached states' byte budget (0: half the machine's memory over the workers); many solvers at once set it.</summary>
         public long StateBudget;
-        /// <summary>A one-worker solver's own end (0: off): its worker stops at a run boundary once Ticks reaches TickLimit, or once a
-        /// best exists and StallTicks passed since the last improvement; a stop from outside lands wherever the clock says.</summary>
         public long TickLimit, StallTicks;
         long _improvedAt;
         internal bool Spent => TickLimit > 0 && (Interlocked.Read(ref Ticks) >= TickLimit
             || StallTicks > 0 && Volatile.Read(ref Shared.Version) > 0 && Interlocked.Read(ref Ticks) - Interlocked.Read(ref _improvedAt) >= StallTicks);
-        /// <summary>Cell replays that started from a stored goal state rather than a worker's own ancestor.</summary>
         public long GoalResumes;
-        /// <summary>Mined patterns drawn per grafted contact.</summary>
         public int MinedDraws = 1;
-        /// <summary>The share of explore runs with a contact that get a mined graft (a Full-TAS window's per-window cap).</summary>
         public double GraftRate = .5;
-        /// <summary>Run input ticks (from the search's start) whose contacts a graft prefers, 3 picks in 4 (a waste audit's span); null: any.</summary>
         public (int lo, int hi)? GraftFocus;
-        /// <summary>
-        /// A classed Full-TAS window's price of a finished run (FullTasClasses.cs; null: runs rank by their time alone): made once per
-        /// worker for its simulation (on its thread), given a run played whole from the window's start and its result, the seconds
-        /// to add (+infinity: the run never counts). Such a run ranks by its time plus these, its runTicks by them in ticks (so a
-        /// window's baseline compares scores); a run resumed from a state inside the window ranks by its time alone, a lower bound,
-        /// and is played whole and priced before it is kept. Set before the search starts.
-        /// </summary>
         public Func<Simulation, Func<List<InputTick>, RunResult, double>> Penalty;
-        /// <summary>The inputs a candidate must have to be played at all (null: any): a human search's digital stick and spaced
-        /// inputs, so no other run is filed, kept or bred from. Called on the workers' threads. Set before the search starts.</summary>
         public Func<List<InputTick>, bool> Accept;
-        /// <summary>Every finished run (its inputs, which may run past the finish, and its time), not only the bests (null: none
-        /// reported): a search for other ways than the fastest. Called on the workers' threads. Set before the search starts.</summary>
         public Action<List<InputTick>, float> FinishedRun;
-        /// <summary>Seconds a run may fall behind the best, overall and to a cell, before it is cut as losing (0: none), so the
-        /// slower ways <see cref="FinishedRun"/> collects get to the finish. Set before the search starts.</summary>
         public float LosingSlack;
         readonly System.Collections.Concurrent.ConcurrentDictionary<List<InputTick>, long> _penaltyTicks
             = new System.Collections.Concurrent.ConcurrentDictionary<List<InputTick>, long>(ReferenceEqualityComparer.Instance);
 
-        /// <summary>The ticks of <see cref="Penalty"/> in a reported best's runTicks (0 without one).</summary>
         public long PenaltyTicks(List<InputTick> inputs) => _penaltyTicks.TryGetValue(inputs, out long ticks) ? ticks : 0;
 
-        /// <summary>How the search's runs ended, by reason with its numbers cut (the status line's top three): why a window finds nothing.</summary>
         readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> _ends = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
 
         static string EndKey(string why) => why == null ? "inputs out"
@@ -206,16 +148,12 @@ namespace IGTAP.EngineSim
                 + "; ends: " + string.Join("; ", _ends.OrderByDescending(e => e.Value).Take(3).Select(e => $"{e.Value} {e.Key}"));
         }
 
-        /// <summary>How much less often a cell in a <see cref="ForcedPath.Discourage"/> box is picked.</summary>
         public const double DiscouragedWeight = .02;
 
-        /// <summary>How hard the guide pulls explore cell picks toward the target (0: no guidance, 1: its full share).</summary>
         public readonly float GuideWeight;
-        /// <summary>The search's random seed (each worker gets this + its index); 0: the clock, as ever.</summary>
         public readonly int Rng;
         float _guideBest = float.PositiveInfinity;
 
-        /// <summary>The progress line's guide fragment: how close the closest cell filed has walked to the target.</summary>
         public string GuideStatus()
         {
             return !DistanceField.Enabled || GuideWeight <= 0f ? "guide off"
@@ -242,8 +180,6 @@ namespace IGTAP.EngineSim
 
         public void Stop() { _stop = true; }
 
-        /// <summary>A route found outside the search (a walk to another route's start, Solve's --walk-seed), tried by the next free
-        /// worker as a seed is.</summary>
         public void Offer(List<InputTick> inputs) { _offered.Enqueue(inputs); }
         readonly System.Collections.Concurrent.ConcurrentQueue<List<InputTick>> _offered = new System.Collections.Concurrent.ConcurrentQueue<List<InputTick>>();
 
@@ -276,15 +212,12 @@ namespace IGTAP.EngineSim
             return threads;
         }
 
-        /// <summary>The memory the states may take half of: the machine's physical memory, or the GC's limit when that is lower.
-        /// (The GC reports its heap hard limit alone when one is set, as the CLI's 54 GiB is, however much RAM there is.)</summary>
         static long AvailableMemory()
         {
             long limit = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes, ram = PhysicalMemory();
             return ram > 0 ? Math.Min(limit, ram) : limit;
         }
 
-        /// <summary>The machine's physical memory in bytes, 0 when it can't be read.</summary>
         static long PhysicalMemory()
         {
             if (OperatingSystem.IsWindows())
@@ -292,7 +225,6 @@ namespace IGTAP.EngineSim
                 var status = new MemoryStatusEx { Length = (uint)Marshal.SizeOf<MemoryStatusEx>() };
                 return GlobalMemoryStatusEx(ref status) != 0 ? (long)status.TotalPhys : 0;
             }
-            // "MemTotal:       65756408 kB"
             if (OperatingSystem.IsLinux() && System.IO.File.Exists("/proc/meminfo"))
                 foreach (string line in System.IO.File.ReadLines("/proc/meminfo"))
                     if (line.StartsWith("MemTotal:", StringComparison.Ordinal))
@@ -337,7 +269,6 @@ namespace IGTAP.EngineSim
                 if (!sources.TryGetValue(pair.Value.source, out Memory.Source s)) sources[pair.Value.source] = s = new Memory.Source { Inputs = pair.Value.source };
                 s.Cells.Add(new Memory.SavedCell { Key = pair.Key, Length = pair.Value.length, Picks = pair.Value.picks, Rank = pair.Value.rank });
             }
-            // Trimmed without a copy (Take shares the runs): a copy of every source's inputs here ran the CLI out of memory.
             foreach (Memory.Source s in sources.Values)
                 s.Inputs = s.Inputs.Take(Math.Min(s.Inputs.Count, s.Cells.Max(c => c.Length) + 1));
             memory.Sources = sources.Values.ToList();
@@ -351,19 +282,13 @@ namespace IGTAP.EngineSim
             return ((long)Mathf.FloorToInt(world.x / cell) << 32) | (uint)Mathf.FloorToInt(world.y / cell);
         }
 
-        /// <summary>The goal-mode cell the simulation's player is in now, as a Full-TAS window files it (its place, resources,
-        /// momentum and goals reached).</summary>
         internal static long GoalKey(Simulation sim, colouredBlockSwapper swapper)
         {
             float behind = float.NaN;
             return Worker.GoalCellKey(Worker.Place(sim, swapper, true, ref behind, false), sim.Progress, sim.Goals.Armed);
         }
 
-        /// <summary>
-        /// The seam of a join at input <paramref name="at"/> (one run's inputs before it, another's from it): a jump held into it is
-        /// pressed there, one let go is released, so every press is a press (RULES.md 3). False when the join would need its
-        /// previous input to let go of a press, or one at or before <paramref name="floor"/>.
-        /// </summary>
+        // Joins keep every press a real press (RULES.md 3): false if the seam needs the previous input to release a press.
         internal static bool Seam(List<InputTick> t, int at, int floor)
         {
             InputTick k = t[at], before = t[at - 1];
@@ -378,10 +303,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>
-        /// Every worker's visited cells: while they run, the copies each made of its own at the last <see cref="Export"/>; once
-        /// stopped (and joined), their maps themselves.
-        /// </summary>
         public Dictionary<long, float> Visits()
         {
             var all = new Dictionary<long, float>();
@@ -392,11 +313,6 @@ namespace IGTAP.EngineSim
             return all;
         }
 
-        /// <summary>
-        /// The inputs without each pause the run doesn't need: <paramref name="kept"/> plays them with that pause dropped and says
-        /// whether the run is no worse (then it stays dropped). A pause's frames aren't physics ticks, so a record's ranking can't
-        /// see one that lifts nothing (a pauselift graft left on a tick where it does nothing), yet 1x opens the menu for them.
-        /// </summary>
         public static List<InputTick> DropIdlePauses(List<InputTick> inputs, Func<List<InputTick>, bool> kept)
         {
             for (int i = 0; i < inputs.Count; i++)
@@ -407,8 +323,6 @@ namespace IGTAP.EngineSim
                 k.pause = k.pauseTick = k.pauseFrame = 0;
                 without[i] = k;
                 if (kept(without)) { inputs = without; continue; }
-                // Else its shortest length that still keeps the run (1, 2, 4, ... frames): a pause's frames are live time, so a
-                // farm lap or Full-TAS run pays every one (Course 6 WJ_DS_DJ_BS's 0.94: its pauselift lifts as well on 13 frames as on 40).
                 for (int frames = 1; frames < inputs[i].pause; frames *= 2)
                 {
                     var shorter = new List<InputTick>(inputs);
@@ -426,18 +340,13 @@ namespace IGTAP.EngineSim
             return time < bestTime - .0001f || (time <= bestTime + .0001f && runTicks < bestRunTicks);
         }
 
-        /// <summary>A farm search (a farm loop's lap, RULES.md 30): finishes rank by live time from the search's start
-        /// (runTicks is then MacroEngine.LiveUnits of the run's physics ticks and held frames), the course timer breaking a tie.
-        /// Set before the search starts.</summary>
         public bool Farm;
 
-        /// <summary>The ranking the search keeps its best by: <see cref="Beats"/>, or by runTicks first in a <see cref="Farm"/> search.</summary>
         bool Ranks(float time, long runTicks, float bestTime, long bestRunTicks)
         {
             return Farm ? runTicks < bestRunTicks || (runTicks == bestRunTicks && time < bestTime - .0001f) : Beats(time, runTicks, bestTime, bestRunTicks);
         }
 
-        // The bests taken, in order, waiting for Improved: queued under Shared's lock as Shared takes them, raised outside it.
         readonly System.Collections.Concurrent.ConcurrentQueue<(float time, long runTicks, List<InputTick> inputs, string how)> _reports
             = new System.Collections.Concurrent.ConcurrentQueue<(float, long, List<InputTick>, string)>();
         readonly object _reporting = new object();
@@ -459,9 +368,7 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        // Improved's handlers write files and the console: they run outside Shared's lock (workers keep adopting and offering),
-        // one at a time and in the order the bests were taken. A worker that finds another reporting leaves its best to it: the
-        // reporter looks at the queue again after letting go.
+        // Improved handlers run outside Shared's lock, one at a time, in the order the bests were taken.
         void Report()
         {
             while (!_reports.IsEmpty && Monitor.TryEnter(_reporting))
@@ -474,31 +381,19 @@ namespace IGTAP.EngineSim
 
         sealed class Cell
         {
-            /// <summary>The inputs of the run that filed it (shared by every cell that run filed); the cell is their first
-            /// Length ticks. Run-length stored: as lists, the cells' inputs outgrew the states on Area 2's long routes.</summary>
             public InputRuns Source;
             public int Length, Picks, Waypoints;
-            /// <summary>Filed inside one of the run's <see cref="ForcedPath.Discourage"/> boxes.</summary>
             public bool Discouraged;
             public Cell Parent;
             public float Rank, Distance;
-            /// <summary>Its map cell: what a state's eviction weighs (the draw pool's pick weight).</summary>
             public long Key;
-            /// <summary>The worker that last kept a state for it (filed it, or replayed to it): the one whose own draws it is in.
-            /// Written by any worker, read racily by the rest; a stale read only puts a draw in the other pool.</summary>
+            // Written by any worker, read racily; a stale read only puts a draw in the other pool.
             public int Owner;
-            /// <summary>Replaced or evicted from the archive: an eviction pass takes it out of its descendants' Parent chains, so
-            /// it and its inputs can go.</summary>
             public volatile bool Removed;
         }
 
-        /// <summary>What an archive cell costs beyond its inputs: the Cell, its dictionary node and bucket, and its slots in each
-        /// worker's four draw pool arrays (Pool: the cells and their cumulative weights, the own ones and theirs; grown by
-        /// doubling, so ~1.5 slots a cell).</summary>
         static long CellBytes(int workers) { return 80 + 56 + 8 + workers * 4 * 12; }
 
-        /// <summary>Counts a cell into (<paramref name="sign"/> 1) or out of (-1) the archive's bytes: the cell, and its inputs
-        /// while it is their first cell in the archive (a run's cells share its inputs).</summary>
         void Count(Cell cell, int sign)
         {
             long bytes = _cellBytes;
@@ -507,15 +402,8 @@ namespace IGTAP.EngineSim
             Interlocked.Add(ref _archiveBytes, sign * bytes);
         }
 
-        /// <summary>The archive is over its budget: an eviction is due (<see cref="Evict"/>).</summary>
         bool ArchiveFull => Volatile.Read(ref _archiveBytes) > _archiveBudget;
 
-        /// <summary>
-        /// Takes the archive back to 7/8 of its budget: removes its least useful cells, those with the lowest pick weight
-        /// (<paramref name="weight"/>: the calling worker's, which is also what its state eviction weighs), and then takes the
-        /// removed cells (these and the ones replaced since the last pass) out of every live cell's Parent chain, so nothing
-        /// but a worker's state or draw pool keeps them. One worker evicts at a time; the others carry on filing.
-        /// </summary>
         void Evict(Func<long, Cell, double> weight)
         {
             if (!Monitor.TryEnter(_evicting)) return;
@@ -586,14 +474,11 @@ namespace IGTAP.EngineSim
                 }
         }
 
-        /// <summary>Goal mode: from the player to the next at: goal's rect, in the capture frame; NaN for any other next goal.
-        /// With guidance on the guide's walkable distance instead of the straight line.</summary>
         public static float GoalDistance(Simulation sim)
         {
             FullTasGoal goal = sim.Goals.Current;
             if (goal == null) return float.NaN;
             CapturePos p = sim.PlayerAtCapture;
-            // A buy or reward goal: the walkable distance to its box's touch spot, with the field on (DistanceField.TouchBoxes).
             if (goal.kind == FullTasGoal.Buy || goal.kind == FullTasGoal.Reward) return DistanceField.Enabled ? DistanceField.For(sim).Distance(p) : float.NaN;
             if (goal.kind != FullTasGoal.At) return float.NaN;
             if (DistanceField.Enabled) return DistanceField.For(sim).Distance(p);
@@ -604,8 +489,6 @@ namespace IGTAP.EngineSim
         sealed record ClosestCell(Cell Cell, int Progress);
         volatile ClosestCell _closest;
 
-        // Goal mode: the cell with the most goals reached, then nearest the next at: goal (no distance counts as farthest),
-        // then earliest.
         static bool Closer(Cell cell, int progress, ClosestCell than)
         {
             if (than == null || progress != than.Progress) return than == null || progress > than.Progress;
@@ -621,10 +504,6 @@ namespace IGTAP.EngineSim
             public List<InputTick> Inputs;
         }
 
-        /// <summary>
-        /// Goal mode: the search's attempt furthest toward the goals so far (most goals reached, then nearest the next area
-        /// goal), as the window's inputs up to that cell; null before any. Changes whenever a closer cell is filed.
-        /// </summary>
         public Attempt Closest()
         {
             ClosestCell c = _closest;
@@ -632,11 +511,6 @@ namespace IGTAP.EngineSim
                 Inputs = c.Cell.Source.ToList(c.Cell.Length) };
         }
 
-        /// <summary>
-        /// Goal mode: the window's inputs to up to <paramref name="max"/> filed cells whose goals reached pass
-        /// <paramref name="progress"/> and whose square is within <paramref name="dx"/>, <paramref name="dy"/> units of the
-        /// capture-frame point's, nearest first. Cells in <paramref name="skip"/> are left out; the ones returned are added to it.
-        /// </summary>
         public List<List<InputTick>> Near(Vector2 at, Func<int, bool> progress, float dx, float dy, HashSet<long> skip, int max)
         {
             int cx = Mathf.FloorToInt(at.x / Worker.CellSize), cy = Mathf.FloorToInt(at.y / Worker.CellSize);
@@ -662,26 +536,17 @@ namespace IGTAP.EngineSim
             internal const float CellSize = 48f;
             const float SegmentSlack = .2f;
             const int StateEvery = 16;
-            // Each worker keeps only the states it made (a snapshot holds its own world's objects), and a cell it lacks one
-            // for is replayed. So a worker draws mostly from the cells it owns (Cell.Owner: it kept their states last), and an
-            // explore draws up to this many cells and takes the first it has a state for.
             const int CachedDraws = 3;
             const int BranchCheckEvery = 10000;
             readonly OfflineSolver _owner;
-            /// <summary>This worker's index: the Cell.Owner of the cells it keeps states for.</summary>
             readonly int _index;
             readonly Simulation _sim;
-            /// <summary>Decodes this world's copy of a stored goal state (SnapshotStore.StateOf).</summary>
             readonly SnapshotStore _store;
             readonly colouredBlockSwapper _swapper;
             readonly System.Random _rng;
             readonly Queue<List<InputTick>> _seeds;
             readonly System.Collections.Concurrent.ConcurrentDictionary<long, Cell> _archive;
             readonly Dictionary<Cell, Entry> _states = new Dictionary<Cell, Entry>();
-            // Eviction is by the draw pool's pick weight first and recency second, so the frontier's hot cells stay through
-            // a wide draw's churn (plain LRU let them go). Every touch queues a record; one whose use isn't its entry's
-            // latest (touched since, or superseded) is stale and skipped, and the queue is rebuilt from the live entries once
-            // it holds four records for each.
             readonly PriorityQueue<Entry, (double weight, long use)> _evict = new PriorityQueue<Entry, (double, long)>();
             long _use;
             int _cap;
@@ -690,19 +555,13 @@ namespace IGTAP.EngineSim
             {
                 public Cell Cell;
                 public SimSnapshot State;
-                /// <summary>When it was last touched; 0 once a newer entry for its cell replaces it.</summary>
                 public long Use;
-                /// <summary>Its pick weight when last touched: its eviction priority, with Use.</summary>
                 public double Weight;
             }
-            // The draw pools, rebuilt by Pool: every filed cell, and the ones this worker owns, each with its cumulative pick
-            // weights; an own draw is taken with probability _ownShare.
             Cell[] _pool = Array.Empty<Cell>(), _ownPool = Array.Empty<Cell>();
             double[] _poolWeights = Array.Empty<double>(), _ownWeights = Array.Empty<double>();
             int _poolCount, _ownCount, _poolPicks;
-            // The archive's eviction passes as of the last Pool: an eviction since makes it rebuild them without the cells gone.
             int _poolEvictions;
-            // The archive's eviction weighs cells as this worker's state eviction does (Weight, no guide closeness).
             readonly Func<long, Cell, double> _evictWeight;
             double _ownShare;
             readonly bool _dash, _omni;
@@ -712,8 +571,6 @@ namespace IGTAP.EngineSim
             Replay _bestRun;
             int _sharedVersion;
 
-            // A run replayed with its record: per tick the states kept, the body, fingerprint and waypoints (convergence), the
-            // cell key and time; per cell the last arrival (segment cuts) and the first (splices).
             sealed class Replay
             {
                 public readonly SimSnapshot[] States;
@@ -722,7 +579,6 @@ namespace IGTAP.EngineSim
                 public readonly int[] Waypoints;
                 public readonly long[] Keys;
                 public readonly float[] Elapsed;
-                /// <summary>A dash in hand (unlocked, an air dash left) before the tick's input.</summary>
                 public readonly bool[] Dash;
                 public readonly Dictionary<long, float> Arrival = new Dictionary<long, float>();
                 public readonly Dictionary<long, (float time, int tick)> First = new Dictionary<long, (float, int)>();
@@ -739,7 +595,6 @@ namespace IGTAP.EngineSim
                     Array.Fill(Elapsed, float.NaN);
                 }
 
-                /// <summary>Ticks 0..through as <paramref name="best"/> had them: a run resumed from its state there matches it up to it.</summary>
                 public void CopyPrefix(Replay best, int through)
                 {
                     int n = through + 1;
@@ -806,16 +661,11 @@ namespace IGTAP.EngineSim
                 if (!sim.TimedFromRunStart && sim.TargetCourse > 0)
                     _gates = sim.World.All<startGate>().Where(g => g.GetComponentInParent<courseScript>() is courseScript c && c.courseNumber == sim.TargetCourse)
                         .Select(g => sim.ToWorld(ScenePos.From(g.transform.position))).ToArray();
-                // The set-up reaches as far as the search's own start, wherever that is: a farm lap starts at the checkpoint a
-                // finish's restart sends the player to, which may be farther from the gate (Course 9 WJ_DS_DJ_BS: 2600 u), and a reach
-                // short of it cut every run on its first tick (0 finishes in 2.3M runs).
                 if (_gates != null && _gates.Length > 0)
                 {
-                    // Where the search starts and where its quick restart lands (the respawn point, in world units).
                     var from = new[] { sim.PlayerWorld, new WorldPos(sim.Player.respawnPoint.x, sim.Player.respawnPoint.y) };
                     _setupReach = Math.Max(SetupReach, from.Max(at => _gates.Min(g => Math.Max(Math.Abs(at.x - g.x), Math.Abs(at.y - g.y)))) + 500f);
                 }
-                // A run that may quick-restart (a Full-TAS window, resets allowed) also grafts the mined windows that restart.
                 _resets = _goalMode && !owner.NoResets;
                 if (owner.GuideWeight > 0f && DistanceField.Enabled)
                 {
@@ -831,8 +681,6 @@ namespace IGTAP.EngineSim
                         "superbounce", "superbounce", "superbounce", "backdash", "backdash", "hold", "hold", "retime", "retime", "vertical", "vertical",
                         "springdash", "lockstick", "lockstick", "dashturn" }
                     : new[] { "cut", "cut", "hop", "nojump", "stick", "insert", "hold", "retime", "vertical" };
-                // A course run quick-restarts too, in its set-up before the timer (Optimize's "reset"): the restart's landing is
-                // another start than the category's (Course 6 WJ_DS_DJ_BS: a farm lap from it ran 1.04 against the record's 1.06).
                 if (!owner.NoResets) _kinds = _kinds.Concat(new[] { "reset", "noreset", "movereset" }).ToArray();
                 if (_omni) _kinds = _kinds.Concat(OmniKinds).ToArray();
             }
@@ -852,7 +700,6 @@ namespace IGTAP.EngineSim
                     if (_restore.Count > 0)
                     {
                         Restore(_restore.Dequeue());
-                        // Its share restored, the loaded sources can go: the cells filed from them hold what they still need.
                         if (_restore.Count == 0) { _spliceScan = true; _owner._partitions[_index] = new List<Memory.Source>(); }
                         continue;
                     }
@@ -917,7 +764,6 @@ namespace IGTAP.EngineSim
                 List<InputTick> inputs;
                 float time;
                 long runTicks;
-                // Shared.Version only moves under the lock, after the rest: an unchanged one skips the lock on every loop.
                 if (Volatile.Read(ref _owner.Shared.Version) == _sharedVersion) return;
                 lock (_owner.Shared)
                 {
@@ -948,7 +794,6 @@ namespace IGTAP.EngineSim
                 _spliceAt = -1;
                 _fromCell = chosen;
                 List<InputTick> spliceInto = _bestInputs;
-                // Contacts are graft sites only for the mined windows: with --no-tech-grafts there is nothing to record.
                 bool grafts = _owner.Mined != null;
                 _recordContacts = grafts;
                 Try(inputs, "explore", from);
@@ -962,18 +807,11 @@ namespace IGTAP.EngineSim
                     if (_contacts.Count > 0 && _rng.NextDouble() < _owner.GraftRate) graft = GraftContact();
                 }
                 _splicing = false;
-                // _spliceBestTick is a tick of the best this run was judged against; a new best from Try makes it stale.
                 if (_spliceAt > chosen.Length && ReferenceEquals(spliceInto, _bestInputs)) Splice(inputs, _spliceAt, _spliceBestTick, from);
                 if (graft is var (tick, kind)) Graft(inputs, tick, kind, lo, from);
                 _fromCell = null;
             }
 
-            // Tech lives on the ticks where the player's contact changes, and a random burst puts its jump and dash anywhere in
-            // its chunks, so it seldom lands them there. An explore run's contacts are recorded (ContactLog: it leaves the ground
-            // at a ledge, lands, touches or leaves a wall, dies; a flat hyper dash slides off a corner; a wall behind, ahead or
-            // above the back; the start gate in reach before the timer; and the per-step kinds), and a graft replaces the run from
-            // one of them with a mined tech demo's input window at the same contact kind (TechGrafts): the Tech tab's demos are
-            // the graft library, with the same detection replayed over them.
             readonly ContactLog _log = new ContactLog();
             readonly ContactProbe _gate;
             List<(int tick, Contact kind)> _contacts => _log.Contacts;
@@ -981,16 +819,10 @@ namespace IGTAP.EngineSim
 
             void RecordContact(int tick) { _log.Tick(tick, _sim.Player, _gate.NearGate()); }
 
-            // Every physics step of an explore run (a dash runs ticks with no input tick, which RecordContact never sees): the
-            // input tick a dash was pressed on, and a CornerHyper contact there when its flat hyper dash leaves the floor.
             void RecordSlide() { _log.Slide((int)_sim.Engine.RunTicks, _sim.Player); }
 
-            // The per-step tech contacts (ContactLog.Step: a spring hit, an air jump, a dash jump, a wall boost, a landing jumped
-            // out of at once, a pause, a step-up, a spike touched or left, an overhang or slope touched).
             void RecordStep() { _log.Step(_sim); }
 
-            /// <summary>A contact of the run to graft at, uniformly among the kinds the mined tech windows offer at this run's
-            /// unlocks; with a <see cref="GraftFocus"/>, among those in it 3 picks in 4 (any when none is).</summary>
             (int tick, Contact kind)? GraftContact()
             {
                 (int lo, int hi) focus = _owner.GraftFocus is var (flo, fhi) && _rng.NextDouble() < .75 ? (flo, fhi) : (int.MinValue, int.MaxValue);
@@ -1009,8 +841,6 @@ namespace IGTAP.EngineSim
                 return null;
             }
 
-            // The demo's own input window around the same contact kind, placed and sampled as its graft spec says and filtered by
-            // the run's category unlocks. Its mode names the tech, so a new best says which demo's window found it.
             void Graft(List<InputTick> run, int tick, Contact contact, int lo, SimSnapshot from)
             {
                 for (int draw = 0; draw < _owner.MinedDraws; draw++)
@@ -1021,13 +851,6 @@ namespace IGTAP.EngineSim
                 }
             }
 
-            // One mined graft at a contact: the pattern composed onto the run (its Tries times, each sampled anew) and run. A
-            // pattern with a chain (its own, else the one it was chained from) records its run's contacts, and the first contact of
-            // a chained kind at least 2 ticks after its placement gets the next graft, up to the chain's depth, 85% of the time;
-            // with an expected contact only when the run shows it where the demo did (the graft worked: a wall clip grounded the
-            // player). An explore cell keeps only the earliest arrival in its square, so the slow states between a chain's grafts
-            // (a set-up drifting to a stop by a wall, the rise between two clips) seldom survive to be explored from later: chaining
-            // finds a climb of several clips (Course 1 NONE's pillar and shelf: four) in one explore step.
             void MinedGraft(TechGrafts mined, List<InputTick> run, int tick, int lo, TechPattern pattern, SimSnapshot from, int depth, PatternChain inherited,
                 (int lo, int hi)? shift = null)
             {
@@ -1065,8 +888,6 @@ namespace IGTAP.EngineSim
             {
                 if (_poolEvictions != _owner._evictions)
                 {
-                    // After an eviction pass no live cell's Parent chain holds a removed cell: their states would only wait
-                    // for the state eviction (on a 40 MB archive budget they were half the cache).
                     foreach (Entry removed in _states.Values.Where(e => e.Cell.Removed).ToList())
                     {
                         removed.Use = 0;
@@ -1094,8 +915,6 @@ namespace IGTAP.EngineSim
                     _ownPool = new Cell[_pool.Length];
                     _ownWeights = new double[_pool.Length];
                 }
-                // The guide's closeness to the target: 1 for the pool's closest cell to it, 0 for cells a span of distance
-                // further out (the span capped, so one cell that wandered off doesn't flatten the rest).
                 float span = float.IsFinite(near) ? Math.Clamp(far - near, CellSize, GuideSpan) : 0f;
                 double total = 0, own = 0;
                 int owned = 0;
@@ -1115,17 +934,11 @@ namespace IGTAP.EngineSim
                 if (owned < _ownCount) Array.Clear(_ownPool, owned, _ownCount - owned);
                 _poolCount = count;
                 _ownCount = owned;
-                // A worker's own draws come in proportion to the pick weight it owns (OwnShare of its draws when every worker
-                // owns an even share), the rest from every cell, so summed over the workers each cell is drawn near its share
-                // of the whole pool, as one global pool drew it, while most draws land on cells this worker has states for.
-                // At most MostOwnShare, so the others' cells are drawn here too and a cell owned by a busy worker doesn't
-                // starve; none when this worker owns every cell (the own pool is the whole pool).
                 _ownShare = owned == 0 || owned == count ? 0 : Math.Min(MostOwnShare, OwnShare * _owner._workers.Length * own / total);
                 _poolPicks = Math.Max(PoolPicks, count / 256);
             }
             const int PoolPicks = 16;
             const double OwnShare = .9, MostOwnShare = .95;
-            /// <summary>The distance the guide's closeness fades out over.</summary>
             const float GuideSpan = 2000f;
 
             Cell Draw()
@@ -1154,7 +967,6 @@ namespace IGTAP.EngineSim
                 if (found != null) Touch(found);
                 SimSnapshot from = found?.State;
                 List<InputTick> inputs = cell.Source.ToList();
-                // The run's stored goal state may sit later on the cell's own prefix than this worker's nearest state does.
                 if (_owner.Resume is SnapshotIndex resume && resume.Find(inputs, cell.Length, from?.Tick ?? -1) is SnapshotIndex.Entry goal)
                     try
                     {
@@ -1232,10 +1044,6 @@ namespace IGTAP.EngineSim
                 Try(t, "splice", from);
             }
 
-            /// <summary>An explore cell's share of the picks: timed cells over untimed, ones further toward the run's goal (its
-            /// way through timed runs, its goal reach, its forced-path boxes), and by the guide ones closer to the target,
-            /// then the pick-count novelty that keeps it exploring. <paramref name="closeness"/> is 1 for the pool's closest
-            /// cell to the target and 0 for its far ones.</summary>
             double Weight(long key, Cell cell, float closeness)
             {
                 double w = key < 0 ? 3.0 : 1.0;
@@ -1294,7 +1102,6 @@ namespace IGTAP.EngineSim
                             if (_rng.NextDouble() < .4) d.dashJump = _rng.Next(1, 11);
                             if (d.x == 0f && _rng.NextDouble() < .15) d.turnX = _rng.NextDouble() < .5 ? -1f : 1f;
                             inputs[at] = d;
-                            // A super's height is how long its jump is held: bonus15's gap takes 24+ inputs.
                             if (d.dashJump > 0) holdEnd = HoldJump(inputs, at, OneOf(DashHolds));
                             if (d.dashJump == 0 && _rng.NextDouble() < .5)
                                 holdEnd = start > 0 && inputs[start - 1].x != 0f && _rng.NextDouble() < .3
@@ -1373,9 +1180,7 @@ namespace IGTAP.EngineSim
                     }
                     case "steep":
                     {
-                        // Freeze aim: the dash pressed with the stick at rest, then the stick 0.35 sideways and full up (or
-                        // down) in its freeze. The sideways part isn't snapped, so it goes 19° off vertical, which no dash
-                        // pressed on a tick can (MacroEngine.StickFor).
+                        // Freeze aim: sideways 0.35 stays unsnapped (19 deg off vertical), unlike a dash pressed on a tick (StickFor).
                         int end = OmniDash(t, at, 0f, 0f, _rng.NextDouble() < .4 ? _rng.Next(1, 11) : 0, side);
                         InputTick d = t[at];
                         d.turnX = side * 0.35f;
@@ -1398,17 +1203,10 @@ namespace IGTAP.EngineSim
                         WaveDash(t, at, side);
                         return DashBounce(t, at + 1 + _rng.Next(1, 15), side);
                     case "superground":
-                        // Super ground bounce: a ground super (flat dash, jump in it), then the dash straight down into the ground and its jump.
                         OmniDash(t, at, side, 0f, _rng.Next(1, 7), side);
                         return DashBounce(t, at + 1 + _rng.Next(4, 20), side);
                     case "bouncechain":
                     {
-                        // The down-dash landing chain (the old 34.88 s VMAN route over goals 15-17): two hypers (an ultra: each
-                        // adds to the momentum, 876 -> 1609 -> 2929 there), then a dash straight down onto the floor and a jump
-                        // out of the landing, 2-5 times, 3-11 ticks of air between. A jump off the ground keeps the momentum and
-                        // adds half again, more than the air takes (2528 to 5832 over four landings). One dash bounce at a time
-                        // the search had to find each link as its own step, and never kept the chain; from 44.94's state before
-                        // goal 15, 600 random chains of this shape reached 1000 units further in 110 ticks than the route did.
                         int end = at;
                         double seed = _rng.NextDouble();
                         if (seed < .9) end = WaveDash(t, at, side);
@@ -1444,7 +1242,6 @@ namespace IGTAP.EngineSim
                 return jump == 0 ? at : HoldJump(t, at, hold);
             }
 
-            /// <summary>Holds a dash jump's jump for <paramref name="hold"/> inputs after the dash at <paramref name="at"/>, then releases it.</summary>
             static int HoldJump(List<InputTick> t, int at, int hold)
             {
                 int end = at + 1 + hold;
@@ -1497,7 +1294,6 @@ namespace IGTAP.EngineSim
             static readonly float?[] LockValues = { null, -1f, 0f, 1f };
             static readonly Func<InputTick, bool> IsDash = k => k.dash, IsPress = k => k.press, IsJump = k => k.press || k.dashJump > 0, IsPressOrDash = k => k.press || k.dash, IsReset = k => k.reset;
 
-            /// <summary>A random tick of <paramref name="t"/> that matches; -1 for none.</summary>
             int Pick(List<InputTick> t, Func<InputTick, bool> match)
             {
                 int count = 0;
@@ -1508,15 +1304,10 @@ namespace IGTAP.EngineSim
 
             static readonly string[] NewDashKinds = { "dash", "dashjump", "latejump", "superbounce", "backdash",
                 "aim", "steep", "wavedash", "ultra", "dashbounce", "wavebounce", "wavejump", "superground", "bouncechain" };
-            // How long after its press a dash can still go: its 0.12 s buffer (8 ticks with the gate's slack), held through a
-            // wall jump's lock (Movement 1596-1599, 6 more), and the press tick's own refill (a landing refills it before the
-            // input is read, so it shows only after that tick).
+            // Dash buffer 8 ticks with gate slack, +6 held through a wall jump lock (RULES.md 4), +press tick's own refill.
             const int DashReach = 16;
             readonly List<int> _dashTicks = new List<int>();
 
-            /// <summary>A random input tick of the best where a dash pressed could go (a dash in hand within
-            /// <see cref="DashReach"/> of it); -1 for none. A press out of dashes that nothing refills in time does
-            /// nothing at all (the buffer just lapses), so a mutation there replays the best.</summary>
             int DashTick(int n)
             {
                 bool[] ready = _bestRun.Dash;
@@ -1661,8 +1452,6 @@ namespace IGTAP.EngineSim
                     }
                     case "dashturn":
                     {
-                        // A dash with no sideways stick, turned by the stick held in its freeze (MacroEngine.StickFor). With the stick
-                        // straight down from a wall cling, turned toward the wall, it is the Inwall wallbounce's climbing dash.
                         int q = Pick(t, IsDash);
                         if (q < 0) return;
                         InputTick k = t[q];
@@ -1674,7 +1463,6 @@ namespace IGTAP.EngineSim
                     }
                     case "reset":
                     {
-                        // A course run's restart pays only before its timer: there, from its second input.
                         if (!_goalMode)
                         {
                             int timed = Array.FindIndex(_bestRun.Elapsed, e => e >= 0f);
@@ -1727,7 +1515,6 @@ namespace IGTAP.EngineSim
                 if (inputs.Count == 0) inputs.Add(new InputTick());
                 if (_owner.Accept != null && !_owner.Accept(inputs)) return;
                 if (from != null && from.Tick >= inputs.Count) from = null;
-                // A priced window keeps a run slower to a cell than the best: it may be cleaner (the segment cut compares times alone).
                 bool finished = Evaluate(inputs, from, null, mode == "optimize" && _penalty == null, out float time, out _, out long runTicks, converge: converge);
                 bool converged = _converged;
                 if (from != null && _rng.Next(BranchCheckEvery) == 0)
@@ -1746,8 +1533,6 @@ namespace IGTAP.EngineSim
                 }
                 bool drift = (mode == "optimize" && converged) || ((mode == "optimize" || mode == "plateau") && finished && !_owner.Ranks(_best, _bestRunTicks, time, runTicks));
                 if (!drift && (!finished || !_owner.Ranks(time, runTicks, _best, _bestRunTicks))) return;
-                // An optimize run starts from a state of the best with the best's inputs before it, so its replay starts there too;
-                // a priced window's replay is the whole run, which is what the price is of.
                 SimSnapshot resume = mode == "optimize" && _penalty == null ? from : null;
                 var record = new Replay(inputs.Count);
                 if (resume != null) record.CopyPrefix(_bestRun, resume.Tick);
@@ -1768,10 +1553,6 @@ namespace IGTAP.EngineSim
                 else Interlocked.Increment(ref _owner.Drifts);
             }
 
-            /// <summary>Plays a run. With a <see cref="OfflineSolver.Penalty"/>, a finished run played whole (no <paramref name="from"/>,
-            /// judged throughout) has its price in its time and runTicks (<see cref="_pricedTicks"/> the ticks), or doesn't finish.</summary>
-            /// <param name="encoded">The inputs already run-length stored (a restored source, a cell's replay): the cells this run
-            /// files share it. Otherwise they're stored at the run's first filed cell (a run never changes its inputs).</param>
             bool Evaluate(List<InputTick> inputs, SimSnapshot from, Replay replay, bool cut,
                 out float time, out int finishTick, out long runTicks, int judgeAfter = -1, int converge = int.MaxValue, InputRuns encoded = null)
             {
@@ -1815,8 +1596,6 @@ namespace IGTAP.EngineSim
             readonly Func<List<InputTick>, RunResult, double> _penalty;
             long _pricedTicks;
 
-            // The run Evaluate is on, for its step and tick callbacks: the delegates are made once, so a run allocates no
-            // closure. (Evaluate never runs inside one of its own callbacks.)
             readonly Func<int, bool> _afterTick;
             readonly Action<int> _onStep;
             List<InputTick> _runInputs;
@@ -1852,7 +1631,6 @@ namespace IGTAP.EngineSim
                 List<InputTick> inputs = _runInputs;
                 Replay replay = _runReplay;
                 _endTick = tick;
-                // The tick's WallBehind probe (NaN: not cast yet), cast once for the contacts and the cell key.
                 float behind = float.NaN;
                 if (_recordContacts)
                 {
@@ -1901,9 +1679,6 @@ namespace IGTAP.EngineSim
                 return !losing;
             }
 
-            // Before the timer a course run sets its start up, and no saved route's set-up strays more than 1626 u (x or y) from
-            // the start gate (3_WJ_DS_DJ 2.76's flying start). Past SetupReach it is wandering the world: unseeded, Course 7
-            // WJ_DS_DJ_BS filed 131k of its 158k untimed cells there, out to 8600 u, and never finished.
             const float SetupReach = 2500f;
             readonly WorldPos[] _gates;
             readonly float _setupReach = SetupReach;
@@ -1917,7 +1692,6 @@ namespace IGTAP.EngineSim
                 return true;
             }
 
-            /// <summary>The tick's <see cref="ContactRays.WallBehind"/>, cast on the first ask (<paramref name="behind"/> NaN).</summary>
             static float Behind(Movement player, ref float behind)
             {
                 if (float.IsNaN(behind)) behind = WallBehind(player);
@@ -1944,9 +1718,7 @@ namespace IGTAP.EngineSim
 
 
 
-            // Cell key bits: y 0-15 and x 16-31 (48-unit cells, wrapped), air dashes 32-35, air jumps 36-39, wall jumps 40-43,
-            // moss 44, momentum x 45-47 and y 48-50 (a course: a wall clip's wall behind 45-46, and before the timer the Motion
-            // bits 47-49), waypoints or goal progress 51-61, blue blocks 62.
+            // Key bits: y 0-15, x 16-31, dash 32-35, jump 36-39, WJ 40-43, moss 44, momentum 45-50, progress 51-61, blue 62.
             internal const int ProgressShift = 51;
             const float MomentumStep = 250f;
 
@@ -1957,23 +1729,16 @@ namespace IGTAP.EngineSim
                 long x = Mathf.FloorToInt(position.x / CellSize) & 0xFFFF, y = Mathf.FloorToInt(position.y / CellSize) & 0xFFFF;
                 long key = (x << 16) | y;
                 if ((object)swapper != null && swapper.isBlueActive) key |= 1L << 62;
-                // A clip-ready state (a wall at the back, in reach of a wall clip graft) is its own cell: the earliest arrival in a
-                // square is seldom the slow one that stopped next to the wall, and only that one clips.
                 if (!resources) key |= Behind(player, ref behind) switch { < 0f => 1L << 45, > 0f => 1L << 46, _ => 0L };
                 bool moss = GroundType(player) != 0;
                 if (!moss && !resources && !spent) return key;
                 long wall = Math.Clamp(player.wallJumpsLeft + 1, 0, 15), air = Math.Clamp(player.airJumpsLeft, 0, 15), dash = Math.Clamp(player.airDashesLeft, 0, 15);
                 key |= (moss ? 1L << 44 : 0L) | (wall << 40) | (air << 36) | (dash << 32);
                 if (!resources) return key;
-                // A superjump or spike super carries its momentum across the next hundred ticks; an arrival that has it and
-                // one that doesn't are different states, so neither replaces the other.
                 bool omni = player.omniDashUnlocked;
                 return key | (MomentumBucket(player.momentum.x, omni) << 45) | (MomentumBucket(player.momentum.y, omni) << 48);
             }
 
-            // With the omnidirectional dash, momentum from chained hypers and down-dash landings reaches thousands (VMAN goals
-            // 15-17: 2528 to 5832 on the old 34.88 s route, against 764-2669 for a hyper or two), and every one past 750 fell
-            // in one bucket, so the slow hyper's earlier arrival replaced the chain's. There the steps are 250, 1000 and 2500.
             static readonly float[] OmniMomentum = { 250f, 1000f, 2500f };
 
             static long MomentumBucket(float m, bool omni)
@@ -1983,10 +1748,6 @@ namespace IGTAP.EngineSim
                 return 3 + Math.Sign(m) * level;
             }
 
-            // Before the timer (a course's untimed set-up), where the player is going is part of the cell: vertical speed in
-            // four bands (falling, near the top, rising, just jumped) and the facing, bits 47-49. A set-up is slow on purpose
-            // (Course 1 NONE's climb to the late gate touch), so its states would lose every square to an earlier arrival
-            // going the other way.
             static long Motion(Movement player)
             {
                 float vy = player.Velocity.y;
@@ -2000,8 +1761,6 @@ namespace IGTAP.EngineSim
                 return timing ? -1 - key : key;
             }
 
-            // A record: lap's gate crossed is a cell of its own (the goal's progress is the same before it): it flips the cell x's top
-            // bit, 1.5 M units off any place a run goes.
             internal static long GoalCellKey(long place, int progress, bool armed)
             {
                 return -1 - (((long)progress << ProgressShift) | (armed ? place ^ 1L << 31 : place));

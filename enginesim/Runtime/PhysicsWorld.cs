@@ -20,14 +20,10 @@ namespace IGTAP.EngineSim
             public readonly List<b2Fixture> Fixtures = new List<b2Fixture>(1);
             public int Layer, ContactMask, Id;
             public Vector3 BuiltScale;
-            /// <summary>What the world loaded it as (with <see cref="Pristine"/>): a restore to a snapshot that doesn't list it.</summary>
             public Vector3 PristineScale;
             public int PristineLayer, PristineMask;
-            /// <summary>Its transform as loaded: a body-less collider a script moved off it is built from its geometry (MovedShapes).</summary>
             public Vector3 LoadedPosition, LoadedScale;
             public Quaternion LoadedRotation;
-            /// <summary>A body-less collider whose transform a script wrote since the last sync (in _movedByScript): rebuilt there, as Unity
-            /// moves a static collider at its next transform sync.</summary>
             public bool Moved;
             public (MonoBehaviour script, Action<object> call)[][] Handlers;
             public bool Listens;
@@ -35,20 +31,13 @@ namespace IGTAP.EngineSim
             public ColliderState[] Sources;
             public bool[] SourcesLiveAtLoad;
             public b2Fixture[] Pristine;
-            /// <summary>What the snapshot being restored lists for it (Restore's scratch).</summary>
             public Built Restoring;
-            /// <summary>An array holding exactly what Fixtures holds now (null when none is known): Restore skips comparing it.</summary>
             public b2Fixture[] FixturesAs;
-            /// <summary>Changed with its fixtures not built yet (PhysicsWorld.RebuildLater; built by Settle).</summary>
             public bool Unbuilt;
-            /// <summary>Rebuilt since load, so it joins _changed and snapshots record its fixtures.</summary>
             public bool Tracked;
             public bool Rescaled;
-            /// <summary>Rebuilt since the last step (PhysicsWorld.FindLapsedTouches).</summary>
             public bool Reshaped;
             public bool Regrid;
-            /// <summary>Whether the player touching it is a spike touch (<see cref="PlayerTouch"/>): -1 not looked up yet, 0 no,
-            /// 1 a spikeScript's trigger.</summary>
             public sbyte TouchKind = -1;
         }
 
@@ -57,11 +46,8 @@ namespace IGTAP.EngineSim
             public Rigidbody2D Rigidbody;
             public b2Body Body;
             public bool TransformDirty, ScaleDirty;
-            /// <summary>Teleported (SetTransform) since the last step (PhysicsWorld.FindLapsedTouches).</summary>
             public bool Shifted;
-            /// <summary>In _movedStatic.</summary>
             public bool MovedStatic;
-            /// <summary>Its place in _bodyList (a snapshot names bodies by it).</summary>
             public int Index;
             public readonly List<ColliderState> Colliders = new List<ColliderState>();
         }
@@ -70,7 +56,6 @@ namespace IGTAP.EngineSim
         {
             public readonly ColliderState A, B;
             public readonly bool Trigger;
-            /// <summary>A trigger pair's shapes overlapped after the step that recorded it (not only at its start).</summary>
             public readonly bool Overlapped;
             public Pair(ColliderState a, ColliderState b, bool trigger, bool overlapped = false)
             {
@@ -92,8 +77,7 @@ namespace IGTAP.EngineSim
         readonly Dictionary<int, ColliderState> _byId = new Dictionary<int, ColliderState>();
         readonly Dictionary<Rigidbody2D, BodyState> _bodies = new Dictionary<Rigidbody2D, BodyState>();
         readonly Dictionary<GameObject, List<ColliderState>> _byObject = new Dictionary<GameObject, List<ColliderState>>();
-        // _bodies/_colliders are filled only in the constructor and nothing is ever removed, so these copies of their
-        // Values (taken at the constructor's end) hold exactly the order a foreach over .Values would walk forever.
+        // _bodies/_colliders are never removed from, so these lists hold the order a foreach over .Values would walk.
         BodyState[] _bodyList = Array.Empty<BodyState>();
         ColliderState[] _colliderList = Array.Empty<ColliderState>();
         readonly int[] _layerMasks;
@@ -101,8 +85,7 @@ namespace IGTAP.EngineSim
         readonly int _velocityIterations, _positionIterations;
         readonly bool _queriesHitTriggers, _queriesStartInColliders;
         HashSet<Pair> _touching = new HashSet<Pair>(), _touchingNext = new HashSet<Pair>();
-        // Trigger pairs touched only at this step's start (Box2D's Collide), not after its move: they enter and exit in the
-        // step, and aren't touching after it (CollectTouching).
+        // Pairs touched only at the step's start (Box2D Collide) enter and exit in the step and aren't touching after it.
         readonly HashSet<Pair> _startOnly = new HashSet<Pair>();
         readonly BodyState _player;
         readonly List<ColliderState> _changed = new List<ColliderState>();
@@ -110,17 +93,13 @@ namespace IGTAP.EngineSim
         bool _loaded;
         bool _suspended;
 
-        /// <summary>
-        /// Collider changes are ignored while set (a restore puts the toggles back). Setting it builds the fixtures still
-        /// waiting (Settle) first, from the colliders as they are before the restore writes them, as an at-once rebuild did.
-        /// </summary>
+        // Setting Suspended first builds waiting fixtures (Settle) from colliders as they are before the restore writes them.
         internal bool Suspended
         {
             get { return _suspended; }
             set { if (value) Settle(); _suspended = value; }
         }
 
-        // A FloatingOrigin rebase moved every transform; bodies and body-less colliders follow at the next sync, as Unity's do.
         bool _worldMoved;
 
         public PhysicsWorld(World world, Simulation sim)
@@ -154,9 +133,6 @@ namespace IGTAP.EngineSim
             _b2.SetSubStepping(SettingBool("useSubStepping", false));
             _ground = _b2.CreateBody(new b2BodyDef());
 
-            // A body off at the export is built too. A static one (a tree segment's ground, TreeSegmentActivationComponent.IE_Grow)
-            // never moves and has fixtures only while its colliders are on (Live); a dynamic or kinematic one (zone 2's zip movers
-            // and course start gates) is built disabled, and its object's activation turns it on and off (SyncEnabled).
             foreach (Rigidbody2D rb in world.Bodies)
             {
                 if (!rb.simulated) continue;
@@ -194,7 +170,6 @@ namespace IGTAP.EngineSim
                 state.Handlers = Handlers(CallbackScripts(c));
                 state.Listens = state.Handlers.Any(h => h.Length > 0);
                 Rebuild(state);
-                // What the world loaded it as: a snapshot that doesn't list it restores this, whatever its rebuilds made since.
                 state.FixturesAs = state.Pristine = state.Fixtures.ToArray();
                 state.PristineScale = state.BuiltScale;
                 state.PristineLayer = state.Layer;
@@ -263,7 +238,6 @@ namespace IGTAP.EngineSim
             return c.m_Enabled && c.gameObject.m_ActiveInHierarchy && (c.attachedRigidbody == null || s.Body != null);
         }
 
-        /// <summary>Rebuilds a collider's fixtures now, after building the ones still waiting (their changes came first).</summary>
         void Rebuild(ColliderState s)
         {
             Settle();
@@ -271,10 +245,6 @@ namespace IGTAP.EngineSim
             BuildFixtures(s);
         }
 
-        /// <summary>
-        /// A rebuild's part that happens when the collider changes, whenever its fixtures are built: the snapshot and step
-        /// bookkeeping, the grid and mover lists, the scale its box is built at, and the layer and contact mask.
-        /// </summary>
         void Reshape(ColliderState s)
         {
             if (_loaded && s.Body != _player && !s.Tracked)
@@ -298,9 +268,7 @@ namespace IGTAP.EngineSim
             foreach (b2Fixture f in s.Fixtures) body.DestroyFixture(f);
             s.Fixtures.Clear();
             if (!Live(s)) return;
-            // Its body's object is on (the collider's is, at or under it): on before its fixtures, as Unity makes a body before
-            // the colliders it attaches, so they get their proxies in the order they are built (a child collider is rebuilt before
-            // its parent's ActiveChanged).
+            // Body goes on before its fixtures, as Unity makes a body before the colliders it attaches (proxy order).
             if (s.Body != null) SyncEnabled(s.Body);
             float friction = s.Data.Friction, restitution = s.Data.Bounciness;
             if (s.Collider is BoxCollider2D box && s.Body != null && s.Body.Rigidbody.bodyType == RigidbodyType2D.Dynamic)
@@ -359,17 +327,11 @@ namespace IGTAP.EngineSim
             }
         }
 
-        /// <summary>
-        /// A composite off at the export has no shapes there, only its paths: its geometry with every source on, each path a
-        /// closed chain in the body's frame (two-sided edges, this Box2D's chains). Unity builds a Polygons composite from convex
-        /// polygons (its decomposition isn't known here; the outline's surface is the same, its inside and its seams aren't:
-        /// docs/fidelity-log.md, *Upgrade trees grown by hand*), an Outlines one from edges.
-        /// </summary>
         ShapeData[] PathShapes(ColliderState s)
         {
             Collider2D c = s.Collider;
             if (s.Data.Paths == null || s.Data.Paths.Length == 0) return null;
-            // ponytail: the paths in the body's frame only for a composite on its body's object at offset 0 (every export's).
+            // shortcut: paths in the body's frame only for a composite on its body's object at offset 0 (every export's).
             if (c.attachedRigidbody == null || c.attachedRigidbody.gameObject != c.gameObject || c.m_Offset != Vector2.zero) return null;
             Vector3 scale = c.transform.m_LossyScale;
             float radius = c is CompositeCollider2D composite ? composite.edgeRadius : 0f;
@@ -380,14 +342,12 @@ namespace IGTAP.EngineSim
                 var loop = new Vector2[path.Length + 1];
                 for (int i = 0; i < path.Length; i++) loop[i] = new Vector2(path[i].x * scale.x, path[i].y * scale.y);
                 loop[path.Length] = loop[0];
-                // b2ChainShape.CreateLoop: the last point again, the ghosts the points before and after the seam.
                 shapes.Add(new ShapeData { Type = "Edges", Radius = radius, Vertices = loop, UseAdjacentStart = true,
                     AdjacentStart = loop[path.Length - 1], UseAdjacentEnd = true, AdjacentEnd = loop[1] });
             }
             return shapes.ToArray();
         }
 
-        // A dynamic box's corners (b2PolygonShape.Set copies them).
         readonly b2Vec2[] _box = new b2Vec2[4];
 
         ShapeData[] Shapes(ColliderState s)
@@ -410,19 +370,13 @@ namespace IGTAP.EngineSim
             return Array.Empty<ShapeData>();
         }
 
-        /// <summary>A script moved the collider's transform off its loaded pose (a tree box falling into place, IE_Grow).</summary>
         static bool OffLoaded(ColliderState s)
         {
             Transform t = s.Collider.transform;
             return !SameBits(t.m_Position, s.LoadedPosition) || !SameBits(t.m_LossyScale, s.LoadedScale) || !SameBits(t.m_Rotation, s.LoadedRotation);
         }
 
-        /// <summary>
-        /// A body-less collider's shapes after a rebase or a script moved its transform: Unity builds them again from the
-        /// collider's own geometry and the transform (world-space vertices, float math); the export's shapes are the capture
-        /// pose's. Boxes and capsules from their geometry; other shapes (the polygon camera zones) move with the origin, and one
-        /// a script moved (before any rebase) ends the run.
-        /// </summary>
+        // Unity rebuilds body-less colliders from geometry and transform in float math; the export's shapes are capture pose.
         ShapeData[] MovedShapes(ColliderState s)
         {
             ShapeData[] captured = s.Data.Shapes;
@@ -458,14 +412,13 @@ namespace IGTAP.EngineSim
                     return new[] { Moved(captured[0], Point(o.x - along, o.y), Point(o.x + along, o.y)) };
                 }
             }
-            // ponytail: a rebase moves every transform off its loaded pose, so only a script's move before any rebase is caught.
+            // shortcut: a rebase moves every transform off its loaded pose, so only a script's move before any rebase is caught.
             if (!_sim.Rebased && OffLoaded(s) && _sim.Engine.IsRunning)
                 _sim.Engine.Abort("Unmodeled physics: " + s.Collider.name + "'s " + s.Collider.GetType().Name + " moved by a script (only boxes and capsules are rebuilt)");
             ScenePos by = _sim.FromCapture(new CapturePos(0f, 0f));
             return captured.Select(c => Moved(c, c.Vertices.Select(v => new Vector2(v.x + by.x, v.y + by.y)).ToArray())).ToArray();
         }
 
-        /// <summary>The rotation's xy block (Unity's Quaternion-to-matrix, float math).</summary>
         internal static (float m00, float m01, float m10, float m11) Rotation2D(Quaternion q)
         {
             float x2 = q.x * 2f, y2 = q.y * 2f, z2 = q.z * 2f;
@@ -479,16 +432,9 @@ namespace IGTAP.EngineSim
                 UseAdjacentEnd = shape.UseAdjacentEnd, AdjacentStart = shape.AdjacentStart, AdjacentEnd = shape.AdjacentEnd };
         }
 
-        /// <summary>A FloatingOrigin rebase moved the world's transforms (Simulation.MoveWorld).</summary>
         public void WorldMoved() { _worldMoved = true; }
 
-        /// <summary>
-        /// A query after FloatingOrigin moved the world sees it moved, as the game's do (a 1x probe of Test-Pillar-Ghost: the
-        /// FixedUpdate after MoveOrigin read the spiked wall where it now is, not the geometry left at the old place). Bodies take
-        /// their moved transforms only at the next physics step's sync, as Unity's do: a query sync that moved the player's body
-        /// took the first rendered frame's interpolation blend and lost the rest of the tick's step (30 units on VMAN's rebase),
-        /// and grounded the player a tick before turbo does.
-        /// </summary>
+        // Queries after FloatingOrigin moved the world see it moved; bodies take moved transforms only at the next step's sync.
         void SyncMovedWorld()
         {
             if (!_worldMoved || _staticsMoved) return;
@@ -517,8 +463,6 @@ namespace IGTAP.EngineSim
             s.Fixtures.Add(body.CreateFixture(def));
         }
 
-        /// <summary>Bumped by every collider toggle, layer change and restore, suspended or not (and by any other write of a
-        /// collider's enabled or active state): unchanged, every collider is live as it was (<see cref="DistanceField"/>'s version).</summary>
         internal int Generation;
 
         public void ColliderChanged(Collider2D collider)
@@ -534,12 +478,7 @@ namespace IGTAP.EngineSim
             LayerChanged(gameObject);
         }
 
-        /// <summary>
-        /// A dynamic or kinematic body is on while its object is (b2Body.SetEnabled): Unity has no body for an object that is
-        /// off, and makes it again when the object comes on, at its transform's pose and at rest (velocity reset: Unity's
-        /// MelvMay lists "the GameObject is being disabled/enabled" among what resets a Rigidbody2D's velocity,
-        /// discussions.unity.com/t/1494932). A restore puts the flag back with the rest of the body (b2World.LoadState).
-        /// </summary>
+        // Unity has no body for an off object and remakes it at its transform's pose, at rest (velocity reset), when it comes on.
         void SyncEnabled(BodyState b)
         {
             b2Body body = b.Body;
@@ -558,10 +497,6 @@ namespace IGTAP.EngineSim
             _moversDirty = true;
         }
 
-        /// <summary>
-        /// A GameObject changed layer (PlatformMover.MakeIntangible): Unity filters its contacts and queries by the new layer at
-        /// once, so its colliders are rebuilt like any other collider change.
-        /// </summary>
         public void LayerChanged(GameObject gameObject)
         {
             Generation++;
@@ -576,33 +511,21 @@ namespace IGTAP.EngineSim
             if (s.Composite != null) Rebuild(s.Composite);
         }
 
-        // Colliders changed with their fixtures not built yet (RebuildLater), in the order of their last change.
         readonly List<ColliderState> _unbuilt = new List<ColliderState>();
 
-        /// <summary>
-        /// A change to a box on a dynamic body builds its fixture at the next Settle, not at once: Movement writes the player
-        /// box's offset and then its size, and each write rebuilt it. Such a box is one fixture with one broadphase proxy, and
-        /// a rebuild frees its leaf node last and takes it first again, so building it once gives it the same proxy id (the
-        /// broadphase's pair order) as building it twice; a collider of several proxies would get them back in another order.
-        /// </summary>
+        // Dynamic-body box builds at the next Settle in last-change order, matching Unity's fixture-list and proxy order.
         static bool BuildsLater(ColliderState s)
             => s.Collider is BoxCollider2D && s.Body != null && s.Body.Rigidbody.bodyType == RigidbodyType2D.Dynamic;
 
         void RebuildLater(ColliderState s)
         {
             Reshape(s);
-            // Last changed, built last: each at-once rebuild put its new fixture at the head of the body's fixture list, so
-            // the list ends up in the order of the colliders' last rebuilds (the mass sum and the proxy syncs walk it).
             if (s.Unbuilt) _unbuilt.Remove(s);
             s.Unbuilt = true;
             _unbuilt.Add(s);
         }
 
-        /// <summary>
-        /// Builds the fixtures still waiting (RebuildLater), in the order of their colliders' last changes. Whatever reads or
-        /// changes the physics world calls it first: syncs and steps, queries, body reads and writes, contacts, captures and
-        /// restores (and a restore's suspension), and the snapshot store's fixture lookups.
-        /// </summary>
+        // Everything that reads or changes the physics world must call this first (syncs, steps, queries, captures, restores).
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         void Settle()
         {
@@ -620,7 +543,6 @@ namespace IGTAP.EngineSim
             _unbuilt.Clear();
         }
 
-        // Body-less colliders whose transforms a script wrote since the last sync (ColliderState.Moved).
         readonly List<ColliderState> _movedByScript = new List<ColliderState>();
 
         public void TransformChanged(Transform transform, bool pose)
@@ -665,21 +587,14 @@ namespace IGTAP.EngineSim
             if (_movedByScript.Count != 0) SyncMoved();
         }
 
-        /// <summary>
-        /// A rendered frame's start (Unity's Physics2DEarlyUpdate, before the frame's FixedUpdate and Update): the body-less
-        /// colliders a script moved since are where their transforms are now, so the frame's queries see them there. A tree box
-        /// falling onto its spot (IE_Grow, at each frame's end) is where the last frame left it for the next FixedUpdate's
-        /// wall rays (Zip% goal 513: the 1x player touched GreenCloneChanceBox's side a tick before this engine's). Bodies
-        /// sync at the step as before (the player's write in a tick's last frame isn't seen by the next FixedUpdate).
-        /// </summary>
+        // Unity's Physics2DEarlyUpdate: script-moved body-less colliders sit at their transforms before FixedUpdate and Update.
         public void FrameStart()
         {
             Settle();
             if (_movedByScript.Count != 0) SyncMoved();
         }
 
-        /// <summary>The body-less colliders a script moved, rebuilt where their transforms are now, by collider id (the order the
-        /// writes came in depends on what ran before a restore).</summary>
+        // Rebuild in collider id order: the order of the writes depends on what ran before a restore.
         void SyncMoved()
         {
             _movedByScript.Sort((a, b) => a.Id.CompareTo(b.Id));
@@ -719,14 +634,10 @@ namespace IGTAP.EngineSim
 
         readonly List<Pair> _pairsNow = new List<Pair>();
         readonly Dictionary<Pair, List<b2Contact>> _contactsNow = new Dictionary<Pair, List<b2Contact>>();
-        // Parallel to _pairsNow (both grow in the same branch of CollectTouching): DispatchCallbacks reads a pair's
-        // contacts by index instead of hashing the pair in _contactsNow again.
         readonly List<List<b2Contact>> _pairContacts = new List<List<b2Contact>>();
         readonly Stack<List<b2Contact>> _contactLists = new Stack<List<b2Contact>>();
         List<Pair> _pairsBefore = new List<Pair>();
         readonly List<ColliderState> _rescaled = new List<ColliderState>();
-        // Trigger pairs overlapping after this step's move (CollectTouching), and the ones whose touch lapsed at its start
-        // (FindLapsedTouches); bodies moved and shapes rebuilt since the last step ends, which that check tests again.
         readonly HashSet<Pair> _overlapNext = new HashSet<Pair>(), _lapsed = new HashSet<Pair>();
         readonly List<BodyState> _shifted = new List<BodyState>();
         readonly List<ColliderState> _reshaped = new List<ColliderState>();
@@ -735,15 +646,10 @@ namespace IGTAP.EngineSim
         public int TouchingPairs { get { return _pairsBefore.Count; } }
         public int BodyCount { get { return _b2.GetBodyCount(); } }
 
-        /// <summary>The player's touches after the last step (<see cref="DispatchCallbacks"/>): a spike trigger (spikeScript: its
-        /// OnTriggerEnter2D/Stay2D pairs), and the side (-1: the surface is at -x) of a solid surface it touches whose normal
-        /// is neither axis-aligned: facing down (an overhang: y &lt; 0) or up (a slope: y &gt; 0). The tech contacts read it
-        /// (ContactLog.Step).</summary>
         public struct PlayerTouches
         {
             public bool Spike;
             public float Overhang, Slope;
-            /// <summary>A surface over the player's head (its normal within 45° of straight down): a head bonk (the waste audit).</summary>
             public bool Ceiling;
         }
         public PlayerTouches PlayerTouch;
@@ -769,7 +675,7 @@ namespace IGTAP.EngineSim
                 {
                     b2Contact c = contacts[k];
                     c.GetWorldManifold(_worldManifold);
-                    // Box2D's normal points from fixture A to B; the player sees the other surface's normal (toward itself).
+                    // Box2D's normal points from fixture A to B; the player needs the other surface's normal, toward itself.
                     bool selfIsB = ((ColliderState)c.GetFixtureB().UserData).Body == _player;
                     float nx = selfIsB ? _worldManifold.normal.x : -_worldManifold.normal.x, ny = selfIsB ? _worldManifold.normal.y : -_worldManifold.normal.y;
                     if (ny < -.7f) touch.Ceiling = true;
@@ -834,9 +740,7 @@ namespace IGTAP.EngineSim
                 var pair = new Pair((ColliderState)fa.UserData, (ColliderState)fb.UserData, trigger);
                 bool overlap = trigger && Overlap(c, fa, fb);
                 if (overlap) _overlapNext.Add(pair);
-                // A touch only at the step's start (a write moved the body into the trigger and the step moved it out) enters
-                // and exits in the step: the next step's overlap enters again (FalseEnding-Any% 353.32's dash pull-forward
-                // into Course 3's CashPerLoop strip at tick 14122: 1x buys on the Stay at 14124, not 14123).
+                // A touch only at the step's start enters and exits in the step; the next overlap enters again (1x buys on the Stay).
                 bool startOnly = trigger && !overlap && c.IsTouching() && !sa.Rescaled && !sb.Rescaled && !_touching.Contains(pair);
                 bool touching = trigger ? overlap || startOnly : c.IsTouching();
                 if (!touching) continue;
@@ -856,7 +760,6 @@ namespace IGTAP.EngineSim
                 if (_pairContacts[i].Count > 1) SortByTouchOrder(_pairContacts[i]);
         }
 
-        /// <summary>The trigger contact's shapes overlap where their bodies stand (b2TestOverlap, kept per contact: b2Contact.m_overlap).</summary>
         bool Overlap(b2Contact c, b2Fixture fa, b2Fixture fb)
         {
             b2Transform xfA = fa.GetBody().GetTransform(), xfB = fb.GetBody().GetTransform();
@@ -871,7 +774,6 @@ namespace IGTAP.EngineSim
         static bool SameBits<T>(in T a, in T b) where T : unmanaged
             => MemoryMarshal.AsBytes(new ReadOnlySpan<T>(in a)).SequenceEqual(MemoryMarshal.AsBytes(new ReadOnlySpan<T>(in b)));
 
-        // A contact's touch order and its place in the contact list walk: CollectTouching's sort key.
         readonly struct TouchOrdered
         {
             public readonly long Order;
@@ -883,12 +785,6 @@ namespace IGTAP.EngineSim
         static readonly Comparison<TouchOrdered> ByTouchOrder = (a, b) => a.Order != b.Order ? (a.Order < b.Order ? -1 : 1) : a.Walk - b.Walk;
         TouchOrdered[] _touchOrdered = new TouchOrdered[8];
 
-        /// <summary>
-        /// A pair's contacts (gathered in the contact list's order) in b2Contact.m_touchOrder order, equal orders keeping the
-        /// list's order: a stable sort, as the insertion into the sorted list before it did (whose shifting cost quadratic
-        /// time). The walk index breaks ties, so every key differs and the sort needs no stability of its own. A list already
-        /// in order is left as it is.
-        /// </summary>
         void SortByTouchOrder(List<b2Contact> contacts)
         {
             int n = contacts.Count;
@@ -914,17 +810,7 @@ namespace IGTAP.EngineSim
             }
         }
 
-        /// <summary>
-        /// The trigger pairs touching after the last step whose touch lapsed at this step's start: Box2D collides a step's
-        /// contacts before it moves the bodies and destroys those whose broadphase proxies no longer overlap there (a transform
-        /// write between the steps moved a body out, or a shape was rebuilt away from the other); overlapping again after the
-        /// step's move begins a new contact: Enter, not Stay (turbo: a dash's interpolation pull-back out of Course 1's start
-        /// gate, on a dynamic body, the last step's move had just reached starts no timer, `startGate` running on Stay only).
-        /// A trigger on a static body or on none (the ground body) never lapses: its touch goes on across any pull-back, rebase
-        /// or not (turbo: a dash's pull-back out of the static `Spikes` composite killed on the step that moved back in, with
-        /// Stay; a body-less upgrade box bought on Stay). Shapes rebuilt for a new scale keep the older rule (their
-        /// start-of-step touch doesn't count; see the facing-flip entry in docs/fidelity-log.md).
-        /// </summary>
+        // Box2D collides a step's contacts before moving bodies and destroys those whose proxies no longer overlap there.
         void FindLapsedTouches()
         {
             _lapsed.Clear();
@@ -932,7 +818,6 @@ namespace IGTAP.EngineSim
             {
                 Pair p = _pairsBefore[i];
                 if (!p.Trigger || p.A.Rescaled || p.B.Rescaled || OnStaticBody(p.A) || OnStaticBody(p.B)) continue;
-                // Unmoved and unrebuilt, both shapes stand where the last step left them: its overlap test still holds.
                 bool overlapping = Moved(p.A) || Moved(p.B) ? ProxiesOverlap(p.A, p.B) : p.Overlapped;
                 if (!overlapping) _lapsed.Add(p);
             }
@@ -942,10 +827,8 @@ namespace IGTAP.EngineSim
 
         static bool Moved(ColliderState s) => s.Reshaped || s.Body != null && s.Body.Shifted;
 
-        // The two proxies' vertex buffers of this world's overlap and distance queries (b2DistanceProxy.Set).
         readonly b2Vec2[] _proxyBufferA = new b2Vec2[2], _proxyBufferB = new b2Vec2[2];
 
-        /// <summary>Some child proxies of the two overlap in the broadphase: Box2D's Collide keeps their contact.</summary>
         bool ProxiesOverlap(ColliderState a, ColliderState b)
         {
             b2BroadPhase broadPhase = _b2.m_contactManager.m_broadPhase;
@@ -968,7 +851,6 @@ namespace IGTAP.EngineSim
             _reshaped.Clear();
         }
 
-        // Message index offsets for Queue's phase (message = (Trigger ? 0 : 3) + phase), as the old "Enter"/"Stay"/"Exit" compares gave.
         const int PhaseEnter = 0, PhaseStay = 1, PhaseExit = 2;
 
         void Queue(Pair p, int phase, List<b2Contact> contacts)
@@ -991,8 +873,6 @@ namespace IGTAP.EngineSim
             if (b != null) Call(p.B, message, b);
         }
 
-        // The Collision2Ds of one DispatchCallbacks, reused by the next: a handler gets one only for its call. No game handler
-        // keeps it or its contacts past the call (Movement and PlatformMover keep only its collider or rigidbody).
         readonly List<Collision2D> _collisions = new List<Collision2D>();
         int _collisionsUsed;
 
@@ -1112,11 +992,6 @@ namespace IGTAP.EngineSim
                 _ray.Fraction * distance, _ray.Fraction);
         }
 
-        /// <summary>
-        /// Whether the player's colliders that can touch <paramref name="collider"/>, its body standing at <paramref name="at"/>,
-        /// overlap the collider's shapes as the world stands now (b2TestOverlap, a trigger contact's test; colliders off touch
-        /// nothing). The economy drive's clonesLoD test (Simulation.Arrive).
-        /// </summary>
         public bool PlayerOverlaps(Collider2D collider, Vector2 at)
         {
             Settle();
@@ -1152,13 +1027,6 @@ namespace IGTAP.EngineSim
         int[] _seen = Array.Empty<int>();
         int _stamp;
 
-        /// <summary>
-        /// The static shapes' query grid: a slot per child proxy of every static fixture (Static), listed in each 64-unit cell
-        /// its box covers. A layout puts the cells in one array (CellStart/CellSlots, a counting sort over the slots); a
-        /// shape regridded since is listed in Extra; a slot freed by a regrid stays listed where it was, skipped (its Fixture
-        /// is null), until the next layout. A cell's order doesn't matter to its queries (each takes a lone hit, else asks
-        /// Box2D, or a minimum).
-        /// </summary>
         sealed class Grid
         {
             public StaticShape[] Static = Array.Empty<StaticShape>();
@@ -1168,8 +1036,6 @@ namespace IGTAP.EngineSim
             public readonly List<int> ExtraUsed = new List<int>();
             public float X, Y;
             public int CellsX, CellsY;
-            // Per collider (by Id): its slots, and what they hold: these fixtures (this many children; -1 for a collider
-            // off the grid, on a body that isn't static) at this body pose.
             public readonly List<int>[] Slots;
             public readonly b2Fixture[][] Fixtures;
             public readonly int[] Children;
@@ -1192,18 +1058,12 @@ namespace IGTAP.EngineSim
         }
 
         Grid _grid;
-        // Grids laid out before, newest first: a restore back across a FloatingOrigin rebase returns every static shape to
-        // where one of them has it, and that grid is taken back instead of laid out again (Matches checks every collider).
         readonly List<Grid> _spareGrids = new List<Grid>();
         const int SpareGrids = 2;
-        // A regrid that changes this many shapes lays the grid out again (a rebase, a restore across one) instead.
         const int LayOutAbove = 1024;
 
-        // The fixtures of non-static bodies by layer, built again (into the same lists) at the first query after a rebuild or
-        // restore marks them dirty.
         readonly List<(b2Fixture fixture, ColliderState state)>[] _movers = new List<(b2Fixture, ColliderState)>[32];
         bool _moversDirty = true;
-        // The layers whose _movers list holds fixtures: a query walks only the ones its mask shares, not every bit of the mask.
         uint _moverLayers;
 
         void BuildMovers()
@@ -1252,12 +1112,10 @@ namespace IGTAP.EngineSim
                     stale += System.Math.Max(Children(s), g.Slots[s.Id].Count);
                     outside = outside || !InBounds(g, s);
                 }
-            // A shape leaving the grid (a rebase's first rebuilds) lays out a grid too: the current one is kept whole as a spare.
             if (stale > LayOutAbove || outside)
             {
                 foreach (ColliderState s in _regrid) s.Regrid = false;
                 _regrid.Clear();
-                // The current grid is whole (no regrid touched it): it becomes a spare.
                 Grid back = null;
                 foreach (Grid spare in _spareGrids)
                     if (Matches(spare)) { back = spare; break; }
@@ -1274,12 +1132,9 @@ namespace IGTAP.EngineSim
                 Regrid(g, s);
             }
             _regrid.Clear();
-            // Freed slots cost every query that walks their cells: past half the slots, lay the grid out again.
             if (g.Dead > g.StaticCount / 2) LayOut(g);
         }
 
-        /// <summary>The grid holds the collider as it is now: the same fixtures (a fixture's shape never changes) at the same
-        /// body pose, or none for a collider on a body that isn't static.</summary>
         bool Holds(Grid g, ColliderState s)
         {
             if ((s.Body?.Body ?? _ground).Type() != b2BodyType.Static) return g.Children[s.Id] < 0 && g.Slots[s.Id].Count == 0;
@@ -1319,8 +1174,6 @@ namespace IGTAP.EngineSim
             for (b2Body body = _b2.GetBodyList(); body != null; body = body.GetNext())
             {
                 if (body.Type() != b2BodyType.Static) continue;
-                // A static body whose transform moved (a rebase: the next sync moves every body) is covered where it goes too,
-                // so its regrid then stays inside the grid (a translation: its boxes move by the same amount, plus a margin).
                 float dx = 0f, dy = 0f;
                 if (body.UserData is BodyState moving && (_worldMoved || moving.TransformDirty))
                 {
@@ -1346,7 +1199,6 @@ namespace IGTAP.EngineSim
             g.CellsX = (int)((maxX - minX) / CellSize) + 1;
             g.CellsY = (int)((maxY - minY) / CellSize) + 1;
             int cells = g.CellsX * g.CellsY;
-            // A larger layout's arrays are kept (grids laid out across a rebase alternate between two sizes).
             if (g.CellStart.Length < cells + 1)
             {
                 g.CellStart = new int[cells + 1];
@@ -1357,7 +1209,6 @@ namespace IGTAP.EngineSim
             else Array.Clear(g.CellStart, 0, cells + 1);
             foreach (int c in g.ExtraUsed) g.Extra[c].Clear();
             g.ExtraUsed.Clear();
-            // Counting sort: each cell's count, its start, then the slots in slot order.
             int[] start = g.CellStart, fill = g.CellFill;
             int cellsX = g.CellsX;
             for (int i = 0; i < g.StaticCount; i++)
@@ -1387,7 +1238,6 @@ namespace IGTAP.EngineSim
             return g.StaticCount++;
         }
 
-        /// <summary>The collider's slots as it is now; its boxes lie inside the grid (UpdateGrid checked <see cref="InBounds"/>).</summary>
         void Regrid(Grid g, ColliderState s)
         {
             bool isStatic = (s.Body?.Body ?? _ground).Type() == b2BodyType.Static;
@@ -1405,7 +1255,6 @@ namespace IGTAP.EngineSim
             NoteGrid(g, s);
         }
 
-        /// <summary>Every box of the collider's fixtures lies inside the grid.</summary>
         bool InBounds(Grid g, ColliderState s)
         {
             if ((s.Body?.Body ?? _ground).Type() != b2BodyType.Static) return true;
@@ -1433,11 +1282,6 @@ namespace IGTAP.EngineSim
             g.Poses[s.Id] = (s.Body?.Body ?? _ground).GetTransform();
         }
 
-        /// <summary>
-        /// Its slots already hold every child of its fixtures where it is now: the same fixtures (a fixture's shape never changes)
-        /// at the same body pose. A restore marks the colliders of every static body ever moved (after a FloatingOrigin rebase:
-        /// the big composites among them) and of every rebuilt collider for a regrid; most are unchanged.
-        /// </summary>
         bool Gridded(Grid g, ColliderState s)
         {
             b2Fixture[] held = g.Fixtures[s.Id];
@@ -1455,8 +1299,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>A rebuild of the same geometry (a rebase's rebuild on a run that crossed it before, a toggle off and back): the
-        /// slots take the new fixtures in place of the held ones, whose shapes and pose, so every query's answer, are the same.</summary>
         static void Retarget(Grid g, ColliderState s, b2Fixture[] held)
         {
             foreach (int i in g.Slots[s.Id])
@@ -1464,7 +1306,6 @@ namespace IGTAP.EngineSim
             g.Fixtures[s.Id] = s.Fixtures.ToArray();
         }
 
-        /// <summary>The two shapes are the same, bit for bit (the fields every query and AABB of theirs reads).</summary>
         static bool SameShape(b2Shape a, b2Shape b)
         {
             if (a.GetType() != b.GetType() || !Same(a.m_radius, b.m_radius)) return false;
@@ -1518,8 +1359,6 @@ namespace IGTAP.EngineSim
 
         const float InvCellSize = 1f / CellSize;
 
-        // Floor-free, same cells: x / 64 == x * (1 / 64f) exactly (a power of two); below 0 a lower bound clamps to 0 and an
-        // upper bound's range is empty either way, and at or above 0 (or NaN) truncation is Floor.
         static void CellRange(Grid g, in b2AABB box, out int x0, out int y0, out int x1, out int y1)
         {
             float lx = (box.lowerBound.x - g.X) * InvCellSize, ly = (box.lowerBound.y - g.Y) * InvCellSize;
@@ -1530,8 +1369,6 @@ namespace IGTAP.EngineSim
             y1 = uy < 0f ? -1 : System.Math.Min(g.CellsY - 1, (int)uy);
         }
 
-        // Accept's trigger half. A mover list holds only its own layer's colliders (every Layer write marks _movers dirty), so the
-        // mover loops need only this.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         bool Hittable(ColliderState s) => _queriesHitTriggers || !s.Collider.m_IsTrigger;
 
@@ -1541,7 +1378,6 @@ namespace IGTAP.EngineSim
             Grid g = _grid;
             ColliderState found = null;
             int count = 0;
-            // CellRange of the point alone: its one cell, or none.
             float cx = (p.x - g.X) * InvCellSize, cy = (p.y - g.Y) * InvCellSize;
             int x = (int)cx, y = (int)cy;
             if (!(cx < 0f) && !(cy < 0f) && x < g.CellsX && y < g.CellsY)
@@ -1555,7 +1391,6 @@ namespace IGTAP.EngineSim
                 foreach (var (f, s) in CollectionsMarshal.AsSpan(_movers[System.Numerics.BitOperations.TrailingZeroCount(layers)]))
                 {
                     if (!Hittable(s)) continue;
-                    // A shape of several children (a chain) never holds a point: one test per fixture.
                     if (f.m_proxyCount > 0 && f.TestPoint(p)) { found = s; count++; }
                 }
             if (count <= 1) return found;
@@ -1577,7 +1412,6 @@ namespace IGTAP.EngineSim
             }
         }
 
-        /// <summary>The cell's slots the segment may hit, each once per query (_seen); false once a second hit shows.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         bool RayCell(Grid g, ReadOnlySpan<int> slots, b2Vec2 p1, b2Vec2 p2, int layerMask, in b2RayCastInput input, ref int count)
         {
@@ -1622,17 +1456,11 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        // A grid shape's Box is its AABB grown by 1 on every side (GridBox): a point inside the shape, or a ray's hit on it,
-        // lies inside the AABB, so a point or segment outside the Box can't test inside or hit, and skipping it changes nothing.
         static bool Contains(in b2AABB box, b2Vec2 p)
         {
             return p.x >= box.lowerBound.x && p.x <= box.upperBound.x && p.y >= box.lowerBound.y && p.y <= box.upperBound.y;
         }
 
-        /// <summary>
-        /// The segment p1–p2 surely misses the box: separated on x, on y, or along the segment's normal (Gino's axis, as
-        /// b2DynamicTree.RayCast). The Box's margin of 1 dwarfs the float error of the test.
-        /// </summary>
         static bool SegmentMisses(in b2AABB box, b2Vec2 p1, b2Vec2 p2)
         {
             if (MathF.Max(p1.x, p2.x) < box.lowerBound.x || MathF.Min(p1.x, p2.x) > box.upperBound.x
@@ -1696,9 +1524,6 @@ namespace IGTAP.EngineSim
             return (layerMask & (1 << s.Layer)) != 0 && (_queriesHitTriggers || !s.Collider.m_IsTrigger);
         }
 
-        /// <summary>Whether the two colliders' layers and include/exclude masks let them touch at all (the contact filter's
-        /// test, <see cref="Filter"/>): of the player's two boxes only the 40×54 hurtbox meets the Default-layer course gates,
-        /// the body box excludes Default.</summary>
         public bool CanTouch(Collider2D a, Collider2D b)
         {
             return (ContactMask(_layerMasks, a) & (1 << b.gameObject.layer)) != 0 && (ContactMask(_layerMasks, b) & (1 << a.gameObject.layer)) != 0;
@@ -1733,15 +1558,12 @@ namespace IGTAP.EngineSim
             var cache = new b2SimplexCache();
             b2Distance(out b2DistanceOutput output, ref cache, input);
             if (output.distance > 0f) return output.distance;
-            // Unity's Collider2D.Distance is negative for overlapping shapes: the depth to separate them. GJK stops at 0, which
-            // hid Movement's squish check (distance < squishDistance -20) offline: turbo died squished, offline ran on.
+            // Unity's Collider2D.Distance is negative for overlaps; GJK stops at 0, which hid Movement's squish check offline.
             float separation = MathF.Max(MaxSeparation(input.proxyA, input.transformA, input.proxyB, input.transformB),
                 MaxSeparation(input.proxyB, input.transformB, input.proxyA, input.transformA));
             return float.IsNegativeInfinity(separation) ? output.distance : MathF.Min(0f, separation - input.proxyA._radius - input.proxyB._radius);
         }
 
-        // Separating-axis separation of b from a along a's face normals (an edge has both of its normals); a lone vertex
-        // (circle) has no faces.
         static float MaxSeparation(in b2DistanceProxy a, in b2Transform xfA, in b2DistanceProxy b, in b2Transform xfB)
         {
             int count = a._count;
@@ -1799,7 +1621,6 @@ namespace IGTAP.EngineSim
             StaticShape[] shapes = g.Static;
             foreach (int i in slots)
             {
-                // A freed slot's State is null, never sb.
                 if (_seen[i] == _stamp || shapes[i].State != sb) continue;
                 _seen[i] = _stamp;
                 foreach (b2Fixture fa in sa.Fixtures)
@@ -1848,34 +1669,19 @@ namespace IGTAP.EngineSim
             return (p.x, p.y, _player.Body.GetAngle(), v.x, v.y, _player.Body.GetAngularVelocity());
         }
 
-        /// <summary>Game code wrote the player's transform since the last sync (a write moves the body at the next sync).</summary>
         public bool PlayerTransformDirty { get { return _player.TransformDirty; } }
 
         sealed class PhysicsSnapshot
         {
             public object World;
             public bool WorldMoved, StaticsMoved;
-            /// <summary>The player's colliders' built scale, layer and contact mask (their fixtures are the body's).</summary>
             public (Vector3 scale, int layer, int mask)[] Player;
             public Pair[] Touching;
             public Built[] Changed;
-            /// <summary>
-            /// What the next step reads of the syncs and moves since the last one: each body's pending transform and scale sync
-            /// and teleport (<see cref="BodyFlag"/> by body index), each collider rebuilt or rescaled since (by collider id). A
-            /// capture between steps (a search's, after a tick's frames) can hold some: a spring's push synced after the step.
-            /// </summary>
             public int[] Bodies, Colliders;
-            /// <summary>
-            /// Every body's transform but the player's (<see cref="Simulation.Restore"/> puts that back), by body index. A step
-            /// writes each moving body's position back to it, and a script's write waits in it for the next sync (a zip mover's
-            /// end-of-move localPosition, TransformDirty), which then moves the body there: a restore that left another run's
-            /// transforms in place teleported the body to them.
-            /// </summary>
             public Pose[] Poses;
         }
 
-        /// <summary>A body's transform as a snapshot holds it (<see cref="PhysicsSnapshot.Poses"/>), and a transform a script moved
-        /// (<see cref="SimSnapshot.Transforms"/>).</summary>
         internal struct Pose
         {
             public Vector3 Position, LocalPosition, LocalScale, LossyScale;
@@ -1887,7 +1693,6 @@ namespace IGTAP.EngineSim
                 Rotation = t.m_Rotation; LocalRotation = t.m_LocalRotation;
             }
 
-            /// <summary>Bit for bit: a -0 is another value to the digest, and a NaN never matches (the capture makes a new list).</summary>
             public bool Is(Transform t)
             {
                 return SameBits(Position, t.m_Position) && SameBits(LocalPosition, t.m_LocalPosition) && SameBits(LocalScale, t.m_LocalScale)
@@ -1902,7 +1707,6 @@ namespace IGTAP.EngineSim
 
         }
 
-        /// <summary>A rebuilt collider as a snapshot holds it: its fixtures and what they were built with.</summary>
         sealed class Built
         {
             public ColliderState State;
@@ -1918,13 +1722,8 @@ namespace IGTAP.EngineSim
         enum ColliderFlag { Reshaped = 1, Rescaled = 2, Moved = 4 }
         const int FlagBits = 3;
 
-        // The rebuilt colliders as a snapshot holds them; null once one is rebuilt again. Shared by every snapshot taken
-        // until then (after a rebase that is every body-less collider, each capture's largest part), and after a restore
-        // the restored snapshot's until a rebuild.
         Built[] _changedCapture = Array.Empty<Built>();
 
-        // The bodies' transforms as the last capture saw them (PhysicsSnapshot.Poses), shared by the captures after it while
-        // none moves (a body at rest, the static ones), and after a restore the restored snapshot's.
         Pose[] _posesCapture;
 
         Pose[] CapturePoses()
@@ -1999,11 +1798,9 @@ namespace IGTAP.EngineSim
             for (int i = 0; i < _bodyList.Length; i++)
                 if (_bodyList[i] != _player) s.Poses[i].WriteTo(_bodyList[i].Rigidbody.transform);
             _posesCapture = s.Poses;
-            // Not provably unchanged: the restored bodies' fixture lists (and the layers below) may differ from the lists'.
             _moversDirty = true;
             foreach (ColliderState c in _player.Colliders) { c.Fixtures.Clear(); c.FixturesAs = null; }
             for (b2Fixture f = _player.Body.GetFixtureList(); f != null; f = f.GetNext()) ((ColliderState)f.UserData).Fixtures.Add(f);
-            // _changed only grows: every collider the snapshot lists is in it, and the ones it doesn't list were pristine then.
             foreach (Built saved in s.Changed) saved.State.Restoring = saved;
             foreach (ColliderState c in _changed)
             {
@@ -2013,7 +1810,6 @@ namespace IGTAP.EngineSim
                 c.BuiltScale = saved?.Scale ?? c.PristineScale;
                 c.Layer = saved?.Layer ?? c.PristineLayer;
                 c.ContactMask = saved?.Mask ?? c.PristineMask;
-                // The same array restored again (or the one its fixtures were captured into): nothing to compare.
                 if (ReferenceEquals(fixtures, c.FixturesAs)) continue;
                 c.FixturesAs = fixtures;
                 if (Holds(c.Fixtures, fixtures)) continue;
@@ -2021,8 +1817,6 @@ namespace IGTAP.EngineSim
                 c.Fixtures.AddRange(fixtures);
                 if ((c.Body?.Body ?? _ground).Type() == b2BodyType.Static) RegridLater(c);
             }
-            // Every collider now holds what the snapshot lists (or its pristine fixtures): a capture before the next rebuild
-            // holds the same.
             _changedCapture = s.Changed;
             foreach (BodyState b in _movedStatic)
                 foreach (ColliderState c in b.Colliders) RegridLater(c);
@@ -2069,8 +1863,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        // --- SnapshotStore: binds a persisted snapshot to this world's physics objects (Runtime/SnapshotStore.cs). ---
-
         internal static readonly Type ColliderStateType = typeof(ColliderState);
 
         internal int IdOfState(object state) => ((ColliderState)state).Id;
@@ -2084,7 +1876,6 @@ namespace IGTAP.EngineSim
 
         internal IEnumerable<int> ChangedIdsOf(object snapshot) => ((PhysicsSnapshot)snapshot).Changed.Select(c => c.State.Id);
 
-        /// <summary>Which collider a fixture belongs to and where in its fixture list (its load fixtures' if it is gone).</summary>
         internal (int owner, int index) LocateFixture(b2Fixture fixture)
         {
             Settle();
@@ -2111,10 +1902,6 @@ namespace IGTAP.EngineSim
                 : throw new KeyNotFoundException("no body " + rigidbodyId + " in this world export");
         }
 
-        /// <summary>
-        /// A restored snapshot's changed colliders that this world never rebuilt: line them up as Restore's loop would have
-        /// (their fixtures as the snapshot has them, what this world loaded as the pristine ones).
-        /// </summary>
         internal void AdoptChanged(object snapshot)
         {
             Settle();
@@ -2123,7 +1910,6 @@ namespace IGTAP.EngineSim
             {
                 ColliderState state = saved.State;
                 if (state.Tracked) continue;
-                // It changed first in the snapshot's world; what this world loaded takes the pristine fixtures' place.
                 state.Tracked = true;
                 _changed.Add(state);
                 state.Fixtures.Clear();
@@ -2141,12 +1927,6 @@ namespace IGTAP.EngineSim
             _changedCapture = null;
         }
 
-        /// <summary>
-        /// The physics state a step reads, bit for bit, as a digest that is the same in every process for the same state (the
-        /// determinism check, Cli/Determinism.cs): the Box2D world (<see cref="b2World.StateDigest"/>, a fixture named by its
-        /// collider, its place in the collider's fixtures and its shape), each collider's fixtures, layer, contact mask and
-        /// built scale, the bodies' pending syncs, the touching pairs in order and the rebase flags.
-        /// </summary>
         internal ulong StateDigest(System.Text.StringBuilder log = null)
         {
             Settle();
@@ -2188,8 +1968,7 @@ namespace IGTAP.EngineSim
             return ((long)s.Id << 40) ^ ((long)(s.Fixtures.IndexOf(f) + 1) << 32) ^ (uint)FingerprintOf(f);
         }
 
-        /// <summary>What a fixture's shape is: a restored fixture must have been built from the same geometry. Deterministic
-        /// (a plain mix): a state file outlives the process that wrote it.</summary>
+        // Deterministic plain mix: a state file outlives the process that wrote it.
         public static int FingerprintOf(b2Fixture fixture)
         {
             ulong h = SnapshotStore.HashSeed;

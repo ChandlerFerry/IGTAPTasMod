@@ -12,18 +12,10 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// "What can I do here?" (the TAS editor's Techs here, enginesim/README.md "Techs"): the
-    /// techs whose key window works from a route's input tick N. The contacts along a few continuations from N (the route's
-    /// own, the stick left, at rest or right, jump held or not) place each tech's key window (<see cref="TechGrafts.Compose"/>),
-    /// in each direction it can take; one works when its key contact happens where its demo had it. Suggestions, not judged.
-    /// </summary>
     static class Techs
     {
-        /// <summary>Input ticks each continuation plays past N, and the contacts along it that place windows.</summary>
         const int Ahead = 75, MaxContacts = 8;
-        /// <summary>A steep freeze aim's x with y at full tilt (16.7°, 19.3° from vertical): from 0.4 up (0.4f is just over it)
-        /// MacroEngine.ControllerAxis snaps x to full tilt, the 45° diagonal.</summary>
+        // From 0.4 up MacroEngine.ControllerAxis snaps x to full tilt (the 45 degree diagonal); 0.4f is just over the steep aim.
         static readonly float[] Steep = { .30f, .35f };
         static readonly (float x, float y)[] Compass = { (0f, 1f), (1f, 1f), (1f, 0f), (1f, -1f), (0f, -1f), (-1f, -1f), (-1f, 0f), (-1f, 1f) };
         static readonly (float x, float y)[] Sideways = { (-1f, 0f), (1f, 0f) };
@@ -38,7 +30,6 @@ namespace IGTAP.EngineSim.Cli
             ContactLog.Mark _mark;
             public WorldPos Start;
             public bool Ground, Wall;
-            /// <summary>The last <see cref="Play"/>'s steps, for the tech checks.</summary>
             public readonly TechSteps Record;
 
             public Runner(Func<Simulation> create)
@@ -50,7 +41,6 @@ namespace IGTAP.EngineSim.Cli
                 Record.Attach();
             }
 
-            /// <summary>The state and the contact detection after the first <paramref name="n"/> of <paramref name="inputs"/>.</summary>
             public void Prime(List<InputTick> inputs, int n)
             {
                 if (_at != null) return;
@@ -67,7 +57,6 @@ namespace IGTAP.EngineSim.Cli
                     Wall = _sim.Player.OnWall;
                     return false;
                 }, extraTicks: 1000000, onStep: _ => Step());
-                // A route that dies or finishes before N (a session held after its death) has no player there to try techs from.
                 if (_at == null)
                     throw new RunEndedException($"the run ends on input tick {reached}, before input tick {n} ("
                         + (r.Finished ? "the finish" : r.EndReason ?? "it stops") + "): hold a tick before that");
@@ -79,10 +68,6 @@ namespace IGTAP.EngineSim.Cli
                 _log.Step(_sim);
             }
 
-            /// <summary><paramref name="inputs"/> played from input tick N to their end (not the idle steps the engine runs after
-            /// them): the contacts from there, the input tick it died on (-1: none), the player's world position after every physics
-            /// step (the first: at N), the path's step where input tick <paramref name="mark"/> starts, and the speed at the end.
-            /// Its steps are in <see cref="Record"/>.</summary>
             public (List<(int tick, Contact kind)> contacts, int died, List<float> path, int marked, float speed) Play(List<InputTick> inputs, int mark = -1)
             {
                 _log.Load(_mark);
@@ -111,7 +96,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>The route doesn't reach the held input tick offline: a plain message for the studio, no stack.</summary>
         sealed class RunEndedException : Exception
         {
             public RunEndedException(string message) : base(message) { }
@@ -128,8 +112,6 @@ namespace IGTAP.EngineSim.Cli
 
         static string Label(float x, float y) => (y > 0f ? "U" : y < 0f ? "D" : "") + (x > 0f ? "R" : x < 0f ? "L" : "");
 
-        /// <summary>The window's directions: its first dash's stick (with the omnidash all 8, else left and right; a dash that
-        /// aims in the freeze turns the freeze stick instead, the diagonals also steep), else the side it was turned to.</summary>
         static IEnumerable<(string dir, float? angle, List<InputTick> ticks)> Aims(List<InputTick> g, int from, int side, Caps caps)
         {
             int d = -1;
@@ -155,8 +137,6 @@ namespace IGTAP.EngineSim.Cli
             return t;
         }
 
-        /// <summary>The route up to <paramref name="at"/>, then <see cref="Ahead"/> ticks of the stick at <paramref name="x"/> with
-        /// jump held or not (a press or release on the first where the button changes).</summary>
         static List<InputTick> Continue(List<InputTick> prefix, float x, bool held)
         {
             InputTick prev = prefix[prefix.Count - 1];
@@ -167,12 +147,6 @@ namespace IGTAP.EngineSim.Cli
             return c;
         }
 
-        /// <summary>
-        /// <c>techs --demos [tech ...] [--dump dir] [--tech-dir D]</c>: every tech's check (<see cref="TechChecks"/>) on its own
-        /// demos and its labs' ghosts: each demo replayed from its start, a line with where its tech happened ("-": nowhere) and
-        /// what the overlay's detectors saw. A demo should show its tech and a ghost (built to miss it) mostly shouldn't.
-        /// <c>--dump</c> writes each run's recorded steps (<see cref="TechSteps"/>) as dir/&lt;demo&gt;.steps.json.
-        /// </summary>
         static int Demos(string[] args)
         {
             var only = new HashSet<string>(args.TakeWhile(a => !a.StartsWith("--", StringComparison.Ordinal)), StringComparer.Ordinal);
@@ -194,8 +168,7 @@ namespace IGTAP.EngineSim.Cli
                         var record = new TechSteps(sim);
                         record.Attach();
                         record.Clear();
-                        // Past a lab's finish box too: what the tech does on the finish tick shows a step later (a box's buy
-                        // trigger stay comes the step after the touch).
+                        // Past a lab's finish box too: a box's buy trigger stay comes the step after the touch.
                         sim.TargetFinish = default;
                         RunResult run = sim.Run(inputs, extraTicks: 200, onStep: _ => record.Step());
                         record.End(run);
@@ -245,7 +218,6 @@ namespace IGTAP.EngineSim.Cli
                     continuations.Add(Continue(prefix, x, held));
 
             TechGrafts mined = TechGrafts.Load(Path.GetDirectoryName(Path.GetFullPath(trace)), techDir: Solve.Option(args, "--tech-dir", (string)null));
-            // Only a tech whose happening can be checked in a run (TechChecks): a window that merely plays is not the tech.
             Dictionary<string, string> detectors = mined.Demos.GroupBy(d => d.Tech).ToDictionary(g => g.Key, g => g.Select(d => d.Detector).FirstOrDefault(d => d != null));
             ILookup<Contact, TechPattern> keys = mined.Patterns.Where(p => p.Key && !p.Resets && p.Kind != Contact.Died && p.Requires.IsSubsetOf(caps)
                     && TechChecks.Checkable(p.Tech, detectors.GetValueOrDefault(p.Tech)))
@@ -261,7 +233,6 @@ namespace IGTAP.EngineSim.Cli
             }
             try
             {
-                // Each worker replays the route to N once (a snapshot holds its own world); the continuations' contacts place the jobs.
                 void Parallel<T>(IReadOnlyList<T> items, Action<Runner, T> work)
                 {
                     int next = -1;
@@ -294,7 +265,6 @@ namespace IGTAP.EngineSim.Cli
                 for (int c = 0; c < continuations.Count; c++)
                 {
                     List<(int tick, Contact kind)> here = contacts[c];
-                    // Where the player already is counts: standing on the ground, clinging to a wall.
                     if (first.Ground) here.Insert(0, (at, Contact.Landed));
                     if (first.Wall) here.Insert(0, (at, Contact.TouchedWall));
                     foreach ((int tick, Contact kind) in here.Distinct())
@@ -310,7 +280,6 @@ namespace IGTAP.EngineSim.Cli
                                             Key = p.Tech + "|" + dir + "|" + angle });
                                 }
                 }
-                // Soonest first: a direction found once is skipped where it would start later.
                 jobs = jobs.OrderBy(j => j.Start).ToList();
                 var found = new Dictionary<string, int>();
                 int tried = 0, works = 0;
@@ -320,11 +289,8 @@ namespace IGTAP.EngineSim.Cli
                     Interlocked.Increment(ref tried);
                     var (hits, died, path, lead, speed) = j.Play(job.Inputs, at + job.Start);
                     if (!hits.Any(h => h.kind == job.Pattern.Kind && h.tick >= job.Placed - 1 && h.tick <= job.Placed + 2)) return;
-                    // A death before the window's own inputs end is the tech failing (one in its coast is shown, marked).
                     int end = job.Inputs.Count - TechGrafts.GraftCoast;
                     if (died >= 0 && died < end) return;
-                    // The tech itself has to happen between the window's start and its last input: its key contact only
-                    // places the window (a kb wall clip's is the wall coming ahead, which a turn alone makes).
                     if (TechChecks.Find(job.Pattern.Tech, detectors.GetValueOrDefault(job.Pattern.Tech), j.Record,
                         TechChecks.StepAt(j.Record, at + job.Start), TechChecks.StepAt(j.Record, end + 1) - 1) < 0) return;
                     lock (found)

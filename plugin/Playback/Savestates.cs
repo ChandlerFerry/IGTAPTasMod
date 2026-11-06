@@ -10,11 +10,6 @@ using UnityEngine;
 
 namespace IGTAPTasMod
 {
-    /// <summary>
-    /// Where a savestate can be restored: its scene and snapshot schema. The game build it was captured on (version and
-    /// Assembly-CSharp hash) is kept as a record only: a Steam update leaves a savestate restorable as long as every field it
-    /// holds is still on the player (<see cref="SavestateService.Restore"/> checks them).
-    /// </summary>
     [Serializable]
     public sealed class CompatibilityFingerprint
     {
@@ -64,20 +59,15 @@ namespace IGTAPTasMod
         public float scaleX = 1f;
         public float scaleY = 1f;
         public float scaleZ = 1f;
-        /// <summary>The FloatingOrigin at capture: a restore moves the position by the origin's change since (world frame kept).</summary>
         public bool hasOrigin;
         public float originX;
         public float originY;
-        /// <summary>cameraMover.camSize (the zoom a camSizeTrigger sets and nothing resets); 0 in savestates from before it.</summary>
         public float camSize;
-        /// <summary>Rebase the world around this world point after the restore (a placed savestate's floating-origin test).</summary>
         public bool hasRebaseAt;
         public float rebaseAtX;
         public float rebaseAtY;
         public Dictionary<string, SnapshotValue> movementFields = new Dictionary<string, SnapshotValue>();
         public Dictionary<string, SnapshotValue> bodyFields = new Dictionary<string, SnapshotValue>();
-        /// <summary>Whether the machine's PlayerPrefs held "OpenA2Door" (<see cref="SavestateService.SetAtomDoorKey"/>); a restore
-        /// puts it back. Null in savestates from before it: a restore leaves the key, a new game's start takes it as absent.</summary>
         public bool? openA2Door;
     }
 
@@ -103,12 +93,7 @@ namespace IGTAPTasMod
 
         internal const string AtomDoorKey = "OpenA2Door";
 
-        /// <summary>
-        /// The machine's PlayerPrefs "OpenA2Door" (RULES.md, exception 13): the atom box's Start opens the atom room's
-        /// door when it is set (upgradeBox.cs:264), its first buy opens the door only when it isn't (:644) and every buy sets it
-        /// (:648). It outlives saves (only the pause menu's delete save clears it, pauseMenuScript.cs:360), so the TAS holds it
-        /// as part of the state: a new game starts without it, a turbo snapshot and a savestate put theirs back.
-        /// </summary>
+        // The machine's OpenA2Door key outlives saves, so the TAS holds it as state (exception 13; upgradeBox.cs:264,644,648).
         internal static void SetAtomDoorKey(bool on)
         {
             if (PlayerPrefs.HasKey(AtomDoorKey) == on) return;
@@ -182,11 +167,7 @@ namespace IGTAPTasMod
                 body.simulated = ReadBool(savestate.bodyFields, "simulated", true);
             }
             Physics2D.SyncTransforms();
-            // A savestate holds only the player. What it replaces may still have a death's respawn queued (onDeath's 0.6 s
-            // Invoke, which would teleport the player back to the checkpoint; turbo's restore cancels every invoke, but a blanket
-            // CancelInvoke here would drop a wall jump's reEnableNormalCollider) and a camZoneScript holding the camera (only
-            // its OnTriggerExit2D gives it back). The camera follows the player, as the zone's exit leaves it; a zone the
-            // restore lands in takes it again on the next physics step.
+            // CancelInvoke only deathRespawn: blanket drops a wall jump's reEnableNormalCollider; camZoneScript holds the camera.
             movement.CancelInvoke("deathRespawn");
             if (movement.cam != null)
             {
@@ -204,17 +185,11 @@ namespace IGTAPTasMod
             CameraPlayerSetOffset = AccessTools.Field(typeof(cameraMover), "playerSetOffset"),
             MovementDashDirection = AccessTools.Field(typeof(Movement), "dashDirection");
 
-        /// <summary>
-        /// Puts the camera where cameraMover's follow settles on the player (no lookahead, the player's set offset, the target
-        /// zoom), so a restore doesn't pan across the map from where the camera was. The set offset is Movement.FixedUpdate's
-        /// fall look-down from the speed now: the one the last tick before a restore left points the camera up to 1180 low.
-        /// </summary>
         internal static void SnapCamera(Vector3 player, bool lookDown = true)
         {
             Camera cam = Camera.main;
             cameraMover mover = cam != null ? cam.GetComponent<cameraMover>() : null;
             if (mover == null) return;
-            // A turbo snapshot restores the camera's own set offset (lookDown false); a savestate has none.
             Vector3 offset = !lookDown && CameraPlayerSetOffset != null ? (Vector3)CameraPlayerSetOffset.GetValue(mover) : mover.defaultoffset;
             if (lookDown && CameraPlayerScript?.GetValue(mover) is Movement m)
             {
@@ -240,7 +215,6 @@ namespace IGTAPTasMod
             };
         }
 
-        // A member's FieldInfo or PropertyInfo by the target's type and its name: a tech overlay captures a state every tick.
         private static readonly Dictionary<(Type, string), (FieldInfo field, PropertyInfo property)> Members =
             new Dictionary<(Type, string), (FieldInfo, PropertyInfo)>();
 
@@ -267,14 +241,12 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>Drops every field a capture doesn't take (a shared savestate's unlocks, anything else hand-added).</summary>
         internal static void KeepCapturedFields(Savestate savestate)
         {
             foreach (string key in savestate.movementFields.Keys.Where(k => Array.IndexOf(MovementFieldNames, k) < 0).ToList()) savestate.movementFields.Remove(key);
             foreach (string key in savestate.bodyFields.Keys.Where(k => Array.IndexOf(BodyFieldNames, k) < 0).ToList()) savestate.bodyFields.Remove(key);
         }
 
-        /// <summary>An unlock (not a per-jump count like airDashesLeft): savestates capture none, but one may carry them (a Full-TAS savestate start).</summary>
         public static bool IsUnlockField(string name)
         {
             return name.EndsWith("Unlocked", StringComparison.Ordinal) || name == "maxAirDashes" || name == "maxAirJumps";
@@ -332,14 +304,8 @@ namespace IGTAPTasMod
             return values != null && values.TryGetValue(key, out value) && bool.TryParse(value.value, out parsed) ? parsed : fallback;
         }
 
-        /// <summary>The game's Assembly-CSharp hash (a shared route plays the same only on the same build).</summary>
         internal static string GameAssemblyHash() { return HashAssembly(typeof(Movement).Assembly); }
 
-        /// <summary>
-        /// The first field a savestate holds that this game build can't take back (a renamed or removed member, or a value its
-        /// type no longer decodes), or null. A restore writes the fields by name, so without this a game update that changed one
-        /// would restore the player only in part, silently.
-        /// </summary>
         static string UnrestorableField(Type type, Dictionary<string, SnapshotValue> values)
         {
             if (values == null) return null;

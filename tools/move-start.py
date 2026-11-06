@@ -1,12 +1,4 @@
-"""Move a courses.json target's start to the in-game checkpoint nearest a point.
-
-    python tools/move-start.py bonus8 20208 13038          # dry run: prints the checkpoint and the change
-    python tools/move-start.py bonus8 20208 13038 --write  # writes courses.json (keeps courses.json.bak)
-
-The target is courses.json's name or id. Checkpoints come from the studio's cached maps (config enginesim/map-*.json
-markers, the spawn's centre); courses.json stores the checkpoint itself, 10 u above it (bonus5: marker 4525, start
-4535.015).
-"""
+"""Usage: move-start.py <target> <x> <y> [--write]"""
 import glob, json, shutil, sys
 from gamepaths import CONFIG
 

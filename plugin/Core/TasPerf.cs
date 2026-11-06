@@ -6,9 +6,6 @@ using UnityEngine;
 
 namespace IGTAPTasMod
 {
-    // GET /api/perf: a ring of the last frames, each split into the pace wait, the plugin's Update (the web pump on its own),
-    // its OnGUI (by overlay section) and the rest (the game's scripts, rendering, Unity's cap), with the bytes each allocated;
-    // skin is the TAS skin's own work (its tick and its pre-render placement), part of the rest.
     public sealed partial class TasPlugin
     {
         struct PerfFrame { public float dt, clock, wait, update, pump, gui, skin; public int gc; public bool ticked; public long allocUpdate, allocGui, allocRest; }
@@ -29,7 +26,6 @@ namespace IGTAPTasMod
 
         static double PerfMs(Stopwatch clock) { return clock.Elapsed.TotalMilliseconds; }
 
-        /// <summary>At Update's start: closes the frame before and starts this one.</summary>
         void PerfFrameStart()
         {
             int gc = GC.CollectionCount(0);
@@ -59,7 +55,6 @@ namespace IGTAPTasMod
         void PerfGuiStart() { _perfNow.allocRest += PerfAlloc(); _perfGuiStart = _perfSectionMark = PerfMs(_perfClock); }
         void PerfGuiEnd() { _perfNow.gui += (float)(PerfMs(_perfClock) - _perfGuiStart); _perfNow.allocGui += PerfAlloc(); }
 
-        /// <summary>The OnGUI time since the last section ends to section <paramref name="i"/> (PerfSectionNames).</summary>
         void PerfSection(int i)
         {
             double now = PerfMs(_perfClock);
@@ -70,7 +65,6 @@ namespace IGTAPTasMod
             _perfSectionMark = now;
         }
 
-        /// <summary>Heap growth since the last call: what ran between allocated (0 across a collection).</summary>
         long PerfAlloc()
         {
             long heap = GC.GetTotalMemory(false), grew = Math.Max(0, heap - _perfHeap);

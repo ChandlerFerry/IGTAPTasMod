@@ -8,9 +8,6 @@ using IGTAPTasMod;
 
 namespace IGTAP.EngineSim.Cli.Runs
 {
-    // Edits the economy steps of the best plan and keeps an edit only when the built run gets better. Each worker thread owns a
-    // Builder and its own build of the best, so a candidate rebuilds from its first changed goal only. Batches are evaluated in
-    // parallel and resolved in move order, so the same start gives the same result.
     sealed class Improver
     {
         const int MissesPerPass = 8, NextSteps = 3, FillBack = 3;
@@ -21,7 +18,6 @@ namespace IGTAP.EngineSim.Cli.Runs
         readonly SegmentFacts _facts;
         readonly int _threads;
         public int MaxSearchesPerBuild = 3;
-        // RunSegment's forced search, the searches its rebuild may make after it and the most each of those may take.
         public long SegmentBudget = Builder.Budgets[1], RebuildBudget = Builder.Budgets[^1];
         public int SegmentSearches = 25;
         public Built Best { get; private set; }
@@ -83,7 +79,6 @@ namespace IGTAP.EngineSim.Cli.Runs
                     Log("the start's straight replay falls short of its build: starting from its harvest");
                     Accept(coord.Do(b => coord.Mine = b.Harvest(plan, inputs, "harvest")).Result, "start (harvest)", coord, workers);
                 }
-                // Nothing left in the economy: the movement polish searches each goal's segment again; a gain opens new moves.
                 while (!stop() && (Pass(coord, workers, stop) != Outcome.Converged || Polish(coord, workers, stop))) { }
                 Event?.Invoke(new { type = "plan", converged = !stop(), reached = Best.Reached, of = Best.Plan.Count, live = Best.Live, waits = Best.Waits.Sum(w => w.Ticks) });
             }
@@ -93,17 +88,13 @@ namespace IGTAP.EngineSim.Cli.Runs
             }
         }
 
-        // One goal's step searched again from its real start with a long budget, kept when the whole run gets faster. untilStop (the
-        // studio's stretch): round after round until Stop, each round that gains nothing 4x the last's budget and going on a quarter of
-        // it without a better find (the search is deterministic: the same budget finds the same again); a gain starts over at
-        // SegmentBudget.
         public void RunSegment(RunPlan plan, List<InputTick> inputs, int goal, Func<bool> stop, bool untilStop = false)
         {
             using var coord = new Worker(() => new Builder(_run, _lib, _search, _facts, searchMisses: true) { Log = Log });
             Built start = coord.Do(b => coord.Mine = b.Harvest(plan, inputs, "harvest")).Result;
             if (!Accept(start, "start", coord, Array.Empty<Worker>())) return;
             if (goal >= start.Reached) { Log($"segment: the best doesn't reach goal {goal + 1} yet"); return; }
-            // ponytail: 4x a round, no cap; a round past a few billion ticks takes hours, Stop ends it.
+            // shortcut: budget 4x a round with no cap; a round past a few billion ticks takes hours, Stop ends it.
             for (long budget = SegmentBudget; !stop();)
             {
                 Built c = coord.Do(b =>
@@ -128,20 +119,14 @@ namespace IGTAP.EngineSim.Cli.Runs
             Event?.Invoke(new { type = "plan", converged = !untilStop, reached = Best.Reached, of = Best.Plan.Count, live = Best.Live, waits = Best.Waits.Sum(w => w.Ticks) });
         }
 
-        // (goal id and span, inputs hash through the window): a window's search depends only on its start and its own inputs (the
-        // seed), so a gain later in the run doesn't search the windows before it again.
         HashSet<(string, ulong)> _polished = new HashSet<(string, ulong)>();
-        // The search budget a polish pass uses: Budgets[0], then Budgets[1] once a whole pass at it found nothing.
         int _polishLevel;
 
-        // A goal alone, then windows of goals scored where they reach their last: a way that reaches a goal later can be faster on
-        // (speed carried into the next goals), which a search for each goal alone never keeps (VMAN's down-dash chain, goals 13-18).
-        // ponytail: fixed spans; a 5-goal window takes 5x a goal's budget. Add longer spans if a run's polish stalls on chains.
+        // shortcut: fixed spans; a 5-goal window takes 5x a goal budget, add longer spans if a run polish stalls on chains.
         static readonly int[] Spans = { 1, 2, 3, 5 };
 
         internal static (string, ulong) PolishKey(Built b, int j, int span = 1) => (span == 1 ? b.Plan.Ids[j] : b.Plan.Ids[j] + "+" + span, SnapshotIndex.Hash(b.Inputs, b.StepEnd[j + span - 1]));
 
-        // Goals j to j+span-1's own inputs in a build: from the goal before them to the last.
         static List<InputTick> Own(Built b, int j, int span = 1)
         {
             if (b == null || j + span > b.Reached) return null;
@@ -149,16 +134,11 @@ namespace IGTAP.EngineSim.Cli.Runs
             return b.Inputs.GetRange(from, b.StepEnd[j + span - 1] - from);
         }
 
-        // The windows not yet polished on this best, each span in turn, the longest first within it (waits left out): the most time
-        // to win.
         internal static List<(int j, int span)> PolishOrder(Built b, HashSet<(string, ulong)> tried) => Spans.SelectMany(span => Enumerable.Range(0, Math.Max(0, b.Reached - span + 1))
             .Where(j => !tried.Contains(PolishKey(b, j, span)))
             .OrderByDescending(j => b.Physics[j + span - 1] - (j == 0 ? 0 : b.Physics[j - 1]) - b.Waits.Where(w => w.Goal >= j && w.Goal < j + span).Sum(w => w.Ticks)).ThenBy(j => j)
             .Select(j => (j, span))).ToList();
 
-        // Each window searched again from its real start (RunSegment's forced search, over its goals) and the run rebuilt after it,
-        // kept when the whole run's straight replay is better. True on a gain. A build allowed no searches (MaxSearchesPerBuild 0)
-        // polishes nothing.
         bool Polish(Worker coord, Worker[] workers, Func<bool> stop)
         {
             List<(int j, int span)> windows = MaxSearchesPerBuild == 0 ? new List<(int, int)>() : PolishOrder(Best, _polished);
@@ -176,11 +156,8 @@ namespace IGTAP.EngineSim.Cli.Runs
                 Event?.Invoke(new { type = "status", polish = j + 1, span, id = plan.Ids[j], best = Best.Live, reached = Best.Reached });
                 Built c = coord.Do(b =>
                 {
-                    // ponytail: one search per window and a rebuild from the library alone; the best's own way on is TailRejoin's.
-                    // Searching the later goals again (up to 25 x 20M, minutes a goal) never won a VMAN polish; give the rebuild
-                    // searches back (MaxSearches) if a run's later goals have nothing in the library to rebuild from.
+                    // shortcut: one search per window, rebuild from the library alone; restore MaxSearches if later goals lack library.
                     (b.ForceSearchAt, b.ForceSpan, b.ForceBudget, b.MaxSearches, b.MaxBudget, b.ForceSeed) = (j, span, budget, 1, budget, Own(coord.Mine, j, span));
-                    // A polish search is for a faster way, not the first: it goes on a quarter of its budget without a better find.
                     _search.Stall = Math.Max(_search.Stall, budget / 4);
                     try { return b.Build(plan, coord.Mine, j); }
                     finally
@@ -189,7 +166,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                         _search.Stall = SegmentSearch.DefaultStall;
                     }
                 }).Result;
-                // Each search's 16 solvers are garbage now: server GC would let them pile up toward its hard limit.
+                // Server GC would let the finished searches' solvers pile up toward its hard limit; collect now.
                 GC.Collect();
                 Log($"polish: {what}: {Describe(c)} against {Describe(Best)}" + (c.Reached > last ? $" (goal {last + 1} at tick {c.Physics[last]}, the best's at {Best.Physics[last]})" : ""));
                 if (!stop() && c.Better(Best) && Accept(c, $"{what} polished", coord, workers)) return true;
@@ -202,12 +179,9 @@ namespace IGTAP.EngineSim.Cli.Runs
             return true;
         }
 
-        // ponytail: a fixed few minutes a rejoin; raise it if polished segments that reach their goal sooner still lose the way on.
+        // shortcut: fixed few minutes a rejoin; raise it if polished segments that reach their goal sooner still lose the way on.
         static readonly TimeSpan TailBudget = TimeSpan.FromMinutes(3);
 
-        // A rebuild after a searched segment refills the later goals from the library (the first segment that replays near the new
-        // state), and that was slower every time (VMAN's polish: 44.0-54.4 s against 43.94). A segment that reaches its goal sooner
-        // keeps the best's own inputs from that goal on instead, repaired by rejoin (Rejoin.cs) where the new state breaks them.
         bool TailRejoin(Built c, int j, Worker coord, Worker[] workers, Func<bool> stop)
         {
             Built best = Best;
@@ -224,7 +198,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             return !stop() && r.Better(best) && Accept(r, $"goal {j + 1} {plan.Labels[j]} polished, the best's way on rejoined", coord, workers);
         }
 
-        // A candidate is kept only as its straight replay from the run's start plays it (Builder.Verify).
         bool Accept(Built b, string what, Worker coord, Worker[] workers)
         {
             int claimed = b.Reached;
@@ -250,12 +223,8 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         Outcome Pass(Worker coord, Worker[] workers, Func<bool> stop)
         {
-            // The same best has the same moves and builds: a pass that only searched misses goes on with the next ones. A segment
-            // a search filed reaches the later misses as they're built.
             if (Best.Failure?.Kind == "miss" && _triedMisses.Add(Key(Best.Plan) + "#best"))
             {
-                // A best that stops at a miss (its searched build ran out of searches) is built on as the start is, before any move
-                // gets the chance to drop the goal it hasn't searched yet.
                 Built built = coord.Do(b => b.Build(Best.Plan, coord.Mine)).Result;
                 if (built.Better(Best) && Accept(built, $"goal {Best.Failure.Goal + 1} {Best.Failure.Label} searched", coord, workers)) return Outcome.Gained;
             }
@@ -310,11 +279,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             (_missesOf, _misses) = (Best, misses);
         }
 
-        // How far ahead of the best a candidate that stopped at a miss is, at the last goal both have (a goal the move put in isn't
-        // the best's). A miss no later than an incomplete best within the goals its failure's moves edit is the only way past
-        // that failure: searched first, the goals the best reached last first (where the player stands: short searches; a lap of a
-        // course left long ago has no distance to steer by).
-        // ponytail: recency stands in for the distance to the goal; a distance field per miss if it misorders.
         long? Ahead(Built c)
         {
             const long Frontier = 1L << 40;
@@ -332,10 +296,6 @@ namespace IGTAP.EngineSim.Cli.Runs
         const int TopProducers = 6, MaxLaps = 12, ResetBack = 8, CoverCap = 120_000;
         Built _incomeOf;
 
-        // A no-income failure is met by what makes its currency where the best stands before that goal (Income: the economy drive's
-        // projection), ranked by the currency each adds per tick it costs: a producer's laps (as many as pay the shortfall, and one
-        // alone) or its buy, put in before the goal. These few are built, and their misses searched, before the generic moves (a
-        // pass over those is thousands of builds).
         bool IncomeFirst(Worker coord, Worker[] workers, Func<bool> stop)
         {
             if (Best.Complete || Best.Failure?.Kind != "no-income" || workers.Length == 0) return false;
@@ -349,7 +309,6 @@ namespace IGTAP.EngineSim.Cli.Runs
                 if (mine == null || mine.Reached < f || !mine.Plan.Same(p)) return null;
                 SimSnapshot Before(int g) => g == 0 ? b.Sim.Start : mine.States[g - 1];
                 if (!(Income.Short(b.Sim, Before(f), boxes) is var (currency, by))) return null;
-                // The goal whose step cut the currency's income (an atom buy resets the courses that paid it), within ResetBack goals.
                 int cut = -1;
                 if (Income.Idle(b.Sim, Before(f), currency) <= 0)
                     for (int g = f - 1; g >= Math.Max(0, f - ResetBack); g--)
@@ -362,10 +321,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             var seen = new HashSet<string>();
             var moves = new List<Move>();
             void Add(string what, RunPlan q) { if (seen.Add(Key(q))) moves.Add(new Move(what, q)); }
-            // Bought while the income still came: before the step that cut it.
             if (cut >= 0 && RunGoals.Editable(p.Labels[f])) Add($"goal {f + 1} {p.Labels[f]} before goal {cut + 1} {p.Labels[cut]}, which cut its {cur} income", p.Move(f, cut));
-            // A producer that would take longer than CoverCap ticks to pay the shortfall only climbs by slivers of the price
-            // (ZipEscape%'s buyteleporters: 2E+07 GreenPower against Course 8's 105 a lap): it needs an economy, not a move.
             var payable = producers.Where(pr => pr.Gain > 0 && shortBy / pr.Gain * Math.Max(pr.Ticks, Income.Window) <= CoverCap).ToList();
             if (payable.Count < producers.Count)
                 Log($"income: {producers.Count - payable.Count} producer(s) of {cur} can't pay {shortBy:G4} within {CoverCap} ticks" + (payable.Count == 0 ? $": goal {f + 1} {p.Labels[f]} needs a {cur} economy built before it" : ""));
@@ -393,7 +349,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             {
                 if (stop()) return false;
                 if (got[k].Failure?.Kind != "miss" || !_triedMisses.Add(Key(moves[k]))) continue;
-                // A new lap or buy has no segment yet: searched (up to 80M ticks) for each goal the move put in, and a few more.
                 Built c = coord.Do(b =>
                 {
                     (b.MaxSearches, b.MaxBudget) = (MaxSearchesPerBuild + moves[k].Plan.Count - p.Count, Builder.Budgets[1]);
@@ -428,18 +383,14 @@ namespace IGTAP.EngineSim.Cli.Runs
             {
                 int f = best.Failure.Goal;
                 if (RunGoals.Editable(p.Labels[f])) Add($"drop goal {f + 1} {p.Labels[f]} ({best.Failure.Kind})", p.RemoveAt(f));
-                // What a goal lacks is often set by a step before it (a buy-max touch spends all it holds the first tick one level
-                // is paid for): a lap or a buy before that step makes it wait, and buy more at once.
                 for (int back = 0; back <= FillBack && f - back >= 0; back++) Fill(f - back, $"{best.Failure.Kind} at goal {f + 1}");
             }
             foreach (Wait w in best.Waits.OrderByDescending(w => w.Ticks).ThenBy(w => w.Goal))
             {
-                // A shortfall shows at a later buy than the step that caused it: fill a few steps back too.
                 for (int back = 0; back <= FillBack && w.Goal - back >= 0; back++) Fill(w.Goal - back, $"goal {w.Goal + 1}'s {w.Ticks}-tick wait");
                 for (int h = w.Goal + 1, taken = 0; h < best.Reached && taken < NextSteps; h++)
                     if (RunGoals.Editable(p.Labels[h])) { Add($"goal {h + 1} {p.Labels[h]} ahead of goal {w.Goal + 1}'s wait", p.Move(h, w.Goal)); taken++; }
             }
-            // A class without major techs rebuilds every step that still holds a pause (a start taken from the major best).
             if (Glitches.NoMajors(_run.Class))
                 for (int j = 0; j < best.Reached; j++)
                 {

@@ -19,7 +19,7 @@
   </ItemGroup>
 
   <Target Name="MonoFloatSemantics" AfterTargets="CoreCompile" BeforeTargets="CopyFilesToOutputDirectory">
-    <!-- Prep's own output, wherever -o or the configuration put it (a clean checkout has no bin\Release copy to run). -->
+    <!-- Prep's path from MSBuild: -o builds (the pre-commit check) have no bin/Release copy. -->
     <MSBuild Projects="..\Prep\IGTAP.EngineSim.Prep.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
       <Output TaskParameter="TargetOutputs" PropertyName="PrepDll" />
     </MSBuild>

@@ -8,18 +8,11 @@ using System.Threading;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// Engine bench: enginebench &lt;trace&gt; &lt;route&gt; [--scale K] [--threads T] [--only full|restore|capture|branch|mt]
-    /// Fixed operation counts (so two builds do the same work in the same order and print comparable digests): full
-    /// replays, restores and captures at snapshots along the route, branch runs (restore + N ticks, like a plan edge;
-    /// 80-tick ones across the rebase), and branch runs on T threads.
-    /// </summary>
     static class EngineBench
     {
         public static int Run(string[] args)
         {
             string trace = args[0], route = args[1];
-            // Timing on a shared machine: stay ahead of the background searches for the few seconds a bench runs.
             try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.AboveNormal; } catch { }
             Thread.CurrentThread.Priority = ThreadPriority.Highest;
             int scale = Solve.Option(args, "--scale", 1);
@@ -141,7 +134,6 @@ namespace IGTAP.EngineSim.Cli
         static TimeSpan Cpu() => Process.GetCurrentProcess().TotalProcessorTime;
         static readonly StreamWriter Dump = Environment.GetEnvironmentVariable("IGTAP_BENCH_DUMP") is string d && d.Length > 0 ? new StreamWriter(d) { AutoFlush = true } : null;
 
-        /// <summary>A process-independent digest of the state after a run (HashCode and identity hashes vary per process).</summary>
         internal static int Digest(Simulation sim, RunResult r)
         {
             ulong h = 14695981039346656037UL;
@@ -161,7 +153,6 @@ namespace IGTAP.EngineSim.Cli
 
         static (long edges, long ticks, double seconds, int fingerprint) Branches(Simulation sim, SimSnapshot snap, List<InputTick> rest, int branch, int count)
         {
-            // A plan edge: the snapshot's inputs are rebased to 0, so the run's inputs are the edge.
             var rng = new Random(1);
             var clock = Stopwatch.StartNew();
             TimeSpan cpu0 = Cpu();

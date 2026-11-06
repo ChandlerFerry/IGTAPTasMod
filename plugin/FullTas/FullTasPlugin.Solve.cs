@@ -67,7 +67,6 @@ namespace IGTAPTasMod
             return offline;
         }
 
-        /// <summary>enginesim FullTas.Segments: a segment ends at each quick restart after the first input, the last one at the route's end.</summary>
         static List<int[]> ResetSegments(List<SolverTick> inputs, List<long> goalInputTicks, int reached)
         {
             var segments = new List<int[]>();
@@ -88,7 +87,6 @@ namespace IGTAPTasMod
             return segments;
         }
 
-        /// <summary>The solver's reach attempt furthest toward the goals (`fulltas/&lt;run&gt;.closest.json`), if it was searched for these goals.</summary>
         FullTasClosest FullTasClosestAttempt(string run, IList<string> labels)
         {
             string path = Path.Combine(EngineSimDir, "fulltas", run + ".closest.json");
@@ -111,11 +109,6 @@ namespace IGTAPTasMod
             return closest.inputs.Count > 0 && closest.goals.SequenceEqual(labels) ? closest : null;
         }
 
-        /// <summary>
-        /// Solve: `solve-run` builds what the run's best doesn't reach yet and improves the whole run until it converges or Stop
-        /// (docs/fulltas.md "Solving (v2)"); `stretch` (a goal's id) searches that goal's way again
-        /// (`--segment`), `class` (RULES.md 54) solves for that class. It leaves the game 2 cores by default.
-        /// </summary>
         void LaunchFullTasSolve(FullTasRunDef run, string trace, JObject body)
         {
             int threads = Number(body, "threads", 0);
@@ -147,8 +140,6 @@ namespace IGTAPTasMod
             FullTasLog(what + " (" + limit + ")");
         }
 
-        /// <summary>The offline best of every run in <c>run.seeds</c> (<c>enginesim/fulltas/&lt;seed&gt;.json</c>), once from each goal it reaches:
-        /// its inputs after goal k with its goals from k+1 on, so a window of this run reaching one of them can reuse the rest.</summary>
         void WriteFullTasRunSeeds(FullTasRunDef run, HashSet<string> labels, List<(bool stale, float time, string key, string json)> found)
         {
             foreach (string source in run.seeds ?? new List<string>())
@@ -169,7 +160,6 @@ namespace IGTAPTasMod
                     string name = source + (k == 0 ? " from its start" : " after goal " + k);
                     var json = new JObject { ["name"] = name, ["goals"] = new JArray(rest), ["capabilities"] = "none",
                         ["standing"] = false, ["restart"] = false, ["ticks"] = ticks };
-                    // From its start, the seed's player stood still where the run's trace starts: the solve walks there first.
                     if (k == 0 && File.Exists(FullTasTracePath(source))) json["trace"] = FullTasTracePath(source);
                     found.Add((false, 0f, "run|" + name, json.ToString(Formatting.None)));
                 }
@@ -221,10 +211,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>
-        /// Asks the solver to stop ("stop" on its stdin): it ends its window as its time limit would, writing the archive and the
-        /// explored map, and exits. Killed if it hasn't within 30 s.
-        /// </summary>
         void StopFullTasSolve()
         {
             if (_fullTasProcess == null || _fullTasKillAt != null) return;
@@ -298,7 +284,7 @@ namespace IGTAPTasMod
                     return;
                 }
                 _fullTasProcess.WaitForExit();
-                // WaitForExit waits for the last stdout and stderr lines (a crash's exception comes last): read them too.
+                // WaitForExit waits for the last stdout/stderr lines (a crash's exception comes last): read them too.
                 while (_fullTasOutput.TryDequeue(out string last)) FullTasSolveLine(last);
                 int code = _fullTasProcess.ExitCode;
                 if (code == 0) KillFullTasSolve(_fullTasKillAt != null ? "Stopped" : "Finished");
@@ -309,13 +295,6 @@ namespace IGTAPTasMod
 
         string FullTasSolvingGroup { get { return _fullTasProcess == null ? null : "fulltas-" + _fullTasSolveRun; } }
 
-        /// <summary>
-        /// A box drawn on a Full-TAS run's map, into the run definitions (data/runs/&lt;run&gt;.json; the engine's FullTasPaths reads them):
-        /// with <paramref name="goal"/> (a goal's id) that goal's "avoid", cut only while the run heads for it; with
-        /// <paramref name="after"/> its "avoidAfter", cut once the run has reached it; else each run's run-wide "avoid".
-        /// <paramref name="from"/> ("left+bottom", ...) makes it one-way: it cuts only a move into it across those sides. A box joins
-        /// the block of its sides there (made when none is). Remove takes it out of every block of the runs, dropping emptied ones.
-        /// </summary>
         int EditFullTasAvoids(List<FullTasRunDef> runs, float[] b, bool remove, string goal = null, string after = null, string from = null)
         {
             float[] wanted = NormalizedBox(b);
@@ -357,7 +336,6 @@ namespace IGTAPTasMod
             return changed;
         }
 
-        /// <summary>A run's run-wide avoid boxes (the overlay draws them), from its definition.</summary>
         List<float[]> FullTasAvoids(string run)
         {
             if (_fullTasAvoids.TryGetValue(run, out List<float[]> boxes)) return boxes;

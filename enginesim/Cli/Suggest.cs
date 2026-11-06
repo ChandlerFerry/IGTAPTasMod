@@ -9,11 +9,6 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// "Optimize my route so far": the player after a route's first N input ticks is the target, and local edits of those
-    /// ticks (<see cref="Humanizer"/>'s: each input shifted, each stick run at every other value, each jump press or dash
-    /// dropped) that bring the player there after fewer input ticks are ranked by the ticks they save.
-    /// </summary>
     static class Suggest
     {
         const int StateEvery = 2, Top = 20;
@@ -26,8 +21,6 @@ namespace IGTAP.EngineSim.Cli
             public bool Ground;
         }
 
-        /// <summary>Reached: within the radius of the target's position, at least its speed less 0.5 along its velocity (unless
-        /// that is below 1), and grounded if it was. Speed: along the target's velocity (0 when it is below 1).</summary>
         sealed class Target
         {
             public State At;
@@ -46,7 +39,6 @@ namespace IGTAP.EngineSim.Cli
             readonly Simulation _sim;
             readonly Rigidbody2D _body;
             SimSnapshot[] _states;
-            /// <summary>The route's player after each of its first N input ticks (index: input ticks done; null where no step ended one).</summary>
             public State?[] Path;
 
             public Judge(Func<Simulation> create)
@@ -61,8 +53,7 @@ namespace IGTAP.EngineSim.Cli
                 return new State { Pos = new Vector2(p.x, p.y), Vel = _sim.Physics.GetVelocity(_body), Ground = _sim.Player.onGround };
             }
 
-            /// <summary>The first <paramref name="n"/> of <paramref name="inputs"/> (one more after them: the player after an input
-            /// differs when none follows, as the engine stops, and every edit's arrival before n has one).</summary>
+            // Record one input more than asked: the player after an input differs when none follows, as the engine stops.
             public void Record(List<InputTick> inputs, int n)
             {
                 if (Path != null) return;
@@ -73,7 +64,7 @@ namespace IGTAP.EngineSim.Cli
                     if (tick < states.Length && tick % StateEvery == 0) states[tick] = _sim.Capture(tick);
                     if (tick < path.Length) path[tick] = Now();
                     return tick < n;
-                }, extraTicks: 1000000);   // a dash's freeze ticks take no input
+                }, extraTicks: 1000000);
                 if (path[n] == null)
                     throw new InvalidOperationException($"the route doesn't reach input tick {n} offline ("
                         + (r.Finished ? $"it finishes at input tick {r.FinishTick}: polish improves a finished route" : r.EndReason ?? "it stops") + ")");
@@ -81,9 +72,6 @@ namespace IGTAP.EngineSim.Cli
                 Path = path;
             }
 
-            /// <summary>The first input tick before <paramref name="limit"/> after which the inputs' player has reached the target, and
-            /// its speed and position there (-1: none), replayed from the route's last recorded state at or before <paramref name="first"/>
-            /// (the first input that differs from the route's) or from the start.</summary>
             public (int at, float speed, Vector2 pos) Arrival(List<InputTick> inputs, int first, Target target, int limit, bool fromStart = false)
             {
                 int s = fromStart ? 0 : Math.Min(first, _states.Length - 1);
@@ -110,13 +98,10 @@ namespace IGTAP.EngineSim.Cli
             public string Kind, What;
         }
 
-        /// <summary>Every input of <paramref name="prefix"/> shifted 1..<paramref name="maxShift"/> ticks either way, every stick run at
-        /// every other value, every jump press (with its hold) and dash dropped, as <see cref="Humanizer"/> keeps them real inputs.</summary>
         static List<Edit> Edits(List<InputTick> prefix, int maxShift)
         {
             var edits = new List<Edit>();
             List<Humanizer.Event> events = Humanizer.Events(prefix, prefix);
-            // A stick at rest from the start is no input to Events; its run takes the other values too (a first tilt from tick 0).
             foreach (bool y in new[] { false, true })
             {
                 int end = 0;
@@ -169,8 +154,6 @@ namespace IGTAP.EngineSim.Cli
                 State?[] path = null;
                 workers[0].Do(j => { j.Record(played, until); path = j.Path; });
                 var target = new Target { At = path[until].Value, Radius = radius };
-                // The route's own first arrival (at the latest the target itself): an edit counts only if it arrives sooner, so it
-                // changes an input before then.
                 int baseline = Enumerable.Range(0, until + 1).First(t => path[t] is State s && target.Reached(s, out _));
                 List<Edit> tests = edits.Where(e => e.First < baseline - 1).ToList();
                 int next = -1;
@@ -198,8 +181,6 @@ namespace IGTAP.EngineSim.Cli
                     target.Reached(path[baseline].Value, out float speed);
                     found.Add(new Edit { Inputs = prefix, First = baseline, At = baseline, Speed = speed, Pos = path[baseline].Value.Pos, Kind = "cut", What = $"ticks {baseline}-{until - 1} cut (the route is there after {baseline} already)" });
                 }
-                // Ranked; the same ticks, or the same first change arriving the same (another stick value that plays alike), once;
-                // each checked from the start (one that arrives otherwise from there isn't kept).
                 var kept = new List<Edit>();
                 foreach (Edit f in found.OrderBy(f => f.At).ThenByDescending(f => f.Speed))
                 {

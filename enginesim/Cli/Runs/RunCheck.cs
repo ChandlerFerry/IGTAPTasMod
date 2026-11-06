@@ -11,9 +11,7 @@ using IGTAPTasMod;
 
 namespace IGTAP.EngineSim.Cli.Runs
 {
-    // Each run and trace replays in a child process: the engine is thread-static, and a crash must stay with its trace.
-    // A baseline entry keeps its inputs' size:mtime; a recaptured trace or a newly saved best is a warning, not a failure,
-    // because check judges the engine, not the routes.
+    // Each run and trace replays in a child process: the engine is thread-static and a crash must stay with its trace.
     static class RunCheck
     {
         const long SmallTrace = 20L << 20;
@@ -26,7 +24,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             if (repo == null || !Directory.Exists(Path.Combine(repo, "data", "runs"))) { Console.Error.WriteLine("check: no source tree with data\\runs\\ (--repo DIR)"); return 2; }
             string traces = Solve.Option<string>(args, "--traces", null) ?? TechGrafts.ResolveTechDir(".");
             bool accept = args.Contains("--accept"), full = args.Contains("--full"), runsOnly = args.Contains("--runs-only");
-            // A complete run's 1x reference (docs/fulltas.md "1x confirmation"): the plugin's config 1x\<run>.json, beside enginesim\.
             string references = Solve.Option<string>(args, "--1x", null) ?? Path.Combine(Path.GetDirectoryName(Path.GetFullPath(traces).TrimEnd('\\', '/')), "1x");
             string baselineFile = Path.Combine(repo, "enginesim", "check", "baseline.json");
             var clock = Stopwatch.StartNew();
@@ -160,7 +157,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             return null;
         }
 
-        // Against the baseline: fewer ticks matching 1x, or as many but parting otherwise, differs; more is a warning (nearer 1x).
         static string ReferenceDiff(JsonNode b, JsonNode a, string key, ref int warned)
         {
             if (b["error"] != null || a["error"] != null) return (string)b["error"] == (string)a["error"] ? null : $"error was {b["error"]}, now {a["error"]}";

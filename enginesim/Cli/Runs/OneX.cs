@@ -8,15 +8,6 @@ using IGTAPTasMod;
 
 namespace IGTAP.EngineSim.Cli.Runs
 {
-    // A 1x log (the plugin's probe of a run, docs/fulltas.md "1x confirmation") against the engine's rows of the same inputs, by
-    // physics tick. The probe's tick row is taken inside its tick, after Movement.FixedUpdate: its input and Velocity are the
-    // engine's row of that tick; its body position, held frames and Cash before the tick's NP payout (econPre) are what the tick
-    // before left, the engine's row of the tick before (taken after that tick's rendered frames, a dash freeze's held ones
-    // included). Both write a row every physics tick; one either side lacks isn't compared. Two differences are where the probe
-    // reads, not the engine: Movement.OnCollisionStay2D zeroes Velocity.y on a floor or ceiling after FixedUpdate, after the
-    // probe's row (engine vy 0); and a step-up in a rendered frame moves the transform, which the body follows only at the next
-    // physics step, after the probe's row (a body off on one tick only). FalseEnding%-280's 1x reference has both on every
-    // landing; neither parts.
     static class OneX
     {
         internal struct Tick
@@ -66,7 +57,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             return r;
         }
 
-        /// <summary>The probe log's tick rows: x, y the body (bodyX, bodyY), Cash its cashPre or econPre's, held -1 where it has none.</summary>
         public static List<Tick> GameRows(JsonElement log)
         {
             var rows = new List<Tick>();
@@ -87,7 +77,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             return rows;
         }
 
-        /// <summary>`fulltas --check --ticks-out` (or `replay --ticks-out`) lines: the tick rows, not the clone and draw rows.</summary>
         public static List<Tick> EngineRows(string file)
         {
             var rows = new List<Tick>();
@@ -107,8 +96,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             return rows;
         }
 
-        /// <summary>The engine's rows of a 1x log's inputs, replayed from the run's trace. Loose buys: the run's goals may have
-        /// changed since the log, and a stray buy that ended it at 1x ends the rows compared there anyway.</summary>
         public static List<Tick> Replay(string trace, List<InputTick> inputs)
         {
             Simulation sim = Solve.Creator(trace, Solve.ReadHeader(trace))();
@@ -135,7 +122,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             ? $"parts from 1x at physics tick {r.Physics} (input {r.Input}): {r.Field} engine {r.Engine.ToString("R", CultureInfo.InvariantCulture)}, 1x {r.Game.ToString("R", CultureInfo.InvariantCulture)} ({r.Compared} ticks matched before)"
             : $"matches 1x on the {r.Compared} ticks both have (engine to tick {r.EngineLast}, 1x to {r.GameLast})";
 
-        /// <summary>align-1x &lt;probe log&gt; (&lt;ticks-out lines&gt; | --trace T): the first tick and field where the engine parts from 1x.</summary>
         public static int Command(string[] args)
         {
             string trace = Solve.Option<string>(args, "--trace", null);

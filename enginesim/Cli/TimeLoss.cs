@@ -8,12 +8,6 @@ using System.Text.Json;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// <c>timeloss split|search|floor|report ...</c> (enginesim/README.md "Time loss"): where a course route loses its time, by segment
-    /// (<see cref="Difficulty.Anchors(Simulation, List{InputTick}, SimSnapshot, bool)"/> on the route's own inputs). <c>split</c>: each
-    /// segment's ticks against a reference route's (TimeLossSplit.cs); <c>search</c>: the best small input change in each (TimeLossSearch.cs);
-    /// <c>floor</c>: each one's ticks over a distance / top speed floor (TimeLossFloor.cs); <c>report</c>: the three joined per segment.
-    /// </summary>
     static class TimeLoss
     {
         const string Usage = "usage: timeloss split <trace.json> <route.json> --ref <route.json | captured trace.json> [--within U] [--json]"
@@ -34,8 +28,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>A segment of the report: the floor's row and, by its first input tick, split's; search's best leg starting in it
-        /// (search cuts a course's segment again where its timer starts).</summary>
         sealed class Joined
         {
             public TimeLossFloor.Row Floor;

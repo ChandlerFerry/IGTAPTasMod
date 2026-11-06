@@ -2,21 +2,15 @@
 
 import { useState, type ReactNode } from "react";
 
-/** A goal's arrival: its physics tick (game frames) and the frames the run had stood still in by then (dash freezes, pauses). */
 export type FullTasSplit = { id?: string; label: string; ticks: number; held?: number };
-/** A run's goal: its id (what requests and the engine name it by) and its label. */
 export type FullTasGoal = { id: string; label: string };
-/** A buy goal's wait for its Cash at its box (enginesim FullTasIdles.cs): [physics tick, held frames] at arrival and when the Cash is there. */
 export type FullTasIdle = { id: string; label: string; arrive: [number, number]; afford: [number, number] };
-/** An event's goal list ([{id, goal}]: a session's, an adopted edit's) as the run's goals. */
 const eventGoals = (list: unknown) => Array.isArray(list) ? (list as { id: string; goal: string }[]).map(g => ({ id: g.id, label: g.goal })) : undefined;
-/** A goal range by its first and last goals' ids (an event's), as goal numbers from 1 in `ids`; null when either is missing. */
 const idSpan = (span: unknown, ids: string[]): [number, number] | null => {
   if (!Array.isArray(span) || span.length !== 2) return null;
   const a = ids.indexOf(String(span[0])), b = ids.indexOf(String(span[1]));
   return a < 0 || b < 0 ? null : [a + 1, b + 1];
 };
-/** Live time: what the run takes at 1x, ticks at 0.02 s plus held frames at 1/280 s (MacroEngine.LiveSeconds). */
 export const liveSeconds = (s: FullTasSplit) => s.ticks * 0.02 + (s.held ?? 0) / 280;
 export type RouteJson = { progress: number; time: number | null; splits: number[] };
 export type FullTasEvent = { type: string; at: number } & Record<string, unknown>;
@@ -24,11 +18,8 @@ export type FullTasOutcome = { kind: "play" | "judge" | "note"; text: string; er
   reason?: string | null; reached?: number; of?: number; expected?: number; next?: string | null; droppedFrames?: number; splits?: FullTasSplit[] };
 export type FullTasSolveState = { running: boolean; name?: string | null; status: string; error?: string | null; command?: string | null;
   events?: FullTasEvent[]; progress?: FullTasEvent | null; log: string[]; outlook?: unknown; pulls?: unknown[] };
-/** The saved best's route between two Quick Restarts: goals first+1..last. */
 export type SegmentRow = { n: number; first: number; last: number; inputs: number; start?: number };
 
-/** What each bonus's reward box gives (its upgradeBox's own reward), shown in place of the bonusN token. The watts ones are the game's
- *  secrets (upgradeBox.isSecret) by their achievement number; each adds +40% global watts (globalUpgradeSet.cashPerLoop). */
 const BONUS_NAMES: Record<string, string> = {
   bonus1: "Global watts, secret 4", bonus2: "Global watts, secret 5", bonus3: "Global watts, secret 7", bonus4: "Global watts, secret 1",
   bonus5: "Global watts, secret 6", bonus6: "Global watts, secret 8", bonus7: "Global watts, secret 9", bonus8: "Global watts, secret 11",
@@ -70,7 +61,6 @@ export function goalName(label: string | undefined | null): string {
   }
 }
 
-/** A run time as minutes:seconds (`2:05.37`), rounded to the hundredth first so 59.999 reads `1:00.00`. */
 export const runTime = (t: number) => {
   const c = Math.round(t * 100);
   return `${Math.floor(c / 6000)}:${((c % 6000) / 100).toFixed(2).padStart(5, "0")}`;
@@ -99,10 +89,8 @@ function asWindow(e: FullTasEvent): Window {
     start: num(e.start) ?? 0, target: num(e.target), savedStarts: num(e.savedStarts) ?? 0, piece: str(e.piece), at: e.at };
 }
 
-// Goals are 1-based in the engine's events and logs (a count of goals reached); the studio shows them 0-based, as runs/<run>.json
-// indexes them: goal n (1-based) shows as n − 1.
+// Engine events and logs count goals from 1; the studio shows them 0-based as runs/<run>.json does (n shows as n - 1).
 function span(w: Window) { return w.limit - w.first <= 1 ? `goal ${w.limit - 1}` : `goals ${w.first}–${w.limit - 1}`; }
-/** Where a window starts: after goal `first` (1-based), or the run's start. */
 const fromGoal = (first: number) => first > 0 ? `goal ${first - 1}` : "the start";
 
 function segmentGoals(r: { first: number; last: number }) {
@@ -110,17 +98,10 @@ function segmentGoals(r: { first: number; last: number }) {
   return r.last - r.first === 1 ? `goal ${r.last - 1}` : `goals ${r.first}–${r.last - 1}`;
 }
 
-/** The saved best's reset segments (the plugin's, from its Quick Restarts). */
 export function resetSegments(saved: number[][] | undefined): SegmentRow[] {
   return (saved ?? []).map(([first, last, inputs, start], i) => ({ n: i + 1, first, last, inputs, start }));
 }
 
-/**
- * A segment's goals with a bar down their left side, as the TAS overlay marks a tech's ticks: the bar is labeled with the
- * segment's number, its tooltip names its goals and whether saves are kept (safe: no buy after it) or reach a later buy,
- * and a strip under the goals marks its closing Quick Restart. Click the bar to pick its
- * goals for Improve (shift-click adds them to the picked goals).
- */
 export function SegmentGroup({ r, end, alt, safe, selected, onPick, disabled, children }: { r: SegmentRow; end: boolean; alt: boolean; safe: boolean;
   selected: boolean; onPick: (shift: boolean) => void; disabled: boolean; children: ReactNode }) {
   const empty = r.last <= r.first;
@@ -134,14 +115,12 @@ export function SegmentGroup({ r, end, alt, safe, selected, onPick, disabled, ch
   </div>;
 }
 
-/** The icon key for SegmentGroup's restart strip, shown under a segmented goals table. */
 export function SegmentLegend() {
   return <div className="segmentLegend">
     <span><i className="segIcon restart">↻</i>Quick Restart</span><span><i className="segIcon end">⚑︎</i>route end</span>
   </div>;
 }
 
-/** The goals (1-based, first..last) whose own splits a new best changed; null when none did. */
 function changedGoals(prev: RouteJson, best: RouteJson): [number, number] | null {
   let first = 0, last = 0;
   for (let k = 0; k < Math.min(prev.progress, best.progress); k++) {
@@ -153,7 +132,6 @@ function changedGoals(prev: RouteJson, best: RouteJson): [number, number] | null
 
 export const goalSpan = ([a, b]: [number, number]) => a === b ? `goal ${a - 1}` : `goals ${a - 1}–${b - 1}`;
 
-/** A --auto log's latest pull (`auto: pull N: <lever> at goal k (<label>), ...`): what Improve is searching now. */
 function lastPull(log: string[]): { lever: string; goal: number; label: string } | null {
   for (let i = log.length - 1; i >= 0; i--) {
     const m = /auto: pull \d+: (\w+) at goal (\d+) \((.*?)\), /.exec(log[i]);
@@ -169,7 +147,6 @@ export const LEVERS: Record<string, string> = { window: "window search", lookahe
 function recordItem(e: FullTasEvent, goals: string[]): Item {
   const prev = e.previous as RouteJson, best = e.best as RouteJson, of = goals.length;
   const how = str(e.how);
-  // Improve's goals part changed the goal list: its words, e.g. "economy planned: goals 12-40 planned to buy:buyds on tick 9000".
   if (e.goalsEdit) return { key: `r${e.at}`, at: e.at, tone: "best", title: str(e.goalsEdit),
     detail: `New record ${s2(best.time)} · ${best.progress} goals; the game takes this goal list when it saves the record` };
   if (e.firstComplete) return { key: `r${e.at}`, at: e.at, tone: "best", title: `First complete route: ${of} goals in ${s2(best.time)}`,
@@ -186,8 +163,6 @@ function recordItem(e: FullTasEvent, goals: string[]): Item {
   return { key: `r${e.at}`, at: e.at, tone: "best", title: `Goal ${best.progress - 1}/${of - 1} now at ${s2(best.time)} (${delta(d)})`, detail: how };
 }
 
-/** Improve's search steps (windows, finds, repairs) are its own business: its feed is the start, the records, the game's
- *  checks and notes. */
 const AUTO_QUIET: Record<string, true> = { session: true, phase: true, window: true, found: true, windowEnd: true, dropped: true };
 
 function feed(events: FullTasEvent[], goals: string[], ids: string[]): Item[] {
@@ -339,7 +314,6 @@ export function FullTasSolvePanel({ solve, goals: runGoals, route, run, lastResu
   const outdated = !solve.running && sessionList != null && (sessionList.length !== runGoals.length || sessionList.some((g, i) => g.id !== runGoals[i].id || g.label !== runGoals[i].label));
   const events = outdated ? [] : allEvents;
   const session = events.find(e => e.type === "session");
-  // Improve (--auto) announces the best it really starts from: the saved record it was handed can beat the session's.
   const autoStart = events.find(e => e.type === "autoStart");
   const labels = outdated ? goals : sessionGoals ?? goals;
   const ids = (outdated ? runGoals : sessionList ?? runGoals).map(g => g.id);

@@ -15,12 +15,8 @@ namespace IGTAPTasMod
 
         public MacroStep() { id = Guid.NewGuid().ToString("N"); }
 
-        /// <summary>A step with no id (null), for the offline engine's per-run steps (Simulation.ToSteps): MacroEngine never
-        /// reads a step's id, and a Guid per merged input group per run is measurable in a search.</summary>
         internal MacroStep(bool noId) { }
         public MacroStepType type = MacroStepType.Move;
-        /// <summary>Old routes' millisecond timing: read once to turn them into ticks (TasPlugin.NormalizeStepFrameTiming),
-        /// never written.</summary>
         public int durationMs = 100;
         public int timeoutMs = 1200;
         public bool ShouldSerializedurationMs() { return false; }
@@ -40,18 +36,8 @@ namespace IGTAPTasMod
         public int dashJumpFrame;
         public int springDashFrame;
         public float? lockMoveX, lockMoveY;
-        /// <summary>On a dash step: the stick held in the dash's freeze, before the next tick (MacroEngine.StickFor). y only
-        /// turns an omnidash.</summary>
         public float? dashTurnX, dashTurnY;
         public bool rawQuickRestart;
-        /// <summary>
-        /// Open the pause menu (pauseMenuScript.menuButtonPressed, the Pause button's) after this step's <c>pauseTick</c>-th
-        /// physics tick (0: its first; a dash's locked ticks count) and <c>pauseFrame</c> Movement.Update frames of the tick
-        /// after it (0: at once, in the tick), and close it after <c>pauseFrames</c> Movement.Update frames. Paused, time
-        /// stands still but Update's step-up runs every frame (the pauselift). 1x playback opens the menu; turbo and the
-        /// offline engine run the same frames (the tick's first frame repeated, or with a pauseFrame the frame before it,
-        /// whose blend the pause holds).
-        /// </summary>
         public int pauseFrames;
         public int pauseTick;
         public int pauseFrame;
@@ -73,8 +59,6 @@ namespace IGTAPTasMod
         public List<MacroStep> steps = new List<MacroStep>();
         public List<RouteMarker> markers;
         public int rerecords;
-        /// <summary>A farm route's loop (RULES.md 30): the input tick its loop starts on, after the lead's last finish
-        /// (0: not a farm loop), and the laps in the loop (0 or 1: one).</summary>
         public int loopFrom, loopLaps;
         public bool ShouldSerializemarkers() { return markers != null && markers.Count > 0; }
         public bool ShouldSerializererecords() { return rerecords > 0; }
@@ -110,7 +94,6 @@ namespace IGTAPTasMod
         public bool dashPressed;
         public bool dashHeld;
         public int dashJumpFrame;
-        /// <summary>A dash pressed with the stick at rest that the stick turned in its freeze: the stick that turned it.</summary>
         public float? dashTurnX, dashTurnY;
         public float positionX;
         public float positionY;
@@ -148,15 +131,10 @@ namespace IGTAPTasMod
         public bool forceBreakerLights;
         public bool checkpointRespawns;
         public string fullTasGoalsRun = "";
-        /// <summary>The selected route's id (the library's selectedIndex, saved without rewriting routes.json).</summary>
         public string selectedRouteId = "";
-        /// <summary>1x playback without the 280 fps cap on real frames; the game time per frame stays on the fixed grid.</summary>
         public bool fastPlayback;
-        /// <summary>The 1x job (ProbeRunner.cs): each run's current best played at 1x after a minute with no command or player input.</summary>
         public bool idle1x;
-        /// <summary>The player drawn as its hurtbox (TasSkin.cs) instead of its sprite.</summary>
         public bool tasSkin = true;
-        /// <summary>The TAS skin as its outline only, over the game's sprite.</summary>
         public bool tasSkinOutline;
     }
 }

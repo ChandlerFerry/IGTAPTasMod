@@ -11,9 +11,6 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim.Cli
 {
-    // Where the game's ultra (CheckForSuperJump: a hyper at least 4 u below lastHyperY, the dash the way the pre-dash
-    // momentum went, "Did an ultra!") can be done: every floor a hyper can land on, and from launch points along them,
-    // two chained wavedashes replayed in the engine, recording each hyper that passes the game's own check.
     static class Ultras
     {
         const BindingFlags Fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -26,11 +23,8 @@ namespace IGTAP.EngineSim.Cli
         static readonly FieldInfo DashSize = typeof(Movement).GetField("dashColliderSize", Fields);
         static readonly FieldInfo DashOffset = typeof(Movement).GetField("dashColliderOffset", Fields);
 
-        // Floor kinds, in the output's order.
         static readonly string[] Kinds = { "metal", "moss", "moving" };
 
-        // Launch search: the first wavedash (hop, then a down-diagonal dash `Delay` input ticks later whose jump is
-        // pressed on dash frame `Jump`), then the second one `Gap` input ticks after the first dash.
         static readonly int[] Delay = { 1, 2, 3 };
         static readonly int[] Jump = { 4, 6, 8, 10 };
         static readonly int[] Hold = { 3, 24 };
@@ -84,7 +78,6 @@ namespace IGTAP.EngineSim.Cli
                 return false;
             }
 
-            // Whether the segment a→b touches or crosses a shape.
             public bool Crosses(float ax, float ay, float bx, float by)
             {
                 var q = new Box(Math.Min(ax, bx), Math.Min(ay, by), Math.Max(ax, bx), Math.Max(ay, by));
@@ -119,7 +112,7 @@ namespace IGTAP.EngineSim.Cli
                 return 0;
             }
             JsonElement header = Solve.ReadHeader(trace);
-            // The launches here model FloatingOrigin's rebase themselves (see Play), on starts placed anywhere: the engine's own is off.
+            // Launches model FloatingOrigin's rebase themselves (see Play), on starts placed anywhere; the engine's own is off.
             Func<Simulation> engine = Solve.Creator(trace, header);
             Func<Simulation> create = () => { Simulation sim = engine(); sim.Rebases = false; return sim; };
             using JsonDocument world = JsonDocument.Parse(File.ReadAllText(worldPath), new JsonDocumentOptions { MaxDepth = 256 });
@@ -132,7 +125,6 @@ namespace IGTAP.EngineSim.Cli
             _threshold = rebase?.Threshold ?? float.PositiveInfinity;
             _use2D = rebase?.Use2DDistance ?? false;
 
-            // Floors only where the launches' engine (the world as exported) has them; the drawn solids show every zone.
             List<Map.WorldShape> shapes = Map.Shapes(world.RootElement, origin, allStates: false);
             var blockers = new Grid();
             var spikes = new Grid();
@@ -144,9 +136,6 @@ namespace IGTAP.EngineSim.Cli
             }
             List<Segment> floors = Floors(shapes, blockers, spikes, stand.x / 2f, dash.y, stand.y);
 
-            // Launch points: along every floor the dot can stand on, every `spacing` units and at both ends, where a
-            // hyper-able floor more than 4 lower lies within reach that way, or where a run that way can cross the
-            // FloatingOrigin threshold (see Play).
             var lower = new Grid();
             foreach (Segment f in floors)
                 lower.Add(new Map.WorldShape("Edges", new[] { f.X0, f.Y0, f.X1, f.Y1 }, 0f, 7, "", false, false, false, false));
@@ -161,7 +150,6 @@ namespace IGTAP.EngineSim.Cli
                     foreach (float side in new[] { -1f, 1f })
                     {
                         var reach = side > 0 ? new Box(x, y - MaxDrop, x + Reach, y - 4f) : new Box(x - Reach, y - MaxDrop, x, y - 4f);
-                        // Near the threshold on the inside, a jump, a climb or a run can cross it before the next hyper.
                         float scene = Scene(new Vector2(x + origin.x, y + origin.y)).magnitude;
                         if (lower.Hits(reach) || scene <= _threshold && scene > _threshold - Reach) launches.Add((x, y, side));
                     }
@@ -180,12 +168,9 @@ namespace IGTAP.EngineSim.Cli
                 if (d % 500 == 0) Console.WriteLine($"[{(DateTime.UtcNow - began):mm\\:ss}] {d}/{launches.Count} launches");
             })();
 
-            // The whole level (every zone and world state), not only the floors of the zones the export had loaded.
             var level = Map.LevelBounds(world.RootElement, origin);
             float x0 = Math.Min(level.x0, floors.Min(f => f.X0)) - 300f, x1 = Math.Max(level.x1, floors.Max(f => f.X1)) + 300f;
             float y0 = Math.Min(level.y0, floors.Min(f => Math.Min(f.Y0, f.Y1))) - 300f, y1 = Math.Max(level.y1, floors.Max(f => Math.Max(f.Y0, f.Y1))) + 300f;
-            // A course at its start gate; a bonus at its finish (its reward box), where the bonus is, not the course it
-            // starts from.
             var labels = new List<(string name, float x, float y)>();
             if (coursesPath != null && File.Exists(coursesPath))
                 using (JsonDocument courses = JsonDocument.Parse(File.ReadAllText(coursesPath)))
@@ -199,8 +184,6 @@ namespace IGTAP.EngineSim.Cli
                         labels.Add(bonus ? (name, c.GetProperty("endX").GetSingle(), c.GetProperty("endY").GetSingle())
                             : (name, c.GetProperty("x").GetSingle(), c.GetProperty("y").GetSingle()));
                     }
-            // The dot hovers a few units over its floor (the ground rays reach 22 below it), so each ultra's height from
-            // lastHyperY is put on the floor segment just under it.
             var ultras = found.Where(f => f != null).SelectMany(f => f).Cast<object[]>().ToList();
             foreach (object[] u in ultras)
             {
@@ -208,9 +191,6 @@ namespace IGTAP.EngineSim.Cli
                 if (under >= 0) u[4] = R(FloorY(floors[under], (float)u[3]));
             }
 
-            // Every floor pair, then each engine ultra on the pair it joins: lastHyperY from the launch floor (a single
-            // hyper) or the first hyper's floor (the second of a chain) to the ultra's floor. The biggest drop is the
-            // pair's example; a pair only the engine found (the flight line check missed it, or an origin shift) is added.
             float hop = HopHeight(probe, stand, standOffset, floors);
             List<Pair> pairs = Pairs(floors, blockers, stand.x / 2f, stand.y / 2f, hop);
             Console.WriteLine($"ultras: a held jump rises {hop:0} u; {pairs.Count} floor pairs by flight line");
@@ -232,44 +212,31 @@ namespace IGTAP.EngineSim.Cli
                 if (!example.TryGetValue(p, out int e) || (float)u[5] > (float)ultras[e][5]) example[p] = k;
             }
             Map.TreeGround tree = Map.Grown(world.RootElement, origin, x0, y0, x1, y1);
-            // Every marker, the map grown to take them in (the true ending's trigger is above the level's ground).
             var markers = Map.Markers(world.RootElement, origin).ToList();
             foreach (var m in markers) { x0 = Math.Min(x0, m.x - 300f); x1 = Math.Max(x1, m.x + 300f); y0 = Math.Min(y0, m.y - 300f); y1 = Math.Max(y1, m.y + 300f); }
             var result = new
             {
                 world = System.IO.Path.GetFileName(worldPath),
                 bounds = new[] { x0, y0, x1, y1 },
-                // The world states the level is drawn in (solids' and markers' `when`); `current`: the capture's, which the
-                // floors and ultras are from.
                 states = Map.WorldStates(world.RootElement).states,
                 player = new { stand = new[] { stand.x, stand.y }, dash = new[] { dash.x, dash.y } },
                 kinds = Kinds,
                 floors = floors.Select(f => new object[] { R(f.X0), R(f.Y0), R(f.X1), R(f.Y1), f.Kind, f.Stand ? 1 : 0 }),
                 solids = Map.Solids(world.RootElement, origin, x0, y0, x1, y1),
-                // The trees' ground, where it grows once its tree upgrades are bought (none of it in a fresh world), and
-                // each segment's place in the tree's purchase order.
                 grown = tree.Shapes, treeSteps = tree.Steps,
-                // Start/end gates, checkpoints, springs, teleporters, refill orbs and secrets (bonus rewards), in every zone.
                 markers,
-                // Zip movers and moving platforms: where each goes (its path and the corridor its box sweeps).
                 zips = Map.Zips(world.RootElement, origin).Where(z => z.box[2] >= x0 && z.box[0] <= x1 && z.box[3] >= y0 && z.box[1] <= y1),
-                // A bonus's label is only in the world state its reward box is in (overgrowth hides some rewards).
                 labels = labels.GroupBy(l => (l.x, l.y)).Select(g => new { name = string.Join(" · ", g.Select(l => l.name)), x = g.Key.x, y = g.Key.y,
                     when = markers.Where(m => m.kind == "box" && m.area != null && m.area.Any(p => Inside(p, g.Key.x, g.Key.y, 24f))).Select(m => m.when).FirstOrDefault() }),
-                // Ground-layer triggers (upgrade boxes): the ground rays hit them, so they are floors too.
                 boxes = shapes.Where(s => s.Layer == 7 && s.Trigger && !s.Spike && !s.Player && s.Type == "Polygon").Select(s => s.V.Select(R)),
                 launches = launches.Count,
-                // FloatingOrigin in a fresh VMAN world: the rebase fires when the player leaves this circle (a pair of
-                // vertical lines with Use2DDistance).
                 rebase = new
                 {
                     threshold = _threshold, use2D = _use2D, center = new[] { R(-origin.x), R(-origin.y) },
-                    // [x, y, physics tick, left origin x, y] of each rebase on the run's best so far.
                     route = RouteRebases(trace, header, create, origin),
                 },
                 ultraFields = new[] { "fromX", "fromY", "side", "x", "y", "drop", "hyper", "hold", "delay", "jump", "gap", "jump2", "landX", "prevX", "shift", "prevY" },
                 ultras,
-                // [from floor, to floor, drop, from x, y, to x, y, flight line clear 0/1, example ultra or -1].
                 pairFields = new[] { "from", "to", "drop", "ax", "ay", "bx", "by", "line", "ultra" },
                 pairs = pairs.Select((p, i) => new object[] { p.From, p.To, R(p.Drop), R(p.Ax), R(p.Ay), R(p.Bx), R(p.By), p.Line ? 1 : 0,
                     example.TryGetValue(i, out int e) ? e : -1 }),
@@ -280,9 +247,6 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        // Where the Full-TAS run's best so far (the trace's `fulltas/<run>.json`) makes FloatingOrigin rebase: these sims
-        // run with Rebases off, so each crossing of the threshold from the current origin is found here, and the next
-        // one is measured from the new origin. `center`: the origin the player left (game-world coordinates).
         static List<object> RouteRebases(string trace, JsonElement header, Func<Simulation> create, CapturePos origin)
         {
             var points = new List<object>();
@@ -326,7 +290,6 @@ namespace IGTAP.EngineSim.Cli
             return f.Y0 + (f.Y1 - f.Y0) * t;
         }
 
-        // The floor segment just under a point the dot was at (it hovers a few units over its floor), or -1.
         static int FloorUnder(List<Segment> floors, float x, float y)
         {
             int best = -1;
@@ -341,7 +304,6 @@ namespace IGTAP.EngineSim.Cli
             return best;
         }
 
-        // How high a held jump lifts the dot, measured in the engine from the middle of the longest floor it stands on.
         static float HopHeight(Simulation sim, Vector2 stand, Vector2 standOffset, List<Segment> floors)
         {
             Segment f = floors.Where(s => s.Stand).OrderByDescending(s => s.X1 - s.X0).First();
@@ -365,8 +327,6 @@ namespace IGTAP.EngineSim.Cli
             return top - from;
         }
 
-        // The floor an engine hyper was on: the nearest segment within 64 whose surface is not above the point (a hyper
-        // in coyote time is a little past its floor's end), or -1.
         static int FloorNear(List<Segment> floors, float x, float y)
         {
             int best = -1;
@@ -382,18 +342,8 @@ namespace IGTAP.EngineSim.Cli
             return best;
         }
 
-        // One way an ultra can go from floor `From` to floor `To`: lastHyperY written on From (a hyper there, or
-        // standing on it: the game writes it on every grounded tick), then the ultra's hyper on To. `Drop`: the most
-        // From's floor is above To's along a clear flight line (`Line`), from A to B.
         readonly record struct Pair(int From, int To, float Drop, float Ax, float Ay, float Bx, float By, bool Line);
 
-        // Every ordered pair of floors with To more than 4 below From (the game's check: the hyper's y under
-        // lastHyperY - 4), at most Reach across and MaxDrop down, joined by a flight line no solid crosses; a floor
-        // sloping more than 4 pairs with itself (downhill). A line runs between the dot's centres over each floor: from
-        // From's ends and middle, or just past either end (walking off it), to To's ends and middle, or just past either
-        // end (coming in under a ledge beside it), straight or over a hop (up to `hop` above the higher end halfway
-        // across, then down). A pair whose every line is blocked has a wall, ceiling or the floor itself between them.
-        // Lines, not arcs: the engine's ultras add the pairs they reach that this misses.
         static List<Pair> Pairs(List<Segment> floors, Grid blockers, float half, float lift, float hop)
         {
             var found = new List<Pair>[floors.Count];
@@ -428,10 +378,7 @@ namespace IGTAP.EngineSim.Cli
             return found.SelectMany(l => l).ToList();
         }
 
-        // Floors a hyper can land on: upward faces (normal at most 60° from up) of Ground-layer colliders (triggers
-        // too: the ground rays hit them, Physics2D.queriesHitTriggers), where the dash box (and, for `Stand`, the
-        // standing box) fits on top, clear of spikes (their touch kills; a Spikes-layer hit under the feet cancels
-        // the ground).
+        // Ground rays hit triggers too (Physics2D.queriesHitTriggers), so Ground-layer triggers are floors.
         static List<Segment> Floors(List<Map.WorldShape> shapes, Grid blockers, Grid spikes, float half, float dashHeight, float standHeight)
         {
             const float step = 4f;
@@ -525,11 +472,9 @@ namespace IGTAP.EngineSim.Cli
                     if (SegmentHits(v[2 * i], v[2 * i + 1], v[2 * i + 2], v[2 * i + 3], q)) return true;
                 return false;
             }
-            return true; // circles and capsules: their bounds already overlap
+            return true;
         }
 
-        // Whether the segment a→b touches or crosses shape `s` (bounds `b`): through a polygon's edge or from inside
-        // it, across an edge chain; circles and capsules by their bounds.
         static bool SegmentCrosses(Map.WorldShape s, Box b, float ax, float ay, float bx, float by)
         {
             float[] v = s.V;
@@ -582,8 +527,6 @@ namespace IGTAP.EngineSim.Cli
             return t0 < t1;
         }
 
-        // One launch: stand the dot on the floor, then hop + wavedash, then a second wavedash `Gap` input ticks later,
-        // over the grid of timings. Returns each distinct ultra (a hyper that passed the game's ultra check).
         static List<object> Search(Simulation sim, SimSnapshot start, (float x, float y, float side) at, Vector2 stand, Vector2 standOffset,
             Vector2 dash, Vector2 dashOffset)
         {
@@ -629,12 +572,9 @@ namespace IGTAP.EngineSim.Cli
         static float _threshold = float.PositiveInfinity;
         static bool _use2D;
 
-        // FloatingOrigin's distance: the reference position, horizontal only with Use2DDistance.
+        // FloatingOrigin's distance: horizontal only with Use2DDistance.
         static Vector2 Scene(Vector2 p) { return _use2D ? new Vector2(p.x, 0f) : p; }
 
-        // LandX: where the dash touched down (canHyper set); X: where the hyper's jump left the floor; Shift: a
-        // FloatingOrigin rebase happened since lastHyperY was last written, so the game compared against a stale value
-        // and Drop is the real height difference (possibly none at all).
         readonly record struct Hyper(int Index, float LandX, float X, float Floor, float Drop, bool Ultra, bool Shift);
 
         static void Record(List<object> ultras, HashSet<(int, int)> seen, (float x, float y, float side) at, List<Hyper> hypers,
@@ -663,8 +603,6 @@ namespace IGTAP.EngineSim.Cli
             return t;
         }
 
-        // OfflineSolver.OmniDash's down-diagonal wavedash: dash (side, -1) with the jump pressed on dash frame `jump`
-        // and held `hold` input ticks, the stick held `side` after it.
         static void WaveDash(List<InputTick> t, int at, float side, int jump, int hold)
         {
             InputTick d = t[at];
@@ -676,15 +614,7 @@ namespace IGTAP.EngineSim.Cli
             InputTick r = t[end]; r.release = true; t[end] = r;
         }
 
-        // Replays the inputs and reports every hyper (canHyper before the tick, the jump taken in it) with the game's
-        // ultra check done on the state it used: Sign(preDashMomentum.x) == Sign(dashDirection.x) and the lifted
-        // position below the old lastHyperY - 4.
-        //
-        // These sims run with Rebases off (a launch placed anywhere would rebase at once), so FloatingOrigin's rebase is
-        // modelled here: when the player gets more than Threshold from the origin (FloatingOrigin.LateUpdate), the game
-        // moves every root object by that position after the next physics step (MoveOrigin waits for WaitForFixedUpdate)
-        // but leaves lastHyperY as it was. In the sim's unmoved frame that is lastHyperY raised by the offset's y. Only a
-        // launch that starts inside the threshold does it; one outside would have rebased on the way there, somewhere unknown.
+        // Rebases are off here; model FloatingOrigin: the game keeps lastHyperY while moving the world, so raise it by offset y.
         static List<Hyper> Play(Simulation sim, SimSnapshot placed, List<InputTick> inputs, Vector2 dash, Vector2 dashOffset, int wanted)
         {
             var hypers = new List<Hyper>();
@@ -707,7 +637,6 @@ namespace IGTAP.EngineSim.Cli
                     hypers.Add(new Hyper(hypers.Count + 1, landX, sim.ToWorld(ScenePos.From(m.transform.position)).x, feet, last - stale - nowLast, ultra, stale != 0f));
                     if (hypers.Count >= wanted) after = 0;
                 }
-                // `stale`: how far a rebase has moved the lastHyperY the game last wrote.
                 if (nowLast != last) stale = 0f;
                 canHyper = nowCan;
                 last = nowLast;
@@ -728,7 +657,6 @@ namespace IGTAP.EngineSim.Cli
             return hypers;
         }
 
-        // Whether (x, y) is within `pad` of polygon `p`'s bounding box (x, y pairs).
         static bool Inside(float[] p, float x, float y, float pad)
         {
             float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;

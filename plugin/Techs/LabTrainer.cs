@@ -10,62 +10,36 @@ namespace IGTAPTasMod
 {
     public sealed partial class TasPlugin
     {
-        /// <summary>
-        /// The input trainer of a lab map with <c>"trainer": "pauselift"</c> (labmaps/pauselift-wall.json), shown while the lab
-        /// is injected, in hand play and in its demo's playback alike. It lists the buttons in order with their timing, turns
-        /// each one green when the game shows it worked (red when it didn't, and why), and draws the attempt on a real-time
-        /// timeline from the dash press: the dash freeze (where the tilt goes), the frames the step-up lifted the dot on (where
-        /// the pause has to land: the pause menu stops FixedUpdate but not Movement.Update's step-up, so a menu opened on a
-        /// lifting frame keeps lifting every paused frame), and where the tilt and the pause actually came. The lifting frames
-        /// are measured on every attempt, so the window it shows is the one at the player's own frame rate.
-        /// All times are real time (Time.unscaledTime): the freeze and the pause stop game time, not the player's hands.
-        /// </summary>
         sealed class PauseliftTrainer
         {
             public Movement Player;
-            /// <summary>The cling's wall: -1 on the left, +1 on the right (the sprite faces the wall while it clings).</summary>
             public int WallSide = -1;
             public bool Clinging, WasClinging, WasDashing, WasPaused, WasFrozen;
-            /// <summary>The attempt: from the frame the dash started (its freeze began) to the frame it ended with the menu shut.</summary>
             public bool Active, Done;
             public float DashAt, FreezeEnd = -1f, TurnAt = -1f, PauseAt = -1f, UnpauseAt = -1f;
             public bool FromCling, StickAtRest, Turned, Reached;
             public readonly List<float> Lifts = new List<float>();
             public readonly List<bool> LiftPaused = new List<bool>();
-            /// <summary>Each lift's frame length (unscaledDeltaTime): a pause pressed anywhere in that frame lands on it.</summary>
             public readonly List<float> LiftFrames = new List<float>();
             public int PausedLifts;
             public string PauseVerdict;
             public int Attempts, Successes;
-            /// <summary>The last attempt's unpaused lifting frames, from the end of the freeze (seconds), the last one's length
-            /// included: the window the pause has to hit. Fixed per attempt, so the display doesn't move with every frame.</summary>
             public float WindowFrom = -1f, WindowTo = -1f;
-            /// <summary>The windows of the last five attempts (from the freeze's end): their spread is the frame-to-frame wobble.</summary>
             public readonly List<Vector2> Windows = new List<Vector2>();
             public float Freeze = -1f;
-            /// <summary>The start the dash came from: a cling, or flush with the back against the wall (<see cref="FlushGap"/>).</summary>
             public bool FromFlush;
-            /// <summary>The back's distance to the wall this frame when facing away from it (-1 when facing it or none in reach).</summary>
             public float Gap = -1f, WasGap = -1f;
             public bool WasFlush, WasFacingAway;
-            /// <summary>
-            /// The reverse super that sets up a flush start: 0 not started, 1 its dash, 2 the super (momentum toward the wall),
-            /// 3 carried flush with the back to the wall, 4 the pauselift dash taken from there; negative: what went wrong.
-            /// </summary>
             public int RsStage;
         }
 
-        /// <summary>The largest back gap that still counts as flush: every frame of the lifting tick lifts up to 0.2 u out, and
-        /// 4 of 6 at 1 u (offline, labmaps/pauselift-wall.json).</summary>
         const float FlushGap = 1f;
 
         static readonly FieldInfo TrainerGroundMaskField = AccessTools.Field(typeof(Movement), "groundRaycastLayer");
-        // Read every frame while the trainer is shown (BackGap): by reference, not FieldInfo.GetValue's boxed copy.
         static readonly AccessTools.FieldRef<Movement, LayerMask> TrainerGroundMask = TrainerGroundMaskField == null ? null
             : AccessTools.FieldRefAccess<Movement, LayerMask>(TrainerGroundMaskField);
         static readonly FieldInfo TrainerJumpActionField = AccessTools.Field(typeof(Movement), "jumpAction");
 
-        /// <summary>The back's gap to the wall behind (the hitbox reaches 15.5 u behind the centre: width 41, offset 5 forward).</summary>
         static float BackGap(Movement p, int wallSide)
         {
             int mask = TrainerGroundMask != null ? TrainerGroundMask(p).value : Physics2D.DefaultRaycastLayers;
@@ -73,7 +47,6 @@ namespace IGTAPTasMod
             return hit.collider == null ? -1f : Mathf.Max(0f, hit.distance - 15.5f);
         }
 
-        /// <summary>Follows the reverse super into a flush start (<see cref="PauseliftTrainer.RsStage"/>).</summary>
         void PumpReverseSuper(PauseliftTrainer tr, Movement p, bool facingAway, bool flush)
         {
             if (tr.RsStage == 1 || tr.RsStage == 2)
@@ -110,7 +83,6 @@ namespace IGTAPTasMod
 
         bool LabTrainerShown { get { return _lab != null && (_trainer != null || _floatTrainer != null); } }
 
-        /// <summary>Every rendered frame (plugin Update): follows the cling, the dash, its freeze, the pause menu and the lab's finish.</summary>
         void PumpLabTrainer()
         {
             if (_lab == null || _lab.Lab.trainer != "final-cling-float") _floatTrainer = null;
@@ -133,8 +105,6 @@ namespace IGTAPTasMod
 
             if (p.dashActive && !tr.WasDashing)
             {
-                // The reverse super's own dash (away from the wall, from out in the open) sets up the flush start; it is not a
-                // pauselift attempt.
                 if (!tr.WasClinging && !tr.WasFlush && tr.WasFacingAway && tr.WasGap > 20f)
                 {
                     tr.RsStage = 1;
@@ -154,8 +124,6 @@ namespace IGTAPTasMod
                     tr.FromCling = tr.WasClinging;
                     tr.FromFlush = tr.WasFlush;
                     if (tr.FromFlush && tr.RsStage == 3) tr.RsStage = 4;
-                    // A dash pressed with the stick at rest waits for the freeze's stick (Movement.getPlayerControlledInput); any
-                    // other stick sets its direction at once, and from a cling it flips away from the wall for good.
                     tr.StickAtRest = TrainerWaitingField != null && (bool)TrainerWaitingField.GetValue(p);
                 }
             }
@@ -181,7 +149,6 @@ namespace IGTAPTasMod
             tr.WasClinging = tr.Clinging;
         }
 
-        /// <summary>A step-up (BeforeSteppedUp): one 56 u lift, paused or not.</summary>
         void TrainerSteppedUp(Movement player)
         {
             PauseliftTrainer tr = _trainer;
@@ -206,8 +173,6 @@ namespace IGTAPTasMod
             tr.Done = true;
             tr.Attempts++;
             if (tr.Reached) tr.Successes++;
-            // The unpaused lifting frames of this attempt, timed from the end of the freeze (the freeze's own length is rounded up
-            // to a whole frame, so timing from the dash press would move with it): where a pause would have had to land.
             float from = -1f, to = -1f;
             for (int i = 0; i < tr.Lifts.Count && tr.FreezeEnd >= 0f; i++)
             {
@@ -257,11 +222,6 @@ namespace IGTAPTasMod
             _trainerRight = new GUIStyle(_trainerTitle) { alignment = TextAnchor.MiddleRight };
         }
 
-        /// <summary>
-        /// The trainer panel, top centre: one chip per button in order (grey to do, green done, red failed), the one message that
-        /// matters (the first thing that went wrong, or the result), and the attempt's timeline. Everything it shows is fixed
-        /// per attempt (no per-frame numbers), so nothing jumps while the menu is open.
-        /// </summary>
         void DrawLabTrainer()
         {
             if (_floatTrainer != null) { DrawFloatTrainer(); return; }
@@ -270,12 +230,9 @@ namespace IGTAPTasMod
             if (p == null) return;
             float scale = Mathf.Max(0.6f, Screen.height / 1080f);
             if (_trainerTitle == null || _trainerStyleHeight != Screen.height) BuildTrainerStyles(scale);
-            // The freeze as it happened on this dash once it has ended (live), else the last one measured, else the game's setting.
             float freeze = tr.Active && tr.FreezeEnd >= 0f ? tr.FreezeEnd - tr.DashAt
                 : tr.Freeze > 0f ? tr.Freeze : TrainerFreeze != null ? TrainerFreeze(p) : 0.05f;
             bool measured = tr.WindowFrom >= 0f;
-            // The pause window, timed from the end of the freeze. Before any attempt: the lifts come in the frames before the
-            // dash's second physics tick after the freeze.
             float from = measured ? tr.WindowFrom : Time.fixedDeltaTime, to = measured ? tr.WindowTo : 2f * Time.fixedDeltaTime;
             string dashKeys = Keys(TrainerDashActionField?.GetValue(p) as InputAction, "Dash");
             string pauseKeys = Keys(p.pauseMenu != null ? TrainerPauseActionField?.GetValue(p.pauseMenu) as InputAction : null, "Pause");
@@ -315,11 +272,6 @@ namespace IGTAPTasMod
             DrawReverseSuper(tr, p, new Rect(box.x, box.yMax + 8f * scale, width, 0f), dashKeys, scale);
         }
 
-        /// <summary>
-        /// Below the pauselift: the reverse super that starts it flush with the back against the wall, where the pause lifts on
-        /// every frame of the lifting tick instead of the last one (offline, 6 of 6 frames at 280 fps against 1 from a cling).
-        /// Its chips follow the setup live: out in the open facing away, the reverse super, the ride back to the wall (the gap).
-        /// </summary>
         void DrawReverseSuper(PauseliftTrainer tr, Movement p, Rect at, string dashKeys, float scale)
         {
             string jumpKeys = Keys(TrainerJumpActionField?.GetValue(p) as InputAction, "Jump");
@@ -347,7 +299,6 @@ namespace IGTAPTasMod
             Label(new Rect(x, y, w, 26f * scale), message, _trainerText, s < 0 ? TrainerRed : s >= 3 ? TrainerGreen : TrainerWaiting);
         }
 
-        // The chips' measuring content, its text set per chip: a new GUIContent per chip was garbage on every drawn frame.
         static readonly GUIContent TrainerChipContent = new GUIContent();
 
         float ChipsWidth(string[] chips, float scale)
@@ -361,7 +312,6 @@ namespace IGTAPTasMod
             return w;
         }
 
-        /// <summary>One row of chips: grey to do, green done, red failed.</summary>
         void DrawChips(float x, float y, string[] chips, int[] states, float scale)
         {
             for (int i = 0; i < chips.Length; i++)
@@ -376,12 +326,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>
-        /// Real time from the dash press: the freeze (blue: tilt here; this dash's own once it ends), the pause window placed after
-        /// the freeze's end (gold: the last dash's lifting frames; faint: the spread of the last five), every lift (cyan, paused
-        /// ones taller), the tilt and the pause as they came (green on time, red off), and a cursor while the attempt runs.
-        /// Paused time is taken out, so the scale stays the game's; the scale itself never changes.
-        /// </summary>
         void DrawTrainerTimeline(Rect r, PauseliftTrainer tr, float freeze, float from, float to)
         {
             float setting = TrainerFreeze != null ? TrainerFreeze(tr.Player) : 0.05f;

@@ -5,25 +5,11 @@ using IGTAPTasMod;
 
 namespace IGTAP.EngineSim
 {
-    // Tech checks for spikes and springs. A spike kills on its second Stay (spikeScript: counter past graceFrames 1, a dash on any
-    // Stay) and its first overlapping tick is only an Enter, so a hurtbox may touch one on two ticks and has to be clear on the
-    // third: the "SpikeGrace" span is such a touch the run lives through. A spring hit (Movement.hitSpring) refills the jumps and
-    // dashes, ends a dash in progress and adds the spring's momentum; SpringScript's cooldown is 0.15 s (8 steps).
     public static partial class TechChecks
     {
-        /// <summary>
-        /// Edge spike jump: a ground jump off the edge of a spike strip inside its grace. The dot stands or runs on the ground (coyote
-        /// full, no landing) with its hurtbox in a spike on the step before the jump, jumps (the buffered press spent, Velocity.y up,
-        /// no air or wall jump used) and lives: the jump lifts it out before the third tick that would kill it. Landing in the spike
-        /// with the buffered jump leaving on the landing step (the one spike jump) is not it: the dot was in the air.
-        /// </summary>
         [TechCheck("edge-spike-jump")]
         static int HazardEdgeSpikeJump(TechSteps run, int from, int to) => HazardEdgeJump(run, from, to, false);
 
-        /// <summary>
-        /// Edge spike jump next to a wall: the edge spike jump, and within 16 steps of it the dot is held sideways by a solid (its x
-        /// does not move with Velocity.x at 100 or more, or it is on a wall): the jump goes up a wall at the strip's end.
-        /// </summary>
         [TechCheck("edge-spike-jump-wall")]
         static int HazardEdgeSpikeJumpWall(TechSteps run, int from, int to) => HazardEdgeJump(run, from, to, true);
 
@@ -42,13 +28,6 @@ namespace IGTAP.EngineSim
             return -1;
         }
 
-        /// <summary>
-        /// Corner jump: a ground jump from a stand on a platform's end over a flush spike pit. The two steps before the jump the dot
-        /// stands still (x within 0.5 u) with a spike straight under its centre and none touching its hurtbox (<see
-        /// cref="TechStep.SpikeUnder"/>: the back ground rays still on the platform hold it), and it lives through the jump. A
-        /// running jump off the edge is never still over the pit, and a stand with the centre still over the platform is no
-        /// corner.
-        /// </summary>
         [TechCheck("corner-jump")]
         static int HazardCornerJump(TechSteps run, int from, int to)
         {
@@ -64,8 +43,6 @@ namespace IGTAP.EngineSim
             return -1;
         }
 
-        /// <summary>A ground jump went in on this step: the press spent from the buffer (getPlayerControlledInput), Velocity.y up, no
-        /// air or wall jump used and no wall kick.</summary>
         static bool HazardGroundJump(TechStep step)
         {
             MoveState input = default;
@@ -87,8 +64,6 @@ namespace IGTAP.EngineSim
             return false;
         }
 
-        /// <summary>Within 16 steps after step j a step where the dot's x does not move although Velocity.x is 100 or more (or it is
-        /// on a wall): a solid beside it.</summary>
         static bool HazardHeldSideways(List<TechStep> steps, int j)
         {
             for (int k = j + 1; k <= Math.Min(steps.Count - 1, j + 16); k++)
@@ -99,12 +74,6 @@ namespace IGTAP.EngineSim
             return false;
         }
 
-        /// <summary>
-        /// Spike fall: the ground rays find no floor over a spike patch flush with it (spikes are triggers, not ground), so the dot
-        /// that was standing or running (coyote full on a step within 12 before) starts to fall with no jump, dash or spring, drops at
-        /// most 20 u, touches the spikes (the first step of a graze the run lives through) and a step-up lifts it out within 3
-        /// steps: it fell into the patch and stepped onto the far floor inside the grace.
-        /// </summary>
         [TechCheck("spike-fall")]
         static int HazardSpikeFall(TechSteps run, int from, int to)
         {
@@ -132,12 +101,6 @@ namespace IGTAP.EngineSim
             return -1;
         }
 
-        /// <summary>
-        /// Spike super: a super jump (CheckForSuperJump, the SuperJump / ReversedSuper / HighSuper spans) that leaves a spike inside
-        /// its grace: a spike graze the run lives through on the step before the super or on the super's own step (a dashing dot
-        /// may touch a spike on one step only: the next Stay kills it). A graze the dash's own block swap began (<see
-        /// cref="HazardSwapGraze"/>) is the super in switching spikes instead.
-        /// </summary>
         [TechCheck("spike-super")]
         static int HazardSpikeSuper(TechSteps run, int from, int to)
         {
@@ -152,17 +115,11 @@ namespace IGTAP.EngineSim
             return -1;
         }
 
-        /// <summary>Step k's dash press swapped the coloured blocks (Swapped) and its hurtbox touches a spike it did not touch the
-        /// step before: the swap turned spikes on around the dot.</summary>
         static bool HazardSwapGraze(List<TechStep> steps, int k) =>
             steps[k].Swapped && steps[k].DashPress && steps[k].Spike && (k == 0 || !steps[k - 1].Spike);
 
         static bool HazardIsSuper(Span span) => span.Tech == "SuperJump" || span.Tech == "ReversedSuper" || span.Tech == "HighSuper";
 
-        /// <summary>
-        /// Spike wallbounce: a bounce off a wall (the Superbounce or WallBounce span: SpecialWallJump) with a spike graze the run
-        /// lives through from 2 steps before the kick to 3 after it: the bounce's first ticks brush the spikes inside their grace.
-        /// </summary>
         [TechCheck("spike-wallbounce")]
         static int HazardSpikeWallbounce(TechSteps run, int from, int to)
         {
@@ -176,12 +133,6 @@ namespace IGTAP.EngineSim
             return -1;
         }
 
-        /// <summary>
-        /// Super in switching spikes: a dash's block swap (Swapped, on the step the dash was pressed) turns spikes on around the dot:
-        /// its hurtbox touches a spike on that very step, not on the step before, and the super on that step or the next leaves
-        /// them inside their grace (a SuperJump / ReversedSuper / HighSuper span, the run lives). A spike the dash itself runs into
-        /// on its first step looks the same when the blocks are unlocked.
-        /// </summary>
         [TechCheck("super-switching-spikes")]
         static int HazardSuperSwitchingSpikes(TechSteps run, int from, int to)
         {
@@ -196,12 +147,6 @@ namespace IGTAP.EngineSim
             return -1;
         }
 
-        /// <summary>
-        /// Spring clip: a downward spring's momentum carries the dot through a spike strip a plain fall dies in. A spike graze the
-        /// run lives through while falling faster than a plain fall can (27 u a step or more: the terminal fall is 26.3) with the
-        /// spring's momentum still pushing down (momentum.y -20 or less), no dash, and the dot has been falling since a hit of a
-        /// spring pointing down (SpringY below -0.5) with no ground touched in between.
-        /// </summary>
         [TechCheck("spring-clip")]
         static int HazardSpringClip(TechSteps run, int from, int to)
         {
@@ -221,13 +166,6 @@ namespace IGTAP.EngineSim
             return -1;
         }
 
-        /// <summary>
-        /// Spring dash stack: a dash that carries one spring's momentum into a second spring. A spring hit lands in a dash (the step
-        /// before the hit has the dash active): hitSpring's endDash gives back 95% of preDashMomentum on the axes endDash checks
-        /// (Movement 2030-2039: x when its sign matches the dash's and the dash is not upward, or a straight-down dash; y when its
-        /// sign matches the dash's), at least 100 u of it, and that momentum is a spring's: the dash started after an earlier spring
-        /// hit with no ground touched since.
-        /// </summary>
         [TechCheck("spring-dash-stack")]
         static int HazardSpringDashStack(TechSteps run, int from, int to)
         {
@@ -258,14 +196,9 @@ namespace IGTAP.EngineSim
             return -1;
         }
 
-        /// <summary>Mathf.Sign: 1 for zero.</summary>
+        // Mathf.Sign returns 1 for zero.
         static float HazardSign(float x) => x < 0f ? -1f : 1f;
 
-        /// <summary>
-        /// Spring double hit: one spring hits the dot twice in one pass. SpringScript's cooldown is 0.15 s (OnTriggerStay2D hits again
-        /// as soon as it ends if the dot is still inside), so two hits of a spring with the same up 7-9 steps apart, the dot within one
-        /// 80x80 trigger's reach (125 u in x, 155 in y) of where the first one hit it. Returns the second hit.
-        /// </summary>
         [TechCheck("spring-double-hit")]
         static int HazardSpringDoubleHit(TechSteps run, int from, int to)
         {

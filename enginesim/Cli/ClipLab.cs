@@ -13,12 +13,6 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// clip: a lab for states no input reaches yet (the player inside a wall, any speed, any Movement fields).
-    /// <c>clip map</c> draws the ground colliders of a box; <c>clip run</c> runs every start of a grid against every branch
-    /// of inputs on all cores and ranks the runs by the height they reach; <c>clip log</c> logs one start × branch tick by
-    /// tick (the probe's rows).
-    /// </summary>
     static class ClipLab
     {
         const BindingFlags Fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -39,7 +33,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>World-frame occupancy of a box: '#' Ground layer (groundRaycastLayer 128), 'S' a Spikes (64) edge in the cell (spike composites are outlines), '.' free.</summary>
         static int MapBox(string[] args)
         {
             var (sim, _, _) = Program.Open(args[0]);
@@ -71,14 +64,6 @@ namespace IGTAP.EngineSim.Cli
             public int Top = 40;
         }
 
-        /// <summary>
-        /// lab.json: <c>base</c> (one start) crossed with <c>axes</c> ({key: [values]}) and/or an explicit <c>starts</c> list,
-        /// <c>prefix</c> ticks every branch starts with, <c>branches</c> [{name, ticks}], <c>horizon</c> physics ticks after the
-        /// inputs. A start's keys: x, y (world frame), vx, vy (the script's Velocity, and the body's with momentum), mx, my
-        /// (momentum), scaleX, collider ("default" | "dash"), savestate (a studio savestate file first), anything else a
-        /// Movement field. A tick is the probe's object or a string "x,y,flags[*n]" (flags H held, P press, R release, D dash,
-        /// Jn dashJump n, Lx:y the stick through the dash lock, Tx or Tx:y the stick held in the dash's freeze; *n repeats it).
-        /// </summary>
         static Lab Load(string path)
         {
             using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
@@ -135,7 +120,6 @@ namespace IGTAP.EngineSim.Cli
                         case 'D': tick.dash = true; break;
                         case 'T':
                         {
-                            // Tx or Tx:y — the stick held in the dash's freeze (InputTick.turnX/turnY), e.g. T-1 or T0.35:1
                             int e = i + 1;
                             while (e < flags.Length && (char.IsDigit(flags[e]) || flags[e] == '-' || flags[e] == '.' || flags[e] == ':')) e++;
                             string[] turn = flags.Substring(i + 1, e - i - 1).Split(':');
@@ -146,7 +130,6 @@ namespace IGTAP.EngineSim.Cli
                         }
                         case 'L':
                         {
-                            // Lx:y — the stick held through the dash lock (MacroStep.lockMoveX/lockMoveY), e.g. L-1:0
                             int e = i + 1;
                             while (e < flags.Length && (char.IsDigit(flags[e]) || flags[e] == '-' || flags[e] == '.' || flags[e] == ':')) e++;
                             string[] lx = flags.Substring(i + 1, e - i - 1).Split(':');
@@ -169,10 +152,6 @@ namespace IGTAP.EngineSim.Cli
             return ticks;
         }
 
-        /// <summary>
-        /// Puts the simulation in one lab start and returns it as a snapshot every branch restores. A start with no keys is the
-        /// trace's own start, untouched (its prefix and branches replay exactly like the trace's inputs).
-        /// </summary>
         static SimSnapshot Apply(Simulation sim, Dictionary<string, JsonElement> start, string baseDir)
         {
             if (start.Count == 0) return sim.Start;
@@ -219,12 +198,9 @@ namespace IGTAP.EngineSim.Cli
                 fields["momentum"] = $"{m.x.ToString(CultureInfo.InvariantCulture)},{m.y.ToString(CultureInfo.InvariantCulture)}";
                 probeStart["velocity"] = new[] { v.x + m.x, v.y + m.y };
             }
-            // rebaseAt [x, y]: the world rebased around that world point first, as if the player had rebased there.
             if (start.TryGetValue("rebaseAt", out JsonElement at)) sim.LabRebase(new WorldPos(at[0].GetSingle(), at[1].GetSingle()));
             using JsonDocument doc = JsonDocument.Parse(JsonSerializer.Serialize(probeStart));
             DemoStart.ApplyStart(sim, doc.RootElement, baseDir);
-            // A lab start is mid-air as often as not: the inputs start on the first tick, without the macro's wait for three
-            // grounded ticks (which also normalizes the quick-restart state) or its start alignment.
             sim.Engine.GetType().GetField("_waitingForStable", Fields).SetValue(sim.Engine, false);
             sim.Engine.GetType().GetField("_preRollTicksRemaining", Fields).SetValue(sim.Engine, 0);
             sim.SetStart(sim.Capture(0), 0);
@@ -237,7 +213,6 @@ namespace IGTAP.EngineSim.Cli
             public float MaxY, EndY, EndX, MaxX, MinX, LaunchVy, BodyVy, BodyVx, LaunchVx;
             public int MaxYStep;
             public string End;
-            /// <summary>The first step the player was on a wall after being off one (-1: never), and where.</summary>
             public int WallStep;
             public float WallX, WallY;
         }
@@ -274,7 +249,6 @@ namespace IGTAP.EngineSim.Cli
             int threads = Solve.Option(args, "--threads", Environment.ProcessorCount);
             int top = Solve.Option(args, "--top", lab.Top);
             string outPath = Solve.Option(args, "--out", (string)null);
-            // The prefix runs once per start (Simulation.Advance); every branch restores the state at its end.
             var inputs = lab.Branches.Select(b => b.ticks).ToList();
             long total = (long)lab.Starts.Count * lab.Branches.Count;
             Console.Error.WriteLine($"{lab.Starts.Count} starts x {lab.Branches.Count} branches = {total} runs on {threads} threads");
@@ -345,8 +319,6 @@ namespace IGTAP.EngineSim.Cli
             var rows = new List<Dictionary<string, object>>();
             Dictionary<string, object> first = Probe.Row(sim, -1, extra, extraInfos);
             rows.Add(first);
-            // --rays file: {"rays": [[dx, dy, dirX, dirY, length, layerMask], ...]} cast from the player's transform (the physics
-            // frame the game's scripts see) after every step, as "ray i: distance" (or "-" for no hit).
             string raysPath = Solve.Option(args, "--rays", (string)null);
             float[][] rays = raysPath == null ? Array.Empty<float[]>() : JsonDocument.Parse(File.ReadAllText(raysPath)).RootElement.GetProperty("rays")
                 .EnumerateArray().Select(a => a.EnumerateArray().Select(v => v.GetSingle()).ToArray()).ToArray();

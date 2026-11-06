@@ -6,14 +6,10 @@ namespace UnityEngine
 {
     public static class Time
     {
-        // The fixed step and the scale are per-world state (a thread's World.Load sets its step, Movement.Start its
-        // scale from globalStats.baseGameSpeed), so they are per thread like the game's own statics: Prep's static
-        // audit fails the build on a mutable static that is neither `[ThreadStatic]` nor in enginesim/static-allow.txt.
+        // Fixed step and scale are per-world state: keep them [ThreadStatic] or the Prep static audit fails the build.
         [ThreadStatic] static float _fixedDeltaTime = 0.0199999921f;
         [ThreadStatic] static float _timeScale = 1f;
-        // Time.deltaTime while the host resumes coroutines: a physics step's (WaitForFixedUpdate) or a rendered frame's
-        // (WaitForSeconds, null, WaitForEndOfFrame; 0 in a dash freeze's or pause's held frames, timeScale 0), as the game's
-        // player loop has it there. null outside a resume: the fixed step.
+        // Time.deltaTime while coroutines resume: step on physics resumes, frame time on rendered ones, 0 in held frames.
         [ThreadStatic] static float? _resumeDeltaTime;
 
         public static float fixedDeltaTime { get { return _fixedDeltaTime; } set { _fixedDeltaTime = value; } }
@@ -24,8 +20,7 @@ namespace UnityEngine
         public static float timeScale { get { return _timeScale; } set { _timeScale = value; } }
     }
 
-    /// <summary>The engine holds no machine's prefs: upgradeBox.Start reads them only on branches the engine doesn't run (its
-    /// Steam branch, SteamManager.Initialized cut; the atom box's door, WokenStarts.Unmodeled).</summary>
+    // No machine prefs: upgradeBox.Start reads them only on branches the engine cuts (Steam, atom door; WokenStarts).
     public static class PlayerPrefs
     {
         public static bool HasKey(string key) { throw new System.NotSupportedException("PlayerPrefs.HasKey(\"" + key + "\") offline"); }
@@ -74,7 +69,6 @@ namespace UnityEngine
             set { _s0 = (uint)value.s0; _s1 = (uint)value.s1; _s2 = (uint)value.s2; _s3 = (uint)value.s3; }
         }
 
-        /// <summary>A diagnostic (enginesim fulltas --check --ticks-out): called on each draw with the game method that made it.</summary>
         [ThreadStatic] public static Action<string> Drawn;
 
         public static uint Draw()
@@ -217,8 +211,6 @@ namespace UnityEngine
     {
         public bool enabled { get; set; } = true;
         public Material material { get; set; } = new Material();
-        /// <summary>Presentation: no sprite geometry here. Only TreeSegmentActivationComponent.IE_Grow reads it, for a trunk's
-        /// grow offset (trunks have no colliders).</summary>
         public Bounds bounds { get { return default; } }
         public int sortingOrder { get; set; }
         public void SetPropertyBlock(MaterialPropertyBlock properties) { }

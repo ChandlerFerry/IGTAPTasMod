@@ -46,7 +46,6 @@ namespace IGTAP.EngineSim.Cli
                     case "timeloss": return TimeLoss.Run(args.Skip(1).ToArray());
                     case "map": return Map.Run(args.Skip(1).ToArray());
                     case "ultras": return Ultras.Run(args.Skip(1).ToArray());
-                    // fulltas <trace>: solve-run; --check replays a route.
                     case "fulltas": return args.Contains("--check") ? FullTasCheck(args.Skip(1).ToArray()) : Runs.RunSolve.Run(args.Skip(1).ToArray());
                     case "body-selftest": return BodyEnableCheck.Run();
                     case "plan-check": return PlanCheck(args.Skip(1).ToArray());
@@ -60,8 +59,6 @@ namespace IGTAP.EngineSim.Cli
                     case "lab": return Lab.Run(args.Skip(1).ToArray());
                     case "path":
                     {
-                        // --canonical: the start as the searches load it (Simulation.LoadStart canonical: the category start's
-                        // history and FloatingOrigin), not as captured.
                         var (sim, _, _) = Open(args[1], args.Contains("--canonical"));
                         List<InputTick> inputs = Plan.ReadRoute(args[2]);
                         bool verbose = args.Contains("--verbose");
@@ -260,15 +257,6 @@ namespace IGTAP.EngineSim.Cli
             return (sim, trace, inputs);
         }
 
-        /// <summary>
-        /// fulltas &lt;trace&gt; --check &lt;route.json&gt; [--goals FILE] [--loose-buys] [--class C] [--ticks-out FILE [--watch [PARENT/]NAME]]:
-        /// a route (a run file's "inputs" or an offline best's "ticks") replayed from the trace's start under its goals (or FILE's
-        /// "goals"): each goal's physics and input tick, live time and held frames, the purchases (--loose-buys: a stray one doesn't end
-        /// the replay, as a trace capture plays on) and how it ended. Searches and writes nothing but --ticks-out: every physics tick
-        /// (physics and input count, world position, velocity, momentum, held frames, ground, air dashes and jumps left, Cash, the
-        /// economy, --watch's upgrade box) and each clone spawn and RNG draw as JSON lines, to line up with a 1x probe (align-1x,
-        /// tools/economy-diff.py).
-        /// </summary>
         static int FullTasCheck(string[] args)
         {
             string file = Solve.Option<string>(args, "--check", null), ticksOut = Solve.Option<string>(args, "--ticks-out", null);
@@ -339,13 +327,6 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        /// <summary>
-        /// The economy as a `--ticks-out` row (and `replay --ticks-out`) carries it, under the names the plugin's 1x probe rows and
-        /// trace ticks use (TasPlugin.EconomyNow), for tools/economy-diff.py: each currency held, the atom collider's atoms per tier
-        /// and waiting atoms, globalStats' NP per tick, its cap, the comp boost's NP factor and the clone dust multiplier, and the
-        /// upgrade trees' grown segments, how far each door box's door is from its box (the atom box's, the Area 2 door box's:
-        /// upgradeBox.doorToOpen, a PlatformMover; -1 without one) and the tree boxes on (treeBoxes, WokenStarts.Describe).
-        /// </summary>
         internal static Dictionary<string, object> EconomyRow(Simulation sim)
         {
             globalStats stats = Singleton<globalStats>.Instance;
@@ -367,7 +348,6 @@ namespace IGTAP.EngineSim.Cli
         static readonly FieldInfo BoxTree = typeof(upgradeBox).GetField("upgradeTree", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
         static readonly FieldInfo DoorToOpen = typeof(upgradeBox).GetField("doorToOpen", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
 
-        /// <summary>The distance from the global box of this kind that has a door to its door (rounded to 0.01 u); -1: none.</summary>
         static double Door(Simulation sim, globalStats.globalUpgradeSet kind)
         {
             foreach (upgradeBox b in sim.World.All<upgradeBox>())
@@ -379,8 +359,6 @@ namespace IGTAP.EngineSim.Cli
         static int Replay(string[] args)
         {
             bool verbose = args.Contains("--verbose");
-            // --ticks-out FILE: the offline economy per physics tick (EconomyRow), as `fulltas --check --ticks-out` writes
-            // it, for tools/economy-diff.py against a 1x probe of the same inputs.
             string ticksOut = Solve.Option(args, "--ticks-out", (string)null);
             using StreamWriter econOut = ticksOut == null ? null : new StreamWriter(ticksOut);
             int failures = 0;
@@ -401,7 +379,6 @@ namespace IGTAP.EngineSim.Cli
                     Dictionary<string, object> econ = econOut == null && (step >= ticks.Length || !ticks[step].TryGetProperty("econ", out _)) ? null : EconomyRow(sim);
                     econOut?.WriteLine(JsonSerializer.Serialize(new { physics = sim.Engine.PhysicsTicks, input = sim.Engine.RunTicks, econ }));
                     if (step >= ticks.Length || firstDiff >= 0 && !verbose) return;
-                    // The tick a death or finish ends the run stops partway here and runs whole in turbo; 1x logs no row for it.
                     if (!sim.Engine.IsRunning) return;
                     var here = new List<string>();
                     JsonElement t = ticks[step];
@@ -426,8 +403,6 @@ namespace IGTAP.EngineSim.Cli
                         }
                     }
                     if (t.TryGetProperty("cash", out JsonElement cash) && Compare(here, "cash", Json(sim.Shop.CashNow), cash) && firstCashDiff < 0) firstCashDiff = step;
-                    // Turbo's economy (the plugin's TasPlugin.EconomyNow on a trace tick) against the engine's, field by field (the
-                    // grid's call count is the session's in the plugin and the run's here: tools/economy-diff.py lines up its steps).
                     if (t.TryGetProperty("econ", out JsonElement turboEcon))
                         foreach (JsonProperty f in turboEcon.EnumerateObject())
                             if (f.Name != "cash" && f.Name != "gridCalls" && econ.TryGetValue(f.Name, out object mine)) Compare(here, f.Name, Json(mine), f.Value);
@@ -454,7 +429,6 @@ namespace IGTAP.EngineSim.Cli
                     + " vs turbo " + (result.GetProperty("finished").GetBoolean() ? "finish " + result.GetProperty("time").GetRawText() : "no finish")
                     + (sameResult ? " [MATCH]" : " [MISMATCH]"));
                 foreach (string d in diffs.Take(verbose ? 60 : 3)) Console.WriteLine("  " + d);
-                // A late economy split hides behind 60 earlier position diffs: name its first tick either way.
                 foreach (string d in new[] { cashLine, randomLine, bigCashLine }.Where(d => d != null && !diffs.Take(verbose ? 60 : 3).Contains(d)))
                     Console.WriteLine("  first split " + d);
                 if (firstDiff >= 0 || !sameResult || run.Stepped != ticks.Length) failures++;
@@ -466,7 +440,6 @@ namespace IGTAP.EngineSim.Cli
 
         static bool Compare(List<string> diffs, string name, string offline, JsonElement turbo)
         {
-            // A string compares by its value: the trace's escapes are Newtonsoft's ("+" raw), this side's System.Text.Json's.
             string expected = Numbers(_normalize(turbo.ValueKind == JsonValueKind.String ? Json(turbo.GetString()) : turbo.GetRawText()));
             string actual = Numbers(offline);
             if (actual == expected) return false;
@@ -572,8 +545,6 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>A one-way avoid box (OfflineSolver.Box.From) cuts a move in across its entry edge and nothing else: Course 3's
-        /// avoid-backwards (from bottom) cuts the climb from the start, a fast one through it included, and not the farm lap's drop.</summary>
         static int OneWay()
         {
             var box = new OfflineSolver.Box(new WorldPos(9446.9f, 7369.6f), new WorldPos(9694.1f, 7484f), 0, IGTAPTasMod.FullTasGoal.FromBottom);
@@ -587,18 +558,12 @@ namespace IGTAP.EngineSim.Cli
             Check(!box.Cuts(new WorldPos(9500, 6000), new WorldPos(9500, 7400)), "respawn inside");
             Check(right.Cuts(new WorldPos(9700, 7000), new WorldPos(9690, 7000)) && !right.Cuts(new WorldPos(9600, 7000), new WorldPos(9630, 7000)), "from right");
             Check(new OfflineSolver.Box(new WorldPos(0, 0), new WorldPos(10, 10)).Cuts(new WorldPos(5, 5), new WorldPos(5, 5)), "two-way box inside");
-            // A box for goal 6 (forced-paths.json's "for"): on from 5 goals reached until the 6th.
             var only6 = new OfflineSolver.Box(new WorldPos(0, 0), new WorldPos(10, 10), 5, 0, 6);
             Check(!only6.Live(4) && only6.Live(5) && !only6.Live(6) && new OfflineSolver.Box(default, default, 0, 0, 1).Live(0), "goal-scoped box");
             Console.WriteLine("oneway: ok");
             return 0;
         }
 
-        /// <summary>
-        /// The 280 fps clock's frames (MacroEngine.FrameGrid), checked against a 280 fps probe (grid280): the restart's crossing,
-        /// and on the run's cycle 28 frames in five ticks, lagging the next tick 0.36, 2.50, 1.07, 3.21, 1.79 ms, frame times as
-        /// 1x reads them and a dash's 0.05 s freeze holding 13 frames.
-        /// </summary>
         static int Grid()
         {
             MacroEngine.FrameGrid grid = MacroEngine.FrameGrid.Playback;
@@ -643,24 +608,6 @@ namespace IGTAP.EngineSim.Cli
 
         static string G9(float f) { return f.ToString("G9", CultureInfo.InvariantCulture); }
 
-        /// <summary>
-        /// plan-check &lt;trace&gt; &lt;route&gt; --at N [--ticks T] [--buy | --finish | --flip on|off | --stray BOX]: the economy drive
-        /// (Simulation.EconomyIdle, EconomyBuy, EconomyFinish: Runtime\EconomyDrive.cs) against the full simulation from the same
-        /// state. N is a goal of a Full-TAS trace (1-based, as `fulltas --check` numbers them), else an input tick; 0 the trace's
-        /// start (idle only). The run's buys are strict, as `fulltas --check` plays them.
-        /// Idle: the route to N, then no input until the player rests (3 still ticks) and a snapshot there; T (2000) more idle
-        /// ticks of the full simulation against EconomyIdle(T) where the player stands.
-        /// --buy / --finish: the state a physics tick before goal N's purchase (the first from N on) or course finish, the full
-        /// simulation's next tick against EconomyBuy / EconomyFinish of it.
-        /// --flip on|off: the first physics step from goal N on where the route's player takes a course's clones on (off) screen
-        /// (a clonesLoD trigger's enter or exit), the full simulation's step against EconomyIdle(1) where the step leaves the
-        /// player.
-        /// --stray BOX: where the player rests after goal N, EconomyIdle(T) and then EconomyBuy(BOX), a box that isn't the next
-        /// goal's: the drive must neither stop nor move the run's goals.
-        /// Every check also asserts the drive left the goal tracker where it was. Prints each economy field PASS or FAIL (the
-        /// random state: skipped where the full ticks drew for the player, its sounds, which the drive has no player for, and
-        /// made as many other draws as the drive); exits 1 on a FAIL.
-        /// </summary>
         static int PlanCheck(string[] args)
         {
             string tracePath = args[0];
@@ -674,8 +621,6 @@ namespace IGTAP.EngineSim.Cli
             sim.StrictBuys = true;
             bool goals = sim.Goals != null;
             string where = at == 0 ? "the trace's start" : goals ? "goal " + at + " " + sim.Goals.Goals[at - 1].label : "input " + at;
-            // The physics step goal N is reached on (or input tick N played on; --buy: the first from there that buys), the inputs
-            // played by then and the boxes bought on it.
             int reached = -1, played = 0;
             var bought = new List<string>();
             if (at > 0)
@@ -703,7 +648,6 @@ namespace IGTAP.EngineSim.Cli
             SimSnapshot snap = null;
             Vector2 place = default;
             SortedDictionary<string, string> full = null;
-            // The full ticks' draws by caller, and those made for the player (Movement's sounds, footsteps, respawn).
             var fullDraws = new List<string>();
             int playerDraws = 0;
             bool counting = false;
@@ -720,7 +664,6 @@ namespace IGTAP.EngineSim.Cli
             if (flip != null)
             {
                 bool on = flip == "on";
-                // Pass 1: the step the route's player flips a course's clones, and the course.
                 int flipped = -1, which = -1;
                 bool[] before = null;
                 sim.Run(route, extraTicks: 1000000, afterTick: _ => flipped < 0, onStep: s =>
@@ -732,12 +675,11 @@ namespace IGTAP.EngineSim.Cli
                     before = now;
                 });
                 if (flipped < 0) { Console.WriteLine($"FAIL: no course's clones go {flip} screen after {where}"); return 1; }
-                // Pass 2: the state before it, and its step, where the route's player stands is the drive's place.
                 bool agrees = false;
                 sim.Run(route, extraTicks: 1000000, afterTick: _ => full == null, onStep: s =>
                 {
                     if (s == flipped - 1) snap = sim.Capture((int)sim.Engine.RunTicks);
-                    counting = s == flipped - 1;   // the next step's draws: the draw callback runs within it
+                    counting = s == flipped - 1;
                     if (s != flipped) return;
                     full = DriveFields(sim);
                     place = sim.Player.transform.position;
@@ -842,7 +784,7 @@ namespace IGTAP.EngineSim.Cli
                 return failed == 0 ? 0 : 1;
             }
             SortedDictionary<string, string> drive = DriveFields(sim);
-            // Counted, not named: the caller a draw reports depends on what the JIT inlined (Economy.RollCount into SpawnClone).
+            // Count draws, never name callers: the reported caller depends on JIT inlining (Economy.RollCount into SpawnClone).
             full["draws"] = fullDraws.Count.ToString(CultureInfo.InvariantCulture);
             drive["draws"] = driveDraws.Count.ToString(CultureInfo.InvariantCulture);
             Console.WriteLine($"draws: full {fullDraws.Count} (and {playerDraws} for the player), drive {driveDraws.Count}");
@@ -863,10 +805,6 @@ namespace IGTAP.EngineSim.Cli
 
         static readonly FieldInfo BoxCooldown = typeof(upgradeBox).GetField("boxCooldown", BindingFlags.Instance | BindingFlags.NonPublic);
 
-        /// <summary>plan-check's fields: each currency held, the economy's clones, upgrades and atoms (Economy.State), the shop's
-        /// spends and buy-max routines, the random state, the scheduler's Invokes and parked coroutines (but the player's, a jump
-        /// buffer's cancel: the drive has no player), the courses' rewards and comp boosts,
-        /// globalStats' NP and clone dust readouts, the boxes and trees, and the run's physics ticks.</summary>
         static SortedDictionary<string, string> DriveFields(Simulation sim)
         {
             var options = new JsonSerializerOptions { IncludeFields = true, NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals };
@@ -895,7 +833,7 @@ namespace IGTAP.EngineSim.Cli
             });
             f["courses"] = J(sim.Courses.Select(c => new object[] { c.courseNumber, c.reward, c.gpReward, c.rpReward, c.CdReward, c.compBoostTimeLeft, c.compBoostBonus, c.rewardTier }).ToArray());
             Dictionary<string, object> row = EconomyRow(sim);
-            row.Remove("gridCalls");   // a diagnostic count, not in snapshots
+            row.Remove("gridCalls");
             f["globalStats"] = J(row);
             f["boxes"] = J(sim.World.All<upgradeBox>().Select(b => new object[] { b.TimesUsed, b.upgradeCost, b.isActive, (float)BoxCooldown.GetValue(b) }).ToArray());
             f["physicsTicks"] = J(new { sim.Engine.PhysicsTicks, sim.Engine.HeldFrames });

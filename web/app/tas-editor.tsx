@@ -7,7 +7,6 @@ import { request as call } from "./studio-socket";
 
 type Command = (path: string, body?: unknown) => Promise<boolean>;
 
-/** One input tick (the plugin's SolverTick; defaults omitted). */
 export type TasTick = { x?: number; y?: number; held?: boolean; press?: boolean; release?: boolean; dash?: boolean; dashJump?: number; springDash?: number;
   lockX?: number | null; lockY?: number | null; turnX?: number | null; turnY?: number | null; reset?: boolean; pause?: number; pauseTick?: number; pauseFrame?: number };
 export type TasMarker = { tick: number; note: string };
@@ -15,13 +14,11 @@ export type TasSuggestion = { index: number; description: string; kind: string; 
 export type TasPlayer = { x: number; y: number; vx: number; vy: number; velX: number; velY: number; momentumX: number; momentumY: number; onGround: boolean; onWall: boolean; dashActive: boolean;
   dead: boolean; airJumpsLeft: unknown; airDashesLeft: unknown; jumpBuffer: boolean; dashBuffer: boolean; coyote: unknown; cutscene: string; originX: number; originY: number;
   courseTime?: number | null };
-/** GET /state/live `tas`: the open TAS editor session (TasPlugin.Editor.cs), null when none. */
 export type TasLive = { open: boolean; routeId: string; name: string; savestateId?: string; course?: number | null; capabilities?: string | null;
   phase: "starting" | "held" | "playing" | "recording" | "running"; cursor: number; physics: number; tickCount: number; baseInput: number; rerecords: number;
   version: number; canUndo: boolean; canRedo: boolean; slowdown: number; greenzone: number[]; traced: number; traceVersion: number; playUntil?: number | null; ended?: string | null; finished: boolean; endTime: number; endPhysics: number;
   player?: TasPlayer | null; suggest: { running: boolean; error?: string | null; until: number; results?: TasSuggestion[] | null; tried?: number | null };
   techs?: TasTechsLive };
-/** `tas.techs`: Techs here (TasPlugin.Techs.cs), the techs whose key window works from the held input tick, per direction. */
 export type TasTechsLive = { at: number; running: boolean; unavailable?: string | null; done: boolean; tried: number; error?: string | null;
   list?: { tech: string; name: string; variants: TasTechVariant[] }[] | null };
 export type TasTechVariant = { dir: string; angle?: number | null; start: number; died: boolean; same?: { dir: string; angle?: number | null }[] };
@@ -32,7 +29,7 @@ type CategoryLite = { id: string; label: string };
 type RouteLite = { id: string; name: string };
 type SavestateLite = { id: string; name: string };
 
-// A controller's stick (docs/human-input.md): x 0, ±1 or a part tilt 0.3..0.8; y 0 or ±1.
+// Controller sticks only (RULES.md 2): x 0, +-1 or a part tilt 0.3..0.8; y 0 or +-1.
 const PARTIALS = [0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8];
 const X_VALUES = [-1, ...PARTIALS.map(v => -v).reverse(), 0, ...PARTIALS, 1];
 const SPEEDS: [number, string][] = [[1, "1x"], [2, "½x"], [4, "¼x"], [10, "⅒x"]];
@@ -45,7 +42,6 @@ const nextY = (y = 0) => y === 0 ? 1 : y === 1 ? -1 : 0;
 const isTap = (t: TasTick) => !t.held && !!t.press && !!t.release;
 const SLACK_KEYS = ["x", "y", "held", "press", "release", "dash", "dashJump", "springDash", "lockX", "lockY", "turnX", "turnY", "reset", "pause"];
 const num = (v?: number | null) => v == null ? "–" : String(+v.toFixed(2));
-// The More column: each extra as a badge, and the legend under the roll's header ([class, example, meaning, badge text]).
 const EXTRAS: [string, string, string, (t: TasTick) => string | null][] = [
   ["djump", "dash-jump f3", "Jump on the dash's 3rd frame (a dash-jump).", t => t.dashJump ? `dash-jump f${t.dashJump}` : null],
   ["aim", "aim x0.35 y1", "The stick the game reads during the dash freeze (x, y). Without the omnidash only x counts.",
@@ -60,10 +56,7 @@ const EXTRAS: [string, string, string, (t: TasTick) => string | null][] = [
 ];
 const fmt = (v: unknown, digits = 1) =>typeof v === "number" ? v.toFixed(digits) : String(v ?? "—");
 
-/**
- * The jump flags from `from` to `to` (and the tick after) as a hold's edges give them: a hold presses where it starts and
- * not after; outside a hold only a tap presses. The tick after the range only gets its press set by the edge.
- */
+// A jump hold presses only where it starts; outside a hold only a tap presses (every buffer from a press, RULES.md 3).
 function fixEdges(ticks: TasTick[], from: number, to: number) {
   for (let i = from; i <= Math.min(to + 1, ticks.length - 1); i++) {
     const t = ticks[i], before = i > 0 && !!ticks[i - 1].held;
@@ -72,20 +65,14 @@ function fixEdges(ticks: TasTick[], from: number, to: number) {
   }
 }
 
-// Keyboard input's game keys, by physical key (KeyboardEvent.code): arrows or WASD the stick, Space jump, X dash.
 type GameKey = "left" | "right" | "up" | "down" | "jump" | "dash";
 const GAME_KEYS: Record<string, GameKey> = { ArrowLeft: "left", KeyA: "left", ArrowRight: "right", KeyD: "right", ArrowUp: "up", KeyW: "up",
   ArrowDown: "down", KeyS: "down", Space: "jump", KeyX: "dash" };
 const GAME_KEY_ORDER: GameKey[] = ["left", "right", "up", "down", "jump", "dash"];
 const GAME_KEY_LABEL: Record<GameKey, string> = { left: "←", right: "→", up: "↑", down: "↓", jump: "Jump", dash: "Dash" };
-/** The keys down (codes), and whether jump or dash went down since the last advance wrote an input (a tap between two). */
 type Pad = { down: Set<string>; jumpTap: boolean; dashTap: boolean };
 const emptyPad = (): Pad => ({ down: new Set(), jumpTap: false, dashTap: false });
 
-/**
- * The input tick the keys give: the stick, jump held (fixEdges sets its press), or on the first tick of an advance a jump
- * tapped and let go since the last one (press and release), and a dash pressed since the last one.
- */
 function padTick(p: Pad, first: boolean): TasTick {
   const on = new Set([...p.down].map(code => GAME_KEYS[code]));
   const x = (on.has("right") ? 1 : 0) - (on.has("left") ? 1 : 0), y = (on.has("up") ? 1 : 0) - (on.has("down") ? 1 : 0);
@@ -175,7 +162,6 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
     return () => { alive = false; };
   }, [tas.routeId, tas.version, loaded]);
 
-  // The trace grows as the session plays (only the new rows are fetched) and starts over where the inputs changed.
   useEffect(() => {
     const fresh = trace.route !== tas.routeId || trace.version !== tas.traceVersion;
     const from = fresh ? 0 : trace.rows.length;
@@ -188,8 +174,6 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
     return () => { alive = false; };
   }, [tas.routeId, tas.traced, tas.traceVersion, trace]);
 
-  // A Human version session (`<course>_<CAT> human <time>`) shows its humanize slack report, on the rows whose inputs
-  // (and every one before them) are still the human version's.
   const [slack, setSlack] = useState<SlackReply | null>(null);
   useEffect(() => {
     setSlack(null);
@@ -212,15 +196,12 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
   const busy = tas.phase === "starting" || tas.phase === "recording";
   const cmd = (path: string, body: unknown = {}) => onCommand(path, body);
 
-  // Keyboard input: the page takes game keys (GAME_KEYS) and each advance writes what they hold into the input it plays.
   const [keyboard, setKeyboard] = useState(false);
   useEffect(() => setKeyboard(window.localStorage.getItem("tasKeyboard") === "1"), []);
   const toggleKeyboard = () => setKeyboard(on => { window.localStorage.setItem("tasKeyboard", on ? "0" : "1"); return !on; });
   const [heldKeys, setHeldKeys] = useState<string>("");
   const pad = useRef<Pad>(emptyPad());
-  // When a keyboard advance was sent: the next waits for the session to move (its cursor is stale till then), 1.5 s at most.
   const pending = useRef(0);
-  // Advances pressed meanwhile queue up, each with the keys as they were at its press, and go one per move.
   const queued = useRef<{ n: number; p: Pad }[]>([]);
   const advanceNow = useRef<(n: number, p: Pad) => void>(() => {});
   useEffect(() => {
@@ -229,12 +210,10 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
     if (next) advanceNow.current(next.n, next.p);
   }, [tas.physics]);
 
-  // The game's hotkeys, here too (Shift: ten ticks). By physical key, so Shift+] is still ]; not while typing.
   const keys = useRef({ tas, busy, speed, recordSpeed, cmd, keyboard, ticks, setTicks });
   keys.current = { tas, busy, speed, recordSpeed, cmd, keyboard, ticks, setTicks };
   useEffect(() => {
     const show = () => { const on = new Set([...pad.current.down].map(code => GAME_KEYS[code])); setHeldKeys(GAME_KEY_ORDER.filter(k => on.has(k)).map(k => GAME_KEY_LABEL[k]).join(" ")); };
-    /** Advance n physics ticks; with keyboard input on, the n inputs from the cursor become what the keys (p) held first. */
     const advance = async (n: number, p: Pad) => {
       const { tas, busy, cmd, keyboard, ticks, setTicks } = keys.current;
       if (busy || tas.ended) return;
@@ -243,9 +222,8 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
         pending.current = Date.now();
         const at = tas.cursor, next = ticks.slice();
         next.splice(at, Math.min(n, next.length - at), ...Array.from({ length: n }, (_, i) => padTick(p, i === 0)));
-        if (next[at + n]) next[at + n] = { ...next[at + n] };  // fixEdges sets its press: a copy, not the shown tick
+        if (next[at + n]) next[at + n] = { ...next[at + n] }; // fixEdges sets its press: copy so the shown tick isn't mutated.
         fixEdges(next, at, at + n - 1);
-        // A tick whose buttons and stick are what it had keeps its extras (dash-jump, aims, locks...).
         const keyOf = (t?: TasTick) => t && [t.x ?? 0, t.y ?? 0, !!t.held, !!t.press, !!t.release, !!t.dash].join();
         const count = Math.min(n + 1, next.length - at), old = ticks.slice(at, at + count);
         for (let i = 0; i < old.length; i++) if (keyOf(next[at + i]) === keyOf(old[i])) next[at + i] = old[i];
@@ -263,7 +241,6 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
       const { tas, busy, speed, recordSpeed, cmd, keyboard } = keys.current, n = e.shiftKey ? 10 : 1;
       const game = keyboard ? GAME_KEYS[e.code] : undefined;
       if (game) {
-        // Game keys are the page's only: no scroll, no button click, no piano-roll selection.
         e.preventDefault(); e.stopPropagation();
         (document.activeElement as HTMLElement | null)?.blur();
         if (e.repeat) return;
@@ -275,7 +252,6 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
       }
       if (e.repeat) return;
       if (e.code === "BracketRight" || (!keyboard && e.code === "ArrowRight")) {
-        // The keys as they are now; a tap between two advances goes in once.
         const p = pad.current;
         advance(n, { down: new Set(p.down), jumpTap: p.jumpTap, dashTap: p.dashTap });
         p.jumpTap = p.dashTap = false;
@@ -283,7 +259,7 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
       }
       else if (e.code === "BracketLeft" || (!keyboard && e.code === "ArrowLeft")) { if (!busy) cmd("/tas/rewind", { ticks: n }); }
       else if (e.code === "Backslash" || (!keyboard && e.code === "Space")) {
-        // Space would scroll the page, or click the focused button on its keyup: blur it so the key only plays/holds.
+        // Blur the focused button: Space would scroll the page or click it on keyup.
         if (e.code === "Space") (document.activeElement as HTMLElement | null)?.blur();
         if (tas.phase === "playing") cmd("/tas/hold"); else if (!busy && !tas.ended) cmd("/tas/play", { slowdown: speed }); }
       else if (e.code === "Quote") { if (tas.phase === "recording") cmd("/tas/record/stop"); else if (!busy && !tas.ended) cmd("/tas/record", { slowdown: recordSpeed }); }
@@ -297,7 +273,7 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
       show();
     };
     const release = () => { pad.current = emptyPad(); show(); };
-    // Capture: ahead of the piano roll's own keys (arrows select rows there).
+    // Capture phase, ahead of the piano roll's own arrow-key row selection.
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("blur", release);
@@ -458,7 +434,6 @@ function TasSession({ tas, courses, categories, onCommand, onImprove, onPlace }:
 function MarkerList({ markers, trace, end, cursor, busy, onSeek, onMarker }: { markers: TasMarker[]; trace: TasTrace; end: number; cursor: number; busy: boolean;
   onSeek: (t: number) => void; onMarker: (t: number, n: string) => void }) {
   const [text, setText] = useState("");
-  // Each segment's length to the next marker (or the end): input ticks, and physics ticks once it has been played.
   const length = (from: number, to: number) => {
     const a = from === 0 ? 0 : trace[from - 1]?.[0], b = trace[to - 1]?.[0];
     return `${to - from} inputs${a != null && b != null ? ` · ${b - a} ticks` : ""}`;
@@ -472,15 +447,9 @@ function MarkerList({ markers, trace, end, cursor, busy, onSeek, onMarker }: { m
 }
 
 type Paint = { column: "x" | "y" | "jump"; from: number; to: number; value: number | boolean };
-/** Per input tick as played (POST /tas/trace): [physics tick its span ends on, x, y, vx, vy]; null where not played yet. */
 export type TasTrace = (number[] | null)[];
 const LEAD_IN = 50;
 
-/**
- * The piano roll (TAStudio / FCEUX TAS Editor conventions): one row per input tick, a seek column, drag-select on the
- * numbers, paint on the inputs, the physics tick each input starts on (dash and spring ticks take no input: +n), the
- * player's position and speed as played, edited cells flash.
- */
 export function TasRoll({ ticks, markers, slack, trace = [], cursor = -1, greenzone = [], base = 0, busy, follow = false,
   onSeek, onEdit, onMarker, onPlayTo, onUndo, onRedo }: {
   ticks: TasTick[]; markers: TasMarker[]; slack?: Map<number, SlackInput[]>; trace?: TasTrace; cursor?: number; greenzone?: number[]; base?: number; busy: boolean; follow?: boolean;
@@ -502,7 +471,6 @@ export function TasRoll({ ticks, markers, slack, trace = [], cursor = -1, greenz
   const green = useMemo(() => new Set(greenzone), [greenzone]);
   const edit = (from: number, del: number, insert: TasTick[]) => { if (!busy) onEdit?.(from, del, insert); };
 
-  // Flash what an edit changed (FCEUX's hot changes): the rows between the unchanged head and tail.
   useEffect(() => {
     const p = prev.current;
     prev.current = ticks;
@@ -545,7 +513,6 @@ export function TasRoll({ ticks, markers, slack, trace = [], cursor = -1, greenz
     return draft;
   }, [ticks, paint, wheel]);
 
-  /** Replace `del` inputs at `from` with `insert`, the jump edges at both seams as a hold gives them. */
   const splice = (from: number, del: number, insert: TasTick[]) => {
     const all = [...ticks.slice(0, from), ...insert.map(t => ({ ...t })), ...ticks.slice(from + del)];
     const end = from + insert.length;
@@ -567,7 +534,6 @@ export function TasRoll({ ticks, markers, slack, trace = [], cursor = -1, greenz
     return () => window.removeEventListener("mouseup", up);
   });
 
-  // The wheel on an X cell steps through a controller's values (the selection's, if it's in it); it lands once the wheel rests.
   const wheelState = useRef({ ticks, sel, wheel, busy, onEdit });
   wheelState.current = { ticks, sel, wheel, busy, onEdit };
   const wheelTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -640,7 +606,6 @@ export function TasRoll({ ticks, markers, slack, trace = [], cursor = -1, greenz
     if (list.length) onSeek?.(dir > 0 ? Math.min(...list) : Math.max(...list));
   };
 
-  // TAStudio / FCEUX keys, while no field has the focus.
   const keys = useRef({ sel, anchor, select, copy, clear, remove, insertBlank, clone, paste, mark, markerSeek, insertCount, onSeek, onPlayTo, onUndo, onRedo, busy, ticks });
   keys.current = { sel, anchor, select, copy, clear, remove, insertBlank, clone, paste, mark, markerSeek, insertCount, onSeek, onPlayTo, onUndo, onRedo, busy, ticks };
   useEffect(() => {
@@ -745,24 +710,16 @@ export function TasRoll({ ticks, markers, slack, trace = [], cursor = -1, greenz
 }
 
 const COMPASS = ["UL", "U", "UR", "L", "", "R", "DL", "D", "DR"];
-/** Input ticks after which a tech's button is dimmed: it starts after a walk of more than half a second. */
 const LATER = 25;
-/** Input ticks after which a tech is hidden until "Show more": it starts more than a second away. */
 const FAR = 50;
 const ARROW: Record<string, string> = { UL: "↖", U: "↑", UR: "↗", L: "←", "": "•", R: "→", DL: "↙", D: "↓", DR: "↘" };
 const hoverTech = (tech?: string, v?: TasTechVariant) => call("/tas/techs/hover", !tech ? {} : v ? { tech, dir: v.dir, angle: v.angle ?? null } : { tech }).catch(() => {});
 
-/**
- * Techs here: one button per tech that works from the held tick, soonest first, with when it starts (a click tries its
- * soonest direction). Hovering it draws all its directions in game, that one bright, and opens its compass; an arrow shows
- * and tries that direction, the wheel on a diagonal steps through its steep freeze aims, and a dim arrow is a direction
- * that plays the same as another.
- */
 function TechsHere({ techs, held, busy, onTry }: { techs: TasTechsLive; held: boolean; busy: boolean; onTry: (tech: string, v: TasTechVariant) => void }) {
   const [open, setOpen] = useState<string | null>(null);
   const [steep, setSteep] = useState<Record<string, number>>({});
   const [all, setAll] = useState(false);
-  // The wheel steps a diagonal's aims; the page mustn't scroll under it (React's wheel listener is passive).
+  // The wheel must not scroll the page under it; React's wheel listener is passive, so attach a native one.
   const compass = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = compass.current;
@@ -809,7 +766,6 @@ function TechsHere({ techs, held, busy, onTry }: { techs: TasTechsLive; held: bo
   </div>;
 }
 
-/** The Savestates tab's place form: a loadstate anywhere (/api/savestates/place), with an optional world rebase (floating-origin tests). */
 export function PlaceLoadstate({ savestates, prefill, onCommand }: { savestates: SavestateLite[]; prefill: PlacePrefill | null; onCommand: Command }) {
   const [from, setFrom] = useState("");
   const [name, setName] = useState("placed");

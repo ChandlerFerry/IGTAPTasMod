@@ -10,50 +10,22 @@ using System.Threading;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// <c>timeloss search &lt;trace.json&gt; &lt;route.json&gt; [--segment k | --window a-b] [--depth 1|2|3] [--radius R] [--beam B] [--threads T]</c>:
-    /// the small edits that gain a tick, segment by segment (enginesim/README.md "Time loss"). The route, its own inputs, is cut at its
-    /// anchors (<see cref="Difficulty.Anchors(Simulation, List{InputTick}, SimSnapshot, bool)"/>, and on a course <c>timer</c>, where
-    /// its timer last starts: a flying start's last start-gate crossing); each segment plays from the route's
-    /// state at its first anchor with its input events (<see cref="Humanizer.Events"/>) edited: every single edit (polish's per-input
-    /// candidates, <see cref="Polish.Candidates"/>: shifted up to R ticks alone and with the route after, the other stick values, a
-    /// dash's other jump frames, a press or dash dropped; a release moved anywhere in its hold or on towards the next press; a press
-    /// added, held a few ticks), then the best <c>--beam</c> of them by arrival (short of that, those that miss by how near they come)
-    /// each edited again, and those again, up to <c>--depth</c> edits. A candidate arrives on the first physics tick its player is at
-    /// the next anchor in the same state
-    /// (<see cref="Difficulty.SameState"/>, the same goals reached; a course's finish: finishing; a Full-TAS goal: reaching it), and is
-    /// scored by its course timer there (by physics ticks while the timer isn't running); end-anchor-free, at the anchor after next,
-    /// the next segment's events edited too. The timer's start is no place to arrive at alike (a tick there is gained by starting it
-    /// in another state, later): a leg to it goes on to the anchor after it. <c>--window a-b</c> edits only input ticks a..b-1, from
-    /// the route's state at a, to the first anchor at or after b. Every candidate that arrives earlier than the route is the whole route edited: each is
-    /// played from the start, a segment's gain counting once it survives to the finish, and the best that beats the route goes to
-    /// &lt;route&gt;-timeloss.json.
-    /// </summary>
     static class TimeLossSearch
     {
         const string Usage = "usage: timeloss search <trace.json> <route.json> [--segment k | --window a-b] [--depth 1|2|3] [--radius R] [--beam B] [--threads T]";
-        /// <summary>The same state as <c>difficulty</c> judges it: within 4 u and 5 % of the route's speed.</summary>
         const float Pos = 4f, Vel = .05f, Tick = .02f;
-        /// <summary>Candidates arriving up to this many ticks after the route (on the timer where it runs) still enter the beam.</summary>
         const int Late = 2;
-        /// <summary>Physics ticks past the route's that a candidate timed at its target may arrive and still be ahead on the timer (it
-        /// started it later).</summary>
         const int LateStart = 50;
-        /// <summary>The gaining candidates of a segment (each mode) played whole, the most gaining first.</summary>
         const int Splice = 64;
-        /// <summary>An added jump press's held ticks.</summary>
         static readonly int[] PressHolds = { 1, 2, 3, 4, 6, 8, 11, 15, 24, 40 };
 
         sealed class Settings
         {
             public int Depth = 2, Radius = Humanizer.Radius, Beam = 8, Threads = Environment.ProcessorCount;
             public int? Segment;
-            /// <summary>--window a-b: only input ticks a..b-1 edited.</summary>
             public (int from, int to)? Window;
         }
 
-        /// <summary>A player at a target anchor: the physics ticks then, the course timer (negative: not running) and the movement
-        /// fingerprint (two candidates there alike play on alike).</summary>
         struct Arrival
         {
             public long Physics;
@@ -61,8 +33,6 @@ namespace IGTAP.EngineSim.Cli
             public int Fingerprint;
         }
 
-        /// <summary>One edited route: the whole route's inputs, its edits, where it arrives, how near (u) its player came to the
-        /// target's, the ticks it gains on the route there, and its run from the start once spliced.</summary>
         sealed class Cand
         {
             public List<InputTick> Inputs;
@@ -76,10 +46,6 @@ namespace IGTAP.EngineSim.Cli
             public RunResult Whole;
         }
 
-        /// <summary>One leg from anchor <see cref="From"/> to <see cref="To"/>, its edits in input ticks <see cref="Lo"/>..<see cref="Hi"/>-1
-        /// (<see cref="Mode"/> <c>next</c>: the segment's; <c>free</c>: the next segment's too; <c>window</c>: --window's): the route's own
-        /// arrival, the candidates played, those arriving alike in another state (ties), the best by arrival and the best that
-        /// survives to the finish.</summary>
         sealed class Leg
         {
             public int From, To, Lo, Hi;
@@ -102,9 +68,6 @@ namespace IGTAP.EngineSim.Cli
             public double Seconds;
         }
 
-        /// <summary>One segment's search for <c>timeloss report</c>: its anchors' input ticks and kinds, the ticks its best surviving
-        /// candidate gains at the finish (0: none survives) and its edits, the whole route's course time and physics ticks with it
-        /// (the route's own when none survives), and the most it gains at the next anchor and, end-anchor-free, at the one after.</summary>
         internal sealed class Row
         {
             public int Segment, From, To;
@@ -134,8 +97,6 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        /// <summary>The search with <c>--depth</c> and <c>--radius</c> (2 and <see cref="Humanizer.Radius"/> by default), one row a
-        /// segment.</summary>
         internal static List<Row> Rows(string tracePath, string routePath, int threads, int depth = 2, int radius = Humanizer.Radius)
         {
             Result r = Search(tracePath, routePath, new Settings { Threads = threads, Depth = depth, Radius = radius }, null);
@@ -205,7 +166,6 @@ namespace IGTAP.EngineSim.Cli
                 }
             foreach (var (from, end, mode) in legs)
             {
-                // A leg to the timer's start goes on to the anchor after it.
                 int to = r.Anchors[end].Kind == Timer && end + 1 < r.Anchors.Count ? end + 1 : end;
                 Leg leg = Search(pool, inputs, r.Anchors, from, to, r.Anchors[from].Tick, s.Window?.to ?? r.Anchors[end].Tick, mode, s);
                 r.Legs.Add(leg);
@@ -214,7 +174,6 @@ namespace IGTAP.EngineSim.Cli
                         : (leg.Best?.Gain > 0 ? $"best +{leg.Best.Gain} ({leg.Best.What}), {leg.Gaining.Count} gaining" : "no gain")
                             + $", {leg.Arrived} arrive by {Late} ticks late, {leg.Ties} of them ties"));
             }
-            // Every gaining candidate (the most gaining of each leg) spliced: the whole route played from the start.
             List<Cand> splice = r.Legs.SelectMany(l => l.Gaining.OrderByDescending(c => c.Gain).ThenBy(c => c.Edits).Take(Splice)).ToList();
             RunResult[] whole = pool.Whole(splice.Select(c => c.Inputs).ToList());
             for (int i = 0; i < splice.Count; i++) splice[i].Whole = whole[i];
@@ -228,16 +187,12 @@ namespace IGTAP.EngineSim.Cli
             return r;
         }
 
-        /// <summary>One leg: the route's own arrival, then every single edit of its events, the best <c>--beam</c> of each depth
-        /// edited again; the candidates that arrive earlier than the route are its gaining ones.</summary>
         static Leg Search(Pool pool, List<InputTick> route, List<Difficulty.Anchor> anchors, int from, int to, int lo, int hi, string mode, Settings s)
         {
             var leg = new Leg { From = from, To = to, Lo = lo, Hi = hi, Mode = mode };
             leg.Base = pool.Play(new List<List<InputTick>> { route }, from, to, 2 * anchors[to].Physics - anchors[from].Physics + LateStart, float.PositiveInfinity).at[0];
             if (leg.Base == null) return leg;
             Arrival own = leg.Base.Value;
-            // Timed there, a candidate is cut once its timer is past the route's by more than Late ticks (it may start later and end
-            // later); untimed, once its physics ticks are.
             bool timed = own.Clock >= 0f;
             long limit = own.Physics + Late + (timed ? LateStart : 0);
             float clockLimit = timed ? own.Clock + (Late + .5f) * Tick : float.PositiveInfinity;
@@ -262,8 +217,6 @@ namespace IGTAP.EngineSim.Cli
                     if (leg.Best == null || c.Gain > leg.Best.Gain) leg.Best = c;
                 }
                 if (depth == s.Depth) break;
-                // The beam: the best arrivals that play on unlike the route (and unlike each other) there, then while it has room the
-                // candidates that never arrive in time by how near they come to the target's player (a break another edit may mend).
                 List<Cand> beam = level.Where(c => c.At is Arrival a && Comparable(a, own) && !(a.Physics == own.Physics && a.Fingerprint == own.Fingerprint))
                     .OrderByDescending(c => c.Gain).ThenBy(c => c.At.Value.Physics)
                     .GroupBy(c => (c.At.Value.Physics, c.At.Value.Fingerprint)).Select(g => g.First()).Take(s.Beam).ToList();
@@ -274,9 +227,6 @@ namespace IGTAP.EngineSim.Cli
             return leg;
         }
 
-        /// <summary>Every single edit of the events in input ticks lo..hi-1 that changes nothing before lo: polish's per-input candidates,
-        /// a release moved anywhere in its hold or on towards the next press (past the radius), a press added where the button is up,
-        /// held <see cref="PressHolds"/> ticks.</summary>
         static List<(List<InputTick> inputs, string what)> Singles(List<InputTick> route, int lo, int hi, int radius)
         {
             var c = new List<(List<InputTick>, string)>();
@@ -309,16 +259,13 @@ namespace IGTAP.EngineSim.Cli
             return c;
         }
 
-        /// <summary>Both timed by the course timer, or neither: the timer then, physics ticks before it runs.</summary>
         static bool Comparable(Arrival a, Arrival b) => (a.Clock < 0f) == (b.Clock < 0f);
 
-        /// <summary>The ticks <paramref name="a"/> arrives before <paramref name="b"/>: by the course timer when it runs, else by physics ticks.</summary>
         static long Gain(Arrival a, Arrival b) => a.Clock >= 0f ? (long)Math.Round((b.Clock - a.Clock) / Tick) : b.Physics - a.Physics;
 
         static bool Beats(RunResult r, RunResult route) =>
             r.Finished && (!route.Finished || OfflineSolver.Beats(r.Time, r.PhysicsTicks, route.Time, route.PhysicsTicks));
 
-        /// <summary>The ticks a finish gains on the route's: by the course timer, physics ticks on a tie.</summary>
         static long FinishGain(RunResult r, RunResult route)
         {
             long timer = (long)Math.Round((route.Time - r.Time) / Tick);
@@ -327,7 +274,6 @@ namespace IGTAP.EngineSim.Cli
 
         static string Seconds(RunResult r) => r.Finished ? $"{r.Time:0.00}s ({r.PhysicsTicks} physics ticks)" : "not finished (" + r.EndReason + ")";
 
-        /// <summary>Input lists already played, by content.</summary>
         sealed class Seen
         {
             readonly Dictionary<int, List<List<InputTick>>> _by = new Dictionary<int, List<List<InputTick>>>();
@@ -345,12 +291,8 @@ namespace IGTAP.EngineSim.Cli
             }
         }
 
-        /// <summary>The pseudo-anchor where a course's timer last starts.</summary>
         const string Timer = "timer";
 
-        /// <summary>The route's anchors (<see cref="Difficulty.Anchors(Simulation, List{InputTick}, SimSnapshot, bool)"/>) and this search's
-        /// own: on a course that finishes, <see cref="Timer"/>, the input tick after the step its timer last starts on (a flying start's
-        /// last start-gate crossing); <c>window</c> at <paramref name="window"/>. Neither is added where an anchor is already.</summary>
         static List<Difficulty.Anchor> Anchors(Simulation sim, List<InputTick> route, int? window)
         {
             List<Difficulty.Anchor> anchors = Difficulty.Anchors(sim, route, null, true, out TechSteps record, out RunResult run, out _);
@@ -377,8 +319,6 @@ namespace IGTAP.EngineSim.Cli
             return anchors.OrderBy(a => a.Tick).ToList();
         }
 
-        /// <summary>The workers, each with a simulation of its own (the game's statics are per thread) and the route's anchors on it
-        /// (<see cref="TimeLossSearch.Anchors"/>), their states captured there.</summary>
         sealed class Pool : IDisposable
         {
             sealed class Lane
@@ -391,7 +331,6 @@ namespace IGTAP.EngineSim.Cli
             long _runs;
             public long Runs => Interlocked.Read(ref _runs);
 
-            /// <param name="window">--window's first input tick (null: none), an anchor of its own.</param>
             public Pool(string tracePath, JsonElement header, string[] labels, List<InputTick> route, int? window, int threads)
             {
                 _lanes = Enumerable.Range(0, threads).Select(i => new Worker<Lane>(() =>
@@ -408,7 +347,6 @@ namespace IGTAP.EngineSim.Cli
                 return anchors;
             }
 
-            /// <summary>Each route played from the start.</summary>
             public RunResult[] Whole(IReadOnlyList<List<InputTick>> routes)
             {
                 var r = new RunResult[routes.Count];
@@ -416,9 +354,6 @@ namespace IGTAP.EngineSim.Cli
                 return r;
             }
 
-            /// <summary>Each route played from anchor <paramref name="from"/>'s state to its arrival at anchor <paramref name="to"/>
-            /// (null: none by <paramref name="limit"/> physics ticks, or once its course timer is past <paramref name="clockLimit"/>), and
-            /// the nearest its player came to the target's (a finish: 0).</summary>
             public (Arrival?[] at, float[] near) Play(List<List<InputTick>> routes, int from, int to, long limit, float clockLimit)
             {
                 var r = new Arrival?[routes.Count];
@@ -458,7 +393,6 @@ namespace IGTAP.EngineSim.Cli
 
             internal static int Extra(Simulation sim) => sim.Goals != null ? 1000000 : 400;
 
-            /// <summary>work(lane, i) for every i below count, on every lane.</summary>
             void Each(int count, Action<Lane, int> work)
             {
                 if (count == 0) return;

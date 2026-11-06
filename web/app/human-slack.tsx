@@ -1,15 +1,11 @@
-// One input of the human version and its slack (`<best>-human.slack.json`, enginesim humanize).
 export type SlackInput = { tick: number; end: number; kind: string; value: number; class: string; window: number };
 export type SlackReport = {
   course: number; capabilities: string; source: string; human: string;
   time: number; runTicks: number; exact: number; exactBefore: number; inputs: SlackInput[];
 };
-// The human version's own input ticks (`<best>-human.json`).
 export type HumanTick = { x: number; y: number; held: boolean; press: boolean; release: boolean; dash: boolean; dashJump: number; reset?: boolean };
 export type SlackReply = { ok: true; file: string; human: string; slack: SlackReport; ticks: HumanTick[] | null };
 
-// exact: one tick or one value only. window: the input moves or re-tilts a little. band: fixed at the start.
-// free: no limit found. The strictest input on a tick picks its colour, so a tick that holds an exact input is red.
 export const TONE: Record<string, { color: string; short: string; label: string; rank: number }> = {
   exact: { color: "#ff5b6e", short: "exact", label: "exact — only this tick or stick value works", rank: 3 },
   band: { color: "#c77dff", short: "band", label: "band — fixed at run start; a stick range works", rank: 2 },

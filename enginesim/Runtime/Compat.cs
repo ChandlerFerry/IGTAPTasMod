@@ -20,7 +20,6 @@ namespace HarmonyLib
 
         public delegate ref F FieldRef<in T, F>(T instance);
 
-        /// <summary>A reference to an instance field of <typeparamref name="T"/>, as Harmony's (ldflda in a dynamic method).</summary>
         public static FieldRef<T, F> FieldRefAccess<T, F>(string fieldName)
         {
             FieldInfo field = Field(typeof(T), fieldName);

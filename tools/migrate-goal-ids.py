@@ -1,18 +1,3 @@
-"""One-time migration to goal ids (docs/fulltas.md, "Goal ids"): every Full-TAS goal gets an id, and nothing outside a goal list
-names a goal by its place in it any more. Close the game and stop every solve first.
-
-- data/runs/<run>.json: "goals" become [{"id", "goal"}]; the Full-TAS rules of enginesim/Cli/forced-paths.json move into their runs
-  (a rule's "avoid" and its plain blocks the run's "avoid", "offFor" by ids; "forGoal" and "for" the goal's "avoid"; "after" the
-  goal's "avoidAfter") and leave forced-paths.json to the courses.
-- Traces (fulltas-<name>.json): each header goal gets its run's id (a goal the run lacks, or a trace of no run: a new id).
-- Offline bests and their copies, candidates and the offline-best/ submissions: "goals" become [{id, label, input, physics,
-  held, idle?}] (the goal ticks and idles folded in), "goalsFrom" lists of [{id, goal}]; closest attempts [{id, goal}].
-- Stretch bests (<run>.stretch-<N>.json) become <run>.stretches.json by goal id; --auto memory, refs and visits key goals by id.
-- fulltas-splits.json: each split its goal's id. searchbench-grafts.json: windows by their first and last goals' ids.
-- Search caches named by goal numbers (archive window and piece files, map outputs) are deleted: the engine makes them again.
-
-    python tools/migrate-goal-ids.py [--dry-run]
-"""
 import glob
 import json
 import os
@@ -23,7 +8,7 @@ import string
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import gamepaths  # noqa: E402
+import gamepaths
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DRY = "--dry-run" in sys.argv
@@ -40,7 +25,6 @@ def new_id(taken):
 
 
 def carry(old_ids, old_labels, labels):
-    """FullTasGoalIds.Carry: the goals both lists share (their longest common subsequence) keep their ids, the rest get new ones."""
     n, m = len(old_labels), len(labels)
     ids = [None] * m
     if n:
@@ -78,7 +62,6 @@ def remove(path, why):
 
 
 def dump(obj, like):
-    """JSON as the file had it: indented when it was."""
     indented = "\n  " in like[:4096]
     return json.dumps(obj, indent=2 if indented else None, separators=None if indented else (",", ":"), ensure_ascii=False) + ("\n" if like.endswith("\n") else "")
 
@@ -89,16 +72,14 @@ def read(path):
     return json.loads(text), text
 
 
-lists = {}  # run key -> (ids, labels): the reference list a file of that run takes its ids from
+lists = {}
 
 
 def ref(key, labels):
-    """The ids of a goal list of run `key` (its run's or trace's ids where they share goals)."""
     ids, old = lists.get(key, ([], []))
     return carry(ids, old, labels)
 
 
-# 1. Run definitions, with forced-paths.json's Full-TAS rules moved into them.
 run_files = {}
 for path in sorted(glob.glob(os.path.join(REPO, "data", "runs", "*.json"))):
     run, text = read(path)
@@ -168,7 +149,6 @@ for rule in fp["paths"]:
 
 for name, (path, run, text, changed) in run_files.items():
     if changed:
-        # The plugin writes a run file with its keys in its own order: name ... avoid, goals.
         goals = run.pop("goals")
         avoid = run.pop("avoid", None)
         if avoid:
@@ -179,7 +159,6 @@ for name, (path, run, text, changed) in run_files.items():
 if len(kept_rules) != len(fp["paths"]):
     fp["paths"] = kept_rules
     out = json.dumps(fp, indent=2, ensure_ascii=False)
-    # The file's compact layout (the plugin's EditForcedPaths): number arrays and arrays of boxes on one line.
     out = re.sub(r"\[\s*((?:-?[\d.eE+-]+|\"[^\"\[\]{},]*\")(?:\s*,\s*(?:-?[\d.eE+-]+|\"[^\"\[\]{},]*\"))*)\s*\]",
                  lambda m: "[" + ", ".join(s.strip() for s in m.group(1).split(",")) + "]", out)
     out = re.sub(r"\[\s*((?:\[[^\[\]]*\]\s*,\s*)*\[[^\[\]]*\])\s*\]", lambda m: "[" + ", ".join(re.findall(r"\[[^\[\]]*\]", m.group(1))) + "]", out)
@@ -188,7 +167,6 @@ if len(kept_rules) != len(fp["paths"]):
             write(p, out + "\n")
 
 
-# 2. Traces: each header goal its id (EconomyPlan.SpliceHeaderGoals' splice: the rest of the file byte for byte).
 def header_goals(path):
     with open(path, "rb") as f:
         head = f.read(16 << 20)
@@ -248,13 +226,11 @@ for path in sorted(glob.glob(os.path.join(TRACES, "fulltas-*.json"))):
         os.replace(tmp, path)
 
 
-# 3. Saved routes, closest attempts, memory, refs, stretch bests, candidates.
 def goal_list(key, labels):
     return [{"id": i, "goal": l} for i, l in zip(ref(key, labels), labels)]
 
 
 def saved_route(key, obj):
-    """An offline best or a copy: one object per goal, its ticks and idle folded in."""
     labels = obj["goals"]
     ids = ref(key, labels)
     n = len(labels)
@@ -376,7 +352,6 @@ for path in sorted(glob.glob(os.path.join(TRACES, "offline-best", "fulltas-*.jso
     if changed:
         write(path, dump(obj, text))
 
-# 4. Visits, search caches named by goal numbers, map outputs.
 archive = os.path.join(TRACES, "archive")
 for path in sorted(glob.glob(os.path.join(archive, "fulltas-*.visits.json"))):
     key = os.path.basename(path)[len("fulltas-"):-len(".visits.json")]
@@ -397,7 +372,6 @@ for d in sorted(glob.glob(os.path.join(archive, "fulltas-*"))):
 for path in sorted(glob.glob(os.path.join(TRACES, "map-fulltas-*.json")) + glob.glob(os.path.join(TRACES, "map-fulltas-*.key"))):
     remove(path, "a map drawn with goal numbers")
 
-# 5. The studio's splits: each its goal's id.
 splits_path = os.path.join(CONFIG, "fulltas-splits.json")
 if os.path.exists(splits_path):
     splits, text = read(splits_path)
@@ -416,7 +390,6 @@ if os.path.exists(splits_path):
     if changed:
         write(splits_path, dump(splits, text))
 
-# 6. The search bench's windows: by their first and last goals' ids (the trace's).
 bench_path = os.path.join(REPO, "enginesim", "Cli", "searchbench-grafts.json")
 bench, text = read(bench_path)
 changed = False

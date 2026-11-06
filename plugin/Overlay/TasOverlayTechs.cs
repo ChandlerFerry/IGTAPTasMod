@@ -70,10 +70,8 @@ namespace IGTAPTasMod
 
         const int TechLanes = 3;
         const int FlipWindowTicks = 4;
-        /// <summary>The most ticks between two climbs of one inwall chain, and between its last climb and the wallbounce.</summary>
         const int InwallChainTicks = 6;
         const long NoTick = long.MinValue / 2;
-        // The detectors read Movement through DebugFields; ProbeRunner's capture still reads lastHyperY by reflection.
         static readonly FieldInfo TechLastHyperYField = AccessTools.Field(typeof(Movement), "lastHyperY");
 
         readonly List<TechSpan> _techSpans = new List<TechSpan>();
@@ -97,7 +95,7 @@ namespace IGTAPTasMod
         float _techInputCoyote, _techInputWallCoyote, _techInputVelocityY, _techInputRaysX;
         int _techInputAirJumps, _techInputWallJumps, _techInputDashBounce;
         bool _techSuperJumpBuffer, _techSuperHyper, _techSuperUltra, _techSuperFloat;
-        // lastHyperY is in the scene frame, which a FloatingOrigin rebase moves: the origin's y when it was last written.
+        // lastHyperY is in the scene frame, which a FloatingOrigin rebase moves: keep the origin's y from its last write.
         float _techLastHyperY, _techLastHyperOriginY;
 
         void PatchTechHooks()
@@ -108,7 +106,6 @@ namespace IGTAPTasMod
             PatchOptional(typeof(PlatformMover), "MakeIntangible", nameof(BeforeTechIntangible), null);
         }
 
-        /// <summary>Techs are listed for a route's 1x playback and for manual play once its session started (the list's rows).</summary>
         bool TechListing { get { return OverlayListsRun || _overlayManual && OverlayListsManual; } }
 
         static bool TechWatching(Movement player)
@@ -141,24 +138,18 @@ namespace IGTAPTasMod
             TasPlugin p = Instance;
             if (!p._techInputJumpBuffer || DebugFields.JumpBuffer(__instance) || p._techWallKick) return;
             long tick = p.TechTick;
-            // The last cling's no-gravity flag still on at a jump: only a refill of the wall jumps (a Ground floor or wall, a
-            // spring, an orb) after that cling keeps it past the air branch, so the jump rises with no gravity until its 0.7 s end.
+            // Cling no-gravity flag stays on at a jump unless a wall-jump refill (ground, spring, orb) came after: rises 0.7 s.
             if (DebugFields.FinalCling(__instance)) p.PendTech(Tech.FinalClingFloat, tick);
             if (__instance.wallJumpsLeft < p._techInputWallJumps)
             {
-                // Off no wall: OnWall off with a count a landing kept (the ground branch clears OnWall but never counts
-                // wallCoyoteFrames down) is the stored wall jump; OnWall held with the count below its max (the rays missed
-                // this tick) is the wall coyote jump.
+                // OnWall off with a count a landing kept (ground branch never counts wallCoyoteFrames down) is the stored wall jump.
                 if (!p._techInputOnWall && p._techInputWallCoyote > 0f) p.PendTech(Tech.StoredWallJump, p._techLastWall + 1);
                 else if (p._techInputWallCoyote < __instance.maxWallCoyoteFrames) p.PendTech(Tech.WallCoyoteJump, p._techLastWall + 1);
-                // Off a wall the rays hit this tick, kicked toward it: the cling came over from the other wall with OnWall
-                // never off, so wallCoyoteDir (the side the jump goes against) is still that first wall's.
                 else if (p._techInputOnWall && Mathf.Sign(__instance.Velocity.x) == Mathf.Sign(p._techInputRaysX)) p.PendTech(Tech.ReverseWallJump, tick);
             }
             else if (__instance.airJumpsLeft < p._techInputAirJumps)
             {
-                // A double jump at Velocity.y 200 or more fires only after a jump that wasn't a normal one (a hyper, a bounce,
-                // a spring, an up-dash's end, a wall kick: the 700 gate), and it keeps half the speed it finds (745 + v/2).
+                // A double jump at Velocity.y >= 200 fires only after a non-normal jump (700 gate); keeps half the speed (745 + v/2).
                 if (p._techInputVelocityY >= 200f)
                 {
                     if (tick - p._techLastSuperbounce <= 2) p.PendTech(Tech.SuperbounceDoubleJump, p._techLastSuperbounce);
@@ -175,8 +166,6 @@ namespace IGTAPTasMod
                 }
                 else if (p._techInputCoyote < __instance.maxCoyoteFrames)
                 {
-                    // A respawn sets onGround but keeps the coyote count: no full ground tick since it is a checkpoint's
-                    // mid-air jump; a dash that was still on at the last ground tick carried the dot off the ledge.
                     if (p._techRespawnTick != NoTick && p._techLastGround <= p._techRespawnTick) p.PendTech(Tech.CheckpointCoyoteJump, p._techRespawnTick + 1);
                     else if (p._techDashAtLastGround) p.PendTech(Tech.DashCoyoteJump, p._techDashStart);
                     else p.PendTech(Tech.CoyoteJump, p._techLastGround + 1);
@@ -195,8 +184,7 @@ namespace IGTAPTasMod
             float lifted = TurboRunner.BlendRead(__instance.transform).y + 2f, lastHyper = DebugFields.LastHyperY(__instance);
             p._techSuperUltra = Mathf.Sign(DebugFields.PreDashMomentum(__instance).x) == Mathf.Sign(DebugFields.DashDirection(__instance).x)
                 && lifted < lastHyper - 4f;
-            // A float ultra: the second hyper of a chain passes the game's check only because a rebase moved the dot since the
-            // first one wrote lastHyperY: in the world frame it is not 4 lower.
+            // Float ultra: the second hyper passes the game's check only because a rebase moved the dot since lastHyperY was written.
             p._techSuperFloat = p._techSuperUltra && p._techDashInWave && lifted - CurrentOrigin().y >= lastHyper - p._techLastHyperOriginY - 4f;
         }
 
@@ -221,7 +209,6 @@ namespace IGTAPTasMod
             {
                 Vector2 dash = DebugFields.DashDirection(__instance);
                 float stick = __instance.MoveAxis.x;
-                // An up-diagonal omnidash still on the ground's coyote ticks: the super from as high as the dash got.
                 p.PendTech(dash.y > 0f ? Tech.HighSuper
                     : stick != 0f && dash.x != 0f && Mathf.Sign(stick) != Mathf.Sign(dash.x) ? Tech.ReversedSuper : Tech.SuperJump, p._techDashStart);
                 p._techSuperAir = true;
@@ -245,12 +232,9 @@ namespace IGTAPTasMod
                 p.PendTech(Tech.Superbounce, p._techDashStart);
                 p._techLastSuperbounce = p.TechTick;
             }
-            // getPlayerControlledInput's dash boost off a count a landing kept (OnWall off, wallCoyoteFrames above 0): the
-            // stored superbounce.
             if (!__instance.OnWall && DebugFields.WallCoyote(__instance) > 0f) p.PendTech(Tech.StoredWallJump, p._techLastWall + 1);
         }
 
-        /// <summary>PlatformMover.MakeIntangible: a jump or wall jump touching a zip mover, or within its 7 coyote ticks of one.</summary>
         private static void BeforeTechIntangible()
         {
             TasPlugin p = Instance;
@@ -258,12 +242,6 @@ namespace IGTAPTasMod
             p.PendTech(Tech.ZipIntangible, p.TechTick);
         }
 
-        /// <summary>
-        /// A step-up (BeforeSteppedUp, in a Movement.Update frame after this tick). An inwall climb is one whose
-        /// forward rays looked the other way from the dot (wallJumpFacing, set at the top of the tick, against facingRight):
-        /// a dash turned into the wall. The wallbounce that follows is the Inwall wallbounce; a climb with the pause menu
-        /// open (no FixedUpdate runs, the step-up still does) is the Pauselift, marked once per pause.
-        /// </summary>
         void TechSteppedUp(Movement player)
         {
             if (!TechWatching(player)) return;
@@ -287,7 +265,6 @@ namespace IGTAPTasMod
         void ResetTechs(Movement player)
         {
             _techSpans.Clear();
-            // The Tech tab's playback list is the last route's; manual play leaves it alone.
             if (OverlayListsRun)
             {
                 _techSeen.Clear();
@@ -347,7 +324,6 @@ namespace IGTAPTasMod
                 _techDashInSuper = _techSuperAir;
                 if (tick - _techSpringCancel <= 1) AddTech(Tech.SpringDash, _techSpringStart, tick);
                 Vector2 dash = DebugFields.DashDirection(player);
-                // Only a dash from a full wall cling keeps x at ±1 next to a vertical part (the cling sets x after the normalize).
                 if (Mathf.Abs(dash.x) == 1f && dash.y != 0f) AddTech(Tech.WallDash, tick, tick);
                 if (jumpPress && _techPreGround && dash.x != 0f && tick - _techLastFlip <= FlipWindowTicks && WallBehind(player, -Mathf.Sign(dash.x)))
                 {
@@ -355,8 +331,7 @@ namespace IGTAPTasMod
                     _techBackwardsStart = _techFlipStart;
                 }
             }
-            // An omnidash the stick aimed in its freeze (MacroEngine.StickFor): Movement.Update doesn't snap a sideways 0.3-0.4
-            // to 0 as a dash pressed on a tick does, so it goes steeper than the 8 ways (|x| under the diagonal's 0.707).
+            // Movement.Update doesn't snap a freeze-aimed sideways 0.3-0.4 to 0 as a dash on a tick does: steeper than 8 ways.
             if (player.dashActive && player.framesSinceLastDash == 1f && tick - _techDashStart == 1)
             {
                 Vector2 aimed = DebugFields.DashDirection(player);
@@ -415,11 +390,9 @@ namespace IGTAPTasMod
             if (OverlayListsRun) _techSeen.Add(span);
             if (_techCounts[(int)tech]++ == 0) _techOrder.Add(tech);
             _techSpans.RemoveAll(s => s.end < end - rows);
-            // A step-up's tech (TechSteppedUp, in Movement.Update) comes between ticks: the cached panels show it now.
             _panelCacheDirty = true;
         }
 
-        // Each tech's summary text and the count and label it was built with: built again only when either changes.
         readonly string[] _techSummaryText = new string[TechNames.Length], _techSummaryLabel = new string[TechNames.Length];
         readonly int[] _techSummaryCount = new int[TechNames.Length];
 
@@ -439,7 +412,6 @@ namespace IGTAPTasMod
             foreach (Tech tech in _techOrder)
             {
                 string text = TechSummary(tech);
-                // Measured once: the fit check's width is the label's (Segment would measure it again).
                 OverlayMeasure.text = text;
                 float textWidth = _overlaySmall.CalcSize(OverlayMeasure).x;
                 if (x + textWidth > right) { Segment(x, y, height, gap, "…", _overlaySmall, MutedColor); return; }

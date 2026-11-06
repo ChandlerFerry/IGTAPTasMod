@@ -8,7 +8,6 @@ using System.Threading;
 
 namespace IGTAP.EngineSim.Cli.Runs
 {
-    // The gate's own replay is the first check of the engine: its per-goal splits must be the engine's, tick for tick.
     static class Confirm
     {
         public static bool Compare(Built b, JsonElement verdict, Action<object> emit, Action<string> log)
@@ -34,7 +33,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             return all;
         }
 
-        // On a disagreement: the game's own trace of the route, replayed here, names the first tick and field that part.
         public static void Investigate(RunContext run, Built b, HttpClient http, Action<object> emit, Action<string> log)
         {
             string name = "confirm-" + run.Name.Replace("%", "pct");

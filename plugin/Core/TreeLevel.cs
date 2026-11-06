@@ -6,14 +6,7 @@ using UnityEngine;
 
 namespace IGTAPTasMod
 {
-    /// <summary>
-    /// The Tree (zone 2, <c>treeNumber</c> 1) at a level, as a game load at that level leaves it (RULES.md 21):
-    /// level L is the plant and the first L tree boxes in segment order bought once each (boxes 0-14, 16-27; TreePart15
-    /// has none). <c>TreeController.load</c> sets each box's <c>TimesUsed</c> and calls <c>instaGrowSegments</c>; a box bought
-    /// out (<c>Cap ≤ TimesUsed</c>) is deactivated as its <c>Start</c> does, an unbought one is the game's
-    /// <c>reactivateAndReset</c>. Segments above the level go off as <c>TreeController.Awake</c> leaves them. No unlock is
-    /// written: the boxes' global upgrades stay the category's.
-    /// </summary>
+    // Level L = the plant and first L tree boxes bought, as TreeController.load sets them (RULES.md 21).
     internal static class TreeLevel
     {
         static readonly AccessTools.FieldRef<TreeController, TreeSegmentActivationComponent[]> TreeSegments =
@@ -32,25 +25,21 @@ namespace IGTAPTasMod
                 .FirstOrDefault(t => t != null && t.treeNumber == 1);
         }
 
-        /// <summary>Each segment's box, in segment order (null for a boxless segment).</summary>
         static upgradeBox[] Boxes(TreeController tree)
         {
             return TreeSegments(tree).Select(s => s == null || s.box == null ? null : s.box.GetComponent<upgradeBox>()).ToArray();
         }
 
-        /// <summary>The boxes level L has bought: the plant and the first L boxes in segment order.</summary>
         static HashSet<upgradeBox> Bought(TreeController tree, int level)
         {
             return new HashSet<upgradeBox>(Boxes(tree).Where(b => b != null).Take(level).Prepend(tree.plantTreeBox));
         }
 
-        /// <summary>The plant and every tree box, the plant first.</summary>
         static IEnumerable<upgradeBox> AllBoxes(TreeController tree)
         {
             return Boxes(tree).Where(b => b != null).Prepend(tree.plantTreeBox);
         }
 
-        /// <summary>The boxes that grow one of these segments (the plant among them for segment 0).</summary>
         static HashSet<upgradeBox> Growers(TreeController tree, int[] grown)
         {
             return new HashSet<upgradeBox>(AllBoxes(tree).Where(b => (SegmentsToTrigger(b) ?? new int[0]).Intersect(grown).Any()));
@@ -82,10 +71,6 @@ namespace IGTAPTasMod
             return tree != null && Apply(tree, Segments(tree, level), Bought(tree, level));
         }
 
-        /// <summary>
-        /// Exactly these segments grown, as a save's <c>_grownSegments</c> loads them (no auto-growth added), and the boxes that
-        /// grow one of them bought. A savestate run's <c>tree</c> array (docs/fulltas.md#savestate-starts).
-        /// </summary>
         internal static bool Apply(TreeController tree, int[] grown)
         {
             if (tree == null) return false;
@@ -105,8 +90,7 @@ namespace IGTAPTasMod
         {
             if (At(tree, want, bought)) return false;
             TreeSegmentActivationComponent[] segments = TreeSegments(tree);
-            // ponytail: a growth a route started (a tree box bought mid-run) and this cut short keeps its trunk pose; a
-            // scene reload resets it.
+            // shortcut: a growth started mid-run and cut short keeps its trunk pose; a scene reload resets it.
             for (int i = 0; i < segments.Length; i++) if (!want.Contains(i)) segments[i].gameObject.SetActive(false);
             tree.GrownSegments.Clear();
             tree.GrowingInProgress = false;

@@ -29,7 +29,6 @@ namespace IGTAPTasMod
             string path = Path.Combine(EngineSimDir, name + ".json");
             Movement player = FindWorldMovement();
             TurboRunner.Snapshot start = NewGameStart(run);
-            // The world as the run starts it: the scene still holds what the last turbo run left (a purchase's objects turned on).
             TurboRunner.Restore(start, player);
             if (world) EngineSimExport.WriteWorld(Path.Combine(EngineSimDir, name + ".world.json"));
             courseScript[] courses = FindObjectsByType<courseScript>(FindObjectsSortMode.None);
@@ -123,9 +122,6 @@ namespace IGTAPTasMod
                 w.WriteEndObject();
                 w.WriteEndObject();
             }
-            // A run that ended before its first tick never played its inputs (after a goals edit it has, from a new game start
-            // the engine couldn't resume): keep the trace there was, which the offline solver would otherwise load and replay to
-            // nothing.
             if (inputs.Count > 1 && finishTick == 0 && tracker.Next == 0)
             {
                 File.Delete(temporary);
@@ -139,12 +135,6 @@ namespace IGTAPTasMod
             return new { ok = true, path = path, trace = path, finished = finished, time = time, finishTick = finishTick, progress = tracker.Next };
         }
 
-        /// <summary>
-        /// A trace that replayed the record's own inputs (the trace starts with them) keeps the record's splits, and puts the
-        /// record's name to the time the replay took when it differs: a record saved when a Full-TAS time was its physics ticks
-        /// alone (before dash freezes counted, RULES.md 31) is re-timed here on its next trace. One whose replay dies or runs
-        /// out of inputs short of its goals (a game update changed it) is retired, as a 1x play retires it.
-        /// </summary>
         void RememberBestSplits(FullTasRunDef run, List<SolverTick> inputs, bool finished, float time, FullTasTracker tracker, string status)
         {
             MacroDefinition best = FullTasBestRoute(run.name);
@@ -168,10 +158,6 @@ namespace IGTAPTasMod
             if (!_fullTasSplits.ContainsKey(best.id)) StoreFullTasSplits(best, FullTasSplits(tracker));
         }
 
-        /// <summary>
-        /// 1x and turbo play a route the same every time: a saved route that dies or runs out of inputs short of its goals (not a
-        /// stop) is no longer a time, so it is renamed stale.
-        /// </summary>
         void RetireBrokenFullTasRoute(MacroDefinition route, string how, string reason, FullTasTracker tracker)
         {
             bool broken = reason != null && (reason.StartsWith("Player death", StringComparison.Ordinal) || reason == "Timeline complete");
@@ -207,9 +193,6 @@ namespace IGTAPTasMod
             return FullTasWhenReady(request, run, "Capturing trace " + name, () => FullTasTrace(run, inputs, name, world));
         }
 
-        /// <summary>The trace was captured for the run as it is now (start, goals, game build, ...); with <paramref name="weights"/>
-        /// also for its human weights, which only a solve's scores read (the gate takes data/runs/&lt;run&gt;.json's), so an edit of them
-        /// recaptures before a solve.</summary>
         bool FullTasTraceCurrent(FullTasRunDef run, string trace, bool weights = true)
         {
             if (!File.Exists(trace)) return false;

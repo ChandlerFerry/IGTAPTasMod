@@ -15,11 +15,6 @@ using UnityEngine.InputSystem.Controls;
 
 namespace IGTAPTasMod
 {
-    /// <summary>
-    /// 1x probes: play exact inputs at normal speed from a category's quick restart or a studio savestate, and log the player
-    /// on every physics tick and every rendered frame (Movement.Update runs per frame, also while a dash's TimeStop holds
-    /// physics). Turbo and enginesim model those frames (MacroEngine.FrameGrid); this is the ground truth they are checked on.
-    /// </summary>
     public sealed partial class TasPlugin
     {
         const string ProbeRouteId = "probe";
@@ -28,31 +23,18 @@ namespace IGTAPTasMod
         {
             public string name, route, savestateId, file;
             public long captureAt = -1;
-            /// <summary>The first physics tick logged (a long run's last stretch).</summary>
             public long logFrom;
             public string capturedSavestateId;
-            /// <summary>The playback's frame rate (<see cref="PacePlayback"/>; unset: MacroEngine.PlaybackFrameRate, the rate turbo and enginesim model).</summary>
             public int fps;
-            /// <summary>Play with the omnidirectional dash on top of the route's unlocks (Vman techs), as a tech demo can.</summary>
             public bool omniDash;
-            /// <summary>Tick rows only, with what the 1x aligner compares (enginesim <c>align-1x</c>): no frame, clone, draw, zone or atom rows.</summary>
             public bool lean;
-            /// <summary>Played with Fast playback whatever the setting (<see cref="PacePlayback"/>; only at the playback's frame rate).</summary>
             public bool fast;
-            /// <summary>A tech demo's probe (<c>tech</c>): its start, inputs and lab map (a lab demo's start is placed as its playback's is).</summary>
             public TechDef tech;
-            /// <summary>
-            /// The pause menu (<see cref="OpenPlaybackPause"/>): opened <c>pauseOffset</c> Movement.Update frames after physics
-            /// tick <c>pauseAt</c> (the log's <c>physics</c>: a dash's locked ticks share one input tick; 0: right after the tick,
-            /// before its first frame) and closed after <c>pauseFrames</c> frames with it open. A frame-exact test; a route's
-            /// own pause is MacroStep.pauseFrames.
-            /// </summary>
             public long pauseAt = -1;
             public int pauseOffset, pauseFrames;
             public bool pauseTaken;
             public bool started;
             public List<SolverTick> ticks;
-            /// <summary>Extra Movement fields logged on every row (as enginesim's <c>probe</c> <c>fields</c>).</summary>
             public FieldInfo[] fields;
             public readonly List<object> rows = new List<object>();
         }
@@ -76,7 +58,6 @@ namespace IGTAPTasMod
                         throw new InvalidOperationException("Stop playback, recording, the solver or the running probe first.");
                     string name = Text(body, "name").Trim();
                     if (name.Length == 0 || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) throw new InvalidOperationException("A probe needs a file-safe name.");
-                    // tech: the tech's lab demo (lab: which of its labs, else its first), its start and inputs, unless given.
                     List<SolverTick> demo = null;
                     TechDef tech = body["tech"] == null ? null : TechLabDemo(FindTech(Text(body, "tech")), body["lab"] == null ? null : Text(body, "lab"), out demo);
                     string route = Text(body, "route").Trim();
@@ -93,14 +74,11 @@ namespace IGTAPTasMod
                         pauseAt = body["pauseAt"] == null ? -1 : (long)body["pauseAt"], pauseOffset = Number(body, "pauseOffset", 0),
                         pauseFrames = Number(body, "pauseFrames", 0),
                         fps = Number(body, "fps", 0), omniDash = Truthy(body, "omniDash"), lean = Truthy(body, "lean"), fast = Truthy(body, "fast") };
-                    // The first row can come before this probe's first globalStats.FixedUpdate: not the last probe's Cash.
                     _cashPre = globalStats.currencyLookup[globalStats.Currencies.Cash];
                     var macro = new MacroDefinition { id = ProbeRouteId, name = route + " probe " + name, savestateId = savestateId, steps = ToSteps(ticks) };
                     Match fullTas = FullTasRouteName.Match(macro.name);
                     if (fullTas.Success && savestateId.Length == 0)
                     {
-                        // A Full-TAS run's probe starts from that run's new game (its unlocks come from what the ticks buy).
-                        // fromTick: its physics ticks before that in turbo (the studio's play from a tick), the probe at 1x after.
                         StartFullTasPlayback(FindFullTasRun(fullTas.Groups[1].Value), macro, null, Number(body, "fromTick", 0));
                         return new { ok = true };
                     }
@@ -154,7 +132,6 @@ namespace IGTAPTasMod
                 object value = f.GetValue(movement);
                 fields[f.Name] = value is UnityEngine.Object o ? (o == null ? null : o.name) : value is Vector2 v2 ? new[] { v2.x, v2.y } : value;
             }
-            // Zip movers within 300 u and their layer: MakeIntangible takes one off Ground (7) for 0.15 s after a jump off it.
             var movers = new List<object>();
             foreach (PlatformMover mover in FindObjectsByType<PlatformMover>(FindObjectsSortMode.None))
             {
@@ -162,8 +139,6 @@ namespace IGTAPTasMod
                 if (Mathf.Abs(q.x - p.x) < 300f && Mathf.Abs(q.y - p.y) < 300f)
                     movers.Add(new { x = q.x - origin.x, y = q.y - origin.y, layer = mover.gameObject.layer });
             }
-            // Upgrade boxes within 300 u: the transform and the solid collider's bottom as physics has it (a tree box falling onto
-            // its spot, IE_Grow: which frame's pose a raycast in FixedUpdate sees).
             var boxes = new List<object>();
             foreach (upgradeBox box in FindObjectsByType<upgradeBox>(FindObjectsSortMode.None))
             {
@@ -197,10 +172,7 @@ namespace IGTAPTasMod
             AccessTools.FieldRefAccess<AtomColliderSystem, List<List<GameObject>>>("contents");
         static readonly AccessTools.FieldRef<AtomColliderSystem, int> AtomWaiting = AccessTools.FieldRefAccess<AtomColliderSystem, int>("waitingAtoms");
         static AtomColliderSystem _econAtoms;
-        /// <summary>The economy at this tick's globalStats.FixedUpdate, before its NP payout: what the last tick's rendered frames
-        /// left, the point turbo's and the engine's rows are taken at (after the tick's frames).</summary>
         static Dictionary<string, object> _econPre;
-        /// <summary>Cash at the same point, a lean probe's <c>cashPre</c>.</summary>
         static double _cashPre;
 
         private static void BeforeProbeStatsFixedUpdate()
@@ -209,18 +181,9 @@ namespace IGTAPTasMod
             _cashPre = globalStats.currencyLookup[globalStats.Currencies.Cash];
             _econPre = Instance._probe.lean ? null : EconomyNow();
         }
-        /// <summary>Every callAddNewAtom Unity or turbo has run in this session (<see cref="BeforeProbeAtomCall"/>): rows compare its
-        /// steps, not its value.</summary>
         static int _gridCalls;
         static TreeController[] _econTrees;
 
-        /// <summary>
-        /// The economy as a probe row and a trace tick carry it (<c>econ</c>), under the names enginesim's <c>--ticks-out</c> rows
-        /// use (FullTas.EconomyRow), for tools/economy-diff.py and <c>replay</c>: each currency held, the atom collider's atoms per
-        /// tier (<c>contents[i].Count</c>) and waiting atoms, globalStats' NP per tick, its cap, the comp boost's NP factor and the
-        /// clone dust multiplier, the upgrade trees' grown segments, how far each door box's door is from its box (the atom
-        /// box's, the Area 2 door box's; -1 without one) and the tree boxes on (<c>treeBoxes</c>). Reads only.
-        /// </summary>
         internal static Dictionary<string, object> EconomyNow()
         {
             if (_econAtoms == null) _econAtoms = FindAnyObjectByType<AtomColliderSystem>(FindObjectsInactive.Include);
@@ -245,8 +208,6 @@ namespace IGTAPTasMod
         static readonly AccessTools.FieldRef<upgradeBox, TreeController> EconBoxTree = AccessTools.FieldRefAccess<upgradeBox, TreeController>("upgradeTree");
         static upgradeBox[] _econTreeBoxes;
 
-        /// <summary>Each tree box on (a grown segment's), by its segment and name: buys, cap, base cap, cost, base cost, active, as
-        /// FullTas.EconomyRow writes it.</summary>
         static string EconTreeBoxes()
         {
             if (_econTreeBoxes == null || Array.Exists(_econTreeBoxes, b => b == null))
@@ -257,8 +218,6 @@ namespace IGTAPTasMod
         static readonly AccessTools.FieldRef<upgradeBox, PlatformMover> EconDoorToOpen = AccessTools.FieldRefAccess<upgradeBox, PlatformMover>("doorToOpen");
         static upgradeBox[] _econDoorBoxes;
 
-        /// <summary>The distance from the global box of this kind that has a door to its door (rounded to 0.01 u, as FullTas.EconomyRow
-        /// has it); -1: none.</summary>
         static double EconDoor(globalStats.globalUpgradeSet kind)
         {
             if (_econDoorBoxes == null || Array.Exists(_econDoorBoxes, b => b == null))
@@ -269,9 +228,7 @@ namespace IGTAPTasMod
             return -1;
         }
 
-        // A probe's clone log (rows of kind "clone"): every clonesScript.SpawnClone with the clonesScripts whose Update ran
-        // before it in the same frame. Turbo and enginesim step the courses' clones lowest instance id first; a spawn's rolls
-        // come off the one RNG, so a frame where two courses spawn in another order hands them each other's rolls.
+        // Turbo/engine step clones lowest instance id first; two courses spawning in one frame swap RNG rolls otherwise.
         static int _cloneOrderFrame = -1;
         static readonly List<int> _cloneOrder = new List<int>();
         static readonly FieldInfo CloneCourse = AccessTools.Field(typeof(clonesScript), "course"), CloneOnScreen = AccessTools.Field(typeof(clonesScript), "onScreen"),
@@ -312,9 +269,6 @@ namespace IGTAPTasMod
             });
         }
 
-        // A probe's RNG log (rows of kind "rng"): each call of a game method that draws UnityEngine.Random (the ones the decompiled
-        // game has: audio picks, lights' and animators' Start, bobbers' and boxes' OnEnable, a zip mover's state, a course's Start,
-        // Movement.playSFX) with the draws it made, so a run's draws line up with turbo's and enginesim's by frame and object.
         static readonly (Type type, string method)[] ProbeRngCallers =
         {
             (typeof(Audio), "PlayAudio"), (typeof(Audio), "PlayAudioAtPoint"), (typeof(Audio), "PlayAudioSetPitch"),
@@ -333,10 +287,6 @@ namespace IGTAPTasMod
             PatchOptional(typeof(PlatformMover), "OnEnable", nameof(BeforeProbeMoverEnable), null);
         }
 
-        // A probe's zone log (rows of kind "zone"): a zone activator's trigger (zoneChanger.OnTriggerEnter2D, which starts
-        // ZoneLoader.IE_Load), the load it makes two yields later (ZoneLoader._LoadZone) and the atom collider the load wakes
-        // (AtomColliderSystem.OnEnable, Start), each with its frame, physics tick, game time and the loader's activeZone then,
-        // so turbo and the engine can load a zone in the frame 1x does. Reads only.
         static readonly AccessTools.FieldRef<zoneChanger, int> ZoneToLoad = AccessTools.FieldRefAccess<zoneChanger, int>("zoneToLoad");
         static readonly AccessTools.FieldRef<ZoneLoader, GameObject> ZoneLoadingText = AccessTools.FieldRefAccess<ZoneLoader, GameObject>("loadingText");
 
@@ -348,7 +298,6 @@ namespace IGTAPTasMod
         private static void BeforeProbeZoneLoad(ZoneLoader __instance, int zoneToLoad) { ProbeZoneRow("load", __instance, zoneToLoad, null); }
         private static void BeforeProbeAtomEnable(AtomColliderSystem __instance) { ProbeZoneRow("atomEnable", __instance, 0, null); }
         private static void BeforeProbeAtomStart(AtomColliderSystem __instance) { ProbeZoneRow("atomStart", __instance, 0, null); }
-        // An upgrade box's first Start (by: why turbo and the engine can't run it, WokenStarts) and a zip mover's OnEnable (JumpToState).
         private static void BeforeProbeBoxStart(upgradeBox __instance) { ProbeZoneRow("boxStart", __instance, 0, WokenStarts.Unmodeled(__instance)); }
         private static void BeforeProbeMoverEnable(PlatformMover __instance) { ProbeZoneRow("moverEnable", __instance, 0, null); }
 
@@ -383,9 +332,6 @@ namespace IGTAPTasMod
             });
         }
 
-        /// <summary>A probe's atom grid log (rows of kind "atom"): each <c>AtomColliderSystem.callAddNewAtom</c> Unity runs (its
-        /// InvokeRepeating, every 0.4 s of game time from OnEnable), with the frame, physics tick and game time it ran at and the
-        /// atoms then waiting, so the grid's phase and the tick an atom lands on line up with turbo's and the engine's.</summary>
         private static void BeforeProbeAtomCall(AtomColliderSystem __instance)
         {
             _gridCalls++;
@@ -415,13 +361,7 @@ namespace IGTAPTasMod
 
         int _pauseLeft, _pausedFrames, _pauseDueFrames, _pauseDueIn;
 
-        /// <summary>
-        /// 1x playback's pause (a route step's MacroStep.pauseFrames, or a probe's pauseAt): the Pause button's
-        /// pauseMenuScript.menuButtonPressed, at once or after <paramref name="afterFrames"/> Movement.Update frames
-        /// (MacroStep.pauseFrame, a probe's pauseOffset), closed the same way after <paramref name="frames"/> frames with it
-        /// open (<see cref="AfterMovementUpdate"/>). Paused, timeScale is 0 and no FixedUpdate runs, but Movement.Update's
-        /// step-up (806-816) still runs every frame. Turbo models a route's pause instead (TurboRunner.Pause).
-        /// </summary>
+        // Paused: timeScale 0 and no FixedUpdate, but Movement.Update's step-up (806-816) still runs every frame.
         void OpenPlaybackPause(Movement movement, int frames, int afterFrames)
         {
             if (frames <= 0 || TurboRunner.Active) return;
@@ -439,12 +379,6 @@ namespace IGTAPTasMod
             Logger.LogInfo("Pause menu opened for " + frames + " frames at physics tick " + _engine.PhysicsTicks);
         }
 
-        /// <summary>
-        /// A lab savestate for probes (/api/savestates/place): a copy of a savestate (<c>from</c>) or of the player now, with
-        /// any of <c>x</c>, <c>y</c> (world frame), <c>vx</c>, <c>vy</c> (Velocity; the body gets Velocity + momentum),
-        /// <c>facing</c> (±1: scale and facingRight) and Movement <c>fields</c> ({name: value}) replaced, so a probe can start
-        /// anywhere, inside a wall too. Named "lab/…": a start for experiments, never a route's.
-        /// </summary>
         Savestate PlaceSavestate(JObject body)
         {
             Savestate placed = PlacedSavestate(body);
@@ -453,7 +387,6 @@ namespace IGTAPTasMod
             return placed;
         }
 
-        /// <summary>The placed savestate of <see cref="PlaceSavestate"/>, not stored (a lab map's start played by hand).</summary>
         Savestate PlacedSavestate(JObject body)
         {
             Movement movement = FindWorldMovement() ?? throw new InvalidOperationException("No player in the world.");
@@ -532,7 +465,6 @@ namespace IGTAPTasMod
                 Instance.OpenPlaybackPause(__instance, Instance._pauseDueFrames, 0);
         }
 
-        /// <summary>Writes the probe's log once its playback is over (plugin Update).</summary>
         void PumpProbe()
         {
             if (_probe == null || _engine.IsRunning || _pendingReplay != null || _fullTasPlay != null) return;
@@ -555,10 +487,6 @@ namespace IGTAPTasMod
             _probe = null;
         }
 
-        // The 1x job (docs/fulltas.md "1x confirmation"): a run's current best played at 1x with Fast playback as a lean probe, when
-        // the game is idle (settings idle1x) or asked (POST /api/probe/1x), logged to 1x\<run>-<inputs hash>.json. A complete run's
-        // first log is also its 1x reference, 1x\<run>.json, which the engine's check aligns with its own rows (align-1x). Any
-        // command (a non-GET request) or the player's input stops it and drops its log.
         sealed class OneXJob { public string run, file, reference; public ProbeRun probe; }
         OneXJob _oneX;
         string _oneXLast;
@@ -573,7 +501,6 @@ namespace IGTAPTasMod
                 && (_fullTasQueue == null || _fullTasQueue.index >= _fullTasQueue.files.Count);
         }
 
-        /// <summary>A non-GET request (HandleWebRequest): the game isn't idle, and a running 1x job gives way before it's handled.</summary>
         void OneXCommand(string path)
         {
             _lastCommandAt = Time.realtimeSinceStartup;
@@ -601,8 +528,6 @@ namespace IGTAPTasMod
             return false;
         }
 
-        /// <summary>Plugin Update, before the hotkeys: the job's end (its log written by PumpProbe), its stop on the player's input, and
-        /// the idle start.</summary>
         void PumpOneX()
         {
             float now = Time.realtimeSinceStartup;
@@ -633,8 +558,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>The 1x play of <paramref name="only"/>'s current best, else of the first run's (complete runs first, test runs
-        /// left out) that has no 1x log yet; null when there's none.</summary>
         object StartOneX(FullTasRunDef only)
         {
             List<FullTasRunDef> runs = only != null ? new List<FullTasRunDef> { only } : _fullTasRuns.Where(r => r.Section != "test").OrderBy(r => r.Section == "complete" ? 0 : 1).ToList();

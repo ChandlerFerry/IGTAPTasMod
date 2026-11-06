@@ -18,7 +18,6 @@ namespace IGTAP.EngineSim.Cli.Runs
     {
         public string Kind, Label, Text, Key;
         public int Goal;
-        // A no-income buy: the share of its price held when the income stopped (a currency at its cap, or nothing paying).
         public double Progress;
     }
 
@@ -39,7 +38,6 @@ namespace IGTAP.EngineSim.Cli.Runs
         public double Live => Reached == 0 ? 0 : Math.Round(MacroEngine.LiveSeconds(Physics[^1], Held[^1]), 4);
         internal Func<List<InputTick>, long> Scorer;
         long? _score;
-        // The inputs don't change once built (Verify only re-times the goals), so the score is cached.
         public long Score => _score ??= Scorer(Inputs);
 
         const double MinProgress = 0.01;
@@ -53,18 +51,13 @@ namespace IGTAP.EngineSim.Cli.Runs
             (int n, long at) = Skeleton();
             (int on, long oat) = o.Skeleton();
             if (n != on) return n > on;
-            // A run stuck for want of income never reaches its next skeleton goal, however soon it reached the last: fewer economy
-            // buys left stuck before that goal first (one nothing pays for is dead weight), then more of the stuck buy's price held
-            // (an income or a cap raised), then time. A plateau of moves that each stop at the same goal and tick climbs this way.
             bool stuck = Failure?.Kind == "no-income", ostuck = o.Failure?.Kind == "no-income";
             if (stuck != ostuck) return stuck;
             if (stuck && StuckBefore() != o.StuckBefore()) return StuckBefore() < o.StuckBefore();
-            // A point of the price at least: slivers (a 105-GreenPower lap against 2E+07) would climb one goal at a time for ever.
             if (stuck && Math.Abs(Failure.Progress - o.Failure.Progress) >= MinProgress) return Failure.Progress > o.Failure.Progress;
             return n > 0 && at < oat;
         }
 
-        // The economy goals from the failing one up to the next skeleton goal: 0 when the skeleton goal itself is stuck.
         int StuckBefore()
         {
             int g = Failure.Goal;
@@ -72,7 +65,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             return g - Failure.Goal;
         }
 
-        // Plans differ in their economy goals; the skeleton (unlocks, areas, rewards) is the same, so progress counts it alone.
         (int reached, long tick) Skeleton()
         {
             int n = 0;
@@ -83,7 +75,7 @@ namespace IGTAP.EngineSim.Cli.Runs
         }
     }
 
-    // One per thread: it owns its Simulation, and the states it keeps belong to that Simulation alone.
+    // One per thread: it owns its Simulation, and its kept states belong to that Simulation alone.
     sealed class Builder
     {
         const int Settle = 20, IdleCap = 60_000, IncomeWindow = 500, QuietWindows = 3, InactiveCap = 10_000;
@@ -104,7 +96,6 @@ namespace IGTAP.EngineSim.Cli.Runs
         public int ForceSearchAt = -1;
         public long ForceBudget = Budgets[1];
         public List<InputTick> ForceSeed;
-        // The forced search's window: it is scored where it reaches the ForceSpan-th goal from ForceSearchAt (Improver.Polish).
         public int ForceSpan = 1;
 
         int Last(Built built, int j) => j == ForceSearchAt ? Math.Min(j + ForceSpan, built.Plan.Count) - 1 : j;
@@ -167,8 +158,7 @@ namespace IGTAP.EngineSim.Cli.Runs
             return built;
         }
 
-        // The build replays goal to goal from captured states; a straight replay from the run's start is what the game does, so a
-        // best's goal ticks are the straight replay's, and a route whose straight replay falls short of its build is refused.
+        // A best goal ticks must be the straight replay's (what the game does); refuse a build whose straight replay falls short.
         public Built Verify(Built b)
         {
             FullTasGoal[] goals = _run.GoalsOf(b.Plan);
@@ -221,8 +211,6 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         (List<InputTick> inputs, SimSnapshot at)? TryPlay(SimSnapshot start, int inputBase, IReadOnlyList<InputTick> inputs, int j)
         {
-            // Explicit idle inputs after the segment: a goal reached in ticks after its last input is cut on inputs that exist.
-            // The engine counts ticks past the list's end too, so a goal reached there is replayed once with that many more.
             var list = new List<InputTick>(inputs.Count + Settle);
             list.AddRange(inputs);
             for (int extra = Settle, attempt = 0; attempt < 2; attempt++)
@@ -242,8 +230,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             return null;
         }
 
-        // A capture can hold more goals than the one the step aimed at (two boxes bought in one physics step), and an area goal
-        // a quick restart took back is reached again later: the tracker's own ticks are the goals' ticks.
         void Append(Built built, int j, List<InputTick> inputs, SimSnapshot at)
         {
             built.Inputs.AddRange(inputs);
@@ -279,7 +265,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             string label = built.Plan.Labels[j];
             if (harvest is var (route, from, source))
             {
-                // A goal can come after the route's last input (a fall to the run's end): the idle ticks TryPlay adds reach it.
                 for (int window = 4096; ; window *= 4)
                 {
                     int n = Math.Max(0, Math.Min(window, route.Count - from));
@@ -326,7 +311,6 @@ namespace IGTAP.EngineSim.Cli.Runs
                     if (buy) NoteWait(built, goals, j, start, c, found);
                     return;
                 }
-                // A window's find is harvested goal by goal, so each of its goals has its own segment, cut and wait.
                 List<InputTick> window = built.Inputs.Concat(found).ToList();
                 while (built.Reached <= last && built.Failure == null)
                     Step(built, goals, built.Reached, (window, built.Reached == 0 ? 0 : built.StepEnd[built.Reached - 1], "window"));
@@ -335,8 +319,6 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         (List<InputTick>, SimSnapshot)? Best(SimSnapshot start, int inputBase, Context c, string label, int j, bool afterReset)
         {
-            // What was filed from this very state reproduces what followed it. Otherwise the fastest of the nearest that replay: one
-            // filed from a nearby state can reach the goal by a detour.
             (List<InputTick> inputs, SimSnapshot at)? best = null;
             foreach (Segment s in _lib.Candidates(label, c.Unlocks, c.X, c.Y, c.Phase, c.Facing, fp: c.Fp))
             {
@@ -352,7 +334,6 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         const int MinWait = 8;
 
-        // A buy-max touch keeps buying every level it can pay for, a step at a time: a new touch can buy only once it's done.
         bool Payable(string[] boxes) => _sim.Shop.BuyMaxLeft(boxes) == 0 && _sim.Shop.Affordable(boxes) == true;
 
         // A class without major techs plays no pause (the pauselift); techs-used checks the rest before a best is kept.
@@ -360,7 +341,6 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         static bool Neutral(InputTick t) => t.x == 0 && t.y == 0 && !t.held && !t.press && !t.release && !t.dash && !t.reset && t.dashJump == 0 && t.pause == 0;
 
-        // The fewest leading idle inputs after which the rest still buys: the economy may pay sooner than when it was filed.
         (List<InputTick>, SimSnapshot) TrimIdle(SimSnapshot start, int inputBase, int j, List<InputTick> inputs, SimSnapshot at)
         {
             int n = 0;
@@ -374,7 +354,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             return lo < n && With(lo) is var (trimmed, trimmedAt) ? (trimmed, trimmedAt) : (inputs, at);
         }
 
-        // A buy step's wait: its idle inputs before it moves off and while it stands in the box.
         void NoteWait(Built built, FullTasGoal[] goals, int j, SimSnapshot start, Context c, List<InputTick> inputs)
         {
             int lead = 0, tail = 0;
@@ -414,8 +393,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             try { bytes = new SnapshotStore(_sim).Save(start); }
             catch (NotSupportedException) { }
             List<List<InputTick>> seeds = _lib.Candidates(label, c.Unlocks, c.X, c.Y, c.Phase, c.Facing, 8, float.MaxValue).Select(s => s.Inputs).Where(Allowed).ToList();
-            // A polish searches from the best's own way here first: the library's nearest could all be slower (VMAN's goal 11: 984
-            // ticks found against the best's 963).
             if (j == ForceSearchAt && ForceSeed != null) seeds.Insert(0, ForceSeed);
             for (; budget != 0; budget = Budgets.FirstOrDefault(b => b > budget && b <= MaxBudget && !_facts.Failed(key, b)))
             {
@@ -428,7 +405,6 @@ namespace IGTAP.EngineSim.Cli.Runs
                     return null;
                 }
                 (List<InputTick> inputs, SimSnapshot at)? best = null;
-                // The best's own way is always a candidate: a polish never comes back slower than what it polishes.
                 if (j == ForceSearchAt && ForceSeed != null) finds.Insert(0, ForceSeed);
                 foreach (List<InputTick> f in finds)
                 {
@@ -456,8 +432,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             Text = $"no way from ({c.X:0}, {c.Y:0}) to goal {j + 1} {label} with {c.Unlocks} after {budget / 1_000_000}M ticks: add an avoid box or a waypoint (at:) here",
         };
 
-        // A buy short of its price idles where the last step left off until it's paid for, walks from there, then takes the
-        // fewest idle ticks after which that walk still buys it: those idle ticks are the step's wait.
         void WaitStep(Built built, FullTasGoal[] goals, int j, SimSnapshot start, int inputBase, Context c, bool afterReset)
         {
             FullTasGoal goal = goals[j];
@@ -470,7 +444,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             double startHeld = currency < 0 ? 0 : _sim.Shop.Holds(currencies[currency]);
             double shortBy = currency < 0 ? 0 : need[currency] - startHeld;
 
-            // The idling itself can buy it: the player may be standing in the box.
             int affordAt = -1, quiet = 0, inactive = 0;
             double lastHeld = startHeld, progress = 0;
             string why = null;
@@ -488,7 +461,6 @@ namespace IGTAP.EngineSim.Cli.Runs
                     if (active == null) { if ((inactive += IncomeWindow) >= InactiveCap) { why = $"{label}'s box never came on"; return false; } return true; }
                     inactive = 0;
                     double held = currency < 0 ? 0 : _sim.Shop.Holds(currencies[currency]);
-                    // Against the price now: a buy-max routine on the box raises it while it spends.
                     double[] price = _sim.Shop.Need(goal.boxes);
                     if (currency >= 0 && price != null && price[currency] > 0) progress = Math.Min(1, held / price[currency]);
                     if (held <= lastHeld) { if (++quiet >= QuietWindows) { why = $"nothing paid {currencies[Math.Max(0, currency)]} toward {label} for {quiet * IncomeWindow} ticks"; return false; } }
@@ -533,7 +505,6 @@ namespace IGTAP.EngineSim.Cli.Runs
                 built.Searches += probe.Searches;
                 if (walk == null) { built.Failure = probe.Failure; return; }
             }
-            // The fewest idle ticks after which the walk still buys it (cash only grows while idling; the 5 below catch a frame phase).
             bool Buys(int k) => TryPlay(start, inputBase, idle.GetRange(0, k).Concat(walk).ToList(), j) != null;
             int lo = 0, hi = affordAt;
             while (lo < hi) { int mid = (lo + hi) / 2; if (Buys(mid)) hi = mid; else lo = mid + 1; }

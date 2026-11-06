@@ -12,17 +12,6 @@ using Math = System.Math;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// determinism &lt;trace.json&gt; &lt;route.json&gt; [--edges N] [--seed S] [--passes P] [--no-child]: whether a run from a
-    /// snapshot depends on anything but the snapshot. It captures snapshots along the route (before and after its rebases),
-    /// draws a fixed set of edges from them (a stretch of the route's inputs, 17 to 150 ticks, as a search's edge), and runs
-    /// the set in order and then in shuffled orders. Each restore must give back the physics state the capture saw
-    /// (<see cref="PhysicsWorld.StateDigest"/>), and each edge must end in the same state (physics, player, RNG, goals) in
-    /// every pass. A mid-edge capture, restored after other runs and continued on its edge's own inputs, must end where the
-    /// uninterrupted edge did. Snapshots stored as bytes (<see cref="SnapshotStore"/>) must load into a fresh simulation
-    /// and end their edges the same. Then it runs itself again in a new process with another shuffle and compares every
-    /// edge's digest. Exit 0 when everything is identical.
-    /// </summary>
     static class Determinism
     {
         public static int Run(string[] args)
@@ -58,7 +47,6 @@ namespace IGTAP.EngineSim.Cli
             var clock = Stopwatch.StartNew();
             SimSnapshot origin = sim.Start;
 
-            // Snapshots spread over the route; a rebase's side is where the snapshot's Rebases count changes.
             int points = 10;
             var snaps = new List<(int at, SimSnapshot snap, ulong digest)>();
             for (int k = 0; k < points; k++)
@@ -68,7 +56,6 @@ namespace IGTAP.EngineSim.Cli
                 SimSnapshot s = sim.Advance(inputs.Take(at).ToList());
                 if (s == null)
                 {
-                    // The run ended first (a death, a finish): no state there to branch from.
                     Console.WriteLine($"the route's run ends before input {at}: no snapshot there");
                     continue;
                 }
@@ -81,9 +68,6 @@ namespace IGTAP.EngineSim.Cli
             }
             sim.SetStart(origin, 0);
 
-            // The edge set, fixed by the seed (the same in every process and order): a search's edge runs the route's inputs to
-            // its snapshot and then its own. Every third one captures a state halfway (as a search keeps a node) and a child
-            // edge runs from that capture later in the pass, after other edges ran in between.
             var rng = new System.Random(seed);
             int[] lengths = { 17, 17, 40, 80, 150 };
             var edges = new (int snap, List<InputTick> inputs, int captureAt, List<InputTick> child)[edgeCount];
@@ -91,13 +75,11 @@ namespace IGTAP.EngineSim.Cli
             {
                 int length = lengths[rng.Next(lengths.Length)];
                 int room = inputs.Count - from - length;
-                // Near the snapshot's own continuation, or anywhere later in the route (a search's wilder edges: deaths, walls).
                 int off = from + rng.Next(0, Math.Max(1, rng.Next(2) == 0 ? Math.Min(40, room) : room));
                 return inputs.Skip(off).Take(length).ToList();
             }
             for (int e = 0; e < edgeCount; e++)
             {
-                // A route snapshot is a start (Simulation.Advance rebases its inputs to 0): the edge's inputs are its own.
                 int j = rng.Next(snaps.Count), at = snaps[j].at;
                 List<InputTick> list = Stretch(at);
                 int captureAt = -1;
@@ -111,17 +93,13 @@ namespace IGTAP.EngineSim.Cli
             }
 
             int restoreMismatches = 0, restores = 0, captures = 0;
-            // IGTAP_DETERMINISM_DUMP=<edge>: that edge's capture and the restore of it as text (determinism-*.txt), to diff.
             int dumpEdge = int.TryParse(Environment.GetEnvironmentVariable("IGTAP_DETERMINISM_DUMP"), out int d) ? d : -1;
             System.Text.StringBuilder captureLog = null;
-            // [pass, edge] for the edges, [pass, edgeCount + edge] for their children.
             var results = new ulong[passes, 2 * edgeCount];
             var local = new int[passes, 2 * edgeCount];
-            // The player's end state alone (no physics internals): whether a difference reached the game.
             var player = new ulong[passes, 2 * edgeCount];
             var ends = new string[passes, 2 * edgeCount];
             int crossing = 0, sideSwitches = 0;
-            // Pass 0's mid-edge captures and each such edge's end state (no run counters): the continuation check below.
             var firstCaptures = new (SimSnapshot state, long physics)[edgeCount];
             var edgeEnds = new (ulong state, int local, long physics)[edgeCount];
             void Restored(SimSnapshot snap, ulong digest, string what)
@@ -165,7 +143,6 @@ namespace IGTAP.EngineSim.Cli
                                 captures++;
                                 captured[e] = (sim.Capture(t), sim.Physics.StateDigest(e == dumpEdge ? captureLog = new System.Text.StringBuilder() : null));
                                 if (p == 0) firstCaptures[e] = (captured[e].state, sim.Engine.PhysicsTicks);
-                                // Later in the pass: in order right after its edge, shuffled anywhere after it.
                                 order.Insert(shuffler == null ? n + 1 : shuffler.Next(n + 1, order.Count + 1), edgeCount + e);
                             }
                             return true;
@@ -209,15 +186,11 @@ namespace IGTAP.EngineSim.Cli
             Console.WriteLine($"restores equal to their capture: {restores - restoreMismatches}/{restores}");
             Console.WriteLine($"runs identical in every pass: {runs - differ}/{runs} (the player's end state: {runs - playerDiffer}/{runs}), digest {all:x16}");
 
-            // A restored state must continue as the run it was captured on: each mid-edge capture of pass 0, restored after
-            // other runs, plays the rest of its edge's own inputs and must end in the state the edge ended in (a restore that
-            // left another run's state in place, say a body's transform waiting for its sync, shows here).
             int continued = 0, continuedSame = 0;
             for (int e = 0; e < edgeCount; e++)
             {
                 if (firstCaptures[e].state == null) continue;
                 continued++;
-                // As many loop steps as the edge had left (a freeze's physics ticks spend the loop's budget without an input).
                 var (capture, atPhysics) = firstCaptures[e];
                 sim.Run(edges[e].inputs, capture, extraTicks: (int)(edgeEnds[e].physics - atPhysics) - (edges[e].inputs.Count - edges[e].captureAt));
                 if (StateDigest(sim) == edgeEnds[e].state && sim.Fingerprint() == edgeEnds[e].local) continuedSame++;
@@ -226,10 +199,7 @@ namespace IGTAP.EngineSim.Cli
             }
             Console.WriteLine($"captures continued with their edge's own inputs: {continuedSame}/{continued} end as the uninterrupted edge");
 
-            // A snapshot stored as bytes and loaded into a fresh simulation (a Full-TAS solve's goal states, SnapshotStore) must
-            // restore the captured state, and its edges must end as they did here. Every save comes first: a simulation takes
-            // its thread's hooks (the input hook, the physics backend) when it is made, so this one's restores once the fresh one
-            // exists would run through the fresh one's.
+            // Make every save first: a simulation takes its thread's hooks when made, so later restores run through the fresh one's.
             int stored = 0, storedSame = 0, storedRuns = 0, storedRunsSame = 0, unstorable = 0;
             var store = new SnapshotStore(sim);
             var saved = new byte[snaps.Count][];
@@ -308,8 +278,6 @@ namespace IGTAP.EngineSim.Cli
             return h.Value;
         }
 
-        /// <summary>The state a run ended in, as a digest that is the same in every process: its result, the player's transform,
-        /// body and Movement fields, the courses' fields and the RNG (<paramref name="player"/>), then the whole physics state.</summary>
         static ulong EndDigest(Simulation sim, RunResult r, out ulong player)
         {
             var h = b2Digest.Start();
@@ -322,7 +290,6 @@ namespace IGTAP.EngineSim.Cli
             return h.Value;
         }
 
-        /// <summary><see cref="EndDigest"/> without the run's result (its tick counters count from where the run started).</summary>
         static ulong StateDigest(Simulation sim)
         {
             var h = b2Digest.Start();
@@ -343,7 +310,6 @@ namespace IGTAP.EngineSim.Cli
             h.Add(px); h.Add(py); h.Add(angle); h.Add(vx); h.Add(vy); h.Add(w);
         }
 
-        /// <summary>A value's content, not its identity: world objects by instance id (the same in every load of an export).</summary>
         static void Add(ref b2Digest h, object value, int depth)
         {
             switch (value)

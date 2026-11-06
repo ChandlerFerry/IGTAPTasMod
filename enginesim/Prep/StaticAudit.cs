@@ -1,24 +1,15 @@
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
-// Build-time check for mutable statics (enginesim/README.md, "per-thread statics"). A static that game code writes
-// outside a type's static constructor, or whose contents it mutates, holds one world's state; shared between solver
-// threads, the last world loaded wins. Every such field must be per thread (`Prep.ThreadStaticFields`) or named in
-// enginesim/static-allow.txt as `Type::field  # reason` (a listed field stays shared, so a reason is required).
-// The audit runs on the rewritten module (after cuts.txt and hooks.txt emptied their methods), so writes inside an
-// emptied method are gone, and on the shim module Prep loads: the shim's own statics are `[ThreadStatic]` in their
-// source or allowed here. Engine-side writes are outside Prep's view: `World.Load` restores every game static per
-// thread from the export, which is what makes the per-thread copy correct.
 static class StaticAudit
 {
     public sealed record Offense(FieldDefinition Field)
     {
-        public List<string> Sites { get; } = new(); // "Type::Method" of each write or mutation site
-        public bool Written { get; set; }   // stsfld outside any .cctor
-        public bool Mutated { get; set; }   // contents mutated (stelem, stfld, stobj, a call through it)
+        public List<string> Sites { get; } = new();
+        public bool Written { get; set; }
+        public bool Mutated { get; set; }
     }
 
-    /// <param name="Fields">Every static field of the audited modules.</param>
     public sealed record Report(Dictionary<string, FieldDefinition> Fields, List<Offense> Offenses);
 
     public static string Key(FieldDefinition f) => f.DeclaringType.FullName + "::" + f.Name;
@@ -62,11 +53,6 @@ static class StaticAudit
         Mutations(m, fields, offenses, site);
     }
 
-    // Walks the IL with an origin set per stack slot and local ("this value comes from static field F") and records a
-    // field as mutated when a store or a call runs through it. Origins propagate through field and element reads,
-    // casts and calls' return values, so mutating an object reached from a static counts too. Anything ambiguous (a
-    // call's argument, say) is treated as a mutation: over-reporting a field only asks for an explicit per-thread or
-    // allow-list decision, missing one keeps a shared bug.
     static void Mutations(MethodDefinition m, Dictionary<string, FieldDefinition> fields, Dictionary<string, Offense> offenses, string site)
     {
         Mono.Collections.Generic.Collection<Instruction> insns = m.Body.Instructions;
@@ -180,30 +166,29 @@ static class StaticAudit
             }
         }
 
-        // Whole families by name: every stelem.*, stind.*, ldind.* and ldelem.* (ldelema too).
         string name = ins.OpCode.Name;
         if (name.StartsWith("stelem", StringComparison.Ordinal))
         {
-            state.Pop(); // value
-            state.Pop(); // index
-            Record(state.Pop()); // array
+            state.Pop();
+            state.Pop();
+            Record(state.Pop());
             return;
         }
         if (name.StartsWith("stind.", StringComparison.Ordinal))
         {
-            state.Pop(); // value
-            Record(state.Pop()); // address
+            state.Pop();
+            Record(state.Pop());
             return;
         }
         if (name.StartsWith("ldind.", StringComparison.Ordinal))
         {
-            state.Push(state.Pop()); // the object reached is still the field's contents
+            state.Push(state.Pop());
             return;
         }
         if (name.StartsWith("ldelem", StringComparison.Ordinal))
         {
-            state.Pop(); // index
-            state.Push(state.Pop()); // the element is still the array's contents
+            state.Pop();
+            state.Push(state.Pop());
             return;
         }
         switch (ins.OpCode.Code)
@@ -250,8 +235,8 @@ static class StaticAudit
                 state.Pop();
                 return;
             case Code.Stfld:
-                state.Pop(); // value
-                Record(state.Pop()); // object: its field is written
+                state.Pop();
+                Record(state.Pop());
                 return;
             case Code.Stobj:
             case Code.Cpobj:
@@ -262,7 +247,7 @@ static class StaticAudit
             case Code.Ldfld:
             case Code.Ldflda:
             case Code.Ldobj:
-                state.Push(state.Pop()); // the object reached is still the field's contents
+                state.Push(state.Pop());
                 return;
             case Code.Castclass:
             case Code.Isinst:
@@ -300,7 +285,7 @@ static class StaticAudit
             case Code.Newobj:
             {
                 var ctor = (MethodReference)ins.Operand;
-                Record(Args(state, ctor.Parameters.Count)); // a constructor may mutate what it is handed
+                Record(Args(state, ctor.Parameters.Count));
                 state.Push(new HashSet<FieldDefinition>());
                 return;
             }
@@ -334,7 +319,6 @@ static class StaticAudit
         }
     }
 
-    // A call's arguments: the union of the trailing slots (Newobj, which has no receiver).
     static HashSet<FieldDefinition> Args(Flow state, int count)
     {
         var union = new HashSet<FieldDefinition>();
@@ -342,15 +326,11 @@ static class StaticAudit
         return union;
     }
 
-    // Reads that cannot mutate what they touch.
     static bool PureRead(string name) =>
         name.StartsWith("get_", StringComparison.Ordinal)
         || name is "ToString" or "GetHashCode" or "Equals" or "GetType" or "Contains" or "ContainsKey" or "ContainsValue"
             or "TryGetValue" or "IndexOf" or "LastIndexOf" or "GetEnumerator" or "MoveNext";
 
-    // Nothing can mutate these through a reference: a string's text and a delegate's invocation list only change when
-    // the field itself is written (a stsfld site). A readonly value-type static is copied before any call, and C# only
-    // writes it in a constructor, so calls and arguments cannot reach its storage either.
     static bool Unmutable(FieldDefinition f)
     {
         TypeReference t = f.FieldType;
@@ -361,7 +341,7 @@ static class StaticAudit
             for (TypeDefinition? b = t.Resolve()?.BaseType?.Resolve(); b != null; b = b.BaseType?.Resolve())
                 if (b.FullName == "System.MulticastDelegate") return true;
         }
-        catch (Exception) { } // a base type the resolver cannot reach: assume mutable
+        catch (Exception) { }
         return false;
     }
 
@@ -386,7 +366,6 @@ static class StaticAudit
         _ => 0,
     };
 
-    // Every offense must be per thread or allowed; every allow-list entry must name a real static field.
     public static void Check(Report report, Dictionary<string, string> allowed)
     {
         var unknown = allowed.Keys.Where(k => !report.Fields.ContainsKey(k)).OrderBy(k => k, StringComparer.Ordinal).ToList();

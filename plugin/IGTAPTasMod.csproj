@@ -14,7 +14,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Sources the offline engine compiles too (enginesim\Runtime\IGTAP.EngineSim.Runtime.csproj). -->
     <Compile Include="$(RepoRoot)\shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
   </ItemGroup>
 
@@ -35,7 +34,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The plugin finds the offline engine and the repo's data\runs\ through these. -->
     <AssemblyMetadata Include="EngineSimExe" Value="$(RepoRoot)\enginesim\Cli\bin\Release\net10.0\IGTAP.EngineSim.exe" />
     <AssemblyMetadata Include="IgtapRepo" Value="$(RepoRoot)" />
   </ItemGroup>

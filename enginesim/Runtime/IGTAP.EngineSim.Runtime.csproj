@@ -15,12 +15,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Sources the plugin compiles too (plugin\IGTAPTasMod.csproj). -->
     <Compile Include="..\..\shared\*.cs" Link="Shared\%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The source tree, for a solver copied out of it: the tech miner reads the repo's data\techs.json and data\labmaps\ there (TechGrafts.SourceRoot). -->
     <AssemblyMetadata Include="IgtapRepo" Value="$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..'))" />
   </ItemGroup>
 
@@ -31,7 +29,7 @@
     <Reference Include="Assembly-CSharp" HintPath="$(RetargetedGame)" Private="true" />
   </ItemGroup>
 
-  <!-- Prep's and the shim's own outputs, wherever -o or the configuration put them (a clean checkout has no bin\Release copies). -->
+  <!-- Prep's and the shim's paths from MSBuild: -o builds (the pre-commit check) have no bin/Release copies. -->
   <Target Name="EngineTools">
     <MSBuild Projects="..\Prep\IGTAP.EngineSim.Prep.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
       <Output TaskParameter="TargetOutputs" PropertyName="PrepDll" />

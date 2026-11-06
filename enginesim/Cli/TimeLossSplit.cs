@@ -8,29 +8,12 @@ using IGTAPTasMod;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// <c>timeloss split &lt;trace.json&gt; &lt;route.json&gt; --ref &lt;route.json | captured trace.json&gt; [--within U] [--json]</c>: where a
-    /// route loses time to a reference run of the same target, anchor by anchor. Both are cut at their anchors
-    /// (<see cref="Difficulty.Anchors(Simulation, List{InputTick}, SimSnapshot, bool)"/>, the route's own inputs): the route
-    /// replayed, the reference too unless it is a captured trace (a turbo capture's per-tick "ticks"), whose anchors come from
-    /// the states it captured, as it played then; what its inputs do on this engine is said beside it (routes judged before
-    /// a frame-grid change may play differently now). Each route anchor takes the reference's nearest anchor of its kind
-    /// within --within u (default <see cref="Within"/>) after the last one taken; the starts match, and the ends when of one
-    /// kind. Per anchor: both runs' physics ticks and their difference, and the difference in ticks the timer has counted (a
-    /// course's starts where the player enters its start, not at the route's start; the table's timer row). The losing
-    /// segment is the first between matched anchors where that timed difference grows, with both players' speeds at its ends.
-    /// </summary>
     static class TimeLossSplit
     {
         const string Usage = "usage: timeloss split <trace.json> <route.json> --ref <route.json | captured trace.json> [--within U] [--json]";
-        /// <summary>The farthest (u) a reference anchor may be from the route's to match it.</summary>
         const float Within = 100f;
-        /// <summary>A step that moves the player this much (u) farther than its velocities carry it is a respawn's teleport.</summary>
         const float Teleport = 32f;
 
-        /// <summary>One route segment, anchor <see cref="From"/> to the next (<see cref="To"/>, input ticks), against the reference
-        /// between the anchors matched to its ends (null where either end has none): physics ticks, and the ticks of them the timer
-        /// counted (null without a timer start), whose differences add up to the difference in time.</summary>
         internal sealed class Row
         {
             public int From, To;
@@ -40,25 +23,19 @@ namespace IGTAP.EngineSim.Cli
             public long? Timed, RefTimed, TimedDelta;
         }
 
-        /// <summary>A run cut at its anchors: where its timer started (physics ticks; null: it never did) and the player then.</summary>
         sealed class Side
         {
             public string Name;
-            /// <summary>Read from a captured trace's states, not replayed.</summary>
             public bool Captured;
             public bool Finished;
-            /// <summary>Why an unfinished replay stopped (RunResult.EndReason).</summary>
             public string EndReason;
             public float Time;
             public long Physics;
             public long? Timer;
             public MoveState TimerMove;
             public List<Difficulty.Anchor> Anchors;
-            /// <summary>A captured trace's inputs replayed on this engine.</summary>
             public RunResult Today;
 
-            /// <summary>The ticks the timer has counted after <paramref name="physics"/> physics ticks: none before its start, so
-            /// a course time is its finish's.</summary>
             public long? Timed(long physics) => Timer == null ? null : Math.Max(0, physics - Timer.Value);
         }
 
@@ -66,10 +43,8 @@ namespace IGTAP.EngineSim.Cli
         {
             public Side Route, Ref;
             public float Within;
-            /// <summary>The reference anchor matched to each route anchor (-1: none).</summary>
             public int[] Match;
             public List<Row> Rows;
-            /// <summary>The matched route anchors the losing segment runs between (-1: the route loses nowhere).</summary>
             public int LoseFrom = -1, LoseTo = -1;
         }
 
@@ -83,18 +58,16 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        /// <summary>The route's segments against the reference (<see cref="Row"/>), for the report.</summary>
         internal static List<Row> Rows(string tracePath, string routePath, string refPath) => Compare(tracePath, routePath, refPath, Within).Rows;
 
         static Result Compare(string tracePath, string routePath, string refPath, float within)
         {
             var (header, labels, inputs) = TechsUsed.Load(tracePath, routePath, "timeloss");
-            // One simulation for both runs: the game's statics are per thread, so a second one here would take them over.
+            // One simulation for both runs: the game's statics are per thread, a second one would take them over.
             Simulation sim = TechsUsed.Create(tracePath, header, labels);
             var r = new Result { Route = Replay(sim, Path.GetFileName(routePath), inputs), Within = within };
             using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(refPath), new JsonDocumentOptions { MaxDepth = 256 }))
             {
-                // A route file's "ticks" are its inputs (Plan.ReadRoute); a capture's are its states, beside its "inputs".
                 List<InputTick> refInputs = Solve.ReadInputs(doc.RootElement);
                 string name = Path.GetFileName(refPath);
                 if (!IsCapture(doc.RootElement)) r.Ref = Replay(sim, name, refInputs);
@@ -110,8 +83,6 @@ namespace IGTAP.EngineSim.Cli
             return r;
         }
 
-        /// <summary>The run replayed: its anchors, and its timer's last start from the tech record's steps (a run timed from its
-        /// start: 0).</summary>
         static Side Replay(Simulation sim, string name, List<InputTick> inputs)
         {
             List<Difficulty.Anchor> anchors = Difficulty.Anchors(sim, inputs, null, false, out TechSteps record, out RunResult run, out int[] goals);
@@ -130,7 +101,6 @@ namespace IGTAP.EngineSim.Cli
             return side;
         }
 
-        /// <summary>The last step the timer started on (it restarts at each crossing of the start).</summary>
         static void TimerStart(List<TechStep> steps, Side side)
         {
             for (int i = 0; i < steps.Count; i++)
@@ -141,7 +111,6 @@ namespace IGTAP.EngineSim.Cli
                 }
         }
 
-        /// <summary>A turbo capture (tools/enginesim-capture.py): a start state and per-tick states, not just inputs.</summary>
         static bool IsCapture(JsonElement root)
         {
             return root.TryGetProperty("start", out JsonElement start) && start.ValueKind == JsonValueKind.Object
@@ -149,9 +118,6 @@ namespace IGTAP.EngineSim.Cli
                 && ticks.GetArrayLength() > 0 && ticks[0].TryGetProperty("position", out _);
         }
 
-        /// <summary>A captured trace's run as it played: its steps rebuilt from the per-tick states (input and physics ticks, the
-        /// player in the world frame, the course's timer, a teleport as a respawn) and cut at their anchors as a replay's are; an
-        /// anchor's player is the state after the first step its input tick is next on.</summary>
         static Side Captured(JsonElement root, string name)
         {
             int course = root.TryGetProperty("course", out JsonElement c) && c.ValueKind == JsonValueKind.Number ? c.GetInt32() : 0;
@@ -195,8 +161,6 @@ namespace IGTAP.EngineSim.Cli
             return side;
         }
 
-        /// <summary>The player of a captured state as the anchors read it: the world frame (the scene position less
-        /// FloatingOrigin's), Movement.Velocity, its contacts, dash and resources.</summary>
         static MoveState State(JsonElement t)
         {
             JsonElement p = t.GetProperty("position");
@@ -226,7 +190,6 @@ namespace IGTAP.EngineSim.Cli
             return s;
         }
 
-        /// <summary>The course's timer runs in this captured state (courseScript.tracking).</summary>
         static bool Tracking(JsonElement t, int course)
         {
             foreach (JsonElement c in t.GetProperty("courses").EnumerateArray())
@@ -243,8 +206,6 @@ namespace IGTAP.EngineSim.Cli
             return false;
         }
 
-        /// <summary>In order: each route anchor takes the nearest reference anchor of its kind within <paramref name="within"/> u
-        /// after the last one taken; the starts match, and the ends when of one kind.</summary>
         static int[] Align(List<Difficulty.Anchor> route, List<Difficulty.Anchor> reference, float within)
         {
             var match = new int[route.Count];
@@ -296,7 +257,6 @@ namespace IGTAP.EngineSim.Cli
             return rows;
         }
 
-        /// <summary>The route's difference at a matched anchor: in timed ticks when both runs have a timer, else in physics ticks.</summary>
         static long Difference(Result r, int i)
         {
             Difficulty.Anchor a = r.Route.Anchors[i], b = r.Ref.Anchors[r.Match[i]];
@@ -304,7 +264,6 @@ namespace IGTAP.EngineSim.Cli
             return timed ?? a.Physics - b.Physics;
         }
 
-        /// <summary>The first pair of consecutive matched anchors the difference grows between.</summary>
         static void Losing(Result r)
         {
             int prev = 0;

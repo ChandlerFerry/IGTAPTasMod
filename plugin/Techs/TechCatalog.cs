@@ -17,52 +17,26 @@ namespace IGTAPTasMod
             public string id;
             public string name;
             public string category;
-            /// <summary>The fewest unlocks the tech needs: a category's label (WJ_DS) or another set's (DS_OM: the omnidirectional
-            /// dash, the statue's or Vman's free box, whatever else the run has).</summary>
             public string requires = "NONE";
             public string description = "";
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string note;
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string detector;
             public List<string> related = new List<string>();
-            /// <summary>The start a route demo played from (a category route's prefix or a Full-TAS run's); a lab demo starts at its lab's.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string start;
-            /// <summary>A demo route from before every tech was its lab (a library route): kept on disk and playable from the
-            /// library, never shown in the Tech tab.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string routeId;
-            /// <summary>
-            /// The demo depends on FloatingOrigin (where the world was rebased): it draws the origin overlay, and it always plays
-            /// from its start, never from a savestate, which holds only the player and not the world's origin.
-            /// </summary>
+            // Depends on FloatingOrigin: always plays from its start, never a savestate (holds the player, not the world's origin).
             [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)] public bool floatingOrigin;
-            /// <summary>
-            /// A Full-TAS demo's first input ticks, run in turbo right after the new game loads, so it starts where the tech
-            /// begins with the world as the run left it (a savestate holds only the player).
-            /// </summary>
             [JsonProperty(DefaultValueHandling = DefaultValueHandling.Ignore)] public int fastForward;
-            /// <summary>
-            /// The tech's own lab map (labmaps/&lt;id&gt;.json): its demo injects the lab, starts at its lab start and restores at
-            /// the end. Lab-only: never a route, never on a route's path (RULES.md). A lab file naming the tech
-            /// ("tech") is one of its labs too (<see cref="TechLabs"/>).
-            /// </summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string labmap;
-            /// <summary>Which of the lab map's demos (labmaps/&lt;labmap&gt;.&lt;labDemo&gt;.demo.json, with its own start); none: &lt;labmap&gt;.demo.json.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string labDemo;
-            /// <summary>
-            /// The offline tech miner's key window (enginesim TechGrafts): {"contact": a ContactLog kind, "tick": the demo input tick
-            /// near it}, for a demo whose last button isn't where the tech happens. Kept as written; the plugin doesn't read it.
-            /// </summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public JObject graftKey;
-            /// <summary>The offline miner's marker, "todo": known real, no lab yet (the Tech tab lists it as not reproduced). Kept as written.</summary>
             [JsonProperty(NullValueHandling = NullValueHandling.Ignore)] public string graft;
-            /// <summary>Every other techs.json field (the offline side's: graftDemos, ...), written back as read.</summary>
             [JsonExtensionData] public IDictionary<string, JToken> extra;
         }
 
         static readonly string[] TechCategories = { "glitchless", "nmg", "major" };
-        /// <summary>techs.json "requires" (<see cref="TechDef.requires"/>): a set of unlocks as its label.</summary>
         static bool IsTechRequires(string requires) { return Caps.TryParse(requires, out _); }
 
-        /// <summary>The body's "requires": a set of unlocks as its label.</summary>
         static string RequiredUnlocks(JObject body)
         {
             string value = Text(body, "requires");
@@ -70,12 +44,8 @@ namespace IGTAPTasMod
             return value;
         }
 
-        // A tech demo's start: a category route's prefix (2_WJ_DS) or a Full-TAS run's (fulltas/VMAN_NONE, its route-name
-        // category fixed); the category part must be one of the categories.
         static readonly Regex TechStart = new Regex(@"^(fulltas/[A-Za-z0-9%-]+_NONE|(?<token>[^_\s/]+)_(?<label>" + Caps.LabelPattern + @"))(?= |$)", RegexOptions.IgnoreCase);
 
-        /// <summary>The start this name has (a category route's prefix or a Full-TAS run's), or empty when its category part
-        /// is no category.</summary>
         static Match MatchTechStart(string name)
         {
             Match m = TechStart.Match(name ?? "");
@@ -120,16 +90,6 @@ namespace IGTAPTasMod
 
         string TechsSeededPath { get { return Path.Combine(Paths.ConfigPath, "IGTAPTasMod", "techs.seeded.json"); } }
 
-        /// <summary>
-        /// The live catalog (the Tech tab's, edited in the game) keeps its own text and order; a plugin build adds what its
-        /// built-in list has that the live one lacks: techs it doesn't have (by id, at the end) and a detector for a tech that
-        /// has none, when no other tech has that detector yet. Each is offered once (techs.seeded.json remembers it), so a tech
-        /// deleted or a detector cleared in the Tech tab stays that way. A tech the built-in list once offered and has since
-        /// dropped (buy-upgrade-from-top, faster-acceleration) goes from the live catalog once too ("-&lt;id&gt;" in
-        /// techs.seeded.json); one the built-in list never offered is the user's and stays. The lab and miner fields (labmap
-        /// with its labDemo, start, graftKey, graft) are the repo's: the built-in ones fill a live tech's gaps on every load, and
-        /// a live "todo" goes once the built-in tech has a lab and no marker. True when the catalog changed.
-        /// </summary>
         bool MergeSeedTechs(List<TechDef> seed)
         {
             var offered = new HashSet<string>();
@@ -171,7 +131,6 @@ namespace IGTAPTasMod
             return true;
         }
 
-        /// <summary><see cref="MergeSeedTechs"/>'s lab and miner fields: the built-in tech's fill the live one's gaps. True when one did.</summary>
         static bool FillSeedGaps(TechDef live, TechDef seed)
         {
             bool changed = false;
@@ -236,21 +195,17 @@ namespace IGTAPTasMod
             return string.IsNullOrEmpty(tech.routeId) ? null : _library.macros.Find(m => m.id == tech.routeId);
         }
 
-        /// <summary>The tech whose demo a route plays: the tech trace's (EngineSimTechTrace), a tech probe's, the Tech tab's lab
-        /// demo (<see cref="PlayTechLab"/>), or the one whose library demo route it is.</summary>
         TechDef TechOfRoute(MacroDefinition route)
         {
             if (_techStart != null) return _techStart;
             if (route == null) return null;
             if (route.id == LabDemoRouteId) return _labPlay;
             if (route.id == ProbeRouteId) return _probe?.tech;
-            // A loop, not Find(lambda): the overlay asks on every Repaint while a route runs.
             foreach (TechDef t in _techs)
                 if (t.routeId == route.id) return t;
             return null;
         }
 
-        /// <summary>A probe's own unlocks on top of its start's (the omnidirectional dash), saved with the category's so playback's end puts them back.</summary>
         void ApplyTechAbilities(MacroDefinition route, Movement movement)
         {
             if (route == null || movement == null || route.id != ProbeRouteId || _probe == null || !_probe.omniDash) return;
@@ -262,7 +217,6 @@ namespace IGTAPTasMod
         {
             if (route == null) return false;
             if (route.id == LabDemoRouteId) return true;
-            // A loop, not Any(lambda): the overlay asks on every idle tick of a playback.
             foreach (TechDef t in _techs)
                 if (t.routeId == route.id) return true;
             return route.id == ProbeRouteId && _probe?.tech != null;
@@ -305,13 +259,10 @@ namespace IGTAPTasMod
             DropSavestate(route.savestateId);
         }
 
-        /// <summary>The route id of a lab demo the Tech tab plays (<see cref="PlayTechLab"/>): never in the library.</summary>
         const string LabDemoRouteId = "lab-demo";
-        /// <summary>The lab demo playing (or last played) from the Tech tab: its tech on that lab (<see cref="TechLabDemo"/>) and its route.</summary>
         TechDef _labPlay;
         MacroDefinition _labPlayRoute;
 
-        /// <summary>Each lab map's id by the tech its file names ("tech"); a lab that doesn't load names none.</summary>
         Dictionary<string, List<string>> LabsNamingTechs()
         {
             var byTech = new Dictionary<string, List<string>>();
@@ -327,11 +278,6 @@ namespace IGTAPTasMod
             return byTech;
         }
 
-        /// <summary>
-        /// A tech's labs, each with the demo it plays: its own labmap (with its labDemo, else the main demo) first, then every
-        /// other lab map whose file names the tech, with its main demo (spring-double-hit and spring-double-hit-side). A tech
-        /// with none isn't reproduced yet.
-        /// </summary>
         static List<(string lab, string demo)> TechLabs(TechDef tech, Dictionary<string, List<string>> naming)
         {
             var labs = new List<(string lab, string demo)>();
@@ -342,13 +288,6 @@ namespace IGTAPTasMod
             return labs;
         }
 
-        /// <summary>
-        /// One of a tech's lab demos (<paramref name="labId"/>, null: its first lab): the tech as it plays there (its labmap
-        /// and labDemo that lab's, its start the lab category's Course 1 start, whose zone and unlocks the lab's demo was solved
-        /// with) and the demo's input ticks, read from the lab's demo file on every call. <paramref name="demoName"/> picks
-        /// another of the lab's demos (labmaps/&lt;lab&gt;.&lt;demo&gt;.demo.json; empty: its main demo); null plays the one
-        /// <see cref="TechLabs"/> gives the lab.
-        /// </summary>
         TechDef TechLabDemo(TechDef tech, string labId, out List<SolverTick> inputs, string demoName = null)
         {
             List<(string lab, string demo)> labs = TechLabs(tech, LabsNamingTechs());
@@ -371,7 +310,6 @@ namespace IGTAPTasMod
                 labmap = lab.id, labDemo = chosen.demo, start = start, floatingOrigin = tech.floatingOrigin };
         }
 
-        /// <summary>Plays one of a tech's lab demos (<see cref="TechLabDemo"/>) at 1x (walk: slowed), as a route that never enters the library.</summary>
         void PlayTechLab(TechDef tech, string labId, string demoName, bool walk)
         {
             if (PlaybackActive || _recorder.IsRecording) throw new InvalidOperationException("Stop playback or recording first.");
@@ -426,8 +364,6 @@ namespace IGTAPTasMod
                     if (body["floatingOrigin"] != null) tech.floatingOrigin = (bool)body["floatingOrigin"];
                     if (body["labmap"] != null || body["labDemo"] != null)
                     {
-                        // The tech's own lab and which of its demos it plays (empty: the main one); another lab's file naming the
-                        // tech stays one of its labs either way.
                         string labmap = body["labmap"] != null ? Text(body, "labmap").Trim() : tech.labmap ?? "";
                         string labDemo = body["labDemo"] != null ? Text(body, "labDemo").Trim() : labmap == tech.labmap ? tech.labDemo ?? "" : "";
                         if (labmap.Length > 0) LoadLabMap(labmap);
@@ -444,7 +380,6 @@ namespace IGTAPTasMod
                     }
                     if (body["position"] != null)
                     {
-                        // Where the tech sits in the list (and in its Tech tab column): an index, or -1 for the end.
                         int position = Number(body, "position", -1);
                         _techs.Remove(tech);
                         _techs.Insert(position < 0 || position > _techs.Count ? _techs.Count : position, tech);
@@ -500,8 +435,6 @@ namespace IGTAPTasMod
                     return new { ok = true };
                 }
                 case "/api/techs/play":
-                    // One of the tech's lab demos (lab: its id, else the tech's first lab; demo: which of that lab's demos, else
-                    // the one the tech plays there), at 1x or walked.
                     PlayTechLab(FindTech(Text(body, "id")), body["lab"] == null ? null : Text(body, "lab"), body["demo"] == null ? null : Text(body, "demo"),
                         Truthy(body, "walk"));
                     return new { ok = true };
@@ -509,10 +442,6 @@ namespace IGTAPTasMod
             throw new InvalidOperationException("Unknown tech command: " + path);
         }
 
-        /// <summary>
-        /// The techs with their labs (<see cref="TechLabs"/>: each lab's id, the demo the tech plays there and that demo's length),
-        /// those labs (shapes, starts, ghosts' paths) and the detectors (studio static state).
-        /// </summary>
         object BuildTechStaticWebState()
         {
             Dictionary<string, List<string>> naming = LabsNamingTechs();
@@ -546,7 +475,6 @@ namespace IGTAPTasMod
                                 shapes = (lab.hand.shapes ?? new List<LabShapeDef>()).Select(s => new { s.kind, s.at, s.size, s.points, s.layer, s.tag, s.trigger, s.spike, s.rotation, s.spring }),
                                 start = lab.hand.start == null ? null : new { lab.hand.start.x, lab.hand.start.y, lab.hand.start.facing },
                             },
-                            // The ghosts' paths in the lab's `ghosts` order (the in-game tints'), else the main demo's alone.
                             ghosts = (lab.ghosts ?? new List<LabGhostDef> { new LabGhostDef() }).Select(g =>
                             {
                                 JObject file = CachedLabJson(lab.id + (string.IsNullOrEmpty(g.demo) ? "" : "." + g.demo) + ".demo.json");
@@ -560,7 +488,6 @@ namespace IGTAPTasMod
             };
         }
 
-        /// <summary>The injected lab and the last playback's techs (studio live state).</summary>
         object BuildTechLiveWebState()
         {
             return new
@@ -571,7 +498,6 @@ namespace IGTAPTasMod
                     routeId = _techSeenRoute.id,
                     route = _techSeenRoute.name,
                     running = OverlayListsRun,
-                    // A Tech tab lab demo's: which tech on which lab, for its card's verdict.
                     lab = _techSeenRoute == _labPlayRoute ? new { tech = _labPlay.id, lab = _labPlay.labmap } : null,
                     items = _techSeen.Select(s => new { detector = s.tech.ToString(), label = TechLabel(s.tech), s.start, s.end, s.input }),
                 },

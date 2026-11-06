@@ -6,8 +6,6 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim
 {
-    /// <summary>Movement's state at one point of a physics step, as the tech checks (<see cref="TechChecks"/>) read it: positions
-    /// in the world frame (the scene minus FloatingOrigin), <see cref="LastHyperY"/> in the scene frame as the game compares it.</summary>
     public struct MoveState
     {
         public float X, Y, Vx, Vy, Mx, My, MoveX, MoveY;
@@ -15,8 +13,6 @@ namespace IGTAP.EngineSim
         public float Coyote, WallCoyote, SinceDash, LastHyperY, SceneY;
         public int AirJumps, WallJumps, AirDashes, DashBounce;
         public float DashX, DashY, PreDashX, PreDashY, RaysX;
-        /// <summary>normalCollider's size (a jump or dash shrinks it to the dash collider) and framesSquished (a squish past
-        /// SquishGraceFrames kills).</summary>
         public float ColliderW, ColliderH;
         public int Squished;
         public Movement.cutsceneModes Cutscene;
@@ -50,23 +46,14 @@ namespace IGTAP.EngineSim
         }
     }
 
-    /// <summary>What happened inside a step, in order (the game's own calls the hooks see).</summary>
     public enum TechCall : byte
     {
-        /// <summary>getPlayerControlledInput's start, once the tick's input is in (Simulation.BeforeInput).</summary>
         Input,
-        /// <summary>determineSpriteDirection's start: right after getPlayerControlledInput, after CheckForSuperJump in the dash
-        /// branch, and in the wall jump lock.</summary>
         Sprite,
-        /// <summary>CheckForSuperJump's start (the dash branch, every dash step).</summary>
         Super,
-        /// <summary>SpecialWallJump (<see cref="TechEvent.Value"/>: directionMagnitudeMod, 1 for a wallbounce, 0.6 a dash boost).</summary>
         Kick,
-        /// <summary>A step-up in a rendered frame (Movement.Update).</summary>
         StepUp,
-        /// <summary>PlatformMover.MakeIntangible: a jump touching a zip mover or in its coyote ticks.</summary>
         Intangible,
-        /// <summary>Movement.respawn (a quick restart, or a death's respawn).</summary>
         Respawn,
     }
 
@@ -77,53 +64,31 @@ namespace IGTAP.EngineSim
         public MoveState State;
     }
 
-    /// <summary>One physics step of a run (<see cref="TechSteps"/>).</summary>
     public sealed class TechStep
     {
-        /// <summary>The input tick the step's contacts file at (MacroEngine.RunTicks after it) and the step's index in the run.</summary>
         public int Tick, Index;
-        /// <summary>The run's physics ticks after the step (MacroEngine.PhysicsTicks: what goal ticks count).</summary>
         public long Physics;
         public readonly List<TechEvent> Calls = new List<TechEvent>();
         public StepEvents Events;
-        /// <summary>A jump or dash press went in on this step (MacroEngine's press counters moved).</summary>
         public bool JumpPress, DashPress;
-        /// <summary>The player's hurtbox touches a spike trigger after the step.</summary>
         public bool Spike;
-        /// <summary>The run died on this step (its last).</summary>
         public bool Died;
-        /// <summary>The ids (FullTasGoal.BoxId) of the active upgrade boxes whose buy trigger held the player on this step.</summary>
         public List<string> Boxes;
-        /// <summary>A solid within 40 u at -x / +x of the player's position, probed only on a dash's first step.</summary>
         public bool WallLeft, WallRight;
-        /// <summary>Standing (onGround, no spike touching the hurtbox) with a spike trigger the first thing straight under the
-        /// player's centre within the ground rays' reach (y - 18, 22 u down): the dot stands on a platform's end over a pit of
-        /// spikes flush with it, held up by the ground rays still on the platform.</summary>
         public bool SpikeUnder;
-        /// <summary>The target course's timer runs after the step (Simulation.TimingCourse).</summary>
         public bool Timing;
-        /// <summary>The spring's up at a hit this step (<see cref="StepEvents.SpringHit"/>).</summary>
         public float SpringX, SpringY;
-        /// <summary>The slanted surfaces the player touches after the step (PhysicsWorld.PlayerTouch: the side, 0 none).</summary>
         public float Overhang, Slope;
-        /// <summary>The coloured blocks swapped this step (a dash's block swap, a respawn's), and to which (true: blue).</summary>
         public bool Swapped, Blue;
         public MoveState After;
     }
 
-    /// <summary>
-    /// The tech checks' record of a run: every physics step's calls (the hooks <see cref="Simulation"/> exposes, in the order
-    /// the game made them), its events and the player's state after it. Attach before the run, call <see cref="Step"/> from
-    /// its onStep and <see cref="End"/> with its result.
-    /// </summary>
     public sealed class TechSteps
     {
         readonly Simulation _sim;
         static readonly AccessTools.FieldRef<courseScript, bool> CourseTracking = AccessTools.FieldRefAccess<courseScript, bool>("tracking");
-        /// <summary>The game's spikes' layer (spikeScript triggers).</summary>
         const int SpikeLayer = 6;
         public readonly List<TechStep> Steps = new List<TechStep>();
-        /// <summary>Movement.maxCoyoteFrames and maxWallCoyoteFrames (the overlay's detectors compare the counts with them).</summary>
         public float MaxCoyote, MaxWallCoyote;
         TechStep _now = new TechStep();
         int _jumps, _dashes;
@@ -132,7 +97,6 @@ namespace IGTAP.EngineSim
 
         public TechSteps(Simulation sim) { _sim = sim; }
 
-        /// <summary>The overlay's detections over the steps so far (<see cref="TechChecks.Detect"/>).</summary>
         public List<TechChecks.Span> Spans => _spans ??= TechChecks.Detect(this);
 
         public void Attach()
@@ -165,7 +129,6 @@ namespace IGTAP.EngineSim
             _sim.BoxTouched = null;
         }
 
-        /// <summary>A new run (or a run resumed from a snapshot): no steps yet, the press counters from here.</summary>
         public void Clear()
         {
             Steps.Clear();
@@ -182,7 +145,6 @@ namespace IGTAP.EngineSim
             _now.Calls.Add(new TechEvent { Call = call, Value = value, State = MoveState.Of(_sim, m) });
         }
 
-        /// <summary>After each physics step (the run's onStep).</summary>
         public void Step()
         {
             _spans = null;
@@ -200,7 +162,6 @@ namespace IGTAP.EngineSim
             s.Spike = touch.Spike;
             s.Overhang = touch.Overhang;
             s.Slope = touch.Slope;
-            // A lab run (TargetCourse -1) stands by any course's gate (ContactProbe): any course's timer counts there.
             s.Timing = _sim.TargetCourse < 0 ? Array.Exists(_sim.Courses, c => CourseTracking(c)) : _sim.TimingCourse() != null;
             if ((s.Events & StepEvents.SpringHit) != 0) { s.SpringX = _sim.SpringUp.x; s.SpringY = _sim.SpringUp.y; }
             s.After = MoveState.Of(_sim, m);
@@ -221,7 +182,6 @@ namespace IGTAP.EngineSim
             _now = new TechStep();
         }
 
-        /// <summary>The run's end: a death marks its last step.</summary>
         public void End(RunResult run)
         {
             if (Steps.Count > 0 && run.EndReason != null && run.EndReason.StartsWith("Player death", StringComparison.Ordinal)) Steps[Steps.Count - 1].Died = true;

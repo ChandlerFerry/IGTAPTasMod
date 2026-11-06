@@ -17,7 +17,6 @@ namespace IGTAPTasMod
         const float MaxNudge = 100f, NudgeLingerSeconds = 1.5f;
         string _nudgeText;
         float _nudgeTime = float.NegativeInfinity;
-        // What _nudgeText was built from: each axis rounded (Axis), int.MinValue for an axis left out (0).
         int _nudgeTextX = int.MaxValue, _nudgeTextY = int.MaxValue;
 
         void SampleVelocity(Movement player)
@@ -59,8 +58,6 @@ namespace IGTAPTasMod
             _fpsElapsed = _fpsWorst = 0f;
         }
 
-        // Clones on screen: the on-screen course (clonesScript.onScreen; one off screen keeps its active clones) with the most, its
-        // clones bought (cloneCount) and the most seen at once since its count last fell to 0 (a new best clears them).
         static readonly AccessTools.FieldRef<clonesScript, List<GameObject>> OverlayActiveClones = AccessTools.FieldRefAccess<clonesScript, List<GameObject>>("activeClones");
         static readonly AccessTools.FieldRef<clonesScript, int> OverlayCloneCount = AccessTools.FieldRefAccess<clonesScript, int>("cloneCount");
         static readonly AccessTools.FieldRef<clonesScript, courseScript> OverlayCloneCourse = AccessTools.FieldRefAccess<clonesScript, courseScript>("course");
@@ -69,14 +66,11 @@ namespace IGTAPTasMod
         clonesScript _peakClones;
         int _peakCloneCount;
         string _clonesText = "";
-        // What _clonesText was built from (the course, the clones on screen, bought, the peak): built again only on a change.
         courseScript _clonesTextCourse;
         int _clonesTextCourseNumber, _clonesTextActive = -1, _clonesTextBought, _clonesTextPeak;
 
         void SampleClones()
         {
-            // The courses' clone scripts are found once per scene load or unload (the game creates none at run time), inactive
-            // ones too; one on an inactive object counts as absent, as a find that leaves those out would have it.
             int generation = SceneGeneration;
             if (_overlayClones == null || generation != _overlayClonesGeneration)
             {
@@ -111,8 +105,6 @@ namespace IGTAPTasMod
             return n == 0 ? "0" : (n < 0 ? negative : positive) + " " + Mathf.Abs(n).ToString("N0");
         }
 
-        // The whole units each _velocityText was built from (Axis rounds), and the ratio _velocityRatioText shows: a tick
-        // builds a text again only when what it reads changed.
         readonly int[] _velocityRounded = new int[8];
         float _velocityRatio = float.NaN;
 
@@ -201,7 +193,6 @@ namespace IGTAPTasMod
                 y += rowHeight;
                 if (i != 1) continue;
                 Label(new Rect(x, y, labelWidth, rowHeight), "NUDGE", _overlaySmall, MutedColor);
-                // Its value fades on the wall clock: the panel is cached (DrawCachedPanels), which draws it live over the cache.
                 _nudgeRect = new Rect(xColumn, y, 2 * columnWidth, rowHeight);
                 y += rowHeight;
             }
@@ -231,7 +222,6 @@ namespace IGTAPTasMod
             else Label(new Rect(r.x, r.y, r.width / 2f, r.height), "0", _overlayText, MutedColor);
         }
 
-        /// <summary>Interpolation stays on; playback runs on the fixed clock that turbo and enginesim model (MacroEngine.FrameGrid).</summary>
         static readonly string InterpolationText = "ON (" + MacroEngine.PlaybackFrameRate.ToString(CultureInfo.InvariantCulture) + " FPS CLOCK)";
         static readonly string SeedText = FullTasSeed.ToString(CultureInfo.InvariantCulture);
     }

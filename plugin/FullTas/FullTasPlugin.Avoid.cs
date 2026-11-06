@@ -12,7 +12,6 @@ namespace IGTAPTasMod
 {
     public sealed partial class TasPlugin
     {
-        /// <summary>A box as forced-paths.json keeps them: corners in order, rounded to 0.1.</summary>
         static float[] NormalizedBox(float[] b)
         {
             float x0 = Math.Min(b[0], b[2]), x1 = Math.Max(b[0], b[2]), y0 = Math.Min(b[1], b[3]), y1 = Math.Max(b[1], b[3]);
@@ -22,15 +21,9 @@ namespace IGTAPTasMod
         static Func<JToken, bool> SameBox(float[] wanted) =>
             t => t is JArray a && a.Count == 4 && Enumerable.Range(0, 4).All(i => Math.Abs((float)a[i] - wanted[i]) < .5f);
 
-        /// <summary>"x 19800.2 to 19978.2, y 3538.6 to 3581.9", as every box's note says it.</summary>
         static string BoxNote(float[] b) => "x " + b[0].ToString("0.#", CultureInfo.InvariantCulture) + " to " + b[2].ToString("0.#", CultureInfo.InvariantCulture)
             + ", y " + b[1].ToString("0.#", CultureInfo.InvariantCulture) + " to " + b[3].ToString("0.#", CultureInfo.InvariantCulture);
 
-        /// <summary>
-        /// forced-paths.json (the source copy by the solver's project and the built copy the solver and the studio's
-        /// optional blocks read): load it, let <paramref name="edit"/> change its "paths", and write both copies back in
-        /// the file's compact format (scalar arrays and arrays of boxes on one line). Returns what the edit counted.
-        /// </summary>
         static int EditForcedPaths(Func<JArray, int> edit)
         {
             string built = ForcedPathsFile ?? throw new InvalidOperationException("The offline solver's path isn't known to this build.");
@@ -47,19 +40,15 @@ namespace IGTAPTasMod
             return changed;
         }
 
-        /// <summary>The built forced-paths.json, the one the solver reads; null: this build doesn't know the solver's path.</summary>
         static string ForcedPathsFile
         {
             get { string exe = EngineSimExe; return string.IsNullOrEmpty(exe) ? null : Path.Combine(Path.GetDirectoryName(exe), "forced-paths.json"); }
         }
 
         static readonly CachedFiles<JObject> _forcedPaths = new CachedFiles<JObject>();
-        // Looked at once a second at most (the overlay asks every frame, the studio for every course); EditForcedPaths, the
-        // plugin's own writer, makes the next call look again.
         static float _forcedPathsCheckAt = float.NegativeInfinity;
         static JObject _forcedPathsRoot;
 
-        /// <summary><see cref="ForcedPathsFile"/> parsed, for reading only; null: none, or unreadable.</summary>
         static JObject ForcedPaths()
         {
             if (Time.unscaledTime < _forcedPathsCheckAt) return _forcedPathsRoot;
@@ -70,13 +59,6 @@ namespace IGTAPTasMod
             return _forcedPathsRoot;
         }
 
-        /// <summary>
-        /// A box drawn on a course's search map (game-world coordinates). Rules match like the engine reads them (its
-        /// course, its "capabilities" listing the map's). Unnamed, the box is cut for every solve those rules cover (the
-        /// rule's standing "avoid"); named, it goes to that optional block of the rule covering this map, created with the
-        /// box's description as its note and "default": true when it starts on. Remove takes the box out of the standing
-        /// avoids and the optional blocks of every matching rule, dropping blocks left without boxes.
-        /// </summary>
         static int EditCourseAvoids(int course, string caps, string[] categories, float[] b, string name, bool on, bool remove)
         {
             float[] wanted = NormalizedBox(b);
@@ -112,7 +94,6 @@ namespace IGTAPTasMod
                 JObject rule = rules.OrderBy(r => r["capabilities"] is JArray list ? list.Count : int.MaxValue).FirstOrDefault();
                 if (name != null)
                 {
-                    // One name stays one block: it joins the block wherever the matching rules already have it.
                     JObject block = rules.SelectMany(r => (r["optional"] as JArray ?? new JArray()).OfType<JObject>())
                         .FirstOrDefault(o => (string)o["name"] == name);
                     if (block != null)
@@ -138,7 +119,6 @@ namespace IGTAPTasMod
             });
         }
 
-        /// <summary>A drawn course rule: every category the course runs in, so a box drawn on one of its maps is cut on all of them.</summary>
         static JObject NewCourseRule(JArray paths, int course, string[] categories)
         {
             var rule = new JObject { ["course"] = course, ["capabilities"] = new JArray(categories),
@@ -147,8 +127,6 @@ namespace IGTAPTasMod
             return rule;
         }
 
-        /// <summary>POST /api/enginesim/avoid {course, capabilities, box, name?, on?, remove?}: an avoid box drawn on
-        /// the course map's search (see <see cref="EditCourseAvoids"/> for where it lands).</summary>
         object HandleCourseAvoid(JObject body)
         {
             int course = Number(body, "course", 0);

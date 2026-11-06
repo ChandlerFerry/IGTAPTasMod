@@ -74,10 +74,6 @@ namespace IGTAP.EngineSim.Cli
             Grow(threads);
         }
 
-        /// <summary>
-        /// Adds workers up to <paramref name="threads"/> in all, callable from any thread while a Humanize runs: its next
-        /// tolerance batch uses them (a solve's background humanizer takes the solver's threads once the solver stops).
-        /// </summary>
         public void Grow(int threads)
         {
             lock (_workers)
@@ -103,10 +99,8 @@ namespace IGTAP.EngineSim.Cli
             return result;
         }
 
-        /// <summary>The human version alone, without the slack report (<c>difficulty</c> measures it).</summary>
         public List<InputTick> Simplified(List<InputTick> best) => Simplify(Start(best), new List<string>());
 
-        /// <summary>The best up to its finish, its time and physics ticks the ones every change must keep.</summary>
         List<InputTick> Start(List<InputTick> best)
         {
             RunResult start = _main.Record(best);
@@ -318,7 +312,6 @@ namespace IGTAP.EngineSim.Cli
             return events.OrderBy(e => e.Tick).ThenBy(e => e.Kind).ToList();
         }
 
-        /// <summary>The event of this kind at this tick, as <see cref="Events"/> has it (without Best); null when there is none.</summary>
         internal static Event EventAt(List<InputTick> route, Kind kind, int tick)
         {
             if (tick < 0 || tick >= route.Count) return null;
@@ -329,7 +322,6 @@ namespace IGTAP.EngineSim.Cli
                 {
                     bool y = kind == Kind.StickY;
                     float value = Axis(route[tick], y);
-                    // A run of one stick value starts here (Runs); the one at tick 0 counts only off rest.
                     if (tick > 0 ? Axis(route[tick - 1], y) == value : value == 0f) return null;
                     int end = tick + 1;
                     while (end < route.Count && Axis(route[end], y) == value) end++;
@@ -606,9 +598,6 @@ namespace IGTAP.EngineSim.Cli
             return 0;
         }
 
-        // One input's slack for the studio: `kind` names the input (stickX, stickY, press, release, dash), `value` its
-        // stick value (a dash's is its jump-on-dash frame), `class` the report's Class column and `window` the ticks it
-        // works on. `end` is the tick after the input's last (a stick run's span is tick..end-1).
         static string KindName(Humanizer.Kind kind)
         {
             switch (kind)
@@ -732,10 +721,6 @@ namespace IGTAP.EngineSim.Cli
             Humanizer _humanizer;
             readonly Thread _thread;
 
-            /// <summary>
-            /// Humanizes each new best on one thread while the solver runs; <see cref="Finish"/> hands the rest
-            /// <paramref name="finishThreads"/> threads, the solver's, which are free by then.
-            /// </summary>
             public Background(Func<Simulation> create, OfflineSolver.ForcedPath path, int course, string caps, int finishThreads, Action<string> log)
             {
                 _create = create;

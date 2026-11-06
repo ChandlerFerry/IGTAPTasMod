@@ -47,12 +47,7 @@ namespace IGTAP.EngineSim
         static readonly FieldInfo BoxesToEnableField = typeof(OvergrowthLoadScript).GetField("boxesToEnable", Fields);
         static readonly FieldInfo TrunksField = typeof(Zone2to1TransitionController).GetField("trunks", Fields);
         static readonly FieldInfo BoxAtomColliderField = typeof(upgradeBox).GetField("atomColliderScript", Fields);
-        /// <summary>
-        /// The earliest the Omni Dash buy's Area 2 → 1 transition can open at 1x, in seconds after the buy
-        /// (Zone2to1TransitionController.cs:46-81): the first trunk grows 0.6 a frame-second from the buy's own physics step
-        /// (0.02 s, then the buy frame's whole deltaTime, at most Unity's 1/3 s maximumDeltaTime), then WaitForSeconds(3),
-        /// then a fade a single long frame can finish, then updateState(open: true) turns closedObject off.
-        /// </summary>
+        // Earliest the Omni Dash buy's Area 2->1 transition opens at 1x (Zone2to1TransitionController.cs:46-81).
         const float TransitionOpensAfter = 1f / 0.6f - 0.02f - 1f / 3f + 3f;
         static readonly int LocalCount = Enum.GetValues(typeof(localUpgrades.localUpgradeSet)).Cast<int>().Max() + 1;
         static readonly int GlobalCount = Enum.GetValues(typeof(globalStats.globalUpgradeSet)).Cast<int>().Max() + 1;
@@ -61,7 +56,7 @@ namespace IGTAP.EngineSim
         {
             public float Pointer;
             public int Fastness, Bigness;
-            public bool Red, Green;   // cloneIsRed, cloneIsGreen (cloneIsBlue is never set on this build: clonesScript.cs:399)
+            public bool Red, Green;
         }
 
         internal struct CloneValues
@@ -113,40 +108,29 @@ namespace IGTAP.EngineSim
         double[] _global = new double[GlobalCount];
         readonly double _gameSpeed, _vmanMult;
         bool _tripBroken;
-        // Seconds of run time until the Omni Dash buy's Area 2 → 1 transition can open at 1x (0: none under way).
         float _transitionOpensIn;
-        // globalStats.CloneDustGpCdMult: green power and clone dust payouts are multiplied by it (RecalcCdMult).
         double _cdMult;
 
-        // Atoms (AtomColliderSystem): the collider's own state, each tier's sprites (contents) as a count; the counts the game
-        // keeps on globalStats (effectiveAtomCount, grossAtomCount, AtomCountInTermsOfWhiteAtoms) stay there, touched.
         readonly AtomColliderSystem _atomCollider;
         readonly upgradeBox _newAtomBox;
         readonly float _craftStep, _craftStepPerTier, _craftStart, _craftStartPerTier, _craftEnd;
         readonly int _atomEffectiveness, _tierColors;
-        int[] _atoms = Array.Empty<int>();              // contents[tier].Count; the length is contents.Count
-        bool[] _crafting = Array.Empty<bool>();         // craftingInProgress
-        float[] _craftProgress = Array.Empty<float>();  // craftingProgress
-        int _waitingAtoms, _handledTier;                // waitingAtoms, currentlyHandledTier
-        double _tierUpCounter;                          // atomTierUpCounter
+        int[] _atoms = Array.Empty<int>();
+        bool[] _crafting = Array.Empty<bool>();
+        float[] _craftProgress = Array.Empty<float>();
+        int _waitingAtoms, _handledTier;
+        double _tierUpCounter;
         bool _isCrafting;
-        // The machine's PlayerPrefs "OpenA2Door" as the start had it (the trace start's economy.openA2Door), then set by every
-        // atom buy (upgradeBox.cs:648); null: the start didn't say, and a door box's first buy ends the run.
         bool? _openA2Door;
-        // The 0.4 s grid: the tick (the Scheduler's) in whose first rendered frame callAddNewAtom comes next (-1: none).
         int _gridDue = -1;
-        // The grid's first call is due in this frame's coroutine pass (GridStart): never across a tick, so not in snapshots.
         bool _gridNow;
-        // Start's draws (RULES.md, exception 12): the drawing behaviours off at the export (their Start hasn't run),
-        // those of them woken since (Start drawn; copied on write, so a capture shares it) and those woken whose Start comes
-        // at the next rendered frame's Start pass.
         readonly HashSet<Behaviour> _neverStarted;
         Behaviour[] _woken = Array.Empty<Behaviour>();
         readonly List<Behaviour> _starting = new List<Behaviour>();
         static readonly FieldInfo AnimIsBroken = typeof(RandomAnimSpeedComponent).GetField("isBroken", Fields);
         static readonly FieldInfo BoxTree = typeof(upgradeBox).GetField("upgradeTree", Fields);
 
-        internal readonly double[] Income = new double[7];   // per globalStats.Currencies, what the economy paid since the start
+        internal readonly double[] Income = new double[7];
         public double Earned => Income[(int)globalStats.Currencies.Cash];
         internal void Add(globalStats.Currencies c, double v) { Income[(int)c] += v; }
 
@@ -182,8 +166,7 @@ namespace IGTAP.EngineSim
             }
             _localsHash = HashLocals();
 
-            // 1x's Update order (instance id, lowest first), as turbo steps them (TurboRunner.Run): the order decides which course
-            // gets which fast/big rolls when two spawn in one frame.
+            // Update order is instance id, lowest first, as turbo steps them: it decides which course gets the fast/big rolls.
             clonesScript[] scripts = world.All<clonesScript>().OrderBy(s => s.GetInstanceID()).ToArray();
             var clonesJson = new Dictionary<int, JsonElement>();
             foreach (JsonElement c in economy.GetProperty("clones").EnumerateArray()) clonesJson[c.GetProperty("id").GetInt32()] = c;
@@ -199,9 +182,7 @@ namespace IGTAP.EngineSim
                 _byScript[script] = clones;
             }
             _stepped = _clones.Where(c => c.Script.gameObject.activeInHierarchy).ToArray();
-            // globalStats.CloneDustGpCdMult as the start holds it, not recomputed: the game recomputes it only after a clone dust
-            // payout and in RubbleDisplayScript's readout (its Start when clone dust is held, then every 0.2 s while on screen,
-            // RubbleDisplayScript.cs:28-55), so clone dust set or spent since leaves it stale (a 1x probe: 1 with 1e4 held).
+            // CloneDustGpCdMult stays as the start holds it; the game recomputes it only after a clone dust payout or readout.
             if ((object)own != null) _cdMult = own.CloneDustGpCdMult; else RecalcCdMult();
 
             _atomCollider = world.All<AtomColliderSystem>().FirstOrDefault();
@@ -231,7 +212,6 @@ namespace IGTAP.EngineSim
                 _handledTier = A<int>("currentlyHandledTier");
                 _isCrafting = A<bool>("isCrafting");
                 _tierUpCounter = _atomCollider.atomTierUpCounter;
-                // The start's own collider state (the plugin's WriteAtomStart): the world export comes some ticks after it.
                 if (economy.TryGetProperty("atomCollider", out JsonElement start))
                 {
                     int[] counts = start.GetProperty("atoms").EnumerateArray().Select(x => x.GetInt32()).ToArray();
@@ -249,16 +229,10 @@ namespace IGTAP.EngineSim
                     _isCrafting = start.GetProperty("isCrafting").GetBoolean();
                     _tierUpCounter = start.GetProperty("tierUpCounter").GetDouble();
                 }
-                // The grid as 1x had it at the start (the plugin's TurboRunner.AtomGridDueIn): floor(dueIn / fixedDeltaTime) ticks
-                // counted as the start's other pending Invokes are (Simulation.LoadStart). 1x calls it in the first rendered frame
-                // after the tick before that one (time = that tick's fixedTime + half a frame, after the frame's Updates: a 1x
-                // probe from Course 6's start), so it first reaches that tick's NP, and crafting from that frame on.
                 if (economy.TryGetProperty("atomGridDueIn", out JsonElement due))
                     _gridDue = Math.Max(0, Mathf.FloorToInt(World.ReadFloat(due) / Time.fixedDeltaTime) - 1);
             }
             if (economy.TryGetProperty("openA2Door", out JsonElement door)) _openA2Door = door.GetBoolean();
-            // globalStats' atom counts, NP rates, comp boost NP factor, clone dust multiplier and RP cap as the start had them
-            // (TurboRunner.AtomStats' order), over the world's, which comes some ticks after the start.
             globalStats live = Singleton<globalStats>.Instance;
             if (economy.TryGetProperty("atomStats", out JsonElement statsJson) && (object)live != null)
             {
@@ -272,8 +246,6 @@ namespace IGTAP.EngineSim
                 live.EffectOfNpCompBoost = v[5];
                 if (v.Length > 7) { live.CloneDustGpCdMult = v[6]; live.rpCap = v[7]; _cdMult = v[6]; }
             }
-            // The start's own (the plugin's TurboRunner.NeverStarted: drawers, the atom collider, upgrade boxes); an older trace's,
-            // the drawers off at the export. One already on (woken in the frame before the start) starts at the first Start pass.
             if (economy.TryGetProperty("neverStarted", out JsonElement never))
             {
                 _neverStarted = new HashSet<Behaviour>();
@@ -285,22 +257,16 @@ namespace IGTAP.EngineSim
                 .Concat(world.All<JiggleDropScript>()).Where(b => !b.isActiveAndEnabled));
         }
 
-        /// <summary>globalStats.RecalcCloneDustMult (globalStats.cs:1126-1140) on the clone dust the run holds: the game runs it
-        /// after every clone dust payout (and RubbleDisplayScript's readout, which the engine doesn't run).</summary>
         void RecalcCdMult()
         {
             double cd = _sim.Shop.Holds(globalStats.Currencies.CloneDust);
-            double m = cd == 0.0 ? 0.0 : Math.Log10(cd);   // math.log10: Unity.Mathematics, double
+            double m = cd == 0.0 ? 0.0 : Math.Log10(cd);
             m += Global(globalStats.globalUpgradeSet.additionalCDdigits);
             _cdMult = Math.Pow(m, 1.7) * 1.05 + 1.0;
         }
 
-        /// <summary>The global upgrades native code the engine steps reads from globalStats' static dictionary:
-        /// PlatformMover.IE_AdvanceToNextState (PlatformMover.cs:134) and JiggleDropScript.FixedUpdate (JiggleDropScript.cs:88).</summary>
         static readonly G[] StaticReads = { G.zipMoversUnlocked, G.unlockJiggleDrops, G.unlockTeleporters };
 
-        /// <summary>The run's values of <see cref="StaticReads"/> into the static dictionary (a buy, a restore, the start): _global
-        /// stays the run's own.</summary>
         void WriteStatic()
         {
             Dictionary<G, double> dict = globalStats.globalUpgradeDict;
@@ -315,7 +281,6 @@ namespace IGTAP.EngineSim
                 if ((int)e.Key >= 0 && (int)e.Key < GlobalCount) _global[(int)e.Key] = e.Value;
         }
 
-        /// <summary>MacroEngine.RefreshRewards: an active course with local upgrades updates its reward (TasPlugin's the same set).</summary>
         internal void RefreshReward(courseScript course)
         {
             if (course.gameObject.activeInHierarchy && LocalIndex(course.localUpgradesScript) >= 0) UpdateReward(course);
@@ -381,8 +346,6 @@ namespace IGTAP.EngineSim
 
         double Global(globalStats.globalUpgradeSet upgrade) { return _global[(int)upgrade]; }
 
-        // Reads for the clone income model (FullTasAutoLib.cs CloneIncome): a course's upgrades, the global upgrades and a course's clone count and path length as
-        // the run holds them now (the objects keep their loaded values).
         internal double LocalOf(localUpgrades script, localUpgrades.localUpgradeSet upgrade)
         {
             int i = LocalIndex(script);
@@ -391,11 +354,8 @@ namespace IGTAP.EngineSim
 
         internal double GlobalOf(globalStats.globalUpgradeSet upgrade) { return Global(upgrade); }
 
-        /// <summary>The atom collider's atoms per tier (contents[i].Count) and its waiting atoms (--ticks-out).</summary>
         internal int[] AtomCounts => (int[])_atoms.Clone();
         internal int WaitingAtoms => _waitingAtoms;
-        /// <summary>NP can't rise past its cap by waiting: no softcap, and no atom waiting, crafting or ready to craft (each raises the
-        /// rate, and the cap with it).</summary>
         internal bool NpCapped
         {
             get
@@ -406,17 +366,8 @@ namespace IGTAP.EngineSim
                 return true;
             }
         }
-        /// <summary>
-        /// The planner's look ahead (nothing changes): globalStats.NPrewardPerTick (RecalcNpRewardPerTick's) once the waiting atoms
-        /// and <paramref name="extra"/> more have landed at determineAtomTier's tiers and every tier has crafted up (3 + t of tier t
-        /// to one of t + 1, FinishCrafting's counts), and the NP FinishCrafting adds when a tier forms the collider never had
-        /// (NPrewardPerTick × 1000 then), with its cap (NPrewardCap's; none with NpCapIsSoftcap). Null without the collider or its effect values.
-        /// </summary>
         internal (double rate, double cap, double bonus)? NpAfterAtoms(int extra) => NpAfterAtoms(extra, null, 0, false);
 
-        /// <summary>NpAfterAtoms had <paramref name="with"/> been raised by <paramref name="by"/> first (a box's effect), and, with
-        /// <paramref name="cleared"/>, the collider cleared (an atom-level box's buy: AtomColliderSystem.ClearAtoms): what an enabler
-        /// would leave the atoms to do.</summary>
         internal (double rate, double cap, double bonus)? NpAfterAtoms(int extra, G? with, double by, bool cleared)
         {
             double Level(G g) => Global(g) + (with == g ? by : 0);
@@ -462,23 +413,17 @@ namespace IGTAP.EngineSim
             return (rate, Global(G.NpCapIsSoftcap) != 0.0 ? double.PositiveInfinity : rate * 50.0 * 120.0 * _vmanMult, bonus);
         }
 
-        /// <summary>A box's effectMult (its effect per level).</summary>
         internal static double EffectMult(upgradeBox box) => (double)BoxEffectMultField.GetValue(box);
 
-        /// <summary>The grid's callAddNewAtom calls so far (--ticks-out, a diagnostic: not in snapshots).</summary>
         internal int GridCalls;
-        /// <summary>globalStats.CloneDustGpCdMult as the run has it (--ticks-out).</summary>
         internal double CdMult => _cdMult;
 
-        /// <summary>Each course's clones now (--ticks-out): course, count, path length, on screen, in flight, spawn timer.</summary>
         internal IEnumerable<object[]> CloneStates()
         {
             foreach (Clones c in _clones)
                 if (c.V.Count > 0) yield return new object[] { c.Course?.courseNumber ?? -1, c.V.Count, c.V.PathLength, c.V.OnScreen, c.Active.Count, c.V.SinceLast };
         }
 
-        /// <summary>Whether every stepped course with clones has both roll chances at 0: SpawnClone's fast and big rolls then always
-        /// fail and draw exactly two values.</summary>
         internal bool RollsFixed()
         {
             foreach (Clones c in _stepped)
@@ -491,7 +436,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>Whether the course's clones are on screen (clonesScript.isOnScreen's last call); null for clones the economy doesn't keep.</summary>
         internal bool? OnScreenOf(clonesScript script)
         {
             return (object)script != null && _byScript.TryGetValue(script, out Clones c) ? c.V.OnScreen : null;
@@ -554,8 +498,6 @@ namespace IGTAP.EngineSim
             return i;
         }
 
-        /// <summary>A diagnostic (--check --ticks-out): each clone spawn as it is rolled, (course, instance id, on screen, divisor
-        /// before, fastness i, bigness j, payout or 0 on screen), to line up with a 1x probe's clone rows.</summary>
         public Action<int, int, bool, float, int, int, double> Spawned;
 
         bool SpawnClone(Clones c)
@@ -577,10 +519,8 @@ namespace IGTAP.EngineSim
                 {
                     c.V.OffscreenDivisor = 1f;
                     c.V.Pooled--;
-                    // Build 25706930: a timer at two intervals or more (Start's 10000, a long wait) goes to 0, any other keeps
-                    // the overshoot (clonesScript.cs:212-219).
+                    // Build 25706930: a timer at two intervals or more goes to 0, else it keeps the overshoot (clonesScript.cs:212-219).
                     c.V.SinceLast = c.V.SinceLast >= c.V.NextDue * 2f ? 0f : (float)(c.V.SinceLast - (double)c.V.NextDue);
-                    // AssignCloneColour (clonesScript.cs:462-495): the colours go on the clone and pay at its path's end.
                     if (!ColourCheck(c, out bool isRed, out bool isGreen)) return false;
                     c.Active.Add(new Clone { Pointer = 0f, Fastness = i, Bigness = j, Red = isRed, Green = isGreen });
                 }
@@ -592,8 +532,6 @@ namespace IGTAP.EngineSim
             double pay = Math.Ceiling(Pay(c, j) / divisor);
             Add(globalStats.Currencies.Cash, pay);
             Spawned?.Invoke(c.Course.courseNumber, c.Script.GetInstanceID(), false, divisorBefore, i, j, pay);
-            // clonesScript.cs:243-283, SpawnClone's mult 1 (only a Vman course passes another, VmanScript.cs:124): each pay
-            // in the game's order of operations; array[2] (blue) is never set (clonesScript.cs:399).
             if (!ColourCheck(c, out bool red, out bool green)) return false;
             double size = j * 2 + 1;
             if (red && !PayRed(c.Course.rpReward * size * boost / divisor)) return false;
@@ -610,8 +548,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>A clone's payout before the offscreen divisor: the course reward × (2 bigness + 1) × the clone multiplier × the
-        /// competition boost, in the game's order.</summary>
         double Pay(Clones c, int bigness)
         {
             double boost = Boost(c.Course);
@@ -623,14 +559,6 @@ namespace IGTAP.EngineSim
 
         static double Boost(courseScript course) { return course.compBoostTimeLeft > 0.0 ? course.compBoostBonus : 1.0; }
 
-        /// <summary>
-        /// What the clones pay a physics tick now, per currency (globalStats.Currencies' order), as their state stands: each course's
-        /// clones spawn Count a path (BaseInterval apart) and pay off screen at each spawn (SpawnClone): Cash its reward × the clone
-        /// multiplier, GP its gpReward on the green ones (globalStats' greenCloneClance in 100 spawns: clonesScript.checkIfColourClone)
-        /// × CloneDustGpCdMult. Bigness and fastness rolls left out (a lower bound). The planner ranks an investment by it at once,
-        /// before the money it brings shows over a window.
-        /// </summary>
-        /// <summary>Each course's clones as the model holds them (fulltas-plan --try's wait@ line).</summary>
         internal string DescribeClones() => string.Join(" ", _clones.Where(c => c.V.Count > 0).Select(c =>
             $"{c.Course?.courseNumber}:{c.V.Count}/{c.V.PathLength:0.##}s {(c.V.OnScreen ? "on" : "off")} gp {c.Course?.gpReward:G3} counter {c.V.Green:0.#} div {c.V.OffscreenDivisor:0.##}{(c.Script.isActiveAndEnabled ? "" : " inactive")}"));
 
@@ -649,29 +577,17 @@ namespace IGTAP.EngineSim
             return rates;
         }
 
-        /// <summary>A red clone's red power (clonesScript.cs:250-254, 330-334): capped at globalStats.rpCap as the world holds it
-        /// (UpdateRpCap runs at Movement.Start and at an RP cap box's buy: <see cref="UpdateRpCap"/>).</summary>
         bool PayRed(double value)
         {
             globalStats stats = Singleton<globalStats>.Instance;
             if ((object)stats == null) return Unmodeled("red power without globalStats (the game throws)");
             Add(globalStats.Currencies.RedPower, Math.Ceiling(value));
             double held = _sim.Shop.Holds(globalStats.Currencies.RedPower);
-            // ponytail: lands exactly on the cap while the held sum and the cap are integers below 2^53; a Shop setter if not.
+            // shortcut: exact on the cap only while the held sum and cap are integers below 2^53; use a Shop setter otherwise.
             if (held > stats.rpCap) Income[(int)globalStats.Currencies.RedPower] -= held - stats.rpCap;
             return true;
         }
 
-        /// <summary>clonesScript.checkIfColourClone (clonesScript.cs:379-401): the green counter grows each spawn, a pass over 100
-        /// makes the clone green and grows the red counter (off Area 2), a red pass over 100 makes it red; each pass draws
-        /// Random.Range(-15, 15).</summary>
-        /// <summary>
-        /// The economy planner's mode (fulltas-plan's search only, never a run that is judged or built): every clone pays its share
-        /// of a green clone's GP (greenCloneClance / 100 of the game's ceiled pay: a slow course's green pays 1 GP, not its fraction) and no green clone pays the whole. A green clone comes when the
-        /// course's counter passes 100, a lump of gpReward (x the off-screen divisor's 11.7 at Course 6's), so a step's GP hung on
-        /// where the counter stood; the beam kept the states that caught a lump and the build, a few ticks off, missed it (Zip% to
-        /// buytree7: the plan's 1,098 GP after a lap of Course 7, the build's 12, with more Cash).
-        /// </summary>
         internal bool ExpectedGreens;
 
         double GreenShare() => Math.Max(0.0, Global(globalStats.globalUpgradeSet.greenCloneClance)) / 100.0;
@@ -697,8 +613,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>clonesScript.DestroyClone (clonesScript.cs:289-375): its pays at the comp boost, with no divisor; cloneIsBlue's
-        /// is never set on this build (clonesScript.cs:399).</summary>
         bool DestroyClone(Clones c, int index)
         {
             Clone clone = c.Active[index];
@@ -758,7 +672,6 @@ namespace IGTAP.EngineSim
                 * (1.0 + Global(globalStats.globalUpgradeSet.moreWatts) * (moreWatts / 100.0))
                 * _gameSpeed * _vmanMult * Math.Pow(10.0, course.rewardTier));
             course.reward = Math.Ceiling(Math.Pow(reward, 1.0 + Global(globalStats.globalUpgradeSet.wattPower) * wattPower));
-            // courseScript.cs:497-499
             course.gpReward = Math.Ceiling((double)BaseGpRewardField.GetValue(course)
                 * (1.0 + Local(local, localUpgrades.localUpgradeSet.GreenCloneRewardBase))
                 * (1.0 + Global(globalStats.globalUpgradeSet.increasedGreenPower) * (increasedGreenPower / 100.0) + Global(globalStats.globalUpgradeSet.tripleThreatIncrease) * (tripleThreat / 100.0))
@@ -784,7 +697,6 @@ namespace IGTAP.EngineSim
                 || !Effect(baseEffect, globalStats.globalUpgradeSet.compBoostStrength, out double strengthBase)
                 || !Effect(effect, globalStats.globalUpgradeSet.compBoostStrength, out double strength))
                 return false;
-            // courseScript.cs:446-449: a boost that isn't running doubles NP's effect; the course's FixedUpdate halves it (:307-311, native).
             if (course.compBoostTimeLeft <= 0.0)
             {
                 globalStats stats = Singleton<globalStats>.Instance;
@@ -807,7 +719,6 @@ namespace IGTAP.EngineSim
             if (local < 0) { Unmodeled("course " + course.courseNumber + " without local upgrades"); return; }
             if (Local(local, localUpgrades.localUpgradeSet.enableCloneDustGeneration) >= 1.0)
             {
-                // courseScript.cs:396-407
                 double cd = course.CdReward * 10.0;
                 if (course.compBoostTimeLeft > 0.0) cd *= course.compBoostBonus;
                 cd *= _cdMult;
@@ -858,8 +769,6 @@ namespace IGTAP.EngineSim
                 {
                     var script = BoxClonesField.GetValue(box) as clonesScript;
                     if ((object)script == null || !_byScript.TryGetValue(script, out Clones c)) return Unmodeled("clone box without clones");
-                    // spawnNewCloneVisual (build 25706930, clonesScript.cs:509-528): the interval always, a pooled clone only
-                    // while the pool and the active clones are short of the count.
                     for (int j = 0; (double)j < effectMult; j++)
                     {
                         c.V.Count++;
@@ -896,18 +805,9 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>
-        /// DoBuyUpgrade's GLOBAL branch (upgradeBox.cs:706-779). A reward input (watts, GP, RP, clone dust, triple threat) is
-        /// read by each course on its next UpdateReward, not at the buy: its 5 s InvokeRepeating (courseScript.cs:268; in a
-        /// Full-TAS run MacroEngine.RefreshRewards), its clones going on or off screen (clonesScript.cs:529, clonesLoD.cs:21),
-        /// its comp boost's end (courseScript.cs:312) and a prestige (courseScript.cs:563), which the engine runs where the game
-        /// does. Only cashPerLoop updates its own course at once (upgradeBox.cs:745-751).
-        /// </summary>
         internal bool BoughtGlobal(upgradeBox box)
         {
             G upgrade = box.globalUpgrade;
-            // DoBuyUpgrade's spawnNewAtom (upgradeBox.cs:752-754): BuyNewAtom queues an atom (AtomColliderSystem.cs:174-177)
-            // that the collider's 0.4 s grid lands (AtomTick). The touch's course reset ran first (AtomPrestige).
             if (upgrade == G.spawnNewAtom)
             {
                 if (!OwnCollider(box)) return false;
@@ -919,17 +819,12 @@ namespace IGTAP.EngineSim
                 case G.startVmanSpeedrun: return Unmodeled("a Vman speedrun's start (VmanScript.SetupVmanSpeedrun, upgradeBox.cs:710)");
                 case G.openGate: return Unmodeled("the gate box (gateAnim's \"open\" trigger and deactivate, upgradeBox.cs:731-732: the gate's collider)");
                 case G.area2DoorOpen:
-                    // DoBuyUpgrade's area2DoorOpen (upgradeBox.cs:755-757): the game's own doorToOpen.ForceNextPhase, its mover's
-                    // IE_AdvanceToNextState run on by the Scheduler (Simulation's Continues), the door tracked so a restore puts it
-                    // back, as the atom box's door (AtomPrestige). The box's cap is 1: a load's upgradeBox.Start JumpToNextState
-                    // (upgradeBox.cs:260-263) is a later session's.
                     if (BoxDoorToOpenField.GetValue(box) is not PlatformMover door || (object)door == null)
                         return Unmodeled("an Area 2 door box without its doorToOpen mover (the game throws)");
                     _sim.Touch(door);
                     door.ForceNextPhase();
                     return true;
                 case G.unlockTeleporters:
-                    // upgradeBox.cs:767-769: one level, not effectMult; TeleporterScript reads the static dictionary (WriteStatic).
                     _global[(int)G.unlockTeleporters] += 1.0;
                     WriteStatic();
                     if (BoxObjectReferenceField.GetValue(box) is GameObject teleporter && (object)teleporter != null)
@@ -945,7 +840,6 @@ namespace IGTAP.EngineSim
             }
             if (upgrade == G.blueCloneChance && Global(G.blueCloneChance) == 0.0 || upgrade == G.redCloneChance && Global(G.redCloneChance) == 0.0)
             {
-                // upgradeBox.cs:717-721: the next box is marked visible (read by upgradeBox.Start at the next load, not now).
                 GameObject reference = BoxObjectReferenceField.GetValue(box) as GameObject;
                 upgradeBox next = (object)reference == null ? null : reference.GetComponent<upgradeBox>();
                 if ((object)next == null) return Unmodeled("a first colour clone chance box without its ObjectReference box (the game throws)");
@@ -986,7 +880,6 @@ namespace IGTAP.EngineSim
                 }
                 case G.makeCourseBuyMax:
                 {
-                    // courseScript.EnableBuyMax (courseScript.cs:714-725): the course's active local boxes buy max.
                     if (CourseToExemptField.GetValue(box) is not courseScript course || (object)course.localUpgradesScript == null)
                         return Unmodeled("a buy max box without its course or its local upgrades (the game throws)");
                     foreach (upgradeBox b in course.localUpgradesScript.transform.GetComponentsInChildren<upgradeBox>())
@@ -1003,16 +896,12 @@ namespace IGTAP.EngineSim
                     _global[(int)upgrade] += 1.0 * effectMult;
                     WriteStatic();
                     return true;
-                default:   // IncreasedCloneDust (its own case, the same), treeGrowth (nothing reads it: the box's tree grows,
-                           // Shop.GrowTree) and every other global
+                default:
                     _global[(int)upgrade] += 1.0 * effectMult;
                     return true;
             }
         }
 
-        // Atoms (AtomColliderSystem)
-
-        /// <summary>The box's atomColliderScript is the world's collider, whose state this economy keeps (the game throws on none).</summary>
         bool OwnCollider(upgradeBox box)
         {
             var collider = BoxAtomColliderField.GetValue(box) as AtomColliderSystem;
@@ -1020,12 +909,6 @@ namespace IGTAP.EngineSim
             return ReferenceEquals(collider, _atomCollider) || Unmodeled("an atom box whose collider isn't the world's AtomColliderSystem");
         }
 
-        /// <summary>
-        /// The collider's OnEnable (AtomColliderSystem.cs:111-115, a zone load waking it: Simulation's Activated hook): its
-        /// InvokeRepeating("callAddNewAtom", 0, 0.4) restarts the grid. Its 0 delay calls it in the frame's own coroutine pass,
-        /// after the load (<see cref="GridNow"/>), then in the first rendered frame of every 20th tick after (<see cref="GridFrame"/>):
-        /// a 1x probe of the zone 1 → 2 crossing (the load at k = 2, the calls at k = 2, then k = 0 of T + 20, T + 40, ...).
-        /// </summary>
         internal void GridStart(AtomColliderSystem collider)
         {
             if (!ReferenceEquals(collider, _atomCollider)) { Unmodeled("an AtomColliderSystem that isn't the world's woke"); return; }
@@ -1033,7 +916,6 @@ namespace IGTAP.EngineSim
             _gridDue = _sim.Scheduler.Tick + Math.Max(1, Mathf.FloorToInt(0.4f / Time.fixedDeltaTime));
         }
 
-        /// <summary>The grid's first call, after the frame's yield-null resumes that woke the collider (<see cref="GridStart"/>).</summary>
         internal void GridNow()
         {
             if (!_gridNow) return;
@@ -1041,8 +923,6 @@ namespace IGTAP.EngineSim
             AtomTick(_atomCollider);
         }
 
-        /// <summary>A tick's first rendered frame, after its Updates (Simulation.InterpolatedFrames): the grid's call when it is due,
-        /// then every 0.4 s (20 ticks), as Unity runs the InvokeRepeating after a frame's Updates.</summary>
         internal void GridFrame()
         {
             if (_gridDue < 0 || _sim.Scheduler.Tick < _gridDue || (object)_atomCollider == null) return;
@@ -1050,8 +930,6 @@ namespace IGTAP.EngineSim
             AtomTick(_atomCollider);
         }
 
-        /// <summary>AtomColliderSystem.callAddNewAtom (AtomColliderSystem.cs:117-126), the 0.4 s grid's call (hooks.txt replaces
-        /// it): a waiting atom lands, +1 AtomicPower, at the tier determineAtomTier rolls.</summary>
         internal void AtomTick(AtomColliderSystem collider)
         {
             if (!ReferenceEquals(collider, _atomCollider)) { Unmodeled("callAddNewAtom on a collider that isn't the world's AtomColliderSystem"); return; }
@@ -1062,7 +940,6 @@ namespace IGTAP.EngineSim
             _waitingAtoms--;
         }
 
-        /// <summary>determineAtomTier (AtomColliderSystem.cs:128-138): the counter grows by the atom level chance; each 100 is a tier up.</summary>
         bool AtomTier(out int tier)
         {
             tier = 0;
@@ -1076,8 +953,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>AddNewAtom's counts (AtomColliderSystem.cs:179-211); its sprite and npDisplay are presentation, and its
-        /// tierColors[Tier] throws past the array.</summary>
         bool AddAtom(int tier)
         {
             globalStats stats = Singleton<globalStats>.Instance;
@@ -1087,14 +962,12 @@ namespace IGTAP.EngineSim
             _atoms[tier]++;
             _sim.Touch(stats);
             stats.grossAtomCount += 1 + tier * (tier - 1);
-            // The game's Mono JIT keeps Pow(...) * 0.001f in double precision on its way into the double field (a float32 product
-            // left effectiveAtomCount 1.7e-9 off turbo's after the first merge, Task 7's atom probe), so the product is a double.
+            // Mono JIT keeps Pow(...)*0.001f in double precision into the double field; a float32 product drifts from turbo.
             stats.effectiveAtomCount += (double)Mathf.Pow(_atomEffectiveness + 10 * tier, tier) * (double)0.001f;
             stats.AtomCountInTermsOfWhiteAtoms += Factorial(2 + tier) / 2.0;
             return RecalcNp();
         }
 
-        /// <summary>The tiers AddNewAtom and FinishCrafting add (AtomColliderSystem.cs:189-195, 292-299): not crafting, progress 1.</summary>
         void GrowTiers(int count)
         {
             int n = _atoms.Length;
@@ -1105,14 +978,8 @@ namespace IGTAP.EngineSim
             for (int i = n; i < count; i++) _craftProgress[i] = 1f;
         }
 
-        /// <summary>Utilities.Factorial (Utilities.cs:22-29).</summary>
         static double Factorial(int f) { return f == 0 ? 1.0 : (double)f * Factorial(f - 1); }
 
-        /// <summary>
-        /// AtomColliderSystem.Update (AtomColliderSystem.cs:213-232) in a rendered frame on its Time.deltaTime (0 in a dash freeze's
-        /// and a pause's held frames), while the collider is on: one tier's crafting a frame, round robin. The sprites' movement
-        /// is presentation.
-        /// </summary>
         internal void AtomFrame(float dt)
         {
             if ((object)_atomCollider == null || !_atomCollider.isActiveAndEnabled || _atoms.Length <= 0) return;
@@ -1121,8 +988,6 @@ namespace IGTAP.EngineSim
             if (_handledTier >= _atoms.Length) _handledTier = 0;
         }
 
-        /// <summary>HandleTierLogic's crafting (AtomColliderSystem.cs:234-247): a crafting tier's progress grows, finishing past
-        /// craftingEndValue; an idle tier with 3 + tier atoms starts while no tier crafts.</summary>
         bool HandleTier(int tier, float dt)
         {
             if (_crafting[tier])
@@ -1134,7 +999,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>startCrafting (AtomColliderSystem.cs:278-283).</summary>
         void StartCrafting(int tier)
         {
             _isCrafting = true;
@@ -1142,13 +1006,6 @@ namespace IGTAP.EngineSim
             _craftProgress[tier] = _craftStart + _craftStartPerTier * (float)tier;
         }
 
-        /// <summary>
-        /// FinishCrafting (AtomColliderSystem.cs:285-332), its counts as the game has them: 2 + tier atoms of the tier off
-        /// (effective, gross, white each), the third's effective and white once more but not its gross, the next tier's
-        /// effective and white on, and gross += the tier's 1 + tier (tier - 1), not the next tier's. 3 + tier atoms leave the
-        /// tier, one joins the next; a tier made for the first time pays 1000 ticks of NP at the new rate. Its tierColors[tier + 1]
-        /// throws past the array.
-        /// </summary>
         bool FinishCrafting(int tier)
         {
             globalStats stats = Singleton<globalStats>.Instance;
@@ -1182,12 +1039,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>
-        /// AtomColliderSystem.ClearAtoms (AtomColliderSystem.cs:140-172), the atom level box's: every atom, crafting and waiting
-        /// atom gone, the counts 0 and NP recalculated, then the atom box's onPrestige(force: true) and one more use. onPrestige
-        /// (upgradeBox.cs:966-994) is <see cref="BoxPrestige"/> forced: the game's own would write an exempt box's native
-        /// localUpgradeDict, which the economy doesn't read (it keeps its own), and draw texts and sprites.
-        /// </summary>
         bool ClearAtoms()
         {
             globalStats stats = Singleton<globalStats>.Instance;
@@ -1210,7 +1061,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>globalStats.UpdateRpCap (globalStats.cs:1142-1147) into the world's globalStats, which PayRed caps at.</summary>
         bool UpdateRpCap()
         {
             globalStats stats = Singleton<globalStats>.Instance;
@@ -1225,8 +1075,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>globalStats.RecalcNpRewardPerTick (globalStats.cs:1158-1163) on the world's globalStats: NP a tick from the
-        /// atoms (effectiveAtomCount, AtomCountInTermsOfWhiteAtoms) and its cap.</summary>
         internal bool RecalcNp()
         {
             globalStats stats = Singleton<globalStats>.Instance;
@@ -1241,13 +1089,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>
-        /// globalStats.FixedUpdate's DoConstantCurrency (globalStats.cs:1100-1124), once a physics step: NP a tick below the cap,
-        /// past it nothing or, with NpCapIsSoftcap, the rate times (cap / NP)³; doubled per running comp boost with
-        /// compBoostDoublesNP. lastAppliedNpRewardPerTick is only the readout's. No globalStats, no FixedUpdate: nothing.
-        /// Simulation runs it before every other FixedUpdate: globalStats inherits [DefaultExecutionOrder(-50)] from Singleton&lt;T&gt;
-        /// (Singleton.cs:3), so it pays before courseScript.FixedUpdate halves EffectOfNpCompBoost (courseScript.cs:307).
-        /// </summary>
         internal void FixedStep()
         {
             globalStats stats = Singleton<globalStats>.Instance;
@@ -1261,29 +1102,17 @@ namespace IGTAP.EngineSim
             Add(globalStats.Currencies.AtomicPower, add);
         }
 
-        /// <summary>
-        /// upgradeBox.buyUpgrade's atom block (upgradeBox.cs:641-654), once a touch before its buys: the first buy of a box
-        /// with a door opens it unless the machine's PlayerPrefs already hold "OpenA2Door", then, unless it is a Green Power
-        /// box with GPAtomsDontResetCourses, doNewAtomPrestige (upgradeBox.cs:688-696): every coursesToReset course not
-        /// exempt from atom prestige resets its upgrades, clones and boxes at its own tiers, and Cash goes to 0.
-        /// </summary>
         internal bool AtomPrestige(upgradeBox box, globalStats.Currencies currency)
         {
-            // Only AtomUpgrades/AtomUpgrade (the free Green Power box by the atom room, its bottom trigger at world (21292, -266)
-            // from a Course 6 start) has a door: zone 2/area2/AtomColliderArea/Door/ZipMoverMovingPart, a plain mover (not a
-            // zip mover) between its shut stop and 380 up. The trace start says whether the machine's PlayerPrefs hold the key.
             if (BoxDoorToOpenField.GetValue(box) is PlatformMover door && (object)door != null && box.TimesUsed == 0 && _openA2Door != true)
             {
                 if (_openA2Door == null)
                     return Unmodeled("the atom box's first buy opens its door (doorToOpen.ForceNextPhase) unless PlayerPrefs hold "
                         + "\"OpenA2Door\", and this start doesn't say whether they do (economy.openA2Door)");
-                // A Course 6-15 start has the door at its open stop already (CourseStart.OpenAtomDoor, RULES.md 21), so on
-                // a machine without the key this buy moves it on to its next stop, shut: the game's branch on the stand-in's state,
-                // which a real game never has (a load opens the door only with the key or TimesUsed != 0, upgradeBox.cs:264).
+                // Course 6-15 starts have the door open (RULES.md 21); without OpenA2Door the first atom buy shuts it (upgradeBox.cs:644).
                 _sim.Touch(door);
                 door.ForceNextPhase();
             }
-            // Every atom buy writes the key on the machine (PlayerPrefs.SetInt("OpenA2Door", 1), upgradeBox.cs:648).
             _openA2Door = true;
             if (currency == globalStats.Currencies.GreenPower && Global(globalStats.globalUpgradeSet.GPAtomsDontResetCourses) != 0.0) return true;
             if (BoxCoursesToResetField.GetValue(box) is not courseScript[] reset) return Unmodeled("an atom box without coursesToReset (the game throws)");
@@ -1298,11 +1127,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>
-        /// The Omni Dash box's first buy (upgradeBox.cs:833-840): Area 1 overgrown, one more refresh orb, the way back from
-        /// Area 2 open, the transition's growth started and Courses 1-5 set to their overgrown tiers. Its on/off toggle is
-        /// the shop's (Shop.Buy).
-        /// </summary>
         internal bool OmniDashFirstBuy(upgradeBox box)
         {
             globalStats stats = Singleton<globalStats>.Instance;
@@ -1320,12 +1144,6 @@ namespace IGTAP.EngineSim
             return GrowTransition(controller) && SetA1CourseTiers(overgrowth);
         }
 
-        /// <summary>
-        /// Zone2to1TransitionController.doStateVisuals' coroutine to its first yield (Zone2to1TransitionController.cs:40-64),
-        /// all a turbo run plays of it: the growth sound's clip draw (Audio.PlayAudio, no pitch variance), every trunk off,
-        /// the first back on (its scale and shader are presentation: trunks have no colliders). Its later frames open the way
-        /// at 1x (closedObject's ground collider off); a run still going by the earliest of them ends (<see cref="Step"/>).
-        /// </summary>
         bool GrowTransition(Zone2to1TransitionController controller)
         {
             var trunks = TrunksField.GetValue(controller) as GameObject[];
@@ -1338,13 +1156,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>
-        /// OvergrowthLoadScript.SetA1CourseTiers (OvergrowthLoadScript.cs:29-62): the RP atom box shown; on each of its
-        /// courses (i = 0..4, its array's order) every active box that scales its cost linearly with more than one level
-        /// gets 2 (1 + 0.2 i) times its base cap and buy-max, its breaker-light, prestige, movement and unlock-prestige
-        /// boxes are hidden, and the course resets to tier 9.45 + 3.6 i, reward tier 6.6 + i, its clone time reset
-        /// (localUpgrades.OnPrestige without the A1 prestige mod); then boxesToEnable shown.
-        /// </summary>
         bool SetA1CourseTiers(OvergrowthLoadScript overgrowth)
         {
             var rpAtomBox = RpAtomBoxField.GetValue(overgrowth) as upgradeBox;
@@ -1445,8 +1256,6 @@ namespace IGTAP.EngineSim
             return TripBreaker(breaker);
         }
 
-        /// <summary>localUpgrades.OnPrestige (localUpgrades.cs:409-444) with clonesScript.onPrestige and courseScript.onPrestige
-        /// (courseScript.cs:542-564): an atom prestige leaves a course exempt from it as it is.</summary>
         bool LocalPrestige(localUpgrades script, bool resetCloneTime, double newTier, double newRewardTier, bool breakerPrestige,
             bool atomPrestige, bool useA1PrestigeMod)
         {
@@ -1510,7 +1319,6 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>upgradeBox.onPrestige (upgradeBox.cs:966-994) without its texts and sprites.</summary>
         bool BoxPrestige(upgradeBox box, bool force = false)
         {
             if ((object)box == null) return Unmodeled("a null child box (the game throws)");
@@ -1576,16 +1384,7 @@ namespace IGTAP.EngineSim
             return true;
         }
 
-        /// <summary>
-        /// SetActive(true) as the game runs it (Simulation's Activated hook, on every SetActive that turns an object on, not a
-        /// restore's): the OnEnable of every behaviour it wakes runs at once, and two of them draw UnityEngine.Random:
-        /// upgradeBox.OnEnable twice (the multibuy text's repeat rate, customBoxUpdate's first delay), ObjectBobber.OnEnable
-        /// once, except in a Full-TAS run, where 1x and turbo give a bobber's draw back (RULES.md exception 11: a buy-max box's
-        /// "buy N" text turns on from its multibuy timer at 1x only). Start (LightFlicker, RandomAnimSpeedComponent,
-        /// JiggleDropScript, upgradeBox) runs before the behaviour's first Update: at 1x in the same rendered frame for an object
-        /// woken in a physics step, in the next for one woken at a frame's end. A turbo run never reaches it, so its draws are
-        /// not made here.
-        /// </summary>
+        // SetActive(true) runs woken OnEnables at once and some draw UnityEngine.Random (RULES.md exception 12).
         internal static void Activate(GameObject g, bool fullTas)
         {
             foreach (upgradeBox b in g.GetComponentsInChildren<upgradeBox>(false))
@@ -1595,12 +1394,6 @@ namespace IGTAP.EngineSim
                 if (b.enabled) UnityEngine.Random.Draw();
         }
 
-        /// <summary>
-        /// A SetActive(true) woke these (Simulation's Activated hook): each drawing behaviour among them whose Start hasn't run
-        /// (off at the export and not woken since) waits for the next rendered frame's Start pass (<see cref="StartPass"/>).
-        /// Start runs before a behaviour's first Update: in the same frame when woken in the physics step, the next when woken
-        /// at a frame's end (RULES.md, exception 12).
-        /// </summary>
         internal void Woken(GameObject g)
         {
             foreach (Behaviour b in g.GetComponentsInChildren<LightFlicker>(false).Cast<Behaviour>()
@@ -1609,15 +1402,7 @@ namespace IGTAP.EngineSim
                 if (b.enabled && _neverStarted.Contains(b) && Array.IndexOf(_woken, b) < 0 && !_starting.Contains(b)) _starting.Add(b);
         }
 
-        /// <summary>
-        /// A rendered frame's Start pass, before its Updates: the draws of each woken behaviour still on (LightFlicker.Start's
-        /// Random.Range(0, 100), LightFlicker.cs:26; RandomAnimSpeedComponent.Start's speed and normalized time, and a broken
-        /// one's state, RandomAnimSpeedComponent.cs:16-21; JiggleDropScript.Start's normalized time, JiggleDropScript.cs:41),
-        /// what they set being presentation; the atom collider's NP; an upgrade box's own Start (upgradeBox.cs:199-298: its cap,
-        /// cost, deactivate, visibility, statue text, Vman omnidash box, key prompt, local upgrades and, bought already, its tree),
-        /// the box and its tree touched first so a restore puts them back. One switched off again first keeps waiting, as
-        /// Unity's Start does.
-        /// </summary>
+        // Start pass runs before a frame's Updates; woken behaviours' Start draws RNG here (RULES.md exception 12).
         internal void StartPass()
         {
             if (_starting.Count == 0) return;
@@ -1633,7 +1418,6 @@ namespace IGTAP.EngineSim
                     if (BoxTree.GetValue(box) is TreeController tree && (object)tree != null) _sim.Touch(tree);
                     IGTAPTasMod.WokenStarts.Start.Invoke(box, null);
                 }
-                // AtomColliderSystem.Start (AtomColliderSystem.cs:106-109) recomputes NP.
                 if (b is AtomColliderSystem) RecalcNp();
                 int draws = b is RandomAnimSpeedComponent anim ? ((bool)AnimIsBroken.GetValue(anim) ? 3 : 2) : b is LightFlicker || b is JiggleDropScript ? 1 : 0;
                 for (int d = 0; d < draws; d++) UnityEngine.Random.Draw();

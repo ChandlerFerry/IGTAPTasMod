@@ -12,8 +12,6 @@ using IGTAPTasMod;
 
 namespace IGTAP.EngineSim.Cli.Runs
 {
-    // `solve-run <trace> [--threads N]`: one command, nothing to decide. It starts from the run's best (or its seed runs'),
-    // builds the rest of the run, then improves it until it converges or "stop" arrives on stdin.
     static class RunSolve
     {
         static readonly JsonSerializerOptions EventJson = new JsonSerializerOptions { NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals };
@@ -38,7 +36,6 @@ namespace IGTAP.EngineSim.Cli.Runs
                 using JsonDocument d = JsonDocument.Parse(File.ReadAllText(def));
                 if (d.RootElement.TryGetProperty("seeds", out JsonElement s)) seeds = s.EnumerateArray().Select(x => x.GetString()).ToArray();
             }
-            // One library for every class of a run: a segment is only ever used where it replays, under the class's own rules.
             var lib = SegmentLibrary.Load(Path.Combine(run.Dir, "fulltas", run.Name + ".segments.json"), seeds.Select(x => Path.Combine(run.Dir, "fulltas", x + ".segments.json")));
             var facts = new SegmentFacts(RunFiles.FileOf(run, ".failures.json"));
             var search = new SegmentSearch(run) { Stop = () => _stop, Parallelism = threads };
@@ -47,13 +44,11 @@ namespace IGTAP.EngineSim.Cli.Runs
 
             List<InputTick> route = new List<InputTick>();
             string from = "nothing (a new run)";
-            // A class run with no route of its own starts from the run's major best.
             foreach (string file in new[] { run.RunFile, Path.Combine(run.Dir, "fulltas", run.Name + ".json") }.Concat(seeds.Select(x => Path.Combine(run.Dir, "fulltas", x + ".json"))).Where(File.Exists))
             {
                 using JsonDocument d = JsonDocument.Parse(File.ReadAllText(file));
                 route = Solve.ReadInputs(d.RootElement);
                 from = Path.GetFileName(file);
-                // The run's own best keeps its plan's goals: an incomplete best never reaches the gate, so the header doesn't have them.
                 if (file == run.RunFile && d.RootElement.TryGetProperty("goals", out JsonElement saved))
                 {
                     var own = new RunPlan(saved.EnumerateArray().Select(g => g.GetProperty("id").GetString()).ToArray(),
@@ -66,7 +61,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             if (route.Count > 0) plan = Solve.OnThread(() => AdoptStrays(run, plan, route));
             var improver = new Improver(run, lib, search, facts, threads) { Log = Log };
             var pending = new BlockingCollection<Built>(new ConcurrentQueue<Built>(), 1);
-            // What the starting route does on this engine, not what it recorded (a fidelity fix can have broken it).
             (int savedReached, double savedLive, object startJson) = (0, double.MaxValue, new { progress = 0, time = (double?)null, splits = Array.Empty<double>() });
             if (route.Count > 0)
                 (savedReached, savedLive, startJson) = Solve.OnThread(() =>
@@ -79,15 +73,13 @@ namespace IGTAP.EngineSim.Cli.Runs
                 });
             Log($"the starting route reaches {savedReached} of {plan.Count} goals on this engine" + (savedLive < double.MaxValue ? $" in {savedLive:0.0000} s" : ""));
             route = Repaired(args, run, plan, search, threads, route) ?? route;
-            // A seed run's route isn't this run's file: any route of this run's own beats having none.
             if (from != Path.GetFileName(run.RunFile)) (savedReached, savedLive) = (0, double.MaxValue);
             Emit(new { type = "session", run = run.Name, goals = plan.Ids.Select((id, i) => new { id, goal = plan.Labels[i] }), threads, engine = BuildInfo.Commit, from, segments = lib.Count, best = startJson });
             object last = startJson;
             improver.Event += Emit;
             improver.NewBest += (b, how) =>
             {
-                // Never replace the run's best with a worse route (a start that harvests less than the file's route reaches), nor
-                // keep one its class doesn't allow (a major span in an nmg run).
+                // Never replace the run's best with a worse route, nor keep one its class disallows (a major span in an nmg run).
                 string refused = Glitches.NoMajors(run.Class) && (b.Complete ? b.Live < savedLive - 1e-4 || savedReached < b.Plan.Count : b.Reached > savedReached) ? MajorSpan(run, b) : null;
                 if (refused != null) Log($"not kept for {Glitches.Key(run.Class)}: {refused}");
                 if (refused == null && (b.Complete ? b.Live < savedLive - 1e-4 || savedReached < b.Plan.Count : b.Reached > savedReached))
@@ -124,14 +116,10 @@ namespace IGTAP.EngineSim.Cli.Runs
             lib.Save();
             Emit(new { type = "done", run = run.Name, best = improver.Best == null ? last : RouteJson(improver.Best) });
             Log("solve-run: done" + (_stop ? " (stopped)" : ""));
-            // Let a pending submission finish before the process ends.
             for (int i = 0; i < 600 && submit && pending.Count > 0; i++) Thread.Sleep(100);
             return 0;
         }
 
-        // A route that stops here before the goals it recorded (`--repair FILE`, else the run's best, else <run>.before-v2.json) is
-        // repaired by rejoin (Rejoin.cs); the repair is the start when its straight replay gets further, or as far sooner, than `start`.
-        // `--repair-path FILE`: its path where it was found (a `fulltas --check --ticks-out` there); `--repair-minutes M` (30).
         static List<InputTick> Repaired(string[] args, RunContext run, RunPlan plan, SegmentSearch search, int threads, List<InputTick> start)
         {
             string only = Solve.Option<string>(args, "--repair", null);
@@ -160,8 +148,6 @@ namespace IGTAP.EngineSim.Cli.Runs
                     return true;
                 }
                 Keep(Make(budget).Repair(), "the repair");
-                // The old route's way on from a goal where it was faster than the best's, spliced onto the best's way there and repaired:
-                // the goals it gains most first.
                 if (top != null && top.Progress == plan.Count)
                     foreach (int k in Enumerable.Range(1, plan.Count - 1).Where(k => input[k - 1] >= 0 && physics[^1] >= 0)
                         .OrderBy(k => physics[^1] - physics[k - 1] - (top.GoalPhysicsTicks[^1] - top.GoalPhysicsTicks[k - 1])).Take(4).ToList())
@@ -179,7 +165,6 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         static long Units(RunResult r) => r.Progress == 0 ? long.MaxValue : MacroEngine.LiveUnits(r.GoalPhysicsTicks[r.Progress - 1], r.GoalHeldFrames[r.Progress - 1]);
 
-        // A route's straight replay.
         static RunResult Straight(RunContext run, RunPlan plan, List<InputTick> inputs) => Solve.OnThread(() =>
         {
             Simulation sim = run.Make();
@@ -189,9 +174,6 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         const string StrayHead = "Bought ", StrayTail = ", which isn't the next goal's box";
 
-        // A route that buys an economy box its goal list doesn't name (a strict run's stray buy) gets that buy as a goal where it
-        // came, as long as the route then gets further: a goal list edited since the route was found otherwise ends it there
-        // (Zip%'s best stops at goal 808 on Course 6's Green reward).
         internal static RunPlan AdoptStrays(RunContext run, RunPlan plan, List<InputTick> route)
         {
             Simulation sim = run.Make();
@@ -230,7 +212,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             splits = Enumerable.Range(0, b.Reached).Select(g => Math.Round(MacroEngine.LiveSeconds(b.Physics[g], b.Held[g]), 4)).ToArray(),
         };
 
-        // The engine's tech checks on the route, as the gate runs them: a class without major techs keeps no route with a major span.
         static string MajorSpan(RunContext run, Built b)
         {
             string file = Path.Combine(Path.GetTempPath(), $"solve-run-{Environment.ProcessId}-techs.json");
@@ -260,8 +241,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             catch (IOException) { }
         }
 
-        // The game judges every strictly faster complete run (turbo from a fresh new game); its goals go along, so the gate adopts
-        // a plan's economy goals when the run's list still is the one they were made from.
         static void Submitter(RunContext run, BlockingCollection<Built> pending)
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };

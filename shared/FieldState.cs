@@ -23,8 +23,7 @@ namespace IGTAPTasMod
             return list.ToArray();
         }
 
-        // MacroEngine's step list is the whole route being played: every resume hands the engine the steps to play
-        // (MacroEngine.ResumeOwned), so a capture copying it every time would be thrown away.
+        // MacroEngine's step list is the route, not state: a resume always hands it back, so capturing it is wasted.
         static bool IsEngineSteps(FieldInfo f)
         {
             return f.DeclaringType == typeof(MacroEngine) && f.Name == "_steps";
@@ -49,7 +48,6 @@ namespace IGTAPTasMod
             return AccessorFor(target.GetType()).Matches(target, values);
         }
 
-        /// <summary>The target's field values (in <see cref="For"/> order, boxed, not copied) into <paramref name="into"/>, which holds at least as many.</summary>
         public static void Read(object target, object[] into)
         {
             AccessorFor(target.GetType()).Read(target, into);
@@ -84,7 +82,6 @@ namespace IGTAPTasMod
             return copy == null ? value : copy(value);
         }
 
-        /// <summary>A List, HashSet, Queue or Stack type's copy (a new one of its items); no copy for any other type.</summary>
         struct Collection
         {
             public Func<object, object> Copy;
@@ -126,14 +123,9 @@ namespace IGTAPTasMod
             return new Stack<T>(items);
         }
 
-        /// <summary>
-        /// A type's field reads, writes and comparison, compiled once (FieldInfo.GetValue/SetValue are reflection per field):
-        /// the same values, copies and results as they gave.
-        /// </summary>
         sealed class Accessor
         {
             public int Count;
-            /// <summary>The fields whose value <see cref="Copy"/> can replace: a slot that can hold an array or a copied collection.</summary>
             public int[] Copied;
             public Action<object, object[]> Read, Write;
             public Func<object, object[], bool> Matches;
@@ -196,8 +188,6 @@ namespace IGTAPTasMod
             }
             il.Emit(OpCodes.Ret);
 
-            // Same(field value, captured) per field, stopping at the first difference. A plain struct field compares in place:
-            // Same's checks for a boxed struct come down to captured being that struct and Equals(object) saying so.
             var matches = new DynamicMethod("FieldState.Matches." + type.Name, typeof(bool), parameters, typeof(FieldState).Module, true);
             il = matches.GetILGenerator();
             Label differs = il.DefineLabel();
@@ -255,7 +245,6 @@ namespace IGTAPTasMod
             };
         }
 
-        /// <summary>Loads the target as its own type: a class reference, or the address inside a boxed struct.</summary>
         static void Target(ILGenerator il, Type type)
         {
             il.Emit(OpCodes.Ldarg_0);

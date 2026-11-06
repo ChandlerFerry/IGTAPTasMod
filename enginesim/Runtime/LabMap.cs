@@ -9,39 +9,22 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim
 {
-    /// <summary>One shape of a lab map, relative to the lab's anchor (world units, world frame kept through FloatingOrigin rebases).</summary>
     public sealed class LabShape
     {
-        /// <summary>box (center + size), polygon (points) or edge (points).</summary>
         public string kind = "box";
-        /// <summary>Box center, relative to the anchor.</summary>
         public float[] at;
-        /// <summary>Box size (w, h), relative to the anchor.</summary>
         public float[] size;
-        /// <summary>Polygon or edge points, relative to the anchor.</summary>
         public float[][] points;
-        /// <summary>Unity layer name ("Ground", "Spikes", "Default", ...) or number.</summary>
         public string layer = "Ground";
-        /// <summary>Unity tag: "Ground" refills jumps and dashes on touch, "Moss" refills nothing, anything else behaves as moss.</summary>
         public string tag = "Ground";
-        /// <summary>A trigger (spikes and gates are triggers).</summary>
         public bool trigger;
-        /// <summary>Adds the game's spikeScript to the shape's object (a spike: kills past its grace, and on a dash).</summary>
         public bool spike;
-        /// <summary>A box's rotation about z in degrees, counter-clockwise (its collider turns with it, and a spring's
-        /// transform.up with it: 180 launches down).</summary>
         public float rotation;
-        /// <summary>Adds the game's SpringScript with these serialized fields (a trigger: OnTriggerStay2D calls
-        /// Movement.hitSpring(upForce, strength, movementLock, transform.up)).</summary>
         public LabSpring spring;
-        /// <summary>A coloured block ("blue" or "orange", solid or a spike): on only while its colour is the active one, and
-        /// colouredBlockSwapper.swapBlocks (a dash with block swap) toggles it with the scene's coloured tilemaps.</summary>
         public string colour;
 
-        /// <summary>The colour's flag (blue: true), null for an uncoloured shape.</summary>
         public bool? Blue => colour == null ? null : colour == "blue";
 
-        /// <summary>The shape object's rotation, the same float quaternion in game and offline.</summary>
         public Quaternion Rotation()
         {
             if (rotation == 0f) return Quaternion.identity;
@@ -55,7 +38,6 @@ namespace IGTAP.EngineSim
             return (at[0], at[1], size[0], size[1]);
         }
 
-        /// <summary>The shape's world-frame bounds relative to the anchor.</summary>
         public (float x0, float y0, float x1, float y1) Bounds()
         {
             if (kind == "box")
@@ -75,8 +57,6 @@ namespace IGTAP.EngineSim
             return (x0, y0, x1, y1);
         }
 
-        /// <summary>A box's corners around its centre in the export's order ((max,min), (max,max), (min,max), (min,min) before
-        /// the rotation), turned by <see cref="Rotation"/>.</summary>
         public Vector2[] Corners(float w, float h)
         {
             Quaternion q = Rotation();
@@ -85,7 +65,6 @@ namespace IGTAP.EngineSim
         }
     }
 
-    /// <summary>A lab spring's SpringScript fields (the Course 5 ceiling spring's: upForce 70, strength 300, movementLock 0.25).</summary>
     public sealed class LabSpring
     {
         public float upForce = 70f;
@@ -93,36 +72,20 @@ namespace IGTAP.EngineSim
         public float movementLock = 0.25f;
     }
 
-    /// <summary>
-    /// A lab map (<c>labmaps/&lt;id&gt;.json</c>): an injected, temporary piece of level for one tech. Shapes, the player's start
-    /// and the finish box sit relative to <see cref="anchor"/>, a point in the world frame (scene position minus
-    /// FloatingOrigin.currentOrigin), so the whole lab can be moved to any empty region of the map by moving the anchor.
-    /// It is lab-only: never a route, never on a route's path, and it is restored (destroyed) after the demo.
-    /// </summary>
     public sealed class LabMapDef
     {
         public int schema = 1;
         public string id;
         public string name;
-        /// <summary>The techs.json tech this lab demonstrates (optional).</summary>
         public string tech;
-        /// <summary>What the lab shows: the field describing the tech demonstrated.</summary>
         public string techNote;
-        /// <summary>The unlocks the lab's demo runs with, as a Caps label (Categories.cs: NONE, WJ, WJ_DS, WJ_DS_DJ, WJ_DS_DJ_BS,
-        /// WJ_DS_DJ_BS_ORB_ZIP_OM, ...).</summary>
         public string category = "NONE";
-        /// <summary>The lab file names its <see cref="category"/> (the tech miner tags the lab's demo windows with it).</summary>
         public bool CategoryGiven;
-        /// <summary>The lab's root in the world frame.</summary>
         public float[] anchor;
-        /// <summary>The empty region the anchor sits in (x, y, w, h, world frame), picked by `lab space`.</summary>
         public float[] region;
         public List<LabShape> shapes = new List<LabShape>();
-        /// <summary>The player's start, relative to the anchor: x, y, vx, vy (Velocity), mx, my (momentum), facing (±1), fields (Movement fields by name).</summary>
         public LabStart start = new LabStart();
-        /// <summary>The finish box (center x, center y, w, h), relative to the anchor.</summary>
         public float[] finish;
-        /// <summary>The search's tick bound (`lab solve`): no demo needs more than this from the lab start.</summary>
         public int maxTicks = 90;
 
         public (float x, float y) Anchor
@@ -149,11 +112,6 @@ namespace IGTAP.EngineSim
             return Parse(doc.RootElement, path);
         }
 
-        /// <summary>
-        /// A demo's own start (<c>start</c> in labmaps/&lt;id&gt;.&lt;demo&gt;.demo.json, the lab start's format): one lab map can
-        /// carry several demos that begin in different places (pauselift-wall: the cling, and the reverse super on its floor).
-        /// Without one the demo starts at the lab's start.
-        /// </summary>
         public void UseDemoStart(JsonElement demo)
         {
             if (demo.TryGetProperty("start", out JsonElement s) && s.ValueKind == JsonValueKind.Object) start = ParseStart(s);
@@ -264,34 +222,21 @@ namespace IGTAP.EngineSim
         }
     }
 
-    /// <summary>The player's start on a lab map, relative to its anchor (the probe/clip start's fields).</summary>
     public sealed class LabStart
     {
         public float? x, y;
-        /// <summary>The script's Velocity (the body gets Velocity + momentum).</summary>
         public float? vx, vy;
-        /// <summary>The script's momentum.</summary>
         public float? mx, my;
-        /// <summary>Facing (±1).</summary>
         public float? facing;
-        /// <summary>The coloured blocks' state at the start (colouredBlockSwapper.isBlueActive; blue is active on a new game):
-        /// null keeps the host trace's.</summary>
         public bool? blueActive;
-        /// <summary>Movement fields by name (onGround, coyoteFrames, airDashesLeft, ...).</summary>
         public Dictionary<string, object> fields;
     }
 
-    /// <summary>A lab map injected additively into a loaded world: static colliders on the ground body, correct layer and tag.</summary>
     public static class LabMap
     {
-        /// <summary>
-        /// Builds the lab's objects on <paramref name="world"/> (call before the <see cref="Simulation"/> is created, so its
-        /// physics and its FloatingOrigin roots pick them up). Shapes are placed in the capture's scene frame (the world frame
-        /// plus the capture's FloatingOrigin), as the world export's own shape lists are.
-        /// </summary>
+        // Call before the Simulation is created so its physics and FloatingOrigin roots pick the lab up.
         public static List<GameObject> Inject(World world, LabMapDef lab)
         {
-            // A coloured shape starts as the scene's blocks are (the lab start may swap them: DemoStart.ApplyLabStart).
             bool blueActive = world.All<colouredBlockSwapper>().FirstOrDefault()?.isBlueActive ?? true;
             Vector3 origin = world.All<FloatingOrigin>().FirstOrDefault()?.currentOrigin ?? Vector3.zero;
             (float ax, float ay) = lab.Anchor;
@@ -339,8 +284,6 @@ namespace IGTAP.EngineSim
                     made = box;
                     box.InitSize(new Vector2(w, h));
                     box.edgeRadius = 0f;
-                    // Shape vertices are scene-frame (the world export's own shape lists are): the box around the child's pose,
-                    // turned with it.
                     data.Shapes = new[] { Polygon(shape.rotation == 0f
                         ? Vertices(world3.x - w / 2f, world3.y - h / 2f, world3.x + w / 2f, world3.y + h / 2f)
                         : shape.Corners(w, h).Select(c => new Vector2(world3.x + c.x, world3.y + c.y)).ToArray()) };
@@ -365,7 +308,6 @@ namespace IGTAP.EngineSim
                     edge.InitCollider(Vector2.zero, shape.trigger, 0, 0, enabled);
                     made = edge;
                     if (shape.points.Length < 2) throw new InvalidDataException("A lab edge needs at least 2 points.");
-                    // One chain of every point, as an exported EdgeCollider2D's shapes are.
                     data.Shapes = new[] { new ShapeData
                     {
                         Type = "Edges", Vertices = shape.points.Select(p => new Vector2(world3.x + p[0], world3.y + p[1])).ToArray(),
@@ -377,8 +319,6 @@ namespace IGTAP.EngineSim
             if (shape.spike) AddScript(world, go, "spikeScript");
             if (shape.spring != null)
             {
-                // The game's own spring: its serialized fields as a scene spring carries them (no Animator: OnTriggerStay2D
-                // skips the animation and the sound).
                 MonoBehaviour spring = AddScript(world, go, "SpringScript");
                 const BindingFlags Fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
                 spring.GetType().GetField("upForce", Fields).SetValue(spring, shape.spring.upForce);
@@ -415,7 +355,7 @@ namespace IGTAP.EngineSim
 
         static Vector2[] Vertices(float x0, float y0, float x1, float y1)
         {
-            // The export's box polygons run (max,min), (max,max), (min,max), (min,min).
+            // Export order of box polygons: (max,min), (max,max), (min,max), (min,min); must match for tick-exact physics.
             return new[] { new Vector2(x1, y0), new Vector2(x1, y1), new Vector2(x0, y1), new Vector2(x0, y0) };
         }
 

@@ -7,11 +7,6 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim.Cli
 {
-    /// <summary>
-    /// The teleporter network as the planner sees it (TeleporterScript, docs/fulltas.md#teleporters): each pad's trigger (world
-    /// frame) and its up and down pads. A hop goes from a pad to its up or down pad once unlockTeleporters is bought and that pad
-    /// was visited (globalStats.visitedTeleporters).
-    /// </summary>
     internal sealed class Teleports
     {
         internal sealed class Pad
@@ -20,12 +15,11 @@ namespace IGTAP.EngineSim.Cli
             public double X, Y, W, H;
             public int? Up, Down;
             public string Place => "tp:" + Id.ToString(CultureInfo.InvariantCulture);
-            /// <summary>An area goal on the trigger's middle (half its size): touching it puts the player inside the pad.</summary>
             public string At => FormattableString.Invariant($"at:{X:0},{Y:0},{W / 2:0},{H / 2:0}");
             public bool Inside(double x, double y) => Math.Abs(x - X) <= W / 2 && Math.Abs(y - Y) <= H / 2;
         }
 
-        /// <summary>A hop's inputs: the stick at rest (the poll needs it under 0.2 since entering), then pushed (over 0.7).</summary>
+        // The teleporter poll needs the stick under 0.2 at rest since entering, then over 0.7 pushed.
         internal const int RestTicks = 2, PushTicks = 3;
         internal const int HopTicks = RestTicks + PushTicks;
 
@@ -37,7 +31,6 @@ namespace IGTAP.EngineSim.Cli
         static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Simulation, Teleports> Read =
             new System.Runtime.CompilerServices.ConditionalWeakTable<Simulation, Teleports>();
 
-        /// <summary>The simulation's network, read once (world frame: a rebase doesn't move it).</summary>
         internal static Teleports For(Simulation sim) => Read.GetValue(sim, Of);
 
         static Teleports Of(Simulation sim)
@@ -58,7 +51,6 @@ namespace IGTAP.EngineSim.Cli
             return t;
         }
 
-        /// <summary>The hops the run can make now: (from, to, up) for each pad whose up or down pad was visited, unlockTeleporters bought.</summary>
         internal List<(int from, int to, bool up)> Hops(Simulation sim)
         {
             var hops = new List<(int, int, bool)>();
@@ -72,7 +64,6 @@ namespace IGTAP.EngineSim.Cli
             return hops;
         }
 
-        /// <summary>The inputs of a hop chain: per hop the stick at rest, then up or down.</summary>
         internal static List<InputTick> HopInputs(IEnumerable<bool> ups)
         {
             var inputs = new List<InputTick>();

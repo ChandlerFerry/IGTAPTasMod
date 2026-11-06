@@ -9,10 +9,6 @@ namespace IGTAPTasMod
 {
     public sealed partial class TasPlugin
     {
-        /// <summary>
-        /// Human candidates played back to back at 1x (`/api/fulltas/queue`), each as Play plays a route: from the run's fresh
-        /// new game (or savestate), then a settle before the next. <see cref="play"/> is files[index]'s playback while it runs.
-        /// </summary>
         sealed class FullTasQueue
         {
             public FullTasRunDef run;
@@ -23,7 +19,6 @@ namespace IGTAPTasMod
             public readonly List<FullTasQueueResult> results = new List<FullTasQueueResult>();
         }
 
-        /// <summary>A candidate's 1x play: its live time when it finished, else the goals it reached and why it stopped.</summary>
         sealed class FullTasQueueResult
         {
             public string file;
@@ -53,7 +48,6 @@ namespace IGTAPTasMod
             return new { ok = true, of = files.Count };
         }
 
-        /// <summary>files[index] from the run's start, as a complete route of the run's goals (it waits for its last goal).</summary>
         void PlayFullTasCandidate(FullTasQueue queue)
         {
             string file = queue.files[queue.index];
@@ -67,7 +61,6 @@ namespace IGTAPTasMod
             queue.play = _fullTasPlay;
         }
 
-        /// <summary>FinishFullTasPlayback's end of a queue's candidate: its result, then the settle before the next.</summary>
         void FullTasQueuePlayed(FullTasPlay play, bool finished, float time, int reached, string reason)
         {
             FullTasQueue queue = _fullTasQueue;
@@ -85,14 +78,12 @@ namespace IGTAPTasMod
             SetFullTasResult("Played " + queue.results.Count + " " + queue.run.name + " candidates back to back at 1x: " + queue.results.Count(r => r.finished) + " finished");
         }
 
-        /// <summary>The queue's next candidate once the last one's playback is over and the settle has passed.</summary>
         void PumpFullTasQueue()
         {
             FullTasQueue queue = _fullTasQueue;
             if (queue == null || queue.index >= queue.files.Count) return;
             if (queue.play != null)
             {
-                // Dropped before it started (DropPendingFullTasPlayback: its new game didn't load).
                 if (_fullTasPlay != queue.play) Played(queue, false, null, 0, "did not start");
                 return;
             }
@@ -101,7 +92,6 @@ namespace IGTAPTasMod
             catch (Exception ex) { Played(queue, false, null, 0, ex.Message); }
         }
 
-        /// <summary>No candidate after the one playing (its result still comes in).</summary>
         void StopFullTasQueue()
         {
             FullTasQueue queue = _fullTasQueue;

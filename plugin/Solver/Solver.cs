@@ -29,25 +29,19 @@ namespace IGTAPTasMod
             public string minCapabilities;
             public string maxCapabilities;
             public bool overgrown;
-            /// <summary>The Tree's level on this target (RULES.md 21: the tree transitions); null: the save's own.</summary>
             public int? tree;
             [JsonIgnore] public int GameCourse { get { return overgrown ? id - 10 : id; } }
             [JsonIgnore] public bool HasFinish { get { return endW > 0f && endH > 0f; } }
             [JsonIgnore] public bool IsTransition { get { return !string.IsNullOrEmpty(to); } }
             [JsonIgnore] public bool IsBonus { get { return HasFinish && !IsTransition; } }
             [JsonIgnore] public string Token { get { return string.IsNullOrEmpty(name) ? id.ToString() : name; } }
-            /// <summary>The lowest <see cref="Categories.Ladder"/> step it runs (courses.json's minCapabilities; none when unset).</summary>
             [JsonIgnore] public int MinStep { get { return Math.Max(0, Categories.LadderStep(minCapabilities)); } }
-            /// <summary>The highest ladder step it runs (RULES.md 17-18): maxCapabilities, a bonus's own step, or up to
-            /// the ladder's top when it's unset.</summary>
             [JsonIgnore] public int MaxStep { get { return !string.IsNullOrEmpty(maxCapabilities) ? Math.Max(0, Categories.LadderStep(maxCapabilities)) : IsBonus ? MinStep : Categories.Ladder.Length - 1; } }
-            /// <summary>The category is run here (RULES.md 17-19, 26): <see cref="CategoryDef.RunsOn"/>.</summary>
             public bool HasCategory(string idOrLabel)
             {
                 CategoryDef def = Categories.Find(idOrLabel);
                 return def != null && Categories.IsTarget(Token) && Categories.CanFinish(Token, def.Caps) && def.RunsOn(Token, MinStep, MaxStep);
             }
-            /// <summary>Every category it runs, in registry order.</summary>
             [JsonIgnore] public string[] CategoryIds { get { return Categories.All.Where(d => HasCategory(d.Id)).Select(d => d.Id).ToArray(); } }
         }
 
@@ -58,7 +52,6 @@ namespace IGTAPTasMod
             public float? lockX, lockY;
             public float? turnX, turnY;
             public bool reset;
-            /// <summary>MacroStep.pauseFrames / pauseTick / pauseFrame.</summary>
             public int pause, pauseTick, pauseFrame;
             public SolverTick Clone() { return (SolverTick)MemberwiseClone(); }
         }
@@ -86,16 +79,10 @@ namespace IGTAPTasMod
         long _solveRuns, _solveFinishes;
         int _turboChecks, _turboSaved;
         float _solveBest = float.PositiveInfinity;
-        /// <summary>The fastest offline best's farm loop cycle (live seconds, RULES.md 30), for an Improve of the farm time.</summary>
         float _solveBestFarm = float.PositiveInfinity;
-        /// <summary>Improve's last `waypoints {json}` line: the waypoints with the best's ticks at each (null before one).</summary>
         JObject _solveWaypoints;
-        /// <summary>The running job is Improve (`solve --auto`), not the plain solve: its runs count pulls.</summary>
         bool _solveAuto;
-        /// <summary>Improve's last `outlook` event: its chance of beating the best with more search, and what else to try (null
-        /// before one). Kept after the job ends, so the panel still says why it stopped.</summary>
         JObject _solveOutlook;
-        /// <summary>Improve's pulls running now (`pullStart` events not yet followed by their `pull`).</summary>
         readonly List<JObject> _solvePulls = new List<JObject>();
 
         sealed class SolveJob
@@ -103,11 +90,8 @@ namespace IGTAPTasMod
             public int course, saved;
             public string caps, label;
             public string[] optional;
-            /// <summary>Improve scores by farm time (quick restart to finish, `--farm`) instead of the record's game timer.</summary>
             public bool farm;
-            /// <summary>Improve's `--focus a-b`: waypoints first..last (1-based, the finish last); null: the whole course.</summary>
             public int[] focus;
-            /// <summary>Improve's `--class`: the record of a human class (human-major, human-nmg) by its score; null: by the game timer.</summary>
             public string cls;
             public string result;
         }
@@ -190,8 +174,6 @@ namespace IGTAPTasMod
         static readonly Regex TransitionName = new Regex(@"^(Course|Bonus)(\d+)_To_(Course|Bonus)(\d+)(?:_(?<label>" + Caps.LabelPattern + @"))?\b", RegexOptions.IgnoreCase);
         const float BonusArrivalSize = 32f;
 
-        /// <summary>The transition this name is ("Course1_To_Course2", optionally with _WJ_DS), or empty when its category part
-        /// is no category ("Course1_To_Course2_almost" names none).</summary>
         static Match MatchTransitionName(string name)
         {
             Match m = TransitionName.Match(name ?? "");
@@ -225,8 +207,6 @@ namespace IGTAPTasMod
                 int id = 201;
                 while (_courses.Any(c => c.id == id)) id++;
                 Movement player = FindWorldMovement();
-                // Its min is always a ladder step (RULES.md 18): the name's category when it is one of them, else the
-                // largest the save's unlocks have (a course's, capped at the ladder's top).
                 CategoryDef named = !m.Groups["label"].Success ? null : Categories.Find(m.Groups["label"].Value.ToUpperInvariant());
                 string step = named != null && named.Scope == CategoryScope.Range ? named.Id
                     : player == null ? default(Caps).Id : LadderStepFor(SaveUnlocks(player));
@@ -298,25 +278,18 @@ namespace IGTAPTasMod
             Logger.LogInfo("Loaded zone " + zone + " for " + def.Token + ".");
         }
 
-        /// <summary>Whether the live world has the course's zone loaded (and only it), as its start state was captured in.</summary>
         bool ZoneReady(CourseDef def)
         {
             int zone = TargetZone(def, out ZoneLoader loader);
             return zone == 0 || zone == loader.activeZone && ZonesSettled();
         }
 
-        /// <summary>
-        /// The zone of the start gate or checkpoint nearest the course's start; 0 when there is no zone loader or none nearby.
-        /// A bonus start is a checkpoint with no gate near it (bonus5's is 3100 u from one): with gates alone it had no zone, and
-        /// was captured in whichever zone the last course left loaded.
-        /// </summary>
         int TargetZone(CourseDef def, out ZoneLoader loader)
         {
             loader = FindAnyObjectByType<ZoneLoader>();
             return def == null ? 0 : ZoneAt(new Vector2(def.x, def.y) + CurrentOrigin(), loader);
         }
 
-        /// <summary>The zone of the start gate or checkpoint nearest a scene point; 0 when there is none within 1000 u.</summary>
         int ZoneAt(Vector2 start, ZoneLoader loader)
         {
             if (loader == null || !(AllZonesField?.GetValue(loader) is GameObject[] zones)) return 0;
@@ -380,8 +353,7 @@ namespace IGTAPTasMod
         bool _savedPathOpen;
         int _treeChangedFrame = -1;
 
-        /// <summary>The Tree at the target's level (<see cref="TreeLevel"/>), the save's kept first; a target without one
-        /// puts the save's back. From level 23 the OmniDash box's buy has opened the Zone 2→1 path (upgradeBox.cs:825-830).</summary>
+        // Level 23 up, the OmniDash box's buy has opened the Zone 2-1 path (upgradeBox.cs:825-830).
         void EnsureTree(CourseDef def)
         {
             TreeController tree = TreeLevel.TheTree();
@@ -410,8 +382,6 @@ namespace IGTAPTasMod
                 path.updateState(open);
         }
 
-        /// <summary>The tree is at the target's level, in its loaded zone, and a frame has passed since either changed, so every
-        /// box they woke has run its Start (the Area 2 door box's toggles the door, upgradeBox.cs:260) before a start sets the door.</summary>
         bool TreeReady(CourseDef def)
         {
             TreeController tree = TreeLevel.TheTree();
@@ -419,8 +389,6 @@ namespace IGTAPTasMod
                 || tree.gameObject.activeInHierarchy && TreeLevel.At(tree, def.tree.Value) && Time.frameCount > _treeChangedFrame;
         }
 
-        /// <summary>A 1x start of a tree target waits until <see cref="TreeReady"/>: its zone and tree set a step early, as
-        /// RestoreRouteStart and the start's door come in one step.</summary>
         bool TreeStartReady(MacroDefinition macro)
         {
             CourseDef def = CourseOfRoute(macro.name);
@@ -449,7 +417,6 @@ namespace IGTAPTasMod
         {
             bool wasOvergrown = stats.currentA1State == globalStats.area1states.Overgrown, overgrown = state == globalStats.area1states.Overgrown;
             OvergrowthLoadScript overgrowth = FindAnyObjectByType<OvergrowthLoadScript>(FindObjectsInactive.Include);
-            // Before OnLoad, as the game's order is: the omnidash's purchase sets the tiers, the next zone load runs OnLoad.
             if (overgrown && !wasOvergrown && overgrowth != null && !stats.Zone2toZone1PathOpen) ApplyOmnidashBoxTiers(overgrowth);
             stats.currentA1State = state;
             if (overgrowth != null) overgrowth.OnLoad();
@@ -470,17 +437,9 @@ namespace IGTAPTasMod
             public double capMult, powerScale;
         }
 
-        // Every box ApplyOmnidashBoxTiers may change, as the save had it; empty when the boxes are the save's own.
         readonly Dictionary<upgradeBox, BoxTier> _omnidashBoxUndo = new Dictionary<upgradeBox, BoxTier>();
 
-        // A save turns Area 1 overgrown by buying the OmniDash box (zone 2's tree, upgradeBox OmniDash at TimesUsed 1): it sets
-        // currentA1State, Zone2toZone1PathOpen and moreRefreshOrbs, and runs OvergrowthLoadScript.SetA1CourseTiers, whose box
-        // changes the course saves keep from then on (a1Statesetter triggers and the zone loader's OnLoad switch only the
-        // state and the terrain). So the boxes are overgrown's only in a save that bought it (Zone2toZone1PathOpen); in any
-        // other this stands in for SetA1CourseTiers' boxes: in Courses 1-5 the movement, prestige, breaker-light and
-        // unlock-prestige boxes go and the scaling boxes get the higher caps and buy max; the RP and atom boxes come. Not the
-        // course prestige it runs (localUpgrades.OnPrestige: the save's course levels, no box comes or goes) nor the orbs and
-        // the path (the category's unlocks set the orbs; the path is above Course 10). Undone when Area 1 is set back.
+        // Buying the OmniDash box sets Area 1 overgrown, Zone2toZone1PathOpen and runs SetA1CourseTiers (RULES.md 24).
         void ApplyOmnidashBoxTiers(OvergrowthLoadScript overgrowth)
         {
             courseScript[] courses = OvergrowthCoursesField?.GetValue(overgrowth) as courseScript[] ?? new courseScript[0];
@@ -502,7 +461,6 @@ namespace IGTAPTasMod
             for (int i = 0; i < courses.Length; i++)
             {
                 if (courses[i] == null) continue;
-                // The game's GetComponentsInChildren: the boxes that are on.
                 foreach (upgradeBox box in courses[i].GetComponentsInChildren<upgradeBox>())
                 {
                     if (box.upgradePowerScaleFactor == 1.0 && box.Cap > 1)
@@ -583,8 +541,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>Every start gate and checkpoint with its zone (the zone root or ZoneDisableLoadList.toLoad it is under;
-        /// 0 outside every zone).</summary>
         static List<(Transform, int)> ZoneMarkers(GameObject[] zones)
         {
             var result = new List<(Transform, int)>();
@@ -601,8 +557,6 @@ namespace IGTAPTasMod
             return result;
         }
 
-        // The build's metadata never changes: read once (a reflection lookup that allocated its attributes on every use, the
-        // goals overlay's ForcedPaths among them).
         static string _engineSimExe;
         static bool _engineSimExeRead;
 
@@ -632,7 +586,6 @@ namespace IGTAPTasMod
             string missing = optional.FirstOrDefault(n => !known.Contains(n));
             if (missing != null) throw new InvalidOperationException("No optional block '" + missing + "' for " + def.Token + " " + capabilities + ".");
             bool farm = Truthy(item, "farm");
-            // Bonuses and transitions are timed in ticks already (RULES.md 31): their record is their farm time.
             if (farm && (def.IsBonus || def.IsTransition)) throw new InvalidOperationException(def.Token + " has no separate farm time: improve its record.");
             int[] focus = item["focus"] is JArray range && range.Count == 2 ? new[] { (int)range[0], (int)range[1] } : null;
             if (focus != null && (focus[0] < 1 || focus[1] < focus[0]))
@@ -650,10 +603,6 @@ namespace IGTAPTasMod
                     + (focus == null ? "" : " waypoints " + focus[0] + "-" + focus[1]) };
         }
 
-        /// <summary>
-        /// The course has a category route to improve from: a record or farm route of this category or a narrower one (their
-        /// unlocks a subset), the routes the solve seeds with. Without one the job is the plain solve, which finds a first finish.
-        /// </summary>
         bool HasCourseRoute(CourseDef course, string capabilities)
         {
             Caps target = Caps.Parse(capabilities);
@@ -665,7 +614,6 @@ namespace IGTAPTasMod
             });
         }
 
-        // The body's picked optional blocks, or the course's default-on blocks when it names none.
         string[] OptionalNames(JObject body, int course, string capabilities)
         {
             IEnumerable<string> names = body["optional"] is JArray picked ? picked.Select(n => (string)n).Where(n => !string.IsNullOrEmpty(n))
@@ -673,7 +621,6 @@ namespace IGTAPTasMod
             return names.Distinct().OrderBy(n => n, StringComparer.Ordinal).ToArray();
         }
 
-        // The engine turns default-on blocks on by itself, so the ones left unpicked go as `--no-optional`.
         StringBuilder AppendOptional(StringBuilder args, int course, string capabilities, string[] optional)
         {
             foreach (string name in optional) args.Append(" --optional ").Append(Quote(name));
@@ -688,7 +635,6 @@ namespace IGTAPTasMod
             public string name, note;
             public bool on;
             public string[] caps;
-            /// <summary>The block's avoid boxes ([x0, y0, x1, y1], game world frame) and their one-way sides (FullTasGoal.FromLeft..., 0: two-way).</summary>
             public float[][] avoid;
             public int from;
         }
@@ -760,12 +706,6 @@ namespace IGTAPTasMod
 
         void KillSolveProcess() { KillEngineSim(ref _solveProcess, "offline solver"); }
 
-        /// <summary>
-        /// The offline engine run with <paramref name="args"/>, below the game: a solve takes nearly every core, and at normal
-        /// priority 1x playback (280 rendered frames a second, each a fixed game-time step) lost frames to it; its children
-        /// (humanize, confirm) inherit it. With <paramref name="output"/> its stdout and stderr lines go there as they come,
-        /// else the caller reads them; <paramref name="stdin"/> keeps its stdin open for a "stop".
-        /// </summary>
         static Process StartEngineSim(string args, ConcurrentQueue<string> output = null, bool stdin = false)
         {
             var process = new Process { StartInfo = new ProcessStartInfo(EngineSimExe, args) {
@@ -845,14 +785,9 @@ namespace IGTAPTasMod
             Movement player = FindWorldMovement();
             CourseDef target = _solverTarget;
             Vector2 start = new Vector2(target.x, target.y) + CurrentOrigin();
-            // Its zone too: a zone load the game still had queued (ZoneLoader.LoadZone's coroutine, e.g. the bootstrap's) can
-            // switch zones back after RestoreRouteStart loaded the course's, and a start captured then has the course's
-            // DisableBits (its start gate, zip movers) off: no run from it starts the timer.
+            // A queued ZoneLoader.LoadZone can switch zones after the restore; a start captured then has the gate off, no timer runs.
             bool parked = player != null && ((Vector2)player.transform.position - start).sqrMagnitude < 64f * 64f && Area1StateReady(target)
                 && ZoneReady(target) && TreeReady(target);
-            // respawn keeps coyoteFrames and the stable-tick wait pins the player at the reset point (Course 7's is 42 u over its
-            // floor), where only coyote time holds onGround: restart from standing (full coyote), or a run that ended airborne
-            // never gets 3 stable ticks, or starts with other coyote frames than the trace. Starts that never land: 600 frames.
             bool grounded = player != null && player.onGround && Convert.ToSingle(GetMovementField(player, "coyoteFrames")) >= player.maxCoyoteFrames;
             if (!parked)
             {
@@ -878,10 +813,6 @@ namespace IGTAPTasMod
 
         static readonly FieldInfo AllZonesField = AccessTools.Field(typeof(ZoneLoader), "allZones");
 
-        /// <summary>
-        /// The world as ZoneLoader._LoadZone(activeZone) leaves it: the active zone's root and its ZoneDisableLoadList.toLoad on
-        /// (a course's DisableBits: start gate, zip movers), every other zone's root off.
-        /// </summary>
         static bool ZonesSettled()
         {
             ZoneLoader loader = FindAnyObjectByType<ZoneLoader>();
@@ -911,7 +842,6 @@ namespace IGTAPTasMod
             _solvePulls.Clear();
         }
 
-        /// <summary>The outlook's verdict for a queue row (empty before one): whether this target is worth another pass.</summary>
         string OutlookNote()
         {
             if (_solveOutlook == null) return "";
@@ -940,8 +870,6 @@ namespace IGTAPTasMod
                 queue = _solveQueue.Select((j, i) => new { label = j.label, result = j.result, active = _solverRunning && i == _solveIndex }).ToArray() };
         }
 
-        /// <summary>The last 12 lines of the solver's log, newest first. The log isn't capped (a long solve writes thousands of
-        /// lines), and Reverse() copied all of it on every studio check.</summary>
         string[] LatestSolverLog()
         {
             var lines = new string[Math.Min(12, _solverLog.Count)];
@@ -978,17 +906,13 @@ namespace IGTAPTasMod
                 + (box.TimesUsed > 0 ? " (bought)" : "");
         }
 
-        /// <summary>A bonus's hint with The Tree's level when the target carries one (<c>unlockJumpDash</c>: The Tree at
-        /// level 10, courses.json <c>tree</c>).</summary>
         string BonusHintWithTree(CourseDef bonus)
         {
             string hint = BonusHint(bonus);
             return hint == null || bonus.tree == null ? hint : hint + "\nThe Tree at level " + bonus.tree + ".";
         }
 
-        /// <summary>Why the last start capture failed (engine status and the player's state at the end), for the caller's error.</summary>
         string _captureFailure;
-        /// <summary>A tech demo's own start for the next start capture (EngineSimTechTrace): its savestate and the omnidirectional dash.</summary>
         TechDef _techStart;
 
         void PumpSolver()
@@ -1032,12 +956,6 @@ namespace IGTAPTasMod
             Logger.LogInfo("Optimize: " + EngineSimExe + " " + args);
         }
 
-        /// <summary>
-        /// The engine's command line for a course job on <paramref name="trace"/> (its seed files written as
-        /// <paramref name="name"/>-seedN.json): Improve, `solve --auto` (record, or `--farm`; `--focus a-b` over the waypoints),
-        /// when the course has a category route to start from, else the plain solve that finds a first finish. Improve leaves
-        /// the game 4 cores, as the Full-TAS Improve does.
-        /// </summary>
         string CourseSolveArgs(SolveJob job, CourseDef course, string trace, string name, float minutes, out string what, out bool auto)
         {
             var args = new StringBuilder("solve ").Append(Quote(trace));
@@ -1061,15 +979,11 @@ namespace IGTAPTasMod
             return args.ToString();
         }
 
-        /// <summary>` --seed "file"` per raw route of the course in the library (its name kept for the engine's log), written as
-        /// <paramref name="name"/>-seedN.json after the old ones go.</summary>
         string CourseSeedArgs(CourseDef course, string name, out int seeds)
         {
             var args = new StringBuilder();
             foreach (string old in Directory.GetFiles(EngineSimDir, name + "-seed*.json")) File.Delete(old);
             seeds = 0;
-            // A tree target also takes the other levels' routes to its course (same start and end; the engine drops what
-            // doesn't finish in this level's world).
             string[] prefixes = (course.tree == null ? new[] { course }
                 : _courses.Where(c => c.tree != null && c.to == course.to).ToArray()).Select(c => c.Token + "_").ToArray();
             foreach (MacroDefinition route in _library.macros.Where(m => m.name != null
@@ -1083,9 +997,6 @@ namespace IGTAPTasMod
             return args.ToString();
         }
 
-        /// <summary>` --walk-seed "file"` per raw route of a tree transition into this course (tree&lt;L&gt;to&lt;C&gt;), with a start
-        /// capture of its target as its start, written as <paramref name="name"/>-walkN.json: the engine walks a run that gets to
-        /// that start (bonus11's checkpoint by the atom room) there and plays the route on, which crosses Course 9's end.</summary>
         string CourseWalkSeedArgs(CourseDef course, string name)
         {
             var args = new StringBuilder();
@@ -1098,7 +1009,6 @@ namespace IGTAPTasMod
                     Match g = MatchGatedRoute(route.name);
                     if (!g.Success || !string.Equals(g.Groups["token"].Value, tree.Token, StringComparison.OrdinalIgnoreCase)) continue;
                     string caps = Caps.Parse(g.Groups["label"].Value.ToUpperInvariant()).Id;
-                    // Every category of a tree target starts on the same spot: any capture of it gives the start.
                     string trace = CourseTrace(tree, caps) ?? tree.CategoryIds.Select(id => CourseTrace(tree, id)).FirstOrDefault(t => t != null);
                     if (trace == null) continue;
                     string seed = Path.Combine(EngineSimDir, name + "-walk" + walks++ + ".json");
@@ -1110,16 +1020,11 @@ namespace IGTAPTasMod
 
         static string Quote(string path) { return "\"" + path + "\""; }
 
-        // One job per map file: a request for a map already being drawn (a second click, a page's second mount) waits for
-        // that job's result instead of failing, and different maps queue, one engine process at a time. A search map
-        // (`progressive`) answers within MapPollMs while its job runs: the file as the engine last wrote it, `pending`, and
-        // the studio asks again (`poll`), joining the job or, once it's done, taking its result (`_mapDone`).
         sealed class MapJob
         {
             public readonly System.Threading.ManualResetEvent Done = new System.Threading.ManualResetEvent(false);
             public int Status = 200;
             public string Response;
-            // Out of the queue: its engine process started (a job waits for the map drawing before it).
             public volatile bool Started;
         }
         readonly Dictionary<string, MapJob> _mapJobs = new Dictionary<string, MapJob>(StringComparer.OrdinalIgnoreCase);
@@ -1150,29 +1055,20 @@ namespace IGTAPTasMod
             }
             string name = "map-c" + course.Token + "-" + caps;
             string output = Path.Combine(EngineSimDir, name + ".json");
-            // This map's job is running or queued: join it, leaving its seed files alone.
             if (MapInFlight(output, body)) return RunEngineSimMap(request, null, output, true);
             var args = new StringBuilder("map ").Append(Quote(trace)).Append(" --out ").Append(Quote(output)).Append(CourseSeedArgs(course, name, out _));
             AppendOptional(args, id, caps, OptionalNames(body, id, caps));
             return RunEngineSimMap(request, args.ToString(), output, true);
         }
 
-        /// <summary>The course's last start capture (the solve's, else the studio's), or null before its first solve.</summary>
         string CourseTrace(CourseDef course, string caps)
         {
-            // The files come and go within a session (a solve writes them), so each call looks again; only the LINQ is gone (the
-            // TAS session's techs check calls this on every studio push).
             string optimize = Path.Combine(EngineSimDir, "optimize-c" + course.Token + "-" + caps + ".json");
             if (File.Exists(optimize)) return optimize;
             string start = Path.Combine(EngineSimDir, "start-c" + course.Token + "-" + caps + ".json");
             return File.Exists(start) ? start : null;
         }
 
-        /// <summary>
-        /// A course target's waypoints for the studio (`solve --auto --waypoints-out`, which places them on the best seed and
-        /// exits): the start gate (record timing), goals along the record's (or with `farm`, the farm route's) path, then the
-        /// finish, with that route's tick at each. Improve's `focus` indexes this list. Run by the engine as a map is, one job per file.
-        /// </summary>
         object EngineSimWaypoints(WebStudioRequest request, JObject body)
         {
             SolveJob job;
@@ -1201,11 +1097,6 @@ namespace IGTAPTasMod
             return RunEngineSimMap(request, args.ToString(), output);
         }
 
-        /// <summary>
-        /// What /api/solver/start would run for the same body, without starting anything: each job's engine command on the
-        /// course's last start capture (the run itself captures a fresh one first) and whether it is Improve or the plain solve.
-        /// Seed files go to preview-c*-seedN.json.
-        /// </summary>
         object PreviewSolver(JObject body)
         {
             List<JObject> items = body["queue"] is JArray queue ? queue.OfType<JObject>().ToList() : new List<JObject> { body };
@@ -1219,8 +1110,6 @@ namespace IGTAPTasMod
             }).ToArray() };
         }
 
-        // Draws `output` with the engine (`args`), or joins the job already drawing it (`args` null), or the one that
-        // last finished it (a progressive map's poll).
         object RunEngineSimMap(WebStudioRequest request, string args, string output, bool progressive = false)
         {
             MapJob job;
@@ -1256,7 +1145,6 @@ namespace IGTAPTasMod
                 }
                 else
                 {
-                    // Still drawing: what the engine wrote so far (an earlier draw's, before its first write), marked pending.
                     string partial = null;
                     try { if (File.Exists(output)) partial = File.ReadAllText(output); }
                     catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { }
@@ -1283,8 +1171,6 @@ namespace IGTAPTasMod
                     else
                     {
                         string error = (errors.Result.Split('\n').FirstOrDefault(l => l.Trim().Length > 0) ?? "exit code " + process.ExitCode).Trim();
-                        // The engine's InvalidOperationException is its refusal of a state ("No farm loop yet: ..."): its message alone,
-                        // a note for the studio, not a failure.
                         Match refusal = EngineRefusal.Match(error);
                         job.Status = refusal.Success ? 409 : 500;
                         job.Response = JsonConvert.SerializeObject(new { ok = false,
@@ -1310,7 +1196,6 @@ namespace IGTAPTasMod
             Match m = SolveProgress.Match(line);
             if (m.Success)
             {
-                // Improve counts its pulls as runs: its whole-route search's runs don't go in.
                 if (!_solveAuto)
                 {
                     _solveRuns = long.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture);
@@ -1319,9 +1204,6 @@ namespace IGTAPTasMod
                 _solverSpeed = m.Groups[1].Value + " runs/s, " + m.Groups[2].Value + " ticks/s offline";
                 return;
             }
-            // Improve (`solve --auto`): its waypoints on every new best, and its events. Pulls count (as runs); `pullStart` and
-            // `pull` keep the list of pulls running now, `outlook` (after every pull) the chance of beating the best; its gains
-            // show as the offline-best lines below, so the rest is dropped (it's all in the engine's own log).
             if (line.StartsWith(WaypointsLine, StringComparison.Ordinal))
             {
                 try { _solveWaypoints = JObject.Parse(line.Substring(WaypointsLine.Length)); }
@@ -1337,7 +1219,6 @@ namespace IGTAPTasMod
                 if (type == "outlook") _solveOutlook = e;
                 else if (type == "pullStart")
                 {
-                    // Once per pull number: a pull re-announced replaces its entry.
                     _solvePulls.RemoveAll(p => (long?)p["pull"] == (long?)e["pull"]);
                     _solvePulls.Add(e);
                 }
@@ -1360,14 +1241,10 @@ namespace IGTAPTasMod
 
         const int JumpBufferTicks = 12;
         const int DashBufferTicks = 8;
-        // Movement.getPlayerControlledInput holds a buffered dash through a wall jump's first 5 lock ticks: while
-        // wallJumpMovementLockRemaining >= wallJumpMovementLockFrames - 5 it re-arms Invoke("cancelDashBuffer", 0.06f) each
-        // tick, so a press's buffer outlives its 0.12 s. After the last hold it lives 0.06 s = 3 ticks, +1 (the hold runs on
-        // the next tick) +2 slack.
+        // getPlayerControlledInput re-arms cancelDashBuffer for the first 5 wall-jump lock ticks, so a dash buffer outlives 0.12 s
         const int DashHoldTicks = 6;
         const int JumpCutBufferTicks = 15;
         List<string> _audit;
-        // MacroEngine.Clock of the last audited tick after which the game held a press's dash buffer (DashHoldTicks).
         int _dashHeldAt;
 
         List<string> StartAudit()
@@ -1376,7 +1253,6 @@ namespace IGTAPTasMod
             return _audit = new List<string>();
         }
 
-        /// <summary>The next tick's getPlayerControlledInput holds the buffered dash (its first check, Movement.cs 1596).</summary>
         static bool DashBufferHeld(Movement player)
         {
             return player.dashCooldown < 0f && GetMovementBool(player, "dashUnlocked", false)
@@ -1410,8 +1286,6 @@ namespace IGTAPTasMod
                     _audit.Add("tick " + tick + ": unlocks differ from the run's purchases (" + u + ")");
                 return;
             }
-            // The unlocks must match the category exactly on every tick (RULES.md 10): the expected values come from
-            // the same list its start applies, less what a run changes on its way (CategoryRunState).
             if (CategoryAbilities(_solverCaps).Any(a => !CategoryRunState.Contains(a.field) && !Equals(GetMovementField(player, a.field), a.value)))
                 _audit.Add("tick " + tick + ": unlocks differ from category " + Caps.Parse(_solverCaps).Label);
         }
@@ -1462,23 +1336,18 @@ namespace IGTAPTasMod
             try
             {
                 TurboRunner.Run(player, () => _pendingSilentMacro != null || (_engine.IsRunning && idleTicks < 20),
-                    // Dash and spring ticks take no input: a farm loop's four laps run well past one tick an input.
                     inputs.Count * 4 + 400, () =>
                     {
                         _engine.Clock++;
                         _engineSimTickHook?.Invoke(player);
                         if (!_engine.IsRunning) return;
-                        // Ticks that take no input don't count (a finish in a stretch of them after the last input, as the engine's run).
                         if (_engine.InputsExhausted && !_engine.TickLocked) idleTicks++;
                         int tick = (int)_engine.RunTicks;
                         if (_startState == null && tick == 0)
                         {
-                            // The category start's history (CourseStart): the snapshot, the trace written from it and this run
-                            // all go on from the same values, whatever ran before. A tech demo's start is its own savestate's.
                             if (_techStart == null)
                                 CourseStart.Apply(player, FindObjectsByType<clonesScript>(FindObjectsInactive.Include, FindObjectsSortMode.None));
                             settling = TurboRunner.Capture(player, _solverCourses, _engine.CaptureState(), 0);
-                            // Its restores put the world at the canonical origin exactly, whatever ran since (TurboRunner.PutCanonicalOrigin).
                             if (_techStart == null) settling.canonical = _canonicalReference;
                         }
                         if (_startState == null && tick > 0) _startState = settling;
@@ -1499,7 +1368,6 @@ namespace IGTAPTasMod
             }
             finally
             {
-                // Also when the run throws: a resumed engine left running would play the inputs on in real time.
                 if (_engine.IsRunning) _engine.Abort("Solver run ended");
                 _pendingSilentMacro = null;
                 _silentEvaluation = false;
@@ -1515,19 +1383,14 @@ namespace IGTAPTasMod
             return _silentFinished && time > 0f;
         }
 
-        /// <summary>The directions the last <see cref="Evaluate"/>'s route kept on a two-way course (Categories.Directions: the
-        /// direction blocks it never cut); none elsewhere.</summary>
         string[] _lastDirections = new string[0];
 
-        /// <summary>A two-way course's direction blocks for the category (Categories.Directions), null unless it has both.</summary>
         List<(string name, OptionalBlock block)> DirectionBlocks(int course, string caps)
         {
             var found = Categories.Directions.Select(d => (d.name, block: OptionalBlocks(course).FirstOrDefault(b => b.name == d.block && b.caps.Contains(caps)))).ToList();
             return found.All(d => d.block != null && d.block.avoid.Length > 0) ? found : null;
         }
 
-        /// <summary>The move from <paramref name="a"/> to <paramref name="p"/> (game world frame) is cut by one of the block's boxes:
-        /// it ends inside a two-way box, or crosses a one-way box's entry edge inwards (the engine's OfflineSolver.Box.Cuts).</summary>
         static bool Cuts(OptionalBlock block, Vector2 a, Vector2 p)
         {
             foreach (float[] b in block.avoid)
@@ -1539,7 +1402,6 @@ namespace IGTAPTasMod
             return false;
         }
 
-        /// <summary>The category's best of a direction (+infinity: none yet).</summary>
         float DirectionBest(string category, string direction)
         {
             float best = float.PositiveInfinity;
@@ -1553,7 +1415,6 @@ namespace IGTAPTasMod
             return best;
         }
 
-        /// <summary>The directions the last <see cref="Evaluate"/>'s route kept whose best <paramref name="time"/> beats.</summary>
         string[] DirectionsBeaten(float time)
         {
             return _lastDirections.Where(d => time < DirectionBest(SolverCategory, d) - .0001f).ToArray();
@@ -1564,20 +1425,8 @@ namespace IGTAPTasMod
 
         bool FarmTracked { get { return _solverFullTas == null && !_solverTarget.IsBonus && !_solverTarget.IsTransition; } }
 
-        /// <summary>A farm route's time in its name: a lap's share of the loop's cycle, live seconds to 4 places.</summary>
         static string FarmSeconds(double seconds) { return seconds.ToString("0.0000", CultureInfo.InvariantCulture); }
 
-        /// <summary>
-        /// The only way a category route is saved (RULES.md 43). A record (<paramref name="loopFrom"/> 0): when a replay
-        /// from the course start finishes in <paramref name="time"/> and every tick obeys the category. A farm loop (RULES.md 30;
-        /// its loop from input <paramref name="loopFrom"/>, <paramref name="loopLaps"/> laps): when a replay from the
-        /// course start loops in exactly <paramref name="loopLive"/> units a loop (<see cref="EvaluateLoop"/>) and every tick obeys
-        /// the category; named by a lap's share, `<c>&lt;category&gt; farm &lt;lap&gt;</c>`. On a two-way course a record is also
-        /// saved as `<c>&lt;category&gt; &lt;direction&gt; &lt;time&gt;</c>` for each direction the replay keeps and beats
-        /// (Categories.Directions), and as only those when it doesn't beat the record. A human class's record
-        /// (<paramref name="humanClass"/>): a record's replay whose score in the class (<see cref="CourseClassViolation"/>) beats
-        /// the class's, saved as `<c>&lt;category&gt; &lt;class&gt; &lt;score&gt;</c>` only.
-        /// </summary>
         bool SaveSolverRoute(List<SolverTick> inputs, float time, int loopFrom = 0, int loopLaps = 1, long loopLive = 0, string humanClass = null)
         {
             string name;
@@ -1612,8 +1461,6 @@ namespace IGTAPTasMod
                 SaveLibrary();
                 return true;
             }
-            // A record also saves as the best of each direction it keeps and beats (a direction record, Categories.Directions), and
-            // only that when it doesn't beat the record itself.
             string[] beaten = loopFrom > 0 || _solverFullTas != null ? new string[0] : DirectionsBeaten(time);
             if (loopFrom > 0 || _solverFullTas != null || beaten.Length == 0 || time < CategoryBest(SolverCategory) - .0001f)
                 _library.macros.Add(new MacroDefinition { name = name, steps = ToSteps(inputs), loopFrom = loopFrom, loopLaps = loopFrom > 0 ? Math.Max(1, loopLaps) : 0 });
@@ -1626,12 +1473,6 @@ namespace IGTAPTasMod
 
         static readonly string[] HumanCourseClasses = { "human-major", "human-nmg" };
 
-        /// <summary>
-        /// The human-class half of a course record's gate (RULES.md 54, on a course): the engine's techs-used replays the
-        /// route from the course's start trace, again as a human class plays it (digital stick, two jump buttons), and scores it.
-        /// The route must finish there in the gate's own time, have a score in the class (human inputs; human-nmg: no major span)
-        /// and, as its name rounds it, a lower one than the class's record.
-        /// </summary>
         string CourseClassViolation(List<SolverTick> inputs, float time, string cls, out float score)
         {
             score = float.NaN;
@@ -1656,10 +1497,8 @@ namespace IGTAPTasMod
                 : "score " + score.ToString("0.00", CultureInfo.InvariantCulture) + " not lower than " + SolverCategory + " " + cls + "'s " + best.ToString("0.00", CultureInfo.InvariantCulture);
         }
 
-        /// <summary>A score as a human record's name has it (to 0.01): one that would get the same name isn't lower (RULES.md 52).</summary>
         static float ScoreName(float score) { return float.Parse(score.ToString("0.00", CultureInfo.InvariantCulture), CultureInfo.InvariantCulture); }
 
-        /// <summary>The category's record score in a human class (+infinity: none yet).</summary>
         float HumanClassBest(string category, string cls)
         {
             float best = float.PositiveInfinity;
@@ -1681,24 +1520,16 @@ namespace IGTAPTasMod
             return false;
         }
 
-        /// <summary>Loops played after a farm route's lead to find its steady cycle (the engine's FullTas.LoopRepeats).</summary>
         const int LoopRepeats = 4;
-        // While a farm loop plays (EvaluateLoop): each finish of the target course (the input count, physics tick and held frames
-        // at it); the finish doesn't end the run then.
         List<(long input, long physics, long held)> _loopFinishes;
-        /// <summary>A farm route's playback (ReplaySelected): its finishes are laps' ends, not the run's.</summary>
         bool _farmPlayback;
 
-        /// <summary>A farm loop's replay (RULES.md 30): the lead's last finish, then each loop's cycle.</summary>
         sealed class LoopResult
         {
-            /// <summary>Every loop finished on its own last input and the last two cycles are equal.</summary>
             public bool steady;
-            /// <summary>The last loop's cycle: physics ticks and held frames from the finish before it; its laps.</summary>
             public long ticks, held;
             public int laps = 1;
             public long live { get { return MacroEngine.LiveUnits(ticks, held); } }
-            /// <summary>The farm time: a lap's share of the cycle, in live seconds.</summary>
             public double lap { get { return MacroEngine.LiveSeconds(ticks, held) / laps; } }
             public readonly List<long> cycles = new List<long>();
             public override string ToString()
@@ -1709,11 +1540,6 @@ namespace IGTAPTasMod
             }
         }
 
-        /// <summary>
-        /// Plays a farm route's lead and then its loop (the inputs from <paramref name="loopFrom"/> on, <paramref name="laps"/>
-        /// laps) LoopRepeats times, from the course start through every finish: each loop must finish on its own last input, and
-        /// the last two cycles must be equal. A lap's share of the cycle is the farm time.
-        /// </summary>
         LoopResult EvaluateLoop(List<SolverTick> inputs, int loopFrom, int laps)
         {
             var result = new LoopResult { laps = Math.Max(1, laps) };
@@ -1745,10 +1571,6 @@ namespace IGTAPTasMod
             return result;
         }
 
-        /// <summary>
-        /// A farm route saved before farms were loops (RULES.md 30) times one lap from the quick restart, not a loop: it
-        /// can't be compared with one, so it is renamed stale (out of the ranking, kept for its inputs).
-        /// </summary>
         bool RetireLapFarms()
         {
             bool retired = false;
@@ -1762,14 +1584,10 @@ namespace IGTAPTasMod
             return retired;
         }
 
-        // A route name's category part ("4_WJ_DS"): the label is matched in any case but must be one of the categories, so
-        // "4_almost_completed 13.46" is no route.
         static readonly Regex CategoryRoute = new Regex(@"^(?<category>(?<token>[^_\s]+)_(?<label>" + Caps.LabelPattern + @")) (?<time>[\d.]+)$", RegexOptions.IgnoreCase);
         static readonly Regex FarmRoute = new Regex(@"^(?<category>(?<token>[^_\s]+)_(?<label>" + Caps.LabelPattern + @")) farm (?<time>[\d.]+)$", RegexOptions.IgnoreCase);
-        // A direction record (Categories.Directions): "3_WJ_DS_DJ backwards 2.76", the category's best of one direction on a two-way course.
         static readonly Regex DirectionRoute = new Regex(@"^(?<category>(?<token>[^_\s]+)_(?<label>" + Caps.LabelPattern + @")) (?<direction>"
             + string.Join("|", Categories.Directions.Select(d => d.name)) + @") (?<time>[\d.]+)$", RegexOptions.IgnoreCase);
-        // A human class's record (SaveSolverRoute's humanClass): "4_WJ_DS human-major 9.12", by its score in the class.
         static readonly Regex HumanRoute = new Regex(@"^(?<category>(?<token>[^_\s]+)_(?<label>" + Caps.LabelPattern + @")) (?<class>human-major|human-nmg) (?<time>[\d.]+)$", RegexOptions.IgnoreCase);
         static readonly Regex RoutePrefix = new Regex(@"^(?<category>(?<token>[^_\s]+)_(?<label>" + Caps.LabelPattern + @"))(?: |$)", RegexOptions.IgnoreCase);
 
@@ -1783,7 +1601,6 @@ namespace IGTAPTasMod
         static Match MatchDirectionRoute(string name) { return MatchRoute(DirectionRoute, name); }
         static Match MatchHumanRoute(string name) { return MatchRoute(HumanRoute, name); }
 
-        /// <summary>A name only the gate gives: a record, a direction record, a human class's record or a farm route.</summary>
         static Match MatchGatedRoute(string name)
         {
             Match g = MatchCategoryRoute(name);

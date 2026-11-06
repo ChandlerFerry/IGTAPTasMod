@@ -7,8 +7,7 @@ using IGTAPTasMod;
 
 namespace IGTAP.EngineSim.Cli.Runs
 {
-    // Deterministic: SearchWorkers single-worker solvers with fixed seeds, each ending itself at its share of the tick budget,
-    // so the same state and seeds give the same finds whatever the machine's load.
+    // Deterministic: fixed seeds and per-worker tick shares, so finds do not depend on the machine's load.
     sealed class SegmentSearch
     {
         public const int SearchWorkers = 16;
@@ -18,11 +17,8 @@ namespace IGTAP.EngineSim.Cli.Runs
 
         readonly RunContext _run;
         public Func<bool> Stop = () => false;
-        // How many of the SearchWorkers solvers run at once (solve-run's --threads): each ends at its own share, so finds don't change.
         public int Parallelism = SearchWorkers;
-        // Each worker's explore archive and state cache, bytes.
         public long ArchiveBudget = 1L << 29, StateBudget = 1L << 30;
-        // Ticks without a better find after which a solver ends (all solvers together): a polish raises it to look for faster ways.
         public long Stall = StallTicks;
         public bool Stopped { get; private set; }
         readonly Lazy<TechGrafts> _grafts;
@@ -58,8 +54,6 @@ namespace IGTAP.EngineSim.Cli.Runs
             return sim;
         }
 
-        // The run definition's avoid boxes go with goal ids: a plan that adds, drops or moves goals has them at its own places.
-        // from: a window's first goal (Improver.Polish), the search scored where it reaches `goal` through the goals between.
         internal OfflineSolver.ForcedPath Avoids(string[] ids, int goal, int from = -1) =>
             Solve.FullTasPaths(_run.Name, ids, new HashSet<int>(Enumerable.Range(from < 0 ? goal : from, goal - (from < 0 ? goal : from) + 1)));
 
@@ -73,7 +67,7 @@ namespace IGTAP.EngineSim.Cli.Runs
                 sim.Restore(sim.Start);
                 string[] boxes = Enumerable.Range(first, goal - first + 1).SelectMany(g => goals[g].boxes ?? Array.Empty<string>()).ToArray();
                 OfflineSolver.ForcedPath p = Avoids(ids, goal, first);
-                // Stray buys end a strict run: the search is steered round the boxes it could buy, never cut off from a graze.
+                // Stray buys end a strict run (RULES.md 38): steer round boxes it could buy, never cut off from a graze.
                 if (!_run.Loose) foreach (var (a, b, _) in sim.StrayTriggers(new HashSet<string>(boxes))) p.Discourage.Add(new OfflineSolver.Box(a, b));
                 return (sim.Shop.AfterBuys(PlayerCaps.Of(sim), boxes).Id, p);
             });

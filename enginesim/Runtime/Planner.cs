@@ -8,74 +8,31 @@ using UnityEngine;
 
 namespace IGTAP.EngineSim
 {
-    /// <summary>
-    /// The contact-node planner (issue #19, `IGTAP.EngineSim plan`): a beam search over exact snapshots, layered by physics
-    /// ticks. A node is the state after an input tick where the player's contact changed (<see cref="ContactLog"/>), or after
-    /// <see cref="Options.Cap"/> ticks without one. An edge is one primitive played from the node's snapshot until the next
-    /// contact after its own inputs: a decision at the node (the stick, a jump press or release, a dash with its jump frame,
-    /// the omnidash's aims), a <see cref="Primitives"/> input at its window around the node's contact or around the
-    /// contact a coast from the node runs into (a buffered jump before a landing, a coyote jump after a ledge, a wall clip), or
-    /// a mined tech demo window (<see cref="TechGrafts"/>) at those contacts. Every layer keeps its best
-    /// <see cref="Options.Width"/> nodes: most goals or forced-path boxes passed, then the <see cref="DistanceField"/>
-    /// distance to the target, then speed. A coarse key (position cell, velocity and momentum buckets, contact, counts left,
-    /// facing, the jump button, the timer, progress) only merges: per key a few Pareto labels (earliest, faster) survive,
-    /// and every expansion starts from the node's exact snapshot. Only inputs a controller makes are played (RULES.md).
-    /// After a finish, nodes that can't beat it at the fastest speed seen are cut; the search then runs again at twice the
-    /// width while time is left (anytime).
-    /// </summary>
     public sealed class Planner
     {
         public sealed class Options
         {
             public int Threads = Environment.ProcessorCount;
-            /// <summary>Nodes kept per physics-tick layer in the first pass; each later pass doubles it up to <see cref="MaxWidth"/>.</summary>
             public int Width = 48, MaxWidth = 768;
-            /// <summary>Pareto labels kept per coarse key.</summary>
             public int Labels = 2;
-            /// <summary>The key's position cell, in units.</summary>
             public float Cell = 16f;
-            /// <summary>Input ticks after a decision without a contact before a node is made anyway.</summary>
             public int Cap = 8;
-            /// <summary>Mid-air inputs between nodes (the Step 0 gaps): in the air, after a coast of <see cref="MidAirDelays"/>
-            /// ticks, a double jump or a jump cut, a stick change, a dash or a dash jump with its lock stick either way.</summary>
             public bool MidAir = true;
             public static readonly int[] MidAirDelays = { 2, 4, 6 };
-            /// <summary>Omnidash nodes also play the down-dash landing chain as one edge (Worker.BounceChain).</summary>
             public bool Chains = true;
-            /// <summary>A Full-TAS window's first goal (the goals reached at its start; -1: the start's own count).</summary>
             public int FromGoal = -1;
-            /// <summary>Finishes up to this many physics ticks behind the fastest are kept when they carry more speed (a window's next
-            /// goal scores arrival and momentum); 0: only faster ones.</summary>
             public int MomentumSlack;
             public double Seconds = 300;
-            /// <summary>Stop after the first pass that finishes.</summary>
             public bool FirstOnly;
-            /// <summary>Known finished routes whose cost to go ranks the nodes instead of the field's distance (the backward half:
-            /// issue #19's "the best's per-cell first arrival"): a node's estimate is the physics ticks a route point near it (same
-            /// stage, within <see cref="GuideRadius"/>) still had to its finish, plus its distance to that point at
-            /// <see cref="GuideSpeed"/>; a node near none of them ranks last.</summary>
             public List<List<InputTick>> Guides = new List<List<InputTick>>();
             public float GuideRadius = 160f, GuideSpeed = 10f, GuideAccel = 60f;
-            /// <summary>Follow edges: a node within <see cref="FollowRadius"/> units and <see cref="FollowSpeed"/> units/s of a guide
-            /// route's point (same stage) plays that route's next <see cref="FollowTicks"/> inputs (0: off), the known routes'
-            /// pieces as primitives (issue #19's backward half, as Splice uses the best's suffix).</summary>
             public int FollowTicks = 16;
             public float FollowRadius = 48f, FollowSpeed = 200f;
-            /// <summary>A guide point counts only for nodes at most this many physics ticks behind the point's own time: a route
-            /// that passes one place twice (Course 4 starts under its end) doesn't pull a node early to its late pass.</summary>
             public int GuideAhead = 60;
-            /// <summary>Faster known runs that don't replay here (<see cref="Trail"/>): their places rank nodes as guide points do and
-            /// their inputs are followed from nodes within <see cref="FollowRadius"/> and <see cref="TrailFollowSpeed"/> of them.</summary>
             public List<Trail> Trails = new List<Trail>();
             public float TrailFollowSpeed = 400f;
         }
 
-        /// <summary>
-        /// A known run's path, per physics tick from the run's start (a 1x probe of an older route: its place in the world frame,
-        /// Velocity + momentum, and the input tick it had played), with its inputs. It doesn't replay on this engine; its
-        /// goals are found along its path (an area goal where its place touches the goal's rect; a buy, start or finish goal
-        /// on the tick after the goal before it), and its ticks from goal to goal are the costs to go its points give.
-        /// </summary>
         public sealed class Trail
         {
             public string Name;
@@ -94,7 +51,6 @@ namespace IGTAP.EngineSim
             public double Wall;
             public int Width;
             public string How;
-            /// <summary>Velocity + momentum at the finish (a window's goal): what it carries on.</summary>
             public float Speed;
         }
 
@@ -104,12 +60,10 @@ namespace IGTAP.EngineSim
         readonly Options _o;
         readonly Dictionary<Contact, TechPattern[]> _patterns = new Dictionary<Contact, TechPattern[]>();
         public long Ticks, Expanded, Edges, Stolen, StolenTicks, Cut;
-        /// <summary>Stopwatch ticks spent in edge runs and in captures, all workers.</summary>
         public long RunTime, CaptureTime;
         public Route Best { get; private set; }
         public event Action<Route> Found;
         readonly Stopwatch _clock = new Stopwatch();
-        /// <summary>The fastest straight-line speed an edge has made, units per physics tick: the bound's speed after a finish.</summary>
         float _vmax = 1f;
 
         public Planner(Func<Simulation> create, string capabilities, OfflineSolver.ForcedPath path, TechGrafts mined, Options options)
@@ -118,18 +72,12 @@ namespace IGTAP.EngineSim
             _caps = Caps.Parse(capabilities);
             _path = path != null && !path.IsEmpty ? path : null;
             _o = options;
-            // Not the route corpus's windows (RouteGrafts.cs): every window at a contact is an edge, and its ~1,400 would
-            // multiply each expansion.
             if (mined != null)
                 foreach (var g in mined.Patterns.Where(p => p.Requires.IsSubsetOf(_caps) && !p.Resets && p.Category != TechGrafts.RouteCategory).GroupBy(p => p.Kind))
                     _patterns[g.Key] = g.ToArray();
-            // The per-step tech contacts (ContactLog.Step) become nodes only when a mined window grafts at one of their kinds.
             _stepContacts = _patterns.Keys.Any(k => !Primitives.ContainsKey(k));
         }
 
-        /// <summary>The planner's primitive library, per contact: the window its inputs start in relative to the contact (lo..hi),
-        /// the plain inputs and the omnidash ones (null: all; the expansion's Grafts builds them). The solver grafts only mined
-        /// tech windows (<see cref="TechGrafts"/>); the planner enumerates these as edges beside the mined windows.</summary>
         internal static readonly Dictionary<Contact, (int lo, int hi, string[] plain, string[] omni)> Primitives = new Dictionary<Contact, (int, int, string[], string[])>
         {
             [Contact.Died] = (-7, -1, new[] { "jump", "jump", "dash", "dashjump", "dashjump", "primed", "primed", "superbounce" }, null),
@@ -152,8 +100,6 @@ namespace IGTAP.EngineSim
 
         readonly bool _stepContacts;
 
-        // ---- search state ----
-
         sealed class Node
         {
             public Node Parent;
@@ -165,10 +111,7 @@ namespace IGTAP.EngineSim
             public long Key;
             public int Progress;
             public float Distance, Speed, Guide;
-            /// <summary>Velocity + momentum.</summary>
             public Vector2 V;
-            /// <summary>The guide route this node lies exactly on (its inputs from the start are the route's), -2 for the start
-            /// (on every guide), -1 for none; <see cref="GuideAt"/> is the route's input tick here.</summary>
             public int GuideRoute = -1, GuideAt;
             public Contact? Kind;
             public ContactLog.Mark Mark;
@@ -178,7 +121,6 @@ namespace IGTAP.EngineSim
             public Vector2 At;
             public string How;
 
-            /// <summary>The node's inputs from the start, into <paramref name="into"/> (cleared) or a new list.</summary>
             public List<InputTick> Inputs(List<InputTick> into = null)
             {
                 var parts = new List<InputTick[]>();
@@ -200,17 +142,12 @@ namespace IGTAP.EngineSim
             return a.Key < b.Key;
         }
 
-        // ---- the guide routes' cost to go ----
-
         const float GuideCell = 64f;
         readonly Dictionary<long, List<(Vector2 at, Vector2 v, float cost, int route, int tick, long physics)>> _guide = new Dictionary<long, List<(Vector2, Vector2, float, int, int, long)>>();
-        /// <summary>The guide routes that finish, as <see cref="_guide"/>'s points index them.</summary>
         readonly List<List<InputTick>> _guideRoutes = new List<List<InputTick>>();
 
         static long GuideKey(int stage, int gx, int gy) { return ((long)stage << 42) ^ ((long)(gx & 0x1FFFFF) << 21) ^ (gy & 0x1FFFFF); }
 
-        /// <summary>The planner's stage: goals reached in goal mode; for a course its forced-path boxes passed and the timer
-        /// running (its start gate is the first target); else the boxes passed.</summary>
         static int Stage(Simulation sim, int waypoints)
         {
             if (sim.Goals != null) return sim.Progress;
@@ -218,8 +155,6 @@ namespace IGTAP.EngineSim
             return 2 * waypoints + (sim.TimingCourse() != null ? 1 : 0);
         }
 
-        /// <summary>Replays each guide route (its own thread and world) and files every input tick's place with the physics
-        /// ticks it still had to its finish; a route that doesn't finish is left out.</summary>
         void BuildGuide(Action<string> log)
         {
             if (_o.Guides.Count == 0 && _o.Trails.Count == 0) return;
@@ -263,20 +198,14 @@ namespace IGTAP.EngineSim
             if (failure != null) throw new InvalidOperationException("guide route replay failed", failure);
         }
 
-        /// <summary>Route indexes (into <see cref="_guideRoutes"/>) that are trails: followed from near points, never exactly.</summary>
         readonly HashSet<int> _trailRoutes = new HashSet<int>();
 
-        /// <summary>Finds the planner's goals along a trail (Full-TAS goals only) and files its points of the planned stages with the
-        /// physics ticks the trail took from there to the last goal (+ the strict finish), timed as if it had started with the
-        /// planner's start: <see cref="Trail"/>.</summary>
         void FileTrail(Simulation sim, Trail trail, Action<string> log)
         {
             FullTasTracker goals = sim.Goals;
             if (goals == null) { log?.Invoke($"trail {trail.Name}: not a Full-TAS plan, left out"); return; }
-            // A window's start can come a few ticks before its first goal is logged (touched in a dash's no-input ticks).
             int first = Math.Max(sim.Progress, _o.FromGoal), limit = Math.Min(goals.Limit, goals.Goals.Length);
             long start = sim.Engine.PhysicsTicks;
-            // reached[g]: the trail's physics tick when goal g (0-based) was reached.
             var reached = Enumerable.Repeat(-1L, goals.Goals.Length).ToArray();
             var stageAt = new int[trail.At.Length];
             int stage = 0;
@@ -287,7 +216,6 @@ namespace IGTAP.EngineSim
                 while (stage < limit)
                 {
                     FullTasGoal g = goals.Goals[stage];
-                    // The player's hitbox (about 41 x 72) touching the goal's rect (centred on x, y).
                     if (g.kind == FullTasGoal.At && !(Math.Abs(c.x - g.x) <= g.w / 2f + 21f && Math.Abs(c.y - g.y) <= g.h / 2f + 36f)) break;
                     reached[stage++] = p;
                 }
@@ -316,10 +244,6 @@ namespace IGTAP.EngineSim
                 + $"its goals at physics ticks {string.Join(" ", reached.Take(limit))}, origin {sim.ToCapture(new WorldPos(0f, 0f)).x:0.#},{sim.ToCapture(new WorldPos(0f, 0f)).y:0.#}");
         }
 
-        /// <summary>The estimated physics ticks to the finish from here with this velocity (Velocity + momentum): the best guide
-        /// point of the stage within <see cref="Options.GuideRadius"/> (else three times it) the node isn't too early for
-        /// (<see cref="Options.GuideAhead"/>), its ticks to go plus the distance at <see cref="Options.GuideSpeed"/> and the
-        /// velocity change at <see cref="Options.GuideAccel"/>; 0 without guide routes, infinite away from them.</summary>
         float GuideCost(int stage, Vector2 at, Vector2 v, long physics)
         {
             if (_guide.Count == 0) return 0f;
@@ -344,8 +268,6 @@ namespace IGTAP.EngineSim
             return float.PositiveInfinity;
         }
 
-        /// <summary>How far velocity <paramref name="v"/> is from a guide point's <paramref name="pv"/>, not counting speed beyond
-        /// the point's own along its direction (a node faster than the guide the same way isn't behind it).</summary>
         static float Behind(Vector2 pv, Vector2 v)
         {
             Vector2 dv = pv - v;
@@ -356,8 +278,6 @@ namespace IGTAP.EngineSim
             return Math.Max(0f, along) + (dv - along * u).magnitude;
         }
 
-        /// <summary>Per guide route, its point nearest this place and velocity within <see cref="Options.FollowRadius"/> and
-        /// <see cref="Options.FollowSpeed"/> (same stage): the input tick to follow it from.</summary>
         List<(int route, int tick)> Follows(int stage, Vector2 at, Vector2 v, long physics)
         {
             var found = new List<(int route, int tick, float score)>();
@@ -384,14 +304,11 @@ namespace IGTAP.EngineSim
         sealed class Layer
         {
             public readonly Dictionary<long, Node> ByKey = new Dictionary<long, Node>();
-            /// <summary>Nodes exactly on a guide route (its inputs from the start): kept past the width and the labels, so the
-            /// planner has every guide's own states to branch from and never ends slower than its best guide.</summary>
             public readonly List<Node> Guided = new List<Node>();
 
             public void AddGuided(Node n) { lock (this) Guided.Add(n); }
             Node _worst;
 
-            /// <summary>Adds the node unless the layer is full of better ones (a same-key node keeps the better of the two).</summary>
             public bool Admits(Node n, int cap)
             {
                 lock (this) return ByKey.TryGetValue(n.Key, out Node old) ? Better(n, old) : ByKey.Count < cap || _worst == null || Better(n, _worst);
@@ -424,7 +341,6 @@ namespace IGTAP.EngineSim
 
         readonly Dictionary<long, Layer> _layers = new Dictionary<long, Layer>();
         readonly object _layersGate = new object();
-        // Written only between layers (single-threaded), read by the workers during one.
         Dictionary<long, List<(long g, float speed)>> _labels = new Dictionary<long, List<(long, float)>>();
         int _width;
 
@@ -466,8 +382,6 @@ namespace IGTAP.EngineSim
 
         readonly List<Route> _finishes = new List<Route>();
 
-        /// <summary>A finish is kept when it is the fastest so far, or (<see cref="Options.MomentumSlack"/> physics ticks behind the
-        /// fastest at most) no finish as early carries as much speed: the window's next goal is scored by arrival and momentum.</summary>
         void Offer(List<InputTick> inputs, float time, long runTicks, string how, float speed)
         {
             Route route;
@@ -488,15 +402,12 @@ namespace IGTAP.EngineSim
             while (v > (old = Volatile.Read(ref _vmax)) && Interlocked.CompareExchange(ref _vmax, v, old) != old) { }
         }
 
-        // ---- the passes ----
-
         Worker[] _workers;
         Barrier _barrier;
         Node[] _work;
         int[] _claims;
         volatile bool _quit;
 
-        /// <summary>Plans until <see cref="Options.Seconds"/> or <see cref="Options.MaxWidth"/> is done; the best route found (null: none).</summary>
         public Route Run(Action<string> log)
         {
             _clock.Start();
@@ -543,7 +454,6 @@ namespace IGTAP.EngineSim
         {
             lock (_layersGate) _layers.Clear();
             _labels = new Dictionary<long, List<(long, float)>>();
-            // The root: every worker has the start (its own world's).
             _work = new[] { (Node)null };
             _claims = new int[1];
             _rootPending = true;
@@ -598,8 +508,6 @@ namespace IGTAP.EngineSim
             _barrier.SignalAndWait();
         }
 
-        // ---- workers ----
-
         sealed class Worker
         {
             readonly Planner _p;
@@ -648,7 +556,6 @@ namespace IGTAP.EngineSim
                     if (_index == 0 && Interlocked.Exchange(ref _p._claims[0], 1) == 0) Root();
                     return;
                 }
-                // Own nodes first (their snapshots are this world's), then any left: replayed from the start.
                 for (int pass = 0; pass < 2; pass++)
                     for (int i = 0; i < work.Length; i++)
                     {
@@ -669,9 +576,6 @@ namespace IGTAP.EngineSim
                 Expand(root);
             }
 
-            // ---- expansion ----
-
-            // The expanded node's inputs, then an edge's after them (Edge cuts it back to the node's _prefix ticks): no run keeps it.
             readonly List<InputTick> _inputs = new List<InputTick>();
             int _prefix;
             Node _node;
@@ -696,13 +600,10 @@ namespace IGTAP.EngineSim
                     Edge(state, ticks, how);
                     if (coast && _hit is Contact kind) predicted.Add((ticks[0], _hitTick, kind));
                 }
-                // The node's own contact: its window's later ticks (a coyote jump off a ledge, a wall clip once clip-ready).
                 if (n.Kind is Contact own && Primitives.TryGetValue(own, out var mine))
                     foreach (int o in Offsets(1, mine.hi))
                         foreach (var (ticks, how) in Grafts(n, own, mine, n.Last, o))
                             Edge(state, Concat(Coast(n.Last, o), ticks), how);
-                // The contacts the coasts run into: their windows' earlier ticks (a buffered jump or dash before a landing,
-                // a wall, a death).
                 foreach (var (coast, tick, kind) in predicted)
                 {
                     if (!Primitives.TryGetValue(kind, out var at)) continue;
@@ -716,8 +617,6 @@ namespace IGTAP.EngineSim
                     Mined(n, state, coast, tick, kind);
                 }
                 if (n.Kind is Contact k) Mined(n, state, n.Last, n.Tick, k);
-                // The guide routes' own inputs: exactly on from a node on one (its next ticks, the node after it on it too), and
-                // from the point of each route nearest this state.
                 for (int route = 0; route < _p._guideRoutes.Count; route++)
                     if ((n.GuideRoute == -2 || n.GuideRoute == route) && !_p._trailRoutes.Contains(route)) Follow(state, route, n.GuideRoute == -2 ? 0 : n.GuideAt, true);
                 foreach (var (route, at) in _p.Follows(n.Progress, n.At, n.V, n.Physics))
@@ -725,11 +624,8 @@ namespace IGTAP.EngineSim
                 _node = null;
             }
 
-            // The guide edge being run: its route and the offset from the planner's input ticks to the route's (-1: not exact).
             int _edgeGuide = -1, _edgeGuideOffset;
 
-            /// <summary>A guide route's next <see cref="Options.FollowTicks"/> inputs from its input tick <paramref name="at"/>, then
-            /// its own ticks on to the next node (not a coast), as they are when <paramref name="exact"/>.</summary>
             void Follow(SimSnapshot state, int route, int at, bool exact)
             {
                 List<InputTick> g = _p._guideRoutes[route];
@@ -744,7 +640,6 @@ namespace IGTAP.EngineSim
 
             static IEnumerable<int> Offsets(int lo, int hi)
             {
-                // A wide window (a wall clip's 0..24) is sampled, a narrow one taken whole.
                 if (hi - lo <= 8) { for (int o = lo; o <= hi; o++) yield return o; yield break; }
                 foreach (int o in new[] { 0, 1, 2, 4, 8, 12, 16, 24 }) if (o >= lo && o <= hi) yield return o;
             }
@@ -765,7 +660,6 @@ namespace IGTAP.EngineSim
                 }
             }
 
-            /// <summary>A window's first tick after <paramref name="before"/>: its button edges made real (TechGrafts.Compose).</summary>
             static InputTick Edge0(InputTick before, InputTick first)
             {
                 bool down = before.held;
@@ -800,9 +694,6 @@ namespace IGTAP.EngineSim
             static readonly int[] DashJumps = { 3, 5, 7, 9 }, OmniJumps = { 4, 8 }, MidAirJumps = { 3, 7 };
             static readonly (float x, float y)[] Aims = { (1f, 0f), (-1f, 0f), (0f, 1f), (0f, -1f), (1f, 1f), (-1f, 1f), (1f, -1f), (-1f, -1f) };
 
-            /// <summary>The decisions at the node's own tick: every stick (x -1/0/1, y 0 or down in the air, up on a wall), the
-            /// jump pressed, kept or released, and a dash with its jump frame (the omnidash: its eight aims and the freeze's steep
-            /// aim). Coasts are flagged: their first contact is where the buffered windows go.</summary>
             IEnumerable<(InputTick[] ticks, string how, bool coast)> Decisions(Node n)
             {
                 bool down = n.Last.held && !n.Last.release;
@@ -816,7 +707,6 @@ namespace IGTAP.EngineSim
                         {
                             yield return (new[] { Stick(x, y, true) }, "hold", true);
                             yield return (new[] { Stick(x, y, false, release: true) }, "release", true);
-                            // Released and pressed again on the next tick.
                             yield return (new[] { Stick(x, y, false, release: true), Stick(x, y, true, press: true) }, "jump", false);
                         }
                         else
@@ -851,8 +741,6 @@ namespace IGTAP.EngineSim
                 if (!_p._caps.Dash || !(n.Ground || n.Wall || n.Dashes)) yield break;
                 if (!n.Omni)
                 {
-                    // A dash each way; with a jump on one of its frames the lock's stick (MacroStep.lockMoveX) aims the super
-                    // jump: the dash's way or back (a reversed super).
                     foreach (float d in new[] { -1f, 1f })
                         foreach (float y in ys)
                         {
@@ -885,9 +773,6 @@ namespace IGTAP.EngineSim
                             t[0].turnY = up;
                             yield return (t, "steep", false);
                         }
-                // The down-dash landing chain (the old VMAN route's goals 15-17): a dash straight down with a jump frame, the jump
-                // out of the landing held a few ticks, some air, again; the momentum grows at each landing, which a node per
-                // bounce ranks too late to keep.
                 if (_p._o.Chains)
                     foreach (float side in new[] { -1f, 1f })
                         foreach (int links in ChainLinks)
@@ -898,8 +783,6 @@ namespace IGTAP.EngineSim
 
             static readonly int[] ChainLinks = { 2, 4 }, ChainGaps = { 3, 7 }, ChainJumps = { 3, 6 };
 
-            /// <summary><paramref name="links"/> dashes straight down (jump frame <paramref name="jump"/>, the stick sideways after),
-            /// the jump held 3 ticks and released, then <paramref name="gap"/> ticks of air, the stick <paramref name="side"/>.</summary>
             static InputTick[] BounceChain(float side, int links, int gap, int jump, bool down)
             {
                 var t = new List<InputTick>();
@@ -923,8 +806,6 @@ namespace IGTAP.EngineSim
                 return t;
             }
 
-            /// <summary>OfflineSolver.OmniDash's shape: the dash aimed (x, y) with its jump frame, then the stick sideways for the lock,
-            /// the jump held a few ticks after a dash jump; a dash jump's lock stick sideways too (the super's way).</summary>
             static InputTick[] OmniDash(float x, float y, int jump, float side, bool down)
             {
                 bool held = jump > 0;
@@ -938,9 +819,6 @@ namespace IGTAP.EngineSim
                 };
             }
 
-            /// <summary>The primitive inputs for this contact at offset <paramref name="o"/> from it, on the coast's stick: the jump
-            /// (a buffered, coyote or wall jump), the dash and dash jump, the primed jump into a dash, the superbounce, the
-            /// backwards dash-jump, the wall clip, the turn away and rest that set one up, the gate tap, the omnidash kinds.</summary>
             IEnumerable<(InputTick[] ticks, string how)> Grafts(Node n, Contact contact, (int lo, int hi, string[] plain, string[] omni) window, InputTick coast, int o)
             {
                 bool down = coast.held && !coast.release;
@@ -1028,9 +906,7 @@ namespace IGTAP.EngineSim
                         }
                         case "gatetap":
                         {
-                            // The timer starts on the second tick in a row the hitbox overlaps the gate (startGate's Stay): a
-                            // one-tick tap from a stand behind it starts none, so the tap holds full tilt for 2 or 4 ticks (the
-                            // gate 0.5-16 u away, standing or jumping: 34 of 48 start it, the old one-tick 0.5 tap none).
+                            // Timer starts on the second consecutive tick the hitbox overlaps the gate, so the tap holds 2 or 4 ticks.
                             float gate = contact == Contact.NearGateLeft ? -1f : 1f;
                             foreach (int delay in new[] { 0, 8 })
                                 foreach (int tap in new[] { 2, 4 })
@@ -1083,8 +959,6 @@ namespace IGTAP.EngineSim
                 }
             }
 
-            // ---- one edge ----
-
             void Edge(SimSnapshot state, InputTick[] ticks, string how, List<InputTick> tail = null, bool raw = false)
             {
                 if (ticks.Length == 0) return;
@@ -1093,7 +967,6 @@ namespace IGTAP.EngineSim
                 inputs.RemoveRange(_prefix, inputs.Count - _prefix);
                 if (!raw) ticks[0] = Edge0(n.Last, ticks[0]);
                 inputs.AddRange(ticks);
-                // After the edge's own ticks: a guide's next ticks, else its last stick and button held.
                 if (tail != null) inputs.AddRange(tail);
                 InputTick coast = inputs[inputs.Count - 1].Coast();
                 for (int i = tail?.Count ?? 0; i < _p._o.Cap + 2; i++) inputs.Add(coast);
@@ -1148,7 +1021,6 @@ namespace IGTAP.EngineSim
                 _log.Tick(tick, _player, _gate.NearGate());
                 _seen = _log.Contacts.Count;
                 if (tick < _commit) return true;
-                // The first contact since the last input tick (a corner hyper's slide is filed on its dash's tick, in between).
                 Contact? hit = before < _seen ? _log.Contacts[before].kind : null;
                 if (hit == null && tick < _capAt) return true;
                 _hit = hit;
@@ -1188,7 +1060,6 @@ namespace IGTAP.EngineSim
 
             int _seen;
 
-            /// <summary>The node's key, rank and the flags its decisions read, from the player now.</summary>
             void Describe(Node n, int waypoints)
             {
                 Movement m = _player;
@@ -1199,8 +1070,6 @@ namespace IGTAP.EngineSim
                 else if (_sim.TimedFromRunStart) { n.Progress = waypoints; n.Distance = _field.Distance(at, waypoints); }
                 else
                 {
-                    // A course: its start gate first (an end gate reached with the timer off finishes nothing), then its
-                    // forced-path boxes and end gate.
                     n.Progress = 2 * waypoints + (timing ? 1 : 0);
                     n.Distance = timing ? _field.Distance(at, waypoints) : _field.StartGateDistance(at);
                 }
@@ -1233,7 +1102,6 @@ namespace IGTAP.EngineSim
                 n.Key = (long)h;
             }
 
-            // Snapshots of nodes this worker expanded or replayed through (this world's): a replay starts from the nearest one.
             readonly Dictionary<Node, SimSnapshot> _cache = new Dictionary<Node, SimSnapshot>(ReferenceEqualityComparer.Instance);
             readonly Queue<Node> _cached = new Queue<Node>();
             const int CacheSize = 1024;
@@ -1248,8 +1116,6 @@ namespace IGTAP.EngineSim
                 while (_cache.Count > CacheSize) _cache.Remove(_cached.Dequeue());
             }
 
-            /// <summary>Another worker's node: its inputs replayed to its tick from the nearest ancestor this world has a
-            /// snapshot of (or the start), keeping the ancestors passed on the way.</summary>
             SimSnapshot Replay(Node n)
             {
                 var path = new List<Node> { n };

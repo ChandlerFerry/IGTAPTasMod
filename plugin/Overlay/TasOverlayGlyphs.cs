@@ -3,11 +3,6 @@ using UnityEngine;
 
 namespace IGTAPTasMod
 {
-    // Overlay text from a glyph atlas. IMGUI (Unity 6's TextCore) generates every new string it draws, ~2 KB of garbage and
-    // ~15 µs each (GET /api/perf), and the overlay draws new numbers every tick and every frame. Each font's glyphs are drawn
-    // once by IMGUI into a texture; a label is then one GL quad batch, with no text generation. What the atlas can't draw (a
-    // glyph outside it, rich text, wrapping, an upper or lower alignment, a clipped label too wide, a rotated one) goes to
-    // GUI.Label.
     public sealed partial class TasPlugin
     {
         const string GlyphExtras = "·→←↑↓—×–✗✓−▲▼●…°↗↘↙↖≈≤";
@@ -19,7 +14,6 @@ namespace IGTAPTasMod
             public Texture2D texture;
             public float lineHeight;
             public float[] advance;
-            // Each glyph's cell in the atlas (pixels, top-left origin) and its texture coordinates.
             public Rect[] cell, uv;
         }
 
@@ -60,10 +54,6 @@ namespace IGTAPTasMod
             return GlyphAtlases[key] = BuildGlyphAtlas(style);
         }
 
-        /// <summary>
-        /// Draws each glyph once with IMGUI, white on black, into a screen-sized render texture (where IMGUI draws 1:1, as
-        /// the panel cache does) and keeps the red channel, the glyph's coverage, as the atlas's alpha. Null if it doesn't fit.
-        /// </summary>
         static GlyphAtlas BuildGlyphAtlas(GUIStyle style)
         {
             var draw = new GUIStyle(style) { alignment = TextAnchor.UpperLeft, padding = new RectOffset(), clipping = TextClipping.Overflow, wordWrap = false, richText = false, contentOffset = Vector2.zero };
@@ -77,7 +67,6 @@ namespace IGTAPTasMod
             int cellHeight = Mathf.CeilToInt(atlas.lineHeight) + 2, x = 0, y = 0, width = 0;
             for (int i = 0; i < GlyphCount; i++)
             {
-                // The advance between neighbours, without the style's padding or a space's trim.
                 GlyphMeasure.text = "x" + GlyphStrings[i] + "x";
                 atlas.advance[i] = draw.CalcSize(GlyphMeasure).x - pair;
                 GlyphMeasure.text = GlyphStrings[i];
@@ -122,7 +111,6 @@ namespace IGTAPTasMod
             return atlas;
         }
 
-        /// <summary>The text's width from the atlas, or -1 if the atlas can't draw it.</summary>
         static float GlyphWidth(string text, GUIStyle style)
         {
             if (string.IsNullOrEmpty(text) || style.wordWrap || style.richText && text.IndexOf('<') >= 0) return -1f;
@@ -138,10 +126,9 @@ namespace IGTAPTasMod
             return width + style.padding.horizontal;
         }
 
-        /// <summary>Draws a label as IMGUI would from the atlas; false if it can't, and nothing is drawn.</summary>
         static bool GlyphLabel(Rect r, string text, GUIStyle style, Color color)
         {
-            // GL ignores GUI.matrix: a rotated label (the hitbox badge, a tech's name) goes to GUI.Label.
+            // GL ignores GUI.matrix: a rotated label (hitbox badge, a tech's name) goes to GUI.Label.
             if (!GUI.matrix.isIdentity) return false;
             TextAnchor align = style.alignment;
             if (align != TextAnchor.MiddleLeft && align != TextAnchor.MiddleCenter && align != TextAnchor.MiddleRight) return false;
@@ -160,7 +147,7 @@ namespace IGTAPTasMod
             GL.PushMatrix();
             GL.LoadPixelMatrix(0f, Screen.width, Screen.height, 0f);
             GL.Begin(GL.QUADS);
-            // IMGUI's colours are gamma; GL.Color is taken as is, so in a linear project it is converted as IMGUI converts.
+            // IMGUI colours are gamma; GL.Color is taken as is, so convert as IMGUI does in a linear project.
             Color tint = GUI.color * color * style.normal.textColor;
             GL.Color(QualitySettings.activeColorSpace == ColorSpace.Linear ? tint.linear : tint);
             for (int k = 0; k < text.Length; k++)

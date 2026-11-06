@@ -14,28 +14,10 @@ using Object = UnityEngine.Object;
 
 namespace IGTAP.EngineSim
 {
-    /// <summary>
-    /// Serializes a <see cref="SimSnapshot"/> and restores it into another simulation of the same trace and world export:
-    /// a Full-TAS solve's goal-boundary states persist under the run's archive dir (docs/fulltas.md "Offline search"), so a
-    /// new solve or window starts from the stored state instead of replaying the run's inputs up to it. Every load of a
-    /// world export creates its objects in the same order, so references travel as the export's instance ids (world
-    /// objects), collider ids and fixture indexes (physics), and every other value field by field, as
-    /// <see cref="FieldState.Capture"/> sees it: a restored state continues exactly as the replayed one. Anything this
-    /// can't write throws <see cref="NotSupportedException"/> and the caller keeps replaying instead. A snapshot to save
-    /// must be its simulation's current state (the fixture indexes are read from the live world).
-    /// </summary>
     public sealed class SnapshotStore
     {
-        // 2: each type in the table carries its field layout (Layout), so a snapshot of a build whose types changed is dropped,
-        // not misread (a field that became a tuple array read as a bool crashed the solve after a redeploy).
-        // 3: the engine state leaves out MacroEngine._steps (FieldState.For), so its values sit one slot earlier after it.
-        // 4: Feed hashes turnY (a steep dash turn), so prefixes differing only in it no longer share a stored state.
-        // 5: the transforms a script moved (SimSnapshot.Transforms).
-        // 7: dynamic and kinematic bodies off at the export are built (disabled), so the physics world has more bodies than an
-        // older state's (b2World.LoadState refuses a body count that differs).
         public const int Format = 10;
 
-        /// <summary>A stable hash of the fields a snapshot writes for type (names and declared types, in order).</summary>
         static int Layout(Type type)
         {
             uint h = 2166136261;
@@ -55,7 +37,6 @@ namespace IGTAP.EngineSim
             _physics = sim.Physics;
         }
 
-        /// <summary>Hashes the inputs a persisted state was reached with: <see cref="Feed"/> chains across a prefix's parts.</summary>
         public const ulong HashSeed = 14695981039346656037UL;
 
         public static ulong Feed(ulong hash, InputTick t)
@@ -110,8 +91,7 @@ namespace IGTAP.EngineSim
                 f.SetValue(s, i.Value(f.FieldType));
                 switch (f.Name)
                 {
-                    // The pre-apply mirrors what Simulation.Restore does (it runs it again, unchanged): the physics
-                    // restore's rebuilds below read the rebase state, the player's collider geometry and the toggles.
+                    // The pre-apply mirrors Simulation.Restore: physics rebuilds read rebase state, player collider geometry and toggles.
                     case "Rebases": _sim.PutRebases(s.Rebases); break;
                     case "Colliders": _sim.RestorePose(s); break;
                     case "Layers": _sim.TrackToggles(s); _sim.RestoreToggles(s); break;
@@ -122,7 +102,7 @@ namespace IGTAP.EngineSim
             return s;
         }
 
-        /// <summary>Written and read in this order: the fields <see cref="Load"/> pre-applies come before <c>Physics</c>.</summary>
+        // Fields are written and read in this order; the ones Load pre-applies must come before Physics.
         static readonly string[] RootOrder =
         {
             "Tick", "Rebases", "RebasePending", "RebaseDue", "Position", "LocalScale", "Rotation", "Colliders",
@@ -190,7 +170,6 @@ namespace IGTAP.EngineSim
                 Type type = value.GetType();
                 if (type.IsPrimitive || type == typeof(string) || type.IsEnum || type == typeof(decimal))
                 {
-                    // Scalars don't gain from identity tracking except strings (MacroStep labels repeat).
                     if (type == typeof(string))
                     {
                         if (Back(value)) return;
@@ -199,7 +178,6 @@ namespace IGTAP.EngineSim
                     }
                     if (type != declared && !type.IsEnum)
                     {
-                        // A boxed scalar in an object-typed slot keeps its exact type (Tag.Enum carries its own).
                         _w.Write((byte)Tag.TypedScalar);
                         _w.Write(TypeId(type));
                     }
@@ -223,7 +201,6 @@ namespace IGTAP.EngineSim
                 }
                 if (type == typeof(b2Contact))
                 {
-                    // Created again by b2World.LoadState from the contact's fixtures; nothing else reads it.
                     _w.Write((byte)Tag.Handle);
                     _w.Write((byte)HandleKind.Contact);
                     return;
@@ -298,7 +275,6 @@ namespace IGTAP.EngineSim
 
             void ArrayValue(Array array, Type type)
             {
-                // No snapshotted type (game, shim, Box2D, engine) has a multi-dimensional array field.
                 if (array.Rank != 1) throw new NotSupportedException("a " + type.Name + " value can't be stored in a snapshot");
                 Type element = type.GetElementType();
                 _w.Write((byte)Tag.Array);
@@ -332,8 +308,7 @@ namespace IGTAP.EngineSim
             {
                 if (_fixtureIds.TryGetValue(fixture, out int id)) return id;
                 (int owner, int index) = _owner._physics.LocateFixture(fixture);
-                // A fixture a rebuild took out lives on only in the broadphase tree's shared base nodes, which every
-                // snapshot's own delta overwrites before the tree is read: such a reference restores as null.
+                // A fixture a rebuild removed lives only in the broadphase tree's shared base nodes (delta overwrites): restore as null.
                 bool free = index >= 0 && (_changed.Contains(owner) || _owner._physics.IsPlayerCollider(owner));
                 _fixtures.Add((owner, index, free, index >= 0 ? PhysicsWorld.FingerprintOf(fixture) : 0));
                 return _fixtureIds[fixture] = _fixtures.Count - 1;
@@ -381,13 +356,11 @@ namespace IGTAP.EngineSim
                 throw new NotSupportedException("a snapshot's type is gone (" + name + "); dropping it");
             }
 
-            /// <summary>Every fixture the snapshot references, as this world's object with that shape.</summary>
             void Bind()
             {
                 if (_bound != null) return;
                 _bound = new b2Fixture[_fixtures.Length];
-                // Rebuilds first (a collider's rebuild replaces its composite's fixtures too), binds second. A fixture can
-                // be either generation its collider holds: the loaded one, or the rebuilt one a snapshot lists it for.
+                // Rebuild first (a collider rebuild replaces its composite's fixtures too), bind second.
                 for (int i = 0; i < _fixtures.Length; i++)
                 {
                     var (owner, index, free, fingerprint) = _fixtures[i];
@@ -464,7 +437,6 @@ namespace IGTAP.EngineSim
                 }
             }
 
-            /// <summary>Back to the slot's own type (a uint field's raw bits, a Nullable field's boxed value).</summary>
             static object Coerce(object value, Type declared)
             {
                 if (declared == null || declared == typeof(object) || value == null || declared.IsInstanceOfType(value)) return value;
@@ -521,7 +493,7 @@ namespace IGTAP.EngineSim
                         Type type = _types[_r.ReadInt32()];
                         Type item = type.GetGenericArguments()[0];
                         int count = _r.ReadInt32();
-                        // The container goes in the identity list where the writer put it: before its items.
+                        // The container enters the identity list before its items, as the writer did.
                         object container = Activator.CreateInstance(type);
                         _objects.Add(container);
                         var items = new object[count];
@@ -533,7 +505,7 @@ namespace IGTAP.EngineSim
                         }
                         else if (tag == Tag.Stack)
                         {
-                            // A stack enumerates top first; pushing the saved order back in reverse, as FieldState.Copy does.
+                            // A stack enumerates top first; push the saved order back reversed, as FieldState.Copy does.
                             MethodInfo push = type.GetMethod("Push");
                             for (int i = count - 1; i >= 0; i--) push.Invoke(container, new[] { items[i] });
                         }
@@ -577,7 +549,6 @@ namespace IGTAP.EngineSim
                         break;
                     default: throw new NotSupportedException("a snapshot byte stream of another engine build; dropping it");
                 }
-                // In the identity list where the writer put the handle's object.
                 _objects.Add(value);
                 return value;
             }
@@ -592,10 +563,9 @@ namespace IGTAP.EngineSim
         int WorldId(Object o) => !o.m_Destroyed && _world.Objects.ContainsKey(o.GetInstanceID()) ? o.GetInstanceID()
             : throw new NotSupportedException("a snapshot holds a world object the export doesn't; not saved");
 
-        // Solver workers load snapshots on their own threads.
         static readonly ConcurrentDictionary<FieldInfo, Action<object, object>> Setters = new ConcurrentDictionary<FieldInfo, Action<object, object>>();
 
-        /// <summary>A field setter that also works on initonly fields (WaitForSeconds.m_Seconds, Pair.A) and boxed structs.</summary>
+        // Setter must also work on initonly fields (WaitForSeconds.m_Seconds, Pair.A) and boxed structs.
         static Action<object, object> Setter(FieldInfo f) => Setters.GetOrAdd(f, field =>
         {
             var dm = new DynamicMethod("snapset_" + field.Name, typeof(void), new[] { typeof(object), typeof(object) }, field.DeclaringType.Module, true);
@@ -624,10 +594,6 @@ namespace IGTAP.EngineSim
         }
         readonly Dictionary<SnapshotIndex.Entry, SimSnapshot> _decoded = new Dictionary<SnapshotIndex.Entry, SimSnapshot>();
 
-        /// <summary>
-        /// The stored state decoded for this world, made to sit at <paramref name="tick"/> of the list it resumes (the run's
-        /// own state there has that many input ticks counted, as MacroEngine.RebaseInputs leaves a run's start's).
-        /// </summary>
         public SimSnapshot StateOf(SnapshotIndex.Entry entry, int tick)
         {
             if (!_decoded.TryGetValue(entry, out SimSnapshot s)) _decoded[entry] = s = Load(entry.Data);
@@ -640,12 +606,6 @@ namespace IGTAP.EngineSim
         #endregion
     }
 
-    /// <summary>
-    /// Goal-boundary states of a run, persisted beside its archive and keyed by the hash of the inputs up to them: a
-    /// Full-TAS solve's windows start from one instead of replaying the run up to there, and an archive cell whose own
-    /// prefix passes one replays from it (docs/fulltas.md "Offline search"). A route edit hashes differently, so a stale
-    /// state is never picked up.
-    /// </summary>
     public sealed class SnapshotIndex
     {
         public sealed class Entry
@@ -656,12 +616,9 @@ namespace IGTAP.EngineSim
         }
 
         readonly Dictionary<ulong, Entry> _byHash = new Dictionary<ulong, Entry>();
-        // By tick, replaced whole on each add (a Find walks the array it read).
         Entry[] _byTick = Array.Empty<Entry>();
-        /// <summary>Workers look states up while a worker's first prefix replay files them.</summary>
         readonly object _gate = new object();
 
-        /// <summary>How many of the run's inputs come before the window these are used in, and their hash's chain.</summary>
         public int Base;
         public ulong BaseHash = SnapshotStore.HashSeed;
 
@@ -673,7 +630,6 @@ namespace IGTAP.EngineSim
             {
                 if (_byHash.TryGetValue(entry.Hash, out Entry old)) { old.Data = entry.Data; old.Goal = entry.Goal; return; }
                 _byHash[entry.Hash] = entry;
-                // After the entries of its tick: Find takes at most one per tick (their hashes differ).
                 int at = 0;
                 while (at < _byTick.Length && _byTick[at].Tick <= entry.Tick) at++;
                 var byTick = new Entry[_byTick.Length + 1];
@@ -686,7 +642,6 @@ namespace IGTAP.EngineSim
 
         public bool TryGet(ulong hash, out Entry entry) { lock (_gate) return _byHash.TryGetValue(hash, out entry); }
 
-        /// <summary>Hash of the run's inputs[0..count].</summary>
         public static ulong Hash(List<InputTick> inputs, int count, ulong from = SnapshotStore.HashSeed)
         {
             ulong hash = from;
@@ -694,10 +649,6 @@ namespace IGTAP.EngineSim
             return hash;
         }
 
-        /// <summary>
-        /// The latest stored state the source's own prefix reaches at or before <paramref name="through"/> and later than
-        /// <paramref name="after"/>, its inputs' hash up to it matching this window's chain. Null: none of them.
-        /// </summary>
         public Entry Find(List<InputTick> source, int through, int after)
         {
             Entry[] byTick;
