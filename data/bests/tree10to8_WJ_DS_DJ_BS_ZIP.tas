@@ -1,0 +1,40 @@
+# IGTAP TAS: tree10to8_WJ_DS_DJ_BS_ZIP 4.04
+# <input ticks>,<inputs>: R L (R0.55: part tilt) U D stick, J jump held (presses where it starts), H held
+# without that press, P press, C release, X dash (X+3 jump on its 3rd frame, X(0.35:1) freeze stick),
+# S3 dash on a spring's 3rd tick, K(x:y) stick through a lock, Z12@0.3 pause, Q quick restart. @ marks a tick.
+   1,R
+   1,R,X+10
+   2,R,H
+   1,R,J,P
+   3,R,C
+   1,R,J
+  20,R,D,C
+   5,R,D,X
+   1,R,D,X+2
+  45,R,D,H
+   4,R,D
+   3,R,D,X
+   5,R,D,J
+  13,R,D,J,X+6
+   3,R,J
+   5,R,D,C
+   3,R,H
+  10,R,D,J
+   2,R,J
+   1,R,D,J
+   3,R,D,J,X+10(1:)
+   1,R,J,S12
+   1,R,J,S15
+   1,R,J,S12
+   1,R0.8,J,X,S13,K(0:)
+   1,R,J,S3
+   2,R0.8,J
+   1,R0.8,J,K(0:0)
+   1,R0.8,C,S23
+   1,R
+   1,R,S8
+   2,R,D
+   4,R
+   1,R,X+10
+   1,R,H
+   1,R,J,X

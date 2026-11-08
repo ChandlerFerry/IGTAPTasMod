@@ -1,0 +1,35 @@
+# IGTAP TAS: bonus2_WJ_DS 1.06
+# <input ticks>,<inputs>: R L (R0.55: part tilt) U D stick, J jump held (presses where it starts), H held
+# without that press, P press, C release, X dash (X+3 jump on its 3rd frame, X(0.35:1) freeze stick),
+# S3 dash on a spring's 3rd tick, K(x:y) stick through a lock, Z12@0.3 pause, Q quick restart. @ marks a tick.
+   1,R0.7,D,J,K(1:)
+   1,R0.7,C,X+2,K(:0)
+   1,R,S21,K(-1:1)
+   1,R,U,S7,K(:-1)
+   1,R,K(0:)
+   1,R,S25,K(-1:1)
+   1,S14,K(:0)
+   1,D,S15,K(0:1)
+   1,R0.8,D,S15,K(-1:0)
+   1,R0.8,J,S3,K(-1:)
+   1,R,J,S10,K(1:-1)
+   1,R,J,S22,K(:-1)
+   1,R,J,K(1:)
+   1,R,C,X+5,S17,K(:1)
+   1,R0.8,S25,K(-1:1)
+   1,R0.8,D,X+2
+   1,R0.8,D,J,K(0:-1)
+   1,R0.8,J,P,X+8,K(-1:0)
+   1,R,J,P,S9,K(0:1)
+   1,R,U,J,X+8,S23,K(1:1)
+   1,R,U,C,S11,K(1:0)
+   1,R,U,J,X+4,S17,K(1:0)
+   1,R,D,J,X,S18,K(0:1)
+   1,R0.8,D,J,P,X+8,K(1:-1)
+   1,R,U,J,S21,K(1:1)
+   1,R,U,J,X,S14,K(:0)
+   1,R,D,J,X+8
+   1,R,D,J,P,X,S11,K(0:)
+   1,R,J,X+2,S10,K(-1:1)
+   3,R,J,P
+   7,R,C

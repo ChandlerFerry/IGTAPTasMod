@@ -1,0 +1,54 @@
+# IGTAP TAS: 2_WJ human-nmg 21.84
+# <input ticks>,<inputs>: R L (R0.55: part tilt) U D stick, J jump held (presses where it starts), H held
+# without that press, P press, C release, X dash (X+3 jump on its 3rd frame, X(0.35:1) freeze stick),
+# S3 dash on a spring's 3rd tick, K(x:y) stick through a lock, Z12@0.3 pause, Q quick restart. @ marks a tick.
+   1,R
+   2,R,D
+   1,R
+   4,R,D
+   4,R
+   3,R,U
+   1,R,D
+   3,R
+   1,L
+   2,R
+   3,R,J
+   7,R,D
+   2
+  18,R,D,Q
+   3,R
+  10,R,D,J
+   8,R,J
+   4,L,J
+  15,L,J,P
+   1,L,U,J
+   5,L,U,C
+   6,L,U,J
+   2,D,J
+   1,L,J
+   4,U,J
+   4,L,J
+   8,J
+   2,L,J
+   3,L,J,P
+   1,L,C
+   4,L,D
+   1,L0.8,D
+   3,L,D,J
+   1,L,J
+   4,L0.8,J
+   1,L0.8,J,P
+   3,L,D,J
+   1,L,D,C
+   4,L,D,H
+   1,R,D,J
+   4,R,D,J,P
+   3,R,D,C
+   3,D
+   1,D,J
+   7,L,J
+   1,L
+   5,L,D
+  21,L,D,J
+   2,L,D,J,P
+   3,J

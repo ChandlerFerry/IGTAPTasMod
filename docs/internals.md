@@ -7,7 +7,7 @@ plugin/        the BepInEx plugin (IGTAPTasMod.csproj), in the game
 shared/        sources compiled into both the plugin and enginesim
 enginesim/     the game's own code running offline, for search
 web/           the Next.js studio, served by the plugin
-data/          runs/ (Full-TAS run definitions), labmaps/ (lab maps and demos), techs.json (the tech catalog)
+data/          runs/ (Full-TAS run definitions), bests/ (every record as TAS text), labmaps/ (lab maps and demos), techs.json (the tech catalog)
 tools/         Python scripts against the running game and the engine
 docs/          reference docs; docs/notes/ holds dated handoffs and reports
 ```
@@ -26,6 +26,7 @@ docs/          reference docs; docs/notes/ holds dated handoffs and reports
 | `enginesim/` | The game's own code running offline for search. See [`enginesim/README.md`](../enginesim/README.md). |
 | `enginesim/Cli/Runs/` | Full-TAS v2: `fulltas <trace>` / `solve-run` (segment library, builder, improver, confirmation) and `check` (complete runs and traces against `enginesim/check/baseline.json`; the pre-commit hook). [`docs/fulltas.md`](fulltas.md#solving-v2-fulltas-trace-is-solve-run). |
 | `data/runs/` | The Full-TAS run definitions, one `<run>.json` each (goals, start, buy rule, section; [`docs/fulltas.md`](fulltas.md#run-definitions)). The plugin reads and writes them here; `fulltas-plan --install` and `--stages` update them as a route gets further ([`docs/fulltas.md`](fulltas.md#install-and-stages)). |
+| `data/bests/` | Every record (the fastest route of each category, direction, farm and Full-TAS class) as TAS text ([`docs/tas-markup.md`](tas-markup.md)), `<category>.tas`, Full-TAS runs in `bests/fulltas/`; a farm's first line gives its loop. The plugin writes one whenever its category's record changes (`ExportBests`, in `SaveLibrary`) and never deletes one: commit them and git keeps every best. To play or improve one, paste it into the studio's share import (up to 100000 input ticks), then **Judge as record** (RULES.md 43: the gate is the only way back into `routes.json`). |
 | `data/techs.json`, `data/labmaps/` | The Tech tab's built-in techs and labs, embedded in the plugin and copied beside the engine. `techs.json` seeds the config folder's `techs.json`, which the tab edits. |
 | `web/` | Next.js studio, served by the plugin. |
 | `tools/` | Capture, redeploy, `validate.py`, `audit-traces.py`, `enginesim-rays.py` (Unity vs offline raycasts), `upgrade-boxes.py` (every one-off box; adds free ones to `courses.json` as bonuses), `probe.py` (a 1x probe and its per-frame log), `economy-diff.py` (two legs' economy, field by field as value sequences; `--ticks` on the same ticks), `tech-check.py` (every tech demo, turbo against the offline engine), `tas-check.py` (the TAS editor's seek, rewind, text and share against 1x). |

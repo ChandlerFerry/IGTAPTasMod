@@ -2,7 +2,8 @@
 
 A route's inputs as text (`TasMarkup.cs`), for editing by hand, diffing and sharing: the studio's TAS tab (**Text**),
 `GET/POST /api/tas/text`, the `.tas` download, and share import (paste the text). One line per input run (`#` comments, `@ note` a marker on the next line's first input tick); lines are
-raw-input steps one to one, so text and route convert both ways without loss.
+raw-input steps one to one, so text and route convert both ways without loss (a number is written to 3 decimals, or with
+all its digits where that would change it: `R0.59999996`).
 
 ```
 # a comment

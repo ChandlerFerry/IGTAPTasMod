@@ -73,7 +73,13 @@ namespace IGTAPTasMod
             return ticks.ToString(Inv).PadLeft(4) + (parts.Count > 0 ? "," + string.Join(",", parts) : "");
         }
 
-        static string Num(float? v) { return v.HasValue ? v.Value.ToString("0.###", Inv) : ""; }
+        // Exact digits where 3 decimals lose bits (a solver's 0.59999996), so text converts back to the same floats.
+        static string Num(float? v)
+        {
+            if (!v.HasValue) return "";
+            string s = v.Value.ToString("0.###", Inv);
+            return float.Parse(s, Inv) == v.Value ? s : v.Value.ToString("R", Inv);
+        }
 
         static readonly Regex Stick = new Regex(@"^([RL])([0-9.]*)$"), Dash = new Regex(@"^X(?:\+(\d+))?(?:\(([-0-9.]*):([-0-9.]*)\))?$"),
             Lock = new Regex(@"^K\(([-0-9.]*):([-0-9.]*)\)$"), Pause = new Regex(@"^Z(\d+)(?:@(\d+)\.(\d+))?$"), Spring = new Regex(@"^S(\d+)$");

@@ -35,6 +35,7 @@ namespace IGTAPTasMod
                 bool recovered = RecoverTasJournal();
                 if (NormalizeLibraryFrameTiming(_library) | RetireLapFarms() | PruneSlowerRoutes() | recovered) SaveLibrary();
                 if (recovered) DeleteTasJournal();
+                ExportBests();
             }
             catch (Exception ex)
             {
@@ -186,6 +187,36 @@ namespace IGTAPTasMod
         {
             WriteJsonAtomic(_libraryPath, _library, true);
             if (_settings.selectedRouteId != (SelectedMacro?.id ?? "")) SaveSelection();
+            ExportBests();
+        }
+
+        // Every record as TAS text in the repo's data/bests (git keeps each best); a file is replaced only by its category's next record.
+        static string BestsDir { get { return Path.Combine(Path.GetDirectoryName(FullTasRunsDir), "bests"); } }
+        readonly Dictionary<string, string> _bestsWritten = new Dictionary<string, string>();
+
+        private void ExportBests()
+        {
+            foreach (MacroDefinition m in _library.macros)
+            {
+                if (!RankedRoute(m.name, out _, out _) && !FullTasRouteOf(m.name, out _, out _, out _)) continue;
+                string category = m.name.Substring(0, m.name.LastIndexOf(' '));
+                foreach (char invalid in Path.GetInvalidFileNameChars()) if (invalid != '/') category = category.Replace(invalid, '_');
+                if (category.Contains("..")) continue;
+                string path = Path.Combine(BestsDir, category.Replace('/', Path.DirectorySeparatorChar) + ".tas");
+                try
+                {
+                    string text = (m.loopFrom > 0 ? "# farm loop: from input tick " + m.loopFrom + ", " + Math.Max(1, m.loopLaps) + " laps\n" : "")
+                        + TasMarkup.Format(m.name, m.steps, m.markers);
+                    if (_bestsWritten.TryGetValue(path, out string written) && written == text) continue;
+                    if (!File.Exists(path) || File.ReadAllText(path) != text)
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(path));
+                        File.WriteAllText(path, text);
+                    }
+                    _bestsWritten[path] = text;
+                }
+                catch (Exception ex) { Logger.LogError("Could not write best " + path + ": " + ex.Message); }
+            }
         }
 
         private string TasJournalPath { get { return Path.Combine(Path.GetDirectoryName(_libraryPath), "tas-session.json"); } }
