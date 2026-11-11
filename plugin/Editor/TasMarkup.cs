@@ -78,7 +78,9 @@ namespace IGTAPTasMod
         {
             if (!v.HasValue) return "";
             string s = v.Value.ToString("0.###", Inv);
-            return float.Parse(s, Inv) == v.Value ? s : v.Value.ToString("R", Inv);
+            // Fewest digits that convert back: Mono's "R" writes 9 (0.599999964) where 8 do, so a record's text would differ by runtime.
+            for (int digits = 7; digits <= 9 && float.Parse(s, Inv) != v.Value; digits++) s = v.Value.ToString("G" + digits, Inv);
+            return s;
         }
 
         static readonly Regex Stick = new Regex(@"^([RL])([0-9.]*)$"), Dash = new Regex(@"^X(?:\+(\d+))?(?:\(([-0-9.]*):([-0-9.]*)\))?$"),

@@ -110,6 +110,30 @@ the saved route (its category, then the course's other categories), and the grou
 studio Optimize run holds the queue only while it starts each target, and its running target's own files until that
 `solve` ends), and moves them to `offline-best\judged\`.
 
+**The plateau walk's sub-tick rule** (`--subtick-share S`, the share of workers under it, default 0.5; 0 turns it off). The
+timer counts whole ticks, so two routes with the same time can be most of a tick apart in where they are, and a walk that
+takes every tie has nothing to climb. A worker under the rule keeps a tie only when it isn't behind the worker's route:
+for each timed tick of the tie, the physics ticks it is ahead of that route at the spot it stands on (the nearest point of
+the route's own line within 12 units and 12 input ticks; a spot only one of the two passes adds none), summed
+(`OfflineSolver.Lead`). Its route so gets earlier along its line tie after tie, until a whole tick comes off somewhere.
+The other workers walk freely, for the ties that have to fall behind first. `ties behind` in the progress line counts the
+ties the rule dropped. A Full-TAS window (goal mode) doesn't use it. `IGTAP.EngineSim lead` checks the measure.
+
+**Block shift** (`shift` among the best's mutations; `--no-shift` turns it off; not in a Full-TAS window). The inputs of a
+stretch of 2-50 ticks play a tick sooner (a tick without a press, release, dash or restart goes at its start and a coast
+tick comes at its end) or a tick later, and the route's length stays: a `cut` moves every input after it, so it holds only
+where the whole rest of the route survives the move.
+
+Both against the search before them (2026-11-11, `searchbench`, `{"base": ["--subtick-share", "0", "--no-shift"], "both":
+[]}`, 3 seeds × 1 minute × 10 threads, the three courses at once; final best, median and min-max). Three seeds, and the
+two changes not told apart: a longer run with an arm each (`["--no-shift"]`, `["--subtick-share", "0"]`) is still owed.
+
+| Course | base | both |
+|---|---|---|
+| Course 4 `WJ_DS_DJ` | 16.52, 16.12–16.82 | 15.82, 15.48–16.20 |
+| Course 1 `NONE` | 1.62, 1.42–1.64 | 1.46, 1.42–1.48 |
+| bonus1 `WJ` | 6.92, 6.90–6.92 | 6.92, 6.92–7.02 |
+
 **First finish along another category's way.** When none of the seeds finishes in the trace's category (on its forced
 path), `solve` first takes the fastest seed of another category that finishes in that category's own trace (the newest
 `*-<caps>.json` of the course beside it: an omnidash route, say) as the way: 12 stretches of waypoints along its path
@@ -444,8 +468,9 @@ it's off. The studio's course search map edits these rules too: **Draw avoid**, 
 cover; named, it becomes one such optional block (`"default": true` with "on by default"), created on the rule covering
 the map's category (a rule is drawn for the course's categories when none covers it). **Remove** under the map takes a
 box back out of the rules' standing avoids and optional blocks, dropping blocks left without boxes. Course 1 has
-`avoid-forwards` (x 2436 to 2522, y -361 to -180), `avoid-backwards` (x 2168.3 to 2347.6, y
-213.4 to 235.5) and `avoid-right` (x 2671.1 to 3503.8, y -478.2 to 557.8, on by default), in every category; Course 2 has
+`avoid-forwards` (x 2436 to 2522, y -361 to -180), `avoid-backwards` (x 2168.3 to 2522, y
+213.4 to 235.5: up to the Start marker box's right edge, so a pause-lift up through the pillar at x 2400 is cut too; the
+forwards climbs cross y 213 at x 2552 or more) and `avoid-right` (x 2671.1 to 3503.8, y -478.2 to 557.8, on by default), in every category; Course 2 has
 `avoid-backwards` (x 4726.5 to 4919.2, y 2398.2 to 2439.1), in every category; Course 3 has `avoid-backwards` (x 9446.9
 to 9694.1, y 7369.6 to 7484.0) and `avoid-forwards` (x 9620.2 to 9694.5, y 6908.6 to 7170.5), in `WJ_DS`, `WJ_DS_DJ`
 and `WJ_DS_DJ_BS_ORB_ZIP_OM`; Course 7 has `avoid-backwards` (x 19800.2 to 19978.2, y 3538.6 to 3581.9), in `WJ_DS_DJ_BS` and

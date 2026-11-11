@@ -600,6 +600,9 @@ namespace IGTAPTasMod
                     _offlineJudged.Add(first.path + "|" + next.label);
                     _offlineJudgedPaths.Add(first.path);
                     Logger.LogInfo(line);
+                    _solverLog.Add(line);
+                    _turboChecks++;
+                    if (line.Contains(", saved")) _turboSaved++;
                     return;
                 }
                 Directory.CreateDirectory(judged);

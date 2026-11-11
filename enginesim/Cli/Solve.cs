@@ -96,7 +96,7 @@ namespace IGTAP.EngineSim.Cli
                 else PlanLog($"plan: no finish ({planner.Ticks} ticks)");
             }
             var solver = new OfflineSolver(create, caps, seeds, memory, forced, mined: mined, guide: (float)(guide ? guideWeight : 0.0), rng: rng)
-                { MinedDraws = Option(args, "--mined-draws", 1) };
+                { MinedDraws = Option(args, "--mined-draws", 1), SubtickShare = Option(args, "--subtick-share", .5), Shift = !args.Contains("--no-shift") };
             if (!forced.IsEmpty)
                 Console.WriteLine($"Forced path{(customPath ? " '" + pathName + "'" : "")}{(optional.Count == 0 ? "" : " with optional " + string.Join(", ", optional))}: via {(forced.Via.Count == 0 ? "-" : string.Join(" then ", forced.Via))}; avoid {(forced.Avoid.Count == 0 ? "-" : string.Join(", ", forced.Avoid))}");
             clock.Restart();
@@ -136,7 +136,7 @@ namespace IGTAP.EngineSim.Cli
                 double s = clock.Elapsed.TotalSeconds;
                 long runs = Interlocked.Read(ref solver.Runs), ticks = Interlocked.Read(ref solver.Ticks);
                 Console.WriteLine($"[{clock.Elapsed:hh\\:mm\\:ss}] {(runs - lastRuns) / (s - lastSeconds):0} runs/s, {(ticks - lastTicks) / (s - lastSeconds):0} ticks/s, "
-                    + $"{runs} runs, {Interlocked.Read(ref solver.Finishes)} finishes, {Interlocked.Read(ref solver.Drifts)} drifts, {Interlocked.Read(ref solver.Splices)} splices, {Interlocked.Read(ref solver.TechGrafted)} tech grafts ({Interlocked.Read(ref solver.ChainGrafts)} chained, {Interlocked.Read(ref solver.ExpectsMet)}/{Interlocked.Read(ref solver.ExpectChecks)} expected contacts, {Interlocked.Read(ref solver.TechGraftedAtStep)} at step contacts), best {solver.Shared.Time:0.00}s"
+                    + $"{runs} runs, {Interlocked.Read(ref solver.Finishes)} finishes, {Interlocked.Read(ref solver.Drifts)} drifts, {Interlocked.Read(ref solver.Behind)} ties behind, {Interlocked.Read(ref solver.Splices)} splices, {Interlocked.Read(ref solver.TechGrafted)} tech grafts ({Interlocked.Read(ref solver.ChainGrafts)} chained, {Interlocked.Read(ref solver.ExpectsMet)}/{Interlocked.Read(ref solver.ExpectChecks)} expected contacts, {Interlocked.Read(ref solver.TechGraftedAtStep)} at step contacts), best {solver.Shared.Time:0.00}s"
                     + (forced.Via.Count > 0 ? $", forced path {solver.MostWaypoints}/{forced.Via.Count} boxes" : "")
                     + (solver.Shared.RunTicks == long.MaxValue ? "" : $" (run {solver.Shared.RunTicks * .02:0.00}s)")
                     + ", " + solver.GuideStatus() + ", branch replays matching "

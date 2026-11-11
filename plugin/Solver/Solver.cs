@@ -64,7 +64,9 @@ namespace IGTAPTasMod
         float _silentTime;
 
         bool _solverRunning;
-        string _solverStatus = "Idle", _solverSpeed = "";
+        string _solverStatus = "Idle", _solverSpeed = "", _solvePhase;
+        readonly Stopwatch _solveClock = new Stopwatch();
+        TimeSpan _solveBestAt;
         CourseDef _solverTarget;
         string _solverCaps = "";
         courseScript[] _solverCourses;
@@ -859,7 +861,7 @@ namespace IGTAPTasMod
         {
             SolveJob current = _solverRunning && _solveIndex >= 0 && _solveIndex < _solveQueue.Count ? _solveQueue[_solveIndex] : null;
             return new {
-                running = _solverRunning, status = _solverStatus, course = _solveCourse, capabilities = _solveCaps, optional = _solveOptional, speed = _solverSpeed,
+                running = _solverRunning, status = _solverStatus, course = _solveCourse, capabilities = _solveCaps, optional = _solveOptional, speed = SolveProgressLine(),
                 farm = current?.farm ?? false, focus = current?.focus, humanClass = current?.cls, auto = _solveAuto, waypoints = _solveWaypoints, outlook = _solveOutlook, pulls = _solvePulls,
                 evaluations = _solveRuns, finishes = _solveFinishes, turboChecks = _turboChecks, turboSaved = _turboSaved, toValidate = _offlineWaiting,
                 best = float.IsInfinity(_solveBest) ? (float?)null : _solveBest,
@@ -868,6 +870,16 @@ namespace IGTAPTasMod
                 courses = _courses.Select(c => c.id).ToArray(),
                 minutes = _solveMinutes, repeat = _solveRepeat, pass = _solvePass,
                 queue = _solveQueue.Select((j, i) => new { label = j.label, result = j.result, active = _solverRunning && i == _solveIndex }).ToArray() };
+        }
+
+        static string MinSec(TimeSpan t) { return (int)t.TotalMinutes + ":" + t.Seconds.ToString("00"); }
+
+        string SolveProgressLine()
+        {
+            if (!_solverRunning || _solveProcess == null) return _solverSpeed;
+            TimeSpan now = _solveClock.Elapsed;
+            string clock = "Searching " + MinSec(now) + " of " + _solveMinutes.ToString("0.##", CultureInfo.InvariantCulture) + " min, no new best for " + MinSec(now - _solveBestAt);
+            return string.Join(" · ", new[] { clock, _solvePhase, _solverSpeed }.Where(s => !string.IsNullOrEmpty(s)));
         }
 
         string[] LatestSolverLog()
@@ -926,7 +938,7 @@ namespace IGTAPTasMod
                 _solveProcess.WaitForExit();
                 while (_solveOutput.TryDequeue(out string line)) ReadSolveLine(line);
                 int code = _solveProcess.ExitCode;
-                EndSolveJob(code == 0 ? "Finished" : "The offline solver exited with code " + code);
+                EndSolveJob(code == 0 ? "Finished" + (_solvePhase == null ? "" : " (" + _solvePhase + ")") : "The offline solver exited with code " + code);
             }
             catch (Exception ex) { Logger.LogError(ex); EndSolveJob("Solver error: " + ex.Message); }
         }
@@ -952,7 +964,11 @@ namespace IGTAPTasMod
             SolveJob job = _solveQueue[_solveIndex];
             string args = CourseSolveArgs(job, course, (string)captured["path"], name, _solveMinutes, out string what, out _solveAuto);
             _solveProcess = StartEngineSim(args, _solveOutput);
-            _solverStatus = what + "; turbo checks every new best";
+            _solveClock.Restart();
+            _solveBestAt = TimeSpan.Zero;
+            _solvePhase = null;
+            // --auto doesn't submit: PumpOfflineBests judges its bests once this course is no longer the one being solved.
+            _solverStatus = what + (_solveAuto ? "; the game checks its bests when the search ends or you press Stop" : "; turbo checks every new best");
             Logger.LogInfo("Optimize: " + EngineSimExe + " " + args);
         }
 
@@ -1189,6 +1205,7 @@ namespace IGTAPTasMod
         static readonly Regex SolveBest = new Regex(@"offline best ([\d.,]+)s via ");
         static readonly Regex SolveLoopBest = new Regex(@"offline best farm loop ([\d.,]+)s via ");
         static readonly Regex SolveClassBest = new Regex(@"offline human-(?:major|nmg) best ([\d.,]+) ");
+        static readonly Regex SolveTimestamp = new Regex(@"^\[[\d:]+\] ");
         const string AutoEvent = "@fulltas ", WaypointsLine = "waypoints ";
 
         void ReadSolveLine(string line)
@@ -1229,6 +1246,9 @@ namespace IGTAPTasMod
                 }
                 return;
             }
+            string phase = SolveTimestamp.Replace(line, "");
+            if (phase.StartsWith("--auto: ", StringComparison.Ordinal) || phase.StartsWith("polish: ", StringComparison.Ordinal)) _solvePhase = phase;
+            if (line.Contains("offline ") && line.Contains(" best ")) _solveBestAt = _solveClock.Elapsed;
             m = SolveLoopBest.Match(line);
             if (m.Success) _solveBestFarm = Math.Min(_solveBestFarm, float.Parse(m.Groups[1].Value.Replace(',', '.'), CultureInfo.InvariantCulture));
             else if ((m = SolveBest.Match(line)).Success || (m = SolveClassBest.Match(line)).Success)

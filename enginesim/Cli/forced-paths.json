@@ -4,7 +4,7 @@
       "course": 1,
       "capabilities": ["none", "wj", "wjds", "wjdsdj", "wjdsdjbsorbzipom", "wjdsbszipom", "wjds2bszipom"],
       "note": "Left side: everything left of the wall hanging right of the buy machines (its left edge, x 2037), straight down through the floor, is cut. Right side: two boxes are cut, x 2675.3 to 2991.2 from y -543.7 to 559.6, and x 3160 to 3494 from y -613 to 1. Every route stays between them; the search otherwise spends most of its runs out there.",
-      "avoid": [[-7000, -6148, 2037, 5852], [2675.3, -543.7, 2991.2, 559.6], [3160, -613, 3494, 1]],
+      "avoid": [[-7000, -6148, 2037, 5852], [2675.3, -543.7, 2991.2, 559.6], [3160, -613, 3494, 1], [2056.4, 251.5, 2109.2, 563.7], [1986.1, 605.7, 3490.2, 920.0], [3432.2, 471.0, 3510.8, 643.1], [2012.3, -503.6, 2762.5, -398.9]],
       "via": [],
       "optional": [
         {
@@ -16,9 +16,9 @@
         },
         {
           "name": "avoid-backwards",
-          "note": "x 2168.3 to 2347.6, y 213.4 to 235.5. Off unless picked.",
+          "note": "x 2168.3 to 2522, y 213.4 to 235.5: every way up left of the Start marker box's right edge, the pillar at x 2400 included (a pause-lift zips up through it, as the 0.54 saved as forwards on 2026-11-11 did). The forwards climbs cross y 213 at x 2552 or more. Off unless picked.",
           "from": "bottom",
-          "avoid": [[2168.3, 213.4, 2347.6, 235.5]],
+          "avoid": [[2168.3, 213.4, 2522, 235.5]],
           "via": []
         },
         {

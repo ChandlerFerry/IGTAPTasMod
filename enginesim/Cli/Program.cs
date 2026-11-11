@@ -52,6 +52,7 @@ namespace IGTAP.EngineSim.Cli
                     case "rays": return Rays(args[1], args[2]);
                     case "grid": return Grid();
                     case "oneway": return OneWay();
+                    case "lead": return Lead();
                     case "probe": return Probe.Run(args.Skip(1).ToArray());
                     case "techgrafts": return TechGrafts.Command(args.Skip(1).ToArray());
                     case "routegrafts": return TechGrafts.RouteCommand(args.Skip(1).ToArray());
@@ -561,6 +562,24 @@ namespace IGTAP.EngineSim.Cli
             var only6 = new OfflineSolver.Box(new WorldPos(0, 0), new WorldPos(10, 10), 5, 0, 6);
             Check(!only6.Live(4) && only6.Live(5) && !only6.Live(6) && new OfflineSolver.Box(default, default, 0, 0, 1).Live(0), "goal-scoped box");
             Console.WriteLine("oneway: ok");
+            return 0;
+        }
+
+        static int Lead()
+        {
+            void Check(bool ok, string what) { if (!ok) throw new InvalidOperationException("lead: " + what); }
+            (float, float, float, float, float, float)[] Line(Func<int, (float x, float y)> at) => Enumerable.Range(0, 21).Select(t => (at(t).x, at(t).y, 0f, 0f, 0f, 0f)).ToArray();
+            int[] steps = Enumerable.Range(0, 21).ToArray();
+            float[] timed = Enumerable.Repeat(0f, 21).ToArray(), untimed = Enumerable.Repeat(-1f, 21).ToArray();
+            var best = Line(t => (10f * t, 0f));
+            double Of((float, float, float, float, float, float)[] run, float[] elapsed = null) => OfflineSolver.Lead(best, steps, 20, run, steps, elapsed ?? timed, 20);
+            Check(Of(best) == 0, "the same line");
+            Check(Math.Abs(Of(Line(t => (10f * t + 5f, 0f))) - .5 * 19) < 1e-3, "half a tick ahead on 19 ticks (the last is past the best's end)");
+            Check(Math.Abs(Of(Line(t => (10f * t - 5f, 0f))) + .5 * 19) < 1e-3, "half a tick behind on 19 ticks (the first is before the best's first point)");
+            Check(Of(Line(t => (10f * t + 5f, 40f))) == 0, "another line");
+            Check(Of(Line(t => (10f * t + 5f, 0f)), untimed) == 0, "before the timer");
+            Check(Of(Line(t => (10f * Math.Min(t + 3, 12), 0f))) > Of(Line(t => (10f * Math.Min(t + 1, 12), 0f))), "sooner at a wait");
+            Console.WriteLine("lead: ok");
             return 0;
         }
 

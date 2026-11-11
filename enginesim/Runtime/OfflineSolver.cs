@@ -124,6 +124,9 @@ namespace IGTAP.EngineSim
         public long GoalResumes;
         public int MinedDraws = 1;
         public double GraftRate = .5;
+        public double SubtickShare = .5;
+        public long Behind;
+        public bool Shift = true;
         public (int lo, int hi)? GraftFocus;
         public Func<Simulation, Func<List<InputTick>, RunResult, double>> Penalty;
         public Func<List<InputTick>, bool> Accept;
@@ -333,6 +336,36 @@ namespace IGTAP.EngineSim
                 }
             }
             return inputs;
+        }
+
+        const int LeadWindow = 12;
+        const float LeadReach = 12f, SameSpot = .01f;
+
+        // Physics ticks a run is ahead of the best where the two pass the same spot, summed over the run's timed ticks; a spot only one passes adds none.
+        internal static double Lead((float x, float y, float, float, float, float)[] best, int[] bestStep, int bestFinish,
+            (float x, float y, float, float, float, float)[] run, int[] step, float[] elapsed, int finish)
+        {
+            int last = Math.Min(bestFinish, best.Length - 1);
+            double sum = 0;
+            for (int t = 1; t <= Math.Min(finish, run.Length - 1); t++)
+            {
+                if (!(elapsed[t] >= 0f)) continue;
+                double lead = 0;
+                float nearest = LeadReach * LeadReach;
+                for (int k = Math.Max(1, t - LeadWindow); k < Math.Min(last, t + LeadWindow); k++)
+                {
+                    float dx = best[k + 1].x - best[k].x, dy = best[k + 1].y - best[k].y, length = dx * dx + dy * dy;
+                    float u = length > 0f ? Math.Clamp(((run[t].x - best[k].x) * dx + (run[t].y - best[k].y) * dy) / length, 0f, 1f) : 0f;
+                    float ex = run[t].x - best[k].x - u * dx, ey = run[t].y - best[k].y - u * dy, d = ex * ex + ey * ey;
+                    double at = bestStep[k] + u * (bestStep[k + 1] - bestStep[k]) - step[t];
+                    // Where the best passes the spot twice (a wait, an out-and-back), the pass nearest in time.
+                    if (d > nearest + SameSpot || d > nearest - SameSpot && nearest < LeadReach * LeadReach && Math.Abs(at) >= Math.Abs(lead)) continue;
+                    lead = at;
+                    nearest = Math.Min(nearest, d);
+                }
+                sum += lead;
+            }
+            return sum;
         }
 
         public static bool Beats(float time, long runTicks, float bestTime, long bestRunTicks)
@@ -580,6 +613,7 @@ namespace IGTAP.EngineSim
                 public readonly long[] Keys;
                 public readonly float[] Elapsed;
                 public readonly bool[] Dash;
+                public readonly int[] Step;
                 public readonly Dictionary<long, float> Arrival = new Dictionary<long, float>();
                 public readonly Dictionary<long, (float time, int tick)> First = new Dictionary<long, (float, int)>();
 
@@ -592,6 +626,7 @@ namespace IGTAP.EngineSim
                     Keys = new long[inputs + 1];
                     Elapsed = new float[inputs + 1];
                     Dash = new bool[inputs + 1];
+                    Step = new int[inputs + 1];
                     Array.Fill(Elapsed, float.NaN);
                 }
 
@@ -605,6 +640,7 @@ namespace IGTAP.EngineSim
                     Array.Copy(best.Keys, Keys, n);
                     Array.Copy(best.Elapsed, Elapsed, n);
                     Array.Copy(best.Dash, Dash, n);
+                    Array.Copy(best.Step, Step, n);
                     for (int t = 0; t < n; t++) Record(t, Keys[t], Elapsed[t]);
                 }
 
@@ -618,6 +654,7 @@ namespace IGTAP.EngineSim
 
             void Adopt(List<InputTick> inputs, float time, int finishTick, long runTicks, Replay replay)
             {
+                _bestFinishTick = finishTick;
                 _best = time;
                 _bestRunTicks = runTicks;
                 _bestInputs = inputs.GetRange(0, Math.Min(finishTick + 1, inputs.Count));
@@ -666,6 +703,7 @@ namespace IGTAP.EngineSim
                     var from = new[] { sim.PlayerWorld, new WorldPos(sim.Player.respawnPoint.x, sim.Player.respawnPoint.y) };
                     _setupReach = Math.Max(SetupReach, from.Max(at => _gates.Min(g => Math.Max(Math.Abs(at.x - g.x), Math.Abs(at.y - g.y)))) + 500f);
                 }
+                _subtick = !_goalMode && (int)((index + 1) * owner.SubtickShare) > (int)(index * owner.SubtickShare);
                 _resets = _goalMode && !owner.NoResets;
                 if (owner.GuideWeight > 0f && DistanceField.Enabled)
                 {
@@ -683,6 +721,7 @@ namespace IGTAP.EngineSim
                     : new[] { "cut", "cut", "hop", "nojump", "stick", "insert", "hold", "retime", "vertical" };
                 if (!owner.NoResets) _kinds = _kinds.Concat(new[] { "reset", "noreset", "movereset" }).ToArray();
                 if (_omni) _kinds = _kinds.Concat(OmniKinds).ToArray();
+                if (owner.Shift && !_goalMode) _kinds = _kinds.Concat(new[] { "shift", "shift" }).ToArray();
             }
 
             public readonly Dictionary<long, float> Visits;
@@ -1164,6 +1203,7 @@ namespace IGTAP.EngineSim
             static readonly int[] BounceHolds = { 3, 6, 10, 16, 24, 40 }, DashJumpHolds = { 2, 5, 10, 16, 24, 40 }, LateHolds = { 0, 2, 5, 10, 16, 24, 40 };
             static readonly int[] Steps = { 1, 1, 2, 3, 5, 8 }, Nudges = { 1, 2, 3, 5, 8 }, Inserts = { 1, 2, 4, 8, 15 }, VerticalSpans = { 1, 3, 6, 12, 25, 50 };
             static readonly float[] Sticks = { -1f, 0f, 1f };
+            static readonly int[] ShiftSpans = { 2, 3, 5, 8, 12, 20, 32, 50 };
 
             T OneOf<T>(T[] from) { return from[_rng.Next(from.Length)]; }
 
@@ -1339,6 +1379,17 @@ namespace IGTAP.EngineSim
                         Cut(t, Omni(t, p, 0, kind) + _rng.Next(1, 25), _rng.Next(0, 20));
                         break;
                     case "cut": Cut(t, p, OneOf(Steps)); break;
+                    case "shift":
+                    {
+                        // The inputs of [p, q) a tick sooner (a tick at p goes, a coast tick comes before q) or later; the route's length stays.
+                        int q = p + OneOf(ShiftSpans);
+                        bool sooner = _rng.NextDouble() < .5;
+                        InputTick gone = t[sooner ? p : Math.Min(q, n) - 1];
+                        if (p == 0 || q >= n || IsPressOrDash(gone) || gone.release || gone.reset) return;
+                        if (sooner) { t.RemoveAt(p); t.Insert(q - 1, t[q - 2].Coast()); }
+                        else { t.Insert(p, t[p - 1].Coast()); t.RemoveAt(q); }
+                        break;
+                    }
                     case "insert":
                         float x = OneOf(Sticks);
                         int count = OneOf(Inserts);
@@ -1548,6 +1599,11 @@ namespace IGTAP.EngineSim
                 });
                 _pricedTicks = priced;
                 bool improved = _owner.Ranks(replayed, replayedTicks, _best, _bestRunTicks);
+                if (!improved && _subtick && Lead(_bestRun.Body, _bestRun.Step, _bestFinishTick, record.Body, record.Step, record.Elapsed, finishTick) < 0)
+                {
+                    Interlocked.Increment(ref _owner.Behind);
+                    return;
+                }
                 Adopt(inputs, replayed, finishTick, replayedTicks, record);
                 if (improved) _owner.Offer(replayed, replayedTicks, _bestInputs, mode, _pricedTicks);
                 else Interlocked.Increment(ref _owner.Drifts);
@@ -1605,6 +1661,9 @@ namespace IGTAP.EngineSim
             bool _runCut, _runCorners;
             int _runJudgeAfter, _runConverge;
 
+            readonly bool _subtick;
+            int _bestFinishTick;
+
             void OnStep(int step)
             {
                 if (_runCorners) RecordSlide();
@@ -1645,6 +1704,7 @@ namespace IGTAP.EngineSim
                     if (tick % StateEvery == 0) replay.Fingerprint[tick] = _sim.Fingerprint();
                     replay.Waypoints[tick] = _waypoints;
                     replay.Dash[tick] = _sim.Player.dashUnlocked && _sim.Player.airDashesLeft > 0;
+                    replay.Step[tick] = (int)_sim.Engine.PhysicsTicks;
                 }
                 else if (tick >= _runConverge && _bestRun != null && tick < _bestRun.Fingerprint.Length && _bestRun.Fingerprint[tick] is int best
                     && _sim.Physics.PlayerBody() == _bestRun.Body[tick] && _sim.Fingerprint() == best && _waypoints == _bestRun.Waypoints[tick])
